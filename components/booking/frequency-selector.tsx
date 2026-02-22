@@ -21,7 +21,7 @@ export function FrequencySelector({ value, onChange }: FrequencySelectorProps) {
         )}
       >
         <div className="font-medium">One-time</div>
-        <div className="mt-1 text-xs opacity-80">Single session</div>
+        <div className="mt-1 text-xs opacity-80">Does not recur</div>
       </button>
       <button
         type="button"
@@ -33,7 +33,7 @@ export function FrequencySelector({ value, onChange }: FrequencySelectorProps) {
             : "bg-background text-foreground border-input hover:bg-accent"
         )}
       >
-        <div className="font-medium">Weekly</div>
+        <div className="font-medium">Weekly (reschedulable)</div>
         <div className="mt-1 text-xs opacity-80">Recurring for 4 months</div>
       </button>
     </div>

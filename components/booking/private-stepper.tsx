@@ -1,6 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
+import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -13,11 +15,13 @@ import { FrequencySelector } from "@/components/booking/frequency-selector";
 import { BookingCheckout } from "@/components/booking/booking-checkout";
 import { PaymentStep } from "@/components/booking/payment-step";
 import { formatTime } from "@/lib/utils";
-import { MapPin, ArrowLeft, ArrowRight } from "lucide-react";
+import { MapPin, ArrowLeft, ArrowRight, UserPlus, CalendarCheck } from "lucide-react";
 
 export function PrivateStepper() {
+  const router = useRouter();
   const [currentStep, setCurrentStep] = useState<1 | 2 | 3>(1);
   const [paymentConfirmed, setPaymentConfirmed] = useState(false);
+  const [authChecking, setAuthChecking] = useState(false);
 
   // Step 1: Location
   const [locationName, setLocationName] = useState("");
@@ -27,8 +31,63 @@ export function PrivateStepper() {
   const [slots, setSlots] = useState<TimeSlot[]>([]);
   const [frequency, setFrequency] = useState<"one-time" | "weekly">("weekly");
 
-  const locationComplete = locationName.trim().length > 0;
+  const locationComplete =
+    locationName.trim().length > 0 && locationAddress.trim().length > 0;
   const scheduleComplete = slots.length > 0;
+
+  // Restore state if the user was redirected away to create an account
+  useEffect(() => {
+    const raw = localStorage.getItem("pendingPrivateBooking");
+    if (!raw) return;
+
+    async function restoreIfAuthenticated() {
+      const supabase = createClient();
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) return;
+
+      try {
+        const saved = JSON.parse(raw!);
+        localStorage.removeItem("pendingPrivateBooking");
+        setLocationName(saved.locationName || "");
+        setLocationAddress(saved.locationAddress || "");
+        setSlots(saved.slots || []);
+        setFrequency(saved.frequency || "weekly");
+        setCurrentStep(3);
+      } catch {
+        localStorage.removeItem("pendingPrivateBooking");
+      }
+    }
+
+    restoreIfAuthenticated();
+  }, []);
+
+  /** Called when tapping "Next: Payment" in step 2.
+   *  Checks auth — redirects unauthenticated users to account creation. */
+  const handleNextToPayment = async () => {
+    setAuthChecking(true);
+    const supabase = createClient();
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    setAuthChecking(false);
+
+    if (!user) {
+      // Save booking state so we can resume after sign-in
+      const pending = {
+        locationName: locationName.trim(),
+        locationAddress: locationAddress.trim(),
+        slots,
+        frequency,
+      };
+      localStorage.setItem("pendingPrivateBooking", JSON.stringify(pending));
+      router.push("/register?next=/book/private");
+      return;
+    }
+
+    setCurrentStep(3);
+  };
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">
@@ -44,7 +103,7 @@ export function PrivateStepper() {
         Step {currentStep} of 3
       </div>
 
-      {/* Step 1: Location */}
+      {/* ── Step 1: Location ── */}
       {currentStep === 1 && (
         <Card>
           <CardContent className="p-6 space-y-4">
@@ -70,17 +129,13 @@ export function PrivateStepper() {
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="locationAddress">
-                Address{" "}
-                <span className="text-muted-foreground font-normal">
-                  (optional)
-                </span>
-              </Label>
+              <Label htmlFor="locationAddress">Address</Label>
               <Input
                 id="locationAddress"
                 value={locationAddress}
                 onChange={(e) => setLocationAddress(e.target.value)}
                 placeholder="Street address or landmark"
+                required
               />
             </div>
 
@@ -96,7 +151,7 @@ export function PrivateStepper() {
         </Card>
       )}
 
-      {/* Step 2: Schedule */}
+      {/* ── Step 2: Schedule ── */}
       {currentStep === 2 && (
         <Card>
           <CardContent className="p-6 space-y-5">
@@ -108,6 +163,34 @@ export function PrivateStepper() {
             </div>
 
             <TimeSlotGrid selectedSlots={slots} onChange={setSlots} />
+
+            {/* Live slot summary */}
+            {slots.length > 0 && (
+              <div className="rounded-lg bg-muted/60 border p-4 space-y-2">
+                <div className="flex items-center gap-2 text-sm font-medium">
+                  <CalendarCheck className="h-4 w-4 text-primary" />
+                  Selected sessions
+                </div>
+                <ul className="space-y-1">
+                  {slots.map((slot) => (
+                    <li
+                      key={`${slot.day}-${slot.startTime}`}
+                      className="text-sm text-muted-foreground"
+                    >
+                      Every{" "}
+                      <span className="font-medium text-foreground">
+                        {slot.day}
+                      </span>{" "}
+                      at{" "}
+                      <span className="font-medium text-foreground">
+                        {formatTime(slot.startTime)} &ndash;{" "}
+                        {formatTime(addOneHour(slot.startTime))}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
 
             <Separator />
 
@@ -126,19 +209,25 @@ export function PrivateStepper() {
                 Back
               </Button>
               <Button
-                onClick={() => setCurrentStep(3)}
-                disabled={!scheduleComplete}
+                onClick={handleNextToPayment}
+                disabled={!scheduleComplete || authChecking}
                 className="flex-1 gap-2"
               >
-                Next: Payment
-                <ArrowRight className="h-4 w-4" />
+                {authChecking ? (
+                  "Checking…"
+                ) : (
+                  <>
+                    Next: Payment
+                    <ArrowRight className="h-4 w-4" />
+                  </>
+                )}
               </Button>
             </div>
           </CardContent>
         </Card>
       )}
 
-      {/* Step 3: Payment */}
+      {/* ── Step 3: Payment ── */}
       {currentStep === 3 && !paymentConfirmed && (
         <Card>
           <CardContent className="p-6">
@@ -151,7 +240,7 @@ export function PrivateStepper() {
         </Card>
       )}
 
-      {/* Checkout — shown after payment is confirmed */}
+      {/* ── Checkout — shown after payment is confirmed ── */}
       {currentStep === 3 && paymentConfirmed && (
         <BookingCheckout
           bookingType="private"
@@ -174,7 +263,7 @@ export function PrivateStepper() {
                 <p>
                   Frequency:{" "}
                   {frequency === "weekly"
-                    ? "Weekly (4 months)"
+                    ? "Weekly (reschedulable) — 4 months"
                     : "One-time session"}
                 </p>
                 <div className="flex items-center gap-1 flex-wrap">

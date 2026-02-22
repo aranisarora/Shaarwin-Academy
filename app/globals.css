@@ -124,3 +124,17 @@
     @apply bg-background text-foreground;
   }
 }
+
+@keyframes marquee {
+  from { transform: translateX(0); }
+  to   { transform: translateX(-50%); }
+}
+
+@keyframes marquee-reverse {
+  from { transform: translateX(-50%); }
+  to   { transform: translateX(0); }
+}
+
+.pause-on-hover:hover .marquee-track {
+  animation-play-state: paused;
+}

@@ -1,17 +1,28 @@
 "use client";
 
+import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { BRAND_NAME } from "@/config/operating-hours";
+import Link from "next/link";
 
 export default function LoginPage() {
+  const searchParams = useSearchParams();
+  const next = searchParams.get("next") || "/dashboard/bookings";
+
   const handleGoogleSignIn = async () => {
     const supabase = createClient();
     await supabase.auth.signInWithOAuth({
       provider: "google",
       options: {
-        redirectTo: `${window.location.origin}/auth/callback`,
+        redirectTo: `${window.location.origin}/auth/callback?next=${encodeURIComponent(next)}`,
       },
     });
   };
@@ -21,9 +32,9 @@ export default function LoginPage() {
       <Card className="w-full max-w-md">
         <CardHeader className="text-center">
           <CardTitle className="text-2xl font-bold">{BRAND_NAME}</CardTitle>
-          <CardDescription>Sign in to book your classes</CardDescription>
+          <CardDescription>Sign in to manage your bookings</CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-4">
           <Button
             onClick={handleGoogleSignIn}
             variant="outline"
@@ -50,6 +61,16 @@ export default function LoginPage() {
             </svg>
             Continue with Google
           </Button>
+
+          <p className="text-center text-sm text-muted-foreground">
+            New to {BRAND_NAME}?{" "}
+            <Link
+              href={`/register?next=${encodeURIComponent(next)}`}
+              className="font-medium text-foreground underline underline-offset-4 hover:text-primary"
+            >
+              Create an account
+            </Link>
+          </p>
         </CardContent>
       </Card>
     </div>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { LocationCard } from "@/components/booking/location-card";
 import { BatchSelectionModal } from "@/components/booking/batch-selection-modal";
@@ -16,6 +16,36 @@ export function BookingPageClient({ locations }: BookingPageClientProps) {
   const [selectedLocation, setSelectedLocation] = useState<Location | null>(
     null
   );
+  const [resumeBatchIds, setResumeBatchIds] = useState<number[]>([]);
+
+  // After account creation, user is redirected back to /book.
+  // Re-open the correct location modal with the previously selected batches.
+  useEffect(() => {
+    const raw = localStorage.getItem("pendingGroupBooking");
+    if (!raw) return;
+
+    try {
+      const { locationId, batchIds } = JSON.parse(raw) as {
+        locationId: number;
+        batchIds: number[];
+      };
+      const loc = locations.find((l) => l.id === locationId);
+      if (loc && batchIds?.length) {
+        localStorage.removeItem("pendingGroupBooking");
+        setResumeBatchIds(batchIds);
+        setSelectedLocation(loc);
+      } else {
+        localStorage.removeItem("pendingGroupBooking");
+      }
+    } catch {
+      localStorage.removeItem("pendingGroupBooking");
+    }
+  }, [locations]);
+
+  const handleClose = () => {
+    setSelectedLocation(null);
+    setResumeBatchIds([]);
+  };
 
   return (
     <div>
@@ -58,7 +88,8 @@ export function BookingPageClient({ locations }: BookingPageClientProps) {
 
       <BatchSelectionModal
         location={selectedLocation}
-        onClose={() => setSelectedLocation(null)}
+        onClose={handleClose}
+        initialBatchIds={resumeBatchIds}
       />
     </div>
   );
