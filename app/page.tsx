@@ -26,6 +26,7 @@ const FOUNDER_IMAGE = "/images/stalin.jpeg";
 const LOGO_IMAGE = "/images/Logo.jpeg";
 
 const socialProofImages: Array<{ src: string; caption: string }> = [
+<<<<<<< HEAD
   { src: "/images/Group1.jpeg", caption: "National Champions 2025" },
   { src: "/images/Group2.jpeg", caption: "State Level Winners" },
   { src: "/images/Group3.jpeg", caption: "District Tournament 2024" },
@@ -33,6 +34,15 @@ const socialProofImages: Array<{ src: string; caption: string }> = [
   { src: "/images/Group5.jpeg", caption: "Inter-Club Champions" },
   { src: "/images/Group6.jpeg", caption: "1000+ Students Trained" },
   { src: "/images/Group7.jpeg", caption: "Elite Squad Training" },
+=======
+  { src: "/images/Group1.jpeg", caption: "ISF U18 Gymnasiade – Bahrain, 2024" },
+  { src: "/images/Group2.jpeg", caption: "ISF U18 Gymnasiade – Bahrain, 2024" },
+  { src: "/images/Group3.jpeg", caption: "ISF U18 Gymnasiade – Bahrain, 2024" },
+  { src: "/images/Group4.jpeg", caption: "ISF U18 Gymnasiade – Bahrain, 2024" },
+  { src: "/images/Group5.jpeg", caption: "CISE Sports and games National Table Tennis 2022" },
+  { src: "/images/Group6.jpeg", caption: "CISE Sports and games National Table Tennis 2022" },
+  { src: "/images/Group7.jpeg", caption: "66th National school games competition" },
+>>>>>>> 9e5f20040fea26f783859ddc40a4a817515ed4e5
 ];
 
 const coaches = [
@@ -80,6 +90,7 @@ const coaches = [
     name: "Sambath",
     initials: "SA",
     image: "",
+<<<<<<< HEAD
     qualifications: [
       "7+ years of coaching experience",
       "ITTF certified coach",
@@ -95,6 +106,10 @@ const coaches = [
       "ITTF certified coach",
       "150+ students trained",
     ],
+=======
+    specialty: "Mental Performance & Match Strategy",
+    bio: "Sharwin's mental performance specialist integrates sports psychology principles into every session. Concentration drills, pressure simulation, and strategic game planning have helped countless students break through plateaus and compete with calm consistency.",
+>>>>>>> 9e5f20040fea26f783859ddc40a4a817515ed4e5
   },
 ];
 
@@ -147,10 +162,16 @@ const testimonials = [
   {
     name: "Sneha L.",
     duration: "8 months",
+<<<<<<< HEAD
     before:
       "Joined purely to stay active. No real ambition to compete — just wanted some exercise.",
     after:
       "Now a passionate competitive player representing my office team in inter-corporate tournaments. Sharwin Table Tennis Academy changed everything.",
+=======
+    coach: "Multiple Coaches",
+    before: "Joined purely to stay active. No real ambition to compete — just wanted some exercise.",
+    after: "Now a passionate competitive player representing my office team in inter-corporate tournaments. Sharwin changed everything.",
+>>>>>>> 9e5f20040fea26f783859ddc40a4a817515ed4e5
     rating: 5,
   },
 ];
@@ -255,6 +276,7 @@ export default function HomePage() {
                 </div>
               </div>
 
+<<<<<<< HEAD
               {/* ── Right: Logo ── */}
               <div className="hero-anim-logo flex justify-center lg:justify-end order-1 lg:order-2">
                 <div className="relative">
@@ -271,8 +293,33 @@ export default function HomePage() {
                   <div className="absolute -bottom-3 left-1/2 -translate-x-1/2 bg-yellow-400 text-yellow-950 rounded-xl px-4 py-2 shadow-lg text-sm font-bold flex items-center gap-1.5 whitespace-nowrap">
                     <Trophy className="h-4 w-4 shrink-0" /> 15+ Titles Won
                   </div>
+=======
+              {/* Portrait Video */}
+              <div className="flex justify-center lg:justify-end order-1 lg:order-2">
+              <div className="relative w-[220px] sm:w-[260px] lg:w-[300px]">
+                <div className="aspect-[9/16] rounded-3xl overflow-hidden border-4 border-primary-foreground/20 shadow-2xl bg-black">
+                  <video
+                    src="/images/herovideo.mp4"
+                    autoPlay
+                    muted // Required for autoplay to work in 99% of browsers
+                    loop
+                    playsInline // Required for iOS/Safari autoplay
+                    controls // This gives you the MP4 UI (play, pause, volume, seek)
+                    preload="auto"
+                    className="w-full h-full object-cover cursor-pointer"
+                  >
+                    {/* Fallback for very old browsers */}
+                    Your browser does not support the video tag.
+                  </video>
+                </div>
+
+                {/* Floating Badge */}
+                <div className="absolute -bottom-3 -left-4 bg-yellow-400 text-yellow-900 rounded-xl px-4 py-2 shadow-lg text-sm font-bold flex items-center gap-1.5 z-10">
+                  <Trophy className="h-4 w-4" /> 15+ Titles Won
+>>>>>>> 9e5f20040fea26f783859ddc40a4a817515ed4e5
                 </div>
               </div>
+            </div>
 
             </div>
           </div>
@@ -337,6 +384,7 @@ export default function HomePage() {
               style={{ "--marquee-dur": "48s" } as React.CSSProperties}
             >
               {[
+<<<<<<< HEAD
                 ...socialProofImages.slice(3),
                 ...socialProofImages.slice(0, 3),
                 ...socialProofImages.slice(3),
@@ -353,6 +401,16 @@ export default function HomePage() {
                     className="object-cover group-hover:scale-105 transition-transform duration-500"
                     sizes="288px"
                   />
+=======
+                { value: "1000+", label: "Students Trained" },
+                { value: "5",    label: "Expert Coaches" },
+                { value: "7+",   label: "Years of Excellence" },
+                { value: "50+",  label: "Tournaments Entered" },
+              ].map((stat) => (
+                <div key={stat.label} className="text-center">
+                  <div className="text-4xl font-bold">{stat.value}</div>
+                  <div className="mt-1 text-sm text-muted-foreground">{stat.label}</div>
+>>>>>>> 9e5f20040fea26f783859ddc40a4a817515ed4e5
                 </div>
               ))}
             </div>
@@ -574,6 +632,7 @@ export default function HomePage() {
             <div className="text-sm font-semibold uppercase tracking-widest text-primary mb-2">
               Student Stories
             </div>
+<<<<<<< HEAD
             <h2 className="text-3xl font-bold">
               <a
                 href="#testimonials"
@@ -587,6 +646,12 @@ export default function HomePage() {
               From complete beginners to competitive athletes — see how Sharwin Table Tennis Academy
               has transformed games across the board.{" "}
               <span className="text-muted-foreground/60">Hover to pause.</span>
+=======
+            <h2 className="text-4xl font-bold">Real Results. Real Players.</h2>
+            <p className="mt-4 text-muted-foreground max-w-xl mx-auto">
+              From complete beginners to competitive athletes — see how Sharwin Academy
+              has transformed games across the board.
+>>>>>>> 9e5f20040fea26f783859ddc40a4a817515ed4e5
             </p>
           </AnimateOnScroll>
 
@@ -636,6 +701,7 @@ export default function HomePage() {
           </div>
         </section>
 
+<<<<<<< HEAD
         {/* ═══════════════════════════════════════════════
             COACHES
         ═══════════════════════════════════════════════ */}
@@ -643,6 +709,56 @@ export default function HomePage() {
           <div className="container mx-auto px-4">
             <AnimateOnScroll className="text-center mb-10">
               <div className="text-sm font-semibold uppercase tracking-widest text-primary mb-2">
+=======
+        {/* ── Why Sharwin ── */}
+        <section className="border-t bg-background py-20">
+          <div className="container mx-auto px-4">
+            <h2 className="mb-3 text-center text-3xl font-bold">Why Sharwin Academy?</h2>
+            <p className="text-center text-muted-foreground mb-12 max-w-xl mx-auto">
+              Expert coaching, flexible scheduling, and a supportive community —
+              everything you need to grow as a player.
+            </p>
+            <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-4">
+              {[
+                {
+                  icon: <Users className="h-8 w-8 text-primary" />,
+                  title: "Group Classes",
+                  desc: "Batch sessions at multiple locations with flexible schedules throughout the week.",
+                },
+                {
+                  icon: <Clock className="h-8 w-8 text-primary" />,
+                  title: "Private Sessions",
+                  desc: "One-on-one coaching with custom timing that fits your schedule perfectly.",
+                },
+                {
+                  icon: <CalendarDays className="h-8 w-8 text-primary" />,
+                  title: "Easy Scheduling",
+                  desc: "Manage bookings, reschedule, or mark absence — synced with Google Calendar.",
+                },
+                {
+                  icon: <MapPin className="h-8 w-8 text-primary" />,
+                  title: "Multiple Locations",
+                  desc: "Choose from various locations across the city for convenient access.",
+                },
+              ].map((f) => (
+                <Card key={f.title} className="border-0 shadow-sm">
+                  <CardContent className="pt-6">
+                    {f.icon}
+                    <h3 className="mt-4 font-semibold text-lg">{f.title}</h3>
+                    <p className="mt-2 text-sm text-muted-foreground">{f.desc}</p>
+                  </CardContent>
+                </Card>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        {/* ── Coaches ── */}
+        <section id="coaches" className="py-24 border-t bg-muted/30">
+          <div className="container mx-auto px-4">
+            <div className="text-center mb-16">
+              <div className="text-sm font-semibold uppercase tracking-widest text-muted-foreground mb-3">
+>>>>>>> 9e5f20040fea26f783859ddc40a4a817515ed4e5
                 Expert Coaching Team
               </div>
               <h2 className="text-3xl font-bold">
@@ -694,12 +810,71 @@ export default function HomePage() {
                           ))}
                         </ul>
                       </div>
+<<<<<<< HEAD
                     </CardContent>
                   </Card>
                 </AnimateOnScroll>
+=======
+                      <div className="text-sm font-medium text-primary mb-3">{coach.specialty}</div>
+                      <p className="text-sm text-muted-foreground leading-relaxed">{coach.bio}</p>
+                    </div>
+                  </CardContent>
+                </Card>
+              ))}
+
+              <Card className="overflow-hidden border-2 border-dashed flex items-center justify-center min-h-[200px]">
+                <CardContent className="text-center p-8">
+                  <Trophy className="h-10 w-10 text-muted-foreground mx-auto mb-4" />
+                  <h3 className="font-semibold text-lg mb-2">Ready to Train?</h3>
+                  <p className="text-sm text-muted-foreground mb-5">
+                    Book a session with any of our expert coaches and start your journey today.
+                  </p>
+                  <Button asChild>
+                    <Link href="/book">Book Now</Link>
+                  </Button>
+                </CardContent>
+              </Card>
+            </div>
+          </div>
+        </section>
+
+        {/* ── Gallery ── */}
+        <section className="py-20 border-t overflow-hidden">
+          <div className="container mx-auto px-4 text-center mb-10">
+            <div className="text-sm font-semibold uppercase tracking-widest text-muted-foreground mb-3">
+              Our Community
+            </div>
+            <h2 className="text-4xl font-bold">Life at Sharwin Academy</h2>
+            <p className="mt-4 text-muted-foreground max-w-xl mx-auto">
+              Tournament victories, group sessions, and memorable moments from
+              our vibrant community of players.
+            </p>
+          </div>
+
+          {/* Row 1 — left scroll */}
+          <div className="pause-on-hover overflow-hidden mb-3">
+            <div
+              className="marquee-track flex gap-3"
+              style={{ animation: "marquee 38s linear infinite", width: "max-content" }}
+            >
+              {[...socialProofImages, ...socialProofImages].map((img, i) => (
+                <div
+                  key={i}
+                  className="relative w-72 h-48 flex-shrink-0 rounded-xl overflow-hidden group shadow-sm"
+                >
+                  <Image
+                    src={img.src}
+                    alt={img.caption}
+                    fill
+                    className="object-cover group-hover:scale-105 transition-transform duration-500"
+                    sizes="288px"
+                  />
+                </div>
+>>>>>>> 9e5f20040fea26f783859ddc40a4a817515ed4e5
               ))}
             </div>
 
+<<<<<<< HEAD
             <AnimateOnScroll className="text-center mt-10">
               <Button asChild size="lg">
                 <Link href="/book">Book a Class</Link>
@@ -785,6 +960,113 @@ export default function HomePage() {
                   </Card>
                 </AnimateOnScroll>
               ))}
+=======
+          {/* Row 2 — right scroll */}
+          <div className="pause-on-hover overflow-hidden">
+            <div
+              className="marquee-track flex gap-3"
+              style={{ animation: "marquee-reverse 48s linear infinite", width: "max-content" }}
+            >
+              {[...socialProofImages.slice(3), ...socialProofImages.slice(0, 3), ...socialProofImages.slice(3), ...socialProofImages.slice(0, 3)].map((img, i) => (
+                <div
+                  key={i}
+                  className="relative w-72 h-48 flex-shrink-0 rounded-xl overflow-hidden group shadow-sm"
+                >
+                  <Image
+                    src={img.src}
+                    alt={img.caption}
+                    fill
+                    className="object-cover group-hover:scale-105 transition-transform duration-500"
+                    sizes="288px"
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+        </section>
+
+        {/* ── Founder ── */}
+        <section className="py-20 border-t bg-muted/30">
+          <div className="container mx-auto px-4">
+            <div className="grid gap-16 lg:grid-cols-2 items-center">
+              <div className="flex justify-center lg:justify-end">
+                <div className="relative">
+                  <div className="h-72 w-72 rounded-2xl bg-muted overflow-hidden relative">
+                    {FOUNDER_IMAGE ? (
+                      <Image
+                        src={FOUNDER_IMAGE}
+                        alt="Stalin Prabu — Founder & Head Coach"
+                        fill
+                        className="object-cover"
+                        sizes="288px"
+                      />
+                    ) : (
+                      <div className="h-full w-full bg-gradient-to-br from-primary/15 to-primary/5 flex items-center justify-center">
+                        <span className="text-8xl font-bold text-primary/20 select-none">SP</span>
+                      </div>
+                    )}
+                  </div>
+                  <div className="absolute -bottom-4 -right-4 bg-primary text-primary-foreground rounded-xl px-5 py-3 shadow-lg">
+                    <div className="text-sm font-semibold">Founder & Head Coach</div>
+                    <div className="text-xs opacity-70 mt-0.5">Sharwin Academy</div>
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <div className="text-sm font-semibold uppercase tracking-widest text-muted-foreground mb-3">
+                  Our Story
+                </div>
+                <h2 className="text-3xl font-bold mb-6 leading-tight">
+                  A Mission to Make Table Tennis Accessible to All
+                </h2>
+                <div className="space-y-4 text-muted-foreground leading-relaxed">
+                  <p>
+                    <span className="font-semibold text-foreground">Stalin Prabu</span>,
+                    founder of Sharwin Academy, began his journey captivated by the speed,
+                    precision, and strategy of table tennis. Noticing that quality coaching
+                    was limited and often inaccessible, he set out to change that.
+                  </p>
+                  <p>
+                    Today, Sharwin is home to five dedicated coaches, a thriving community
+                    of passionate students, and a philosophy built on discipline, encouragement,
+                    and measurable progress. Every session is designed not just to improve
+                    your game — but to deepen your love for it.
+                  </p>
+                </div>
+                <div className="mt-8">
+                  <Button asChild size="lg">
+                    <Link href="/book">
+                      Start Your Journey <ChevronRight className="ml-2 h-4 w-4" />
+                    </Link>
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* ── Final CTA ── */}
+        <section className="bg-primary text-primary-foreground py-24">
+          <div className="container mx-auto px-4 text-center">
+            <h2 className="text-4xl font-bold mb-4">Your First Rally Starts Here.</h2>
+            <p className="text-primary-foreground/70 max-w-lg mx-auto mb-10 text-lg">
+              Whether you're picking up a paddle for the first time or returning to sharpen
+              your competitive edge — Sharwin Academy has a program for you.
+            </p>
+            <div className="flex flex-col sm:flex-row gap-4 justify-center">
+              <Button asChild size="lg" variant="secondary" className="min-w-[220px]">
+                <Link href="/book">Book a Class</Link>
+              </Button>
+              <Button
+                asChild
+                size="lg"
+                variant="outline"
+                className="min-w-[220px] border-primary-foreground/30 text-secondary-foreground hover:bg-primary-foreground/10"
+              >
+                <Link href="/login">Sign In to Your Account</Link>
+              </Button>
+>>>>>>> 9e5f20040fea26f783859ddc40a4a817515ed4e5
             </div>
           </div>
         </section>

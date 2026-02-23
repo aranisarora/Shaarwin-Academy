@@ -14,9 +14,9 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Shaarwin Academy - Book Your Classes",
+  title: "Sharwin Academy - Book Your Classes",
   description:
-    "Book group and private classes at Shaarwin Academy. Easy scheduling with Google Calendar integration.",
+    "Book group and private classes at Sharwin Academy. Easy scheduling with Google Calendar integration.",
 };
 
 export default function RootLayout({
