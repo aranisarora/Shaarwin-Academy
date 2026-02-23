@@ -19,13 +19,13 @@ import {
 const FOUNDER_IMAGE = "/images/stalin.jpeg";
 
 const socialProofImages: Array<{ src: string; caption: string }> = [
-  { src: "/images/Group1.jpeg", caption: "National Champions 2025" },
-  { src: "/images/Group2.jpeg", caption: "State Level Winners" },
-  { src: "/images/Group3.jpeg", caption: "District Tournament 2024" },
-  { src: "/images/Group4.jpeg", caption: "15+ Tournament Titles" },
-  { src: "/images/Group5.jpeg", caption: "Inter-Club Champions" },
-  { src: "/images/Group6.jpeg", caption: "200+ Students Trained" },
-  { src: "/images/Group7.jpeg", caption: "Elite Squad Training" },
+  { src: "/images/Group1.jpeg", caption: "ISF U18 Gymnasiade – Bahrain, 2024" },
+  { src: "/images/Group2.jpeg", caption: "ISF U18 Gymnasiade – Bahrain, 2024" },
+  { src: "/images/Group3.jpeg", caption: "ISF U18 Gymnasiade – Bahrain, 2024" },
+  { src: "/images/Group4.jpeg", caption: "ISF U18 Gymnasiade – Bahrain, 2024" },
+  { src: "/images/Group5.jpeg", caption: "CISE Sports and games National Table Tennis 2022" },
+  { src: "/images/Group6.jpeg", caption: "CISE Sports and games National Table Tennis 2022" },
+  { src: "/images/Group7.jpeg", caption: "66th National school games competition" },
 ];
 
 const coaches = [
@@ -62,7 +62,7 @@ const coaches = [
     initials: "SA",
     image: "",
     specialty: "Mental Performance & Match Strategy",
-    bio: "Shaarwin's mental performance specialist integrates sports psychology principles into every session. Concentration drills, pressure simulation, and strategic game planning have helped countless students break through plateaus and compete with calm consistency.",
+    bio: "Sharwin's mental performance specialist integrates sports psychology principles into every session. Concentration drills, pressure simulation, and strategic game planning have helped countless students break through plateaus and compete with calm consistency.",
   },
 ];
 
@@ -112,7 +112,7 @@ const testimonials = [
     duration: "8 months",
     coach: "Multiple Coaches",
     before: "Joined purely to stay active. No real ambition to compete — just wanted some exercise.",
-    after: "Now a passionate competitive player representing my office team in inter-corporate tournaments. Shaarwin changed everything.",
+    after: "Now a passionate competitive player representing my office team in inter-corporate tournaments. Sharwin changed everything.",
     rating: 5,
   },
 ];
@@ -160,23 +160,29 @@ export default function HomePage() {
 
               {/* Portrait Video */}
               <div className="flex justify-center lg:justify-end order-1 lg:order-2">
-                <div className="relative w-[220px] sm:w-[260px] lg:w-[300px]">
-                  <div className="aspect-[9/16] rounded-3xl overflow-hidden border-4 border-primary-foreground/20 shadow-2xl">
-                    <video
-                      src="/images/herovideo2.mp4"
-                      autoPlay
-                      muted
-                      loop
-                      playsInline
-                      preload="auto"
-                      className="w-full h-full object-cover"
-                    />
-                  </div>
-                  <div className="absolute -bottom-3 -left-4 bg-yellow-400 text-yellow-900 rounded-xl px-4 py-2 shadow-lg text-sm font-bold flex items-center gap-1.5">
-                    <Trophy className="h-4 w-4" /> 15+ Titles Won
-                  </div>
+              <div className="relative w-[220px] sm:w-[260px] lg:w-[300px]">
+                <div className="aspect-[9/16] rounded-3xl overflow-hidden border-4 border-primary-foreground/20 shadow-2xl bg-black">
+                  <video
+                    src="/images/herovideo.mp4"
+                    autoPlay
+                    muted // Required for autoplay to work in 99% of browsers
+                    loop
+                    playsInline // Required for iOS/Safari autoplay
+                    controls // This gives you the MP4 UI (play, pause, volume, seek)
+                    preload="auto"
+                    className="w-full h-full object-cover cursor-pointer"
+                  >
+                    {/* Fallback for very old browsers */}
+                    Your browser does not support the video tag.
+                  </video>
+                </div>
+
+                {/* Floating Badge */}
+                <div className="absolute -bottom-3 -left-4 bg-yellow-400 text-yellow-900 rounded-xl px-4 py-2 shadow-lg text-sm font-bold flex items-center gap-1.5 z-10">
+                  <Trophy className="h-4 w-4" /> 15+ Titles Won
                 </div>
               </div>
+            </div>
 
             </div>
           </div>
@@ -221,7 +227,7 @@ export default function HomePage() {
           <div className="container mx-auto px-4 py-10">
             <div className="grid grid-cols-2 gap-8 md:grid-cols-4">
               {[
-                { value: "200+", label: "Students Trained" },
+                { value: "1000+", label: "Students Trained" },
                 { value: "5",    label: "Expert Coaches" },
                 { value: "7+",   label: "Years of Excellence" },
                 { value: "50+",  label: "Tournaments Entered" },
@@ -243,7 +249,7 @@ export default function HomePage() {
             </div>
             <h2 className="text-4xl font-bold">Real Results. Real Players.</h2>
             <p className="mt-4 text-muted-foreground max-w-xl mx-auto">
-              From complete beginners to competitive athletes — see how Shaarwin Academy
+              From complete beginners to competitive athletes — see how Sharwin Academy
               has transformed games across the board.
             </p>
           </div>
@@ -285,10 +291,10 @@ export default function HomePage() {
           </div>
         </section>
 
-        {/* ── Why Shaarwin ── */}
+        {/* ── Why Sharwin ── */}
         <section className="border-t bg-background py-20">
           <div className="container mx-auto px-4">
-            <h2 className="mb-3 text-center text-3xl font-bold">Why Shaarwin Academy?</h2>
+            <h2 className="mb-3 text-center text-3xl font-bold">Why Sharwin Academy?</h2>
             <p className="text-center text-muted-foreground mb-12 max-w-xl mx-auto">
               Expert coaching, flexible scheduling, and a supportive community —
               everything you need to grow as a player.
@@ -398,7 +404,7 @@ export default function HomePage() {
             <div className="text-sm font-semibold uppercase tracking-widest text-muted-foreground mb-3">
               Our Community
             </div>
-            <h2 className="text-4xl font-bold">Life at Shaarwin Academy</h2>
+            <h2 className="text-4xl font-bold">Life at Sharwin Academy</h2>
             <p className="mt-4 text-muted-foreground max-w-xl mx-auto">
               Tournament victories, group sessions, and memorable moments from
               our vibrant community of players.
@@ -475,7 +481,7 @@ export default function HomePage() {
                   </div>
                   <div className="absolute -bottom-4 -right-4 bg-primary text-primary-foreground rounded-xl px-5 py-3 shadow-lg">
                     <div className="text-sm font-semibold">Founder & Head Coach</div>
-                    <div className="text-xs opacity-70 mt-0.5">Shaarwin Academy</div>
+                    <div className="text-xs opacity-70 mt-0.5">Sharwin Academy</div>
                   </div>
                 </div>
               </div>
@@ -490,12 +496,12 @@ export default function HomePage() {
                 <div className="space-y-4 text-muted-foreground leading-relaxed">
                   <p>
                     <span className="font-semibold text-foreground">Stalin Prabu</span>,
-                    founder of Shaarwin Academy, began his journey captivated by the speed,
+                    founder of Sharwin Academy, began his journey captivated by the speed,
                     precision, and strategy of table tennis. Noticing that quality coaching
                     was limited and often inaccessible, he set out to change that.
                   </p>
                   <p>
-                    Today, Shaarwin is home to five dedicated coaches, a thriving community
+                    Today, Sharwin is home to five dedicated coaches, a thriving community
                     of passionate students, and a philosophy built on discipline, encouragement,
                     and measurable progress. Every session is designed not just to improve
                     your game — but to deepen your love for it.
@@ -519,7 +525,7 @@ export default function HomePage() {
             <h2 className="text-4xl font-bold mb-4">Your First Rally Starts Here.</h2>
             <p className="text-primary-foreground/70 max-w-lg mx-auto mb-10 text-lg">
               Whether you're picking up a paddle for the first time or returning to sharpen
-              your competitive edge — Shaarwin Academy has a program for you.
+              your competitive edge — Sharwin Academy has a program for you.
             </p>
             <div className="flex flex-col sm:flex-row gap-4 justify-center">
               <Button asChild size="lg" variant="secondary" className="min-w-[220px]">
@@ -529,7 +535,7 @@ export default function HomePage() {
                 asChild
                 size="lg"
                 variant="outline"
-                className="min-w-[220px] border-primary-foreground/30 text-primary-foreground hover:bg-primary-foreground/10"
+                className="min-w-[220px] border-primary-foreground/30 text-secondary-foreground hover:bg-primary-foreground/10"
               >
                 <Link href="/login">Sign In to Your Account</Link>
               </Button>

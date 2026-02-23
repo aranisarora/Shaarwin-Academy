@@ -10,4 +10,4 @@ export const OPERATING_HOURS: Record<number, { open: string; close: string }> = 
 
 export const TIMEZONE = "Asia/Kolkata";
 
-export const BRAND_NAME = "Shaarwin Academy";
+export const BRAND_NAME = "Sharwin Academy";

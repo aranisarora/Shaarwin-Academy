@@ -41,7 +41,7 @@ export function PaymentStep({
       <div className="flex justify-center">
         <div className="rounded-xl border bg-white p-3 shadow-sm">
           <Image
-            src="/images/gpay-qr.png"
+            src="/images/gpay-qr.jpeg"
             alt="Google Pay QR Code"
             width={200}
             height={200}
