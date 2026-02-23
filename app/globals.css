@@ -55,7 +55,7 @@
   --card-foreground: oklch(0.145 0 0);
   --popover: oklch(1 0 0);
   --popover-foreground: oklch(0.145 0 0);
-  --primary: oklch(0.205 0 0);
+  --primary: oklch(0.52 0.22 27.325);
   --primary-foreground: oklch(0.985 0 0);
   --secondary: oklch(0.97 0 0);
   --secondary-foreground: oklch(0.205 0 0);
@@ -74,7 +74,7 @@
   --chart-5: oklch(0.769 0.188 70.08);
   --sidebar: oklch(0.985 0 0);
   --sidebar-foreground: oklch(0.145 0 0);
-  --sidebar-primary: oklch(0.205 0 0);
+  --sidebar-primary: oklch(0.52 0.22 27.325);
   --sidebar-primary-foreground: oklch(0.985 0 0);
   --sidebar-accent: oklch(0.97 0 0);
   --sidebar-accent-foreground: oklch(0.205 0 0);
@@ -89,8 +89,8 @@
   --card-foreground: oklch(0.985 0 0);
   --popover: oklch(0.205 0 0);
   --popover-foreground: oklch(0.985 0 0);
-  --primary: oklch(0.922 0 0);
-  --primary-foreground: oklch(0.205 0 0);
+  --primary: oklch(0.68 0.18 27.325);
+  --primary-foreground: oklch(0.145 0 0);
   --secondary: oklch(0.269 0 0);
   --secondary-foreground: oklch(0.985 0 0);
   --muted: oklch(0.269 0 0);
@@ -108,7 +108,7 @@
   --chart-5: oklch(0.645 0.246 16.439);
   --sidebar: oklch(0.205 0 0);
   --sidebar-foreground: oklch(0.985 0 0);
-  --sidebar-primary: oklch(0.488 0.243 264.376);
+  --sidebar-primary: oklch(0.68 0.18 27.325);
   --sidebar-primary-foreground: oklch(0.985 0 0);
   --sidebar-accent: oklch(0.269 0 0);
   --sidebar-accent-foreground: oklch(0.985 0 0);
@@ -123,8 +123,12 @@
   body {
     @apply bg-background text-foreground;
   }
+  html {
+    scroll-behavior: smooth;
+  }
 }
 
+/* ── Marquee animations ── */
 @keyframes marquee {
   from { transform: translateX(0); }
   to   { transform: translateX(-50%); }
@@ -135,6 +139,67 @@
   to   { transform: translateX(0); }
 }
 
-.pause-on-hover:hover .marquee-track {
+/*
+ * Use CSS classes (not inline style "animation") so that animation-play-state
+ * can be overridden by the :hover rule below — inline style would block it.
+ * Set duration via the --marquee-dur CSS custom property.
+ */
+.marquee-left {
+  animation-name: marquee;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+  animation-duration: var(--marquee-dur, 30s);
+  width: max-content;
+}
+
+.marquee-right {
+  animation-name: marquee-reverse;
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+  animation-duration: var(--marquee-dur, 30s);
+  width: max-content;
+}
+
+.pause-on-hover:hover .marquee-left,
+.pause-on-hover:hover .marquee-right {
   animation-play-state: paused;
+}
+
+/* ── Entrance animations (hero — always visible on load) ── */
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(28px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.hero-anim-1 { animation: fadeInUp 0.65s ease both; animation-delay: 0.05s; }
+.hero-anim-2 { animation: fadeInUp 0.65s ease both; animation-delay: 0.2s; }
+.hero-anim-3 { animation: fadeInUp 0.65s ease both; animation-delay: 0.35s; }
+.hero-anim-4 { animation: fadeInUp 0.65s ease both; animation-delay: 0.5s; }
+.hero-anim-5 { animation: fadeInUp 0.65s ease both; animation-delay: 0.65s; }
+.hero-anim-logo { animation: fadeIn 0.8s ease both; animation-delay: 0.15s; }
+
+/* ── Scroll-triggered animations (toggled by AnimateOnScroll component) ── */
+.anim-on-scroll {
+  opacity: 0;
+  transform: translateY(22px);
+  transition: opacity 0.55s ease, transform 0.55s ease;
+}
+
+.anim-on-scroll.in-view {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.anim-on-scroll-fade {
+  opacity: 0;
+  transition: opacity 0.55s ease;
+}
+
+.anim-on-scroll-fade.in-view {
+  opacity: 1;
 }

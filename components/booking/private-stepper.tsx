@@ -15,7 +15,7 @@ import { FrequencySelector } from "@/components/booking/frequency-selector";
 import { BookingCheckout } from "@/components/booking/booking-checkout";
 import { PaymentStep } from "@/components/booking/payment-step";
 import { formatTime } from "@/lib/utils";
-import { MapPin, ArrowLeft, ArrowRight, UserPlus, CalendarCheck } from "lucide-react";
+import { MapPin, ArrowLeft, ArrowRight, UserPlus, CalendarCheck, X } from "lucide-react";
 
 export function PrivateStepper() {
   const router = useRouter();
@@ -172,20 +172,29 @@ export function PrivateStepper() {
                   Selected sessions
                 </div>
                 <ul className="space-y-1">
-                  {slots.map((slot) => (
+                  {slots.map((slot, i) => (
                     <li
                       key={`${slot.day}-${slot.startTime}`}
-                      className="text-sm text-muted-foreground"
+                      className="flex items-center justify-between text-sm text-muted-foreground"
                     >
-                      Every{" "}
-                      <span className="font-medium text-foreground">
-                        {slot.day}
-                      </span>{" "}
-                      at{" "}
-                      <span className="font-medium text-foreground">
-                        {formatTime(slot.startTime)} &ndash;{" "}
-                        {formatTime(addOneHour(slot.startTime))}
+                      <span>
+                        Every{" "}
+                        <span className="font-medium text-foreground">
+                          {slot.day}
+                        </span>{" "}
+                        at{" "}
+                        <span className="font-medium text-foreground">
+                          {formatTime(slot.startTime)} &ndash;{" "}
+                          {formatTime(addOneHour(slot.startTime))}
+                        </span>
                       </span>
+                      <button
+                        type="button"
+                        onClick={() => setSlots(slots.filter((_, idx) => idx !== i))}
+                        className="ml-3 rounded-full p-0.5 hover:bg-muted-foreground/20 text-muted-foreground hover:text-foreground transition-colors"
+                      >
+                        <X className="h-3.5 w-3.5" />
+                      </button>
                     </li>
                   ))}
                 </ul>

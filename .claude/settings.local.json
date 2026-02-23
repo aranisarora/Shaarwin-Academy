@@ -8,7 +8,8 @@
       "Bash(npx shadcn@latest add button card dialog input label select tabs dropdown-menu calendar skeleton badge avatar separator toast -y)",
       "Bash(npx tsc:*)",
       "Bash(cd /c/Users/arani/Projects/ShaarwinAcademyV4 && npm run build 2>&1)",
-      "Bash(taskkill:*)"
+      "Bash(taskkill:*)",
+      "Bash(tail:*)"
     ]
   }
 }

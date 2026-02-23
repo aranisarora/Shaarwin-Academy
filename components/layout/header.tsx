@@ -1,8 +1,8 @@
 import Link from "next/link";
+import Image from "next/image";
 import { createClient } from "@/lib/supabase/server";
 import { Button } from "@/components/ui/button";
 import { UserMenu } from "@/components/layout/user-menu";
-import { BRAND_NAME } from "@/config/operating-hours";
 
 export async function Header() {
   const supabase = await createClient();
@@ -13,16 +13,45 @@ export async function Header() {
   return (
     <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
       <div className="container mx-auto flex h-16 items-center justify-between px-4">
-        <Link href="/" className="flex items-center gap-2">
-          <span className="text-xl font-bold tracking-tight">
-            {BRAND_NAME}
+        <Link href="/" className="flex items-center gap-2 shrink-0">
+          <Image
+            src="/images/Logo.jpeg"
+            alt="Sharwin Table Tennis Academy"
+            width={36}
+            height={36}
+            className="rounded-full object-cover"
+          />
+          <span className="text-base font-bold tracking-tight text-primary hidden sm:block">
+            Sharwin Table Tennis Academy
+          </span>
+          <span className="text-base font-bold tracking-tight text-primary sm:hidden">
+            Sharwin TTA
           </span>
         </Link>
 
-        <nav className="flex items-center gap-4">
+        {/* Section navigation — desktop only */}
+        <nav className="hidden lg:flex items-center gap-5 text-sm">
+          <a href="/#gallery" className="text-muted-foreground hover:text-foreground transition-colors">
+            Gallery
+          </a>
+          <a href="/#founder" className="text-muted-foreground hover:text-foreground transition-colors">
+            Our Story
+          </a>
+          <a href="/#coaches" className="text-muted-foreground hover:text-foreground transition-colors">
+            Coaches
+          </a>
+          <a href="/#benefits" className="text-muted-foreground hover:text-foreground transition-colors">
+            Why Us
+          </a>
+          <a href="/#contact" className="text-muted-foreground hover:text-foreground transition-colors">
+            Contact
+          </a>
+        </nav>
+
+        <nav className="flex items-center gap-3">
           <Link
             href="/book"
-            className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
+            className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors hidden md:block"
           >
             Book a Class
           </Link>

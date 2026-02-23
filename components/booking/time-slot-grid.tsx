@@ -2,11 +2,9 @@
 
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { cn, formatTime } from "@/lib/utils";
 import { DAY_NAMES } from "@/lib/constants";
 import { OPERATING_HOURS } from "@/config/operating-hours";
-import { X } from "lucide-react";
 
 export interface TimeSlot {
   day: string;
@@ -73,41 +71,10 @@ export function TimeSlotGrid({ selectedSlots, onChange }: TimeSlotGridProps) {
     }
   };
 
-  const removeSlot = (day: string, startTime: string) => {
-    onChange(
-      selectedSlots.filter(
-        (s) => !(s.day === day && s.startTime === startTime)
-      )
-    );
-  };
-
   const daySlots = activeDay ? generateSlots(DAY_INDEX[activeDay]) : [];
 
   return (
     <div className="space-y-4">
-      {/* Selected slots as removable badges */}
-      {selectedSlots.length > 0 && (
-        <div className="flex flex-wrap gap-2">
-          {selectedSlots.map((slot) => (
-            <Badge
-              key={`${slot.day}-${slot.startTime}`}
-              variant="secondary"
-              className="gap-1.5 py-1.5 px-3 text-sm"
-            >
-              {slot.day.slice(0, 3)} {formatTime(slot.startTime)} &ndash;{" "}
-              {formatTime(addOneHour(slot.startTime))}
-              <button
-                type="button"
-                onClick={() => removeSlot(slot.day, slot.startTime)}
-                className="ml-1 rounded-full hover:bg-muted-foreground/20 p-0.5"
-              >
-                <X className="h-3 w-3" />
-              </button>
-            </Badge>
-          ))}
-        </div>
-      )}
-
       {/* Day buttons row */}
       <div className="grid grid-cols-4 sm:grid-cols-7 gap-2">
         {DAY_NAMES.map((day) => {
