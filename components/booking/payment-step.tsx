@@ -83,19 +83,12 @@ export function PaymentStep({
       {/* Confirm after paying */}
       <Button
         onClick={() => onConfirmed(null)}
-        disabled={!whatsappOpened}
         className="w-full gap-2"
         size="lg"
       >
         <CheckCircle2 className="h-5 w-5" />
         I&apos;ve Paid
       </Button>
-
-      {!whatsappOpened && (
-        <p className="text-xs text-center text-muted-foreground -mt-2">
-          Chat with the founder first, then confirm here once you&apos;ve paid.
-        </p>
-      )}
 
       {/* Post-payment info */}
       <div className="rounded-lg border border-blue-200 bg-blue-50 dark:bg-blue-950/20 dark:border-blue-800 px-4 py-3 flex gap-3 items-start">

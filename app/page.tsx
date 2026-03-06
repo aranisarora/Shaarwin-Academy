@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import Link from "next/link";
 import Image from "next/image";
 import { Header } from "@/components/layout/header";
@@ -22,7 +23,7 @@ import {
   MessageCircle,
 } from "lucide-react";
 
-const FOUNDER_IMAGE = "/images/stalin.jpeg";
+const FOUNDER_IMAGE = "/images/Stalin.jpeg";
 const LOGO_IMAGE = "/images/Logo.jpeg";
 
 const socialProofImages: Array<{ src: string; caption: string }> = [
@@ -39,7 +40,7 @@ const coaches = [
   {
     name: "Augustine",
     initials: "AU",
-    image: "",
+    image: "/images/AugustineMug.jpeg",
     qualifications: [
       "7+ years of coaching experience",
       "ITTF certified coach",
@@ -49,7 +50,7 @@ const coaches = [
   {
     name: "Jerald",
     initials: "JE",
-    image: "",
+    image: "/images/JeraldMug.jpeg",
     qualifications: [
       "7+ years of coaching experience",
       "ITTF certified coach",
@@ -59,7 +60,7 @@ const coaches = [
   {
     name: "Mahaveer",
     initials: "MA",
-    image: "",
+    image: "/images/MahaveerMug.jpeg",
     qualifications: [
       "7+ years of coaching experience",
       "ITTF certified coach",
@@ -69,7 +70,7 @@ const coaches = [
   {
     name: "Purnendu",
     initials: "PU",
-    image: "",
+    image: "/images/PurnenduMug.jpeg",
     qualifications: [
       "7+ years of coaching experience",
       "ITTF certified coach",
@@ -77,9 +78,9 @@ const coaches = [
     ],
   },
   {
-    name: "Sambath",
+    name: "SampathMug",
     initials: "SA",
-    image: "",
+    image: "/images/SampathMug.jpeg",
     qualifications: [
       "7+ years of coaching experience",
       "ITTF certified coach",
@@ -89,7 +90,7 @@ const coaches = [
   {
     name: "Sunil",
     initials: "SU",
-    image: "",
+    image: "/images/SunilMug.jpeg",
     qualifications: [
       "7+ years of coaching experience",
       "ITTF certified coach",
@@ -158,7 +159,9 @@ const testimonials = [
 export default function HomePage() {
   return (
     <div className="flex min-h-screen flex-col">
-      <Header />
+      <Suspense fallback={<div className="sticky top-0 z-50 w-full h-16 border-b bg-background/95" />}>
+        <Header />
+      </Suspense>
 
       <main className="flex-1">
 
@@ -731,13 +734,13 @@ export default function HomePage() {
                 <AnimateOnScroll key={coach.name} delay={idx * 80}>
                   <Card className="overflow-hidden border border-gray-100 shadow-sm hover:shadow-md transition-all hover:-translate-y-0.5 h-full">
                     <CardContent className="p-0">
-                      <div className="h-32 bg-gradient-to-br from-red-700 to-blue-900 relative overflow-hidden flex items-center justify-center">
+                      <div className="aspect-[431/512] bg-gradient-to-br from-red-700 to-blue-900 relative overflow-hidden flex items-center justify-center">
                         {coach.image ? (
                           <Image
                             src={coach.image}
                             alt={`Coach ${coach.name}`}
                             fill
-                            className="object-cover object-top"
+                            className="object-cover"
                             sizes="(max-width: 768px) 100vw, 33vw"
                           />
                         ) : (

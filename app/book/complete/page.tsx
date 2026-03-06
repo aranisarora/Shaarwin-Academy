@@ -11,6 +11,7 @@ import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
 import { PRICING } from "@/config/pricing";
+import { formatTime } from "@/lib/utils";
 import type {
   PendingBooking,
   GroupBookingPayload,
@@ -30,14 +31,31 @@ function computeTotal(pending: PendingBooking): number {
   }
 }
 
-function buildWhatsappMessage(pending: PendingBooking): string {
+function buildWhatsappMessage(pending: PendingBooking, profile: Profile | null): string {
   const total = computeTotal(pending);
+  const name = profile?.full_name || "";
+  const phone = profile?.phone_number || "";
+  const userLines = [`Name: ${name}`, `Phone: ${phone}`];
+
   if (pending.type === "group") {
     const payload = pending.data as GroupBookingPayload;
-    return `Hi, I want to book a group class — ${payload.batchIds.length} batch(es), ₹${total.toLocaleString("en-IN")}`;
+    return [
+      `Hi, I'd like to book group classes.`,
+      ...userLines,
+      `Batches: ${payload.batchIds.length} batch(es)`,
+      `Total: ₹${total.toLocaleString("en-IN")}`,
+    ].join("\n");
   } else {
     const payload = pending.data as PrivateBookingPayload;
-    return `Hi, I want to book a private session — ${payload.slots.length} slot(s), ₹${total.toLocaleString("en-IN")}`;
+    const slotsStr = payload.slots
+      .map((s) => `${s.day} ${formatTime(s.startTime)}`)
+      .join(", ");
+    return [
+      `Hi, I'd like to book a private session at ${payload.locationName}${payload.locationAddress ? ` (${payload.locationAddress})` : ""}.`,
+      ...userLines,
+      `Schedule: ${payload.frequency === "weekly" ? "Weekly" : "One-time"} — ${slotsStr}`,
+      `Total: ₹${total.toLocaleString("en-IN")}`,
+    ].join("\n");
   }
 }
 
@@ -198,7 +216,7 @@ export default function BookingCompletePage() {
   // ── Payment ──
   if (stage === "payment") {
     const total = pendingData ? computeTotal(pendingData) : undefined;
-    const whatsappMessage = pendingData ? buildWhatsappMessage(pendingData) : "";
+    const whatsappMessage = pendingData ? buildWhatsappMessage(pendingData, profile) : "";
     return (
       <div className="flex min-h-[60vh] flex-col items-center justify-center px-4">
         <div className="w-full max-w-md space-y-4">

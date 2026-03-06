@@ -25,6 +25,8 @@ import { getProfile } from "@/actions/auth";
 import { toast } from "sonner";
 import { UserPlus } from "lucide-react";
 import type { Batch, Location, Profile } from "@/types/database";
+import { formatTime } from "@/lib/utils";
+import { PRICING } from "@/config/pricing";
 
 interface BatchSelectionModalProps {
   location: Location | null;
@@ -50,7 +52,6 @@ export function BatchSelectionModal({
 
   // Payment state (only reached after auth)
   const [showPayment, setShowPayment] = useState(false);
-  const [paymentConfirmed, setPaymentConfirmed] = useState(false);
 
   // Auth state
   const [authChecked, setAuthChecked] = useState(false);
@@ -65,14 +66,12 @@ export function BatchSelectionModal({
       setLoading(true);
       setAuthChecked(false);
       setShowPayment(false);
-      setPaymentConfirmed(false);
       return;
     }
 
     async function fetchData() {
       setLoading(true);
       setShowPayment(false);
-      setPaymentConfirmed(false);
 
       const supabase = createClient();
 
@@ -142,11 +141,10 @@ export function BatchSelectionModal({
   const isSelected = (batchId: number) =>
     selectedBatches.some((b) => b.id === batchId);
 
-  const hasCompleteProfile = profile?.full_name && profile?.phone_number;
   const needsPhone = isAuthenticated && profile && !profile.phone_number;
 
   // Batch cards are locked once the user moves to the payment step
-  const batchesLocked = showPayment || paymentConfirmed;
+  const batchesLocked = showPayment;
 
   /** Redirect unauthenticated users to account creation, saving booking context */
   const handleCreateAccount = (redirectTo = "/register") => {
@@ -273,64 +271,45 @@ export function BatchSelectionModal({
                 )}
 
                 {/* ── Authenticated: payment flow ── */}
-                {isAuthenticated && !showPayment && !paymentConfirmed && (
-                  <Button
-                    onClick={() => setShowPayment(true)}
-                    className="w-full"
-                    size="lg"
-                  >
-                    Proceed to Payment
-                  </Button>
-                )}
-
-                {isAuthenticated && showPayment && !paymentConfirmed && (
-                  <PaymentStep
-                    onBack={() => setShowPayment(false)}
-                    onConfirmed={() => {
-                      setShowPayment(false);
-                      setPaymentConfirmed(true);
-                    }}
-                  />
-                )}
-
-                {isAuthenticated && paymentConfirmed && (
-                  <>
-                    {hasCompleteProfile && (
-                      <Button
-                        onClick={handleConfirmBooking}
-                        disabled={submitting}
-                        className="w-full"
-                        size="lg"
-                      >
-                        {submitting
-                          ? "Booking…"
-                          : `Confirm Booking (${selectedBatches.length} batch${selectedBatches.length > 1 ? "es" : ""})`}
-                      </Button>
-                    )}
-
+                {isAuthenticated && !showPayment && (
+                  <div className="space-y-3">
                     {needsPhone && (
-                      <div className="space-y-3">
-                        <div className="space-y-2">
-                          <Label htmlFor="modal-phone">Phone Number</Label>
-                          <Input
-                            id="modal-phone"
-                            value={phoneNumber}
-                            onChange={(e) => setPhoneNumber(e.target.value)}
-                            placeholder="Enter your phone number"
-                            type="tel"
-                          />
-                        </div>
-                        <Button
-                          onClick={handleConfirmBooking}
-                          disabled={submitting || !phoneNumber.trim()}
-                          className="w-full"
-                          size="lg"
-                        >
-                          {submitting ? "Booking…" : "Confirm Booking"}
-                        </Button>
+                      <div className="space-y-2">
+                        <Label htmlFor="modal-phone">Phone Number</Label>
+                        <Input
+                          id="modal-phone"
+                          value={phoneNumber}
+                          onChange={(e) => setPhoneNumber(e.target.value)}
+                          placeholder="Enter your phone number"
+                          type="tel"
+                        />
                       </div>
                     )}
-                  </>
+                    <Button
+                      onClick={() => setShowPayment(true)}
+                      disabled={needsPhone ? !phoneNumber.trim() : false}
+                      className="w-full"
+                      size="lg"
+                    >
+                      Proceed to Payment
+                    </Button>
+                  </div>
+                )}
+
+                {isAuthenticated && showPayment && (
+                  <PaymentStep
+                    onBack={() => setShowPayment(false)}
+                    onConfirmed={handleConfirmBooking}
+                    totalAmount={selectedBatches.length * PRICING.groupBatchPrice}
+                    founderPhone={process.env.NEXT_PUBLIC_FOUNDER_WHATSAPP ?? ""}
+                    whatsappMessage={[
+                      `Hi, I'd like to book group classes at ${location?.name}${location?.address ? ` (${location.address})` : ""}.`,
+                      `Name: ${profile?.full_name || ""}`,
+                      `Phone: ${needsPhone ? phoneNumber.trim() : (profile?.phone_number || "")}`,
+                      `Batches: ${selectedBatches.map((b) => `${b.title} (${b.day_codes.join("/")} ${formatTime(b.start_time)}–${formatTime(b.end_time)})`).join(", ")}`,
+                      `Total: ₹${(selectedBatches.length * PRICING.groupBatchPrice).toLocaleString("en-IN")}`,
+                    ].join("\n")}
+                  />
                 )}
               </div>
             )}
