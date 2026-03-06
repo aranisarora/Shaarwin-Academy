@@ -77,7 +77,7 @@ export function PaymentStep({
         size="lg"
       >
         <MessageCircle className="h-5 w-5" />
-        Chat with Founder on WhatsApp
+        Send Request To Founder On WhatsApp
       </Button>
 
       {/* Confirm after paying */}
