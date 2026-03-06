@@ -6,6 +6,7 @@ import { Footer } from "@/components/layout/footer";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { AnimateOnScroll } from "@/components/ui/animate-on-scroll";
+import { ImageLightbox } from "@/components/ui/image-lightbox";
 import {
   CalendarDays,
   Users,
@@ -688,16 +689,15 @@ export default function HomePage() {
 
                 {/* Right: Poster */}
                 <div className="flex justify-center lg:justify-end order-1 lg:order-2">
-                  <div className="relative w-full max-w-sm rounded-2xl overflow-hidden shadow-2xl border-4 border-yellow-400/30">
-                    <Image
-                      src="/images/SummerCamp.jpeg"
-                      alt="Summer Camp 2026"
-                      width={480}
-                      height={600}
-                      className="object-cover w-full"
-                      style={{ maxHeight: "480px", objectFit: "cover" }}
-                    />
-                  </div>
+                  <ImageLightbox
+                    src="/images/SummerCamp.jpeg"
+                    alt="Summer Camp 2026"
+                    width={480}
+                    height={600}
+                    className="object-cover w-full"
+                    style={{ maxHeight: "480px", objectFit: "cover" }}
+                    containerClassName="relative w-full max-w-sm rounded-2xl overflow-hidden shadow-2xl border-4 border-yellow-400/30"
+                  />
                 </div>
 
               </div>
