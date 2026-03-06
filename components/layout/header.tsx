@@ -49,6 +49,14 @@ export async function Header() {
         </nav>
 
         <nav className="flex items-center gap-3">
+          {user && (
+            <Link
+              href="/dashboard/bookings"
+              className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors hidden md:block"
+            >
+              Manage Bookings
+            </Link>
+          )}
           <Link
             href="/book"
             className="text-sm font-medium text-muted-foreground hover:text-foreground transition-colors hidden md:block"

@@ -640,6 +640,69 @@ export default function HomePage() {
         </section>
 
         {/* ═══════════════════════════════════════════════
+            SUMMER CAMP
+        ═══════════════════════════════════════════════ */}
+        <section id="summer-camp" className="py-14 bg-white border-t-4 border-yellow-400">
+          <div className="container mx-auto px-4">
+            <AnimateOnScroll>
+              <div className="grid gap-10 lg:grid-cols-2 lg:gap-16 items-center">
+
+                {/* Left: Write-up */}
+                <div className="space-y-5 order-2 lg:order-1">
+                  <div className="inline-flex items-center gap-2 rounded-full border border-yellow-400/50 bg-yellow-50 px-4 py-1.5 text-sm font-semibold text-yellow-700">
+                    Summer Camp 2026
+                  </div>
+
+                  <h2 className="text-3xl font-bold leading-tight sm:text-4xl">
+                    Sharwin TT Summer Camp
+                  </h2>
+
+                  <p className="text-muted-foreground leading-relaxed">
+                    Join Bangalore&apos;s most exciting table tennis summer camp — an action-packed
+                    program designed for players of all ages and skill levels. Over intensive
+                    sessions, our ITTF-certified coaches will sharpen your technique, build your
+                    match instinct, and fuel your passion for the sport.
+                  </p>
+                  <p className="text-muted-foreground leading-relaxed">
+                    Whether you&apos;re picking up a paddle for the first time or looking to
+                    level up your competitive game, this summer camp will be a transformative
+                    experience — skill-building, fun, and unforgettable.
+                  </p>
+
+                  <a
+                    href={`https://wa.me/${process.env.NEXT_PUBLIC_FOUNDER_WHATSAPP ?? ""}?text=${encodeURIComponent("Hi, I'm interested in registering for the Sharwin TT Summer Camp 2026. Please share more details.")}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-2 rounded-lg bg-yellow-400 px-6 py-3 text-sm font-bold text-yellow-950 shadow hover:bg-yellow-300 transition-colors"
+                  >
+                    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M17.472 14.382c-.297-.149-1.758-.867-2.03-.967-.273-.099-.471-.148-.67.15-.197.297-.767.966-.94 1.164-.173.199-.347.223-.644.075-.297-.15-1.255-.463-2.39-1.475-.883-.788-1.48-1.761-1.653-2.059-.173-.297-.018-.458.13-.606.134-.133.298-.347.446-.52.149-.174.198-.298.298-.497.099-.198.05-.371-.025-.52-.075-.149-.669-1.612-.916-2.207-.242-.579-.487-.5-.669-.51-.173-.008-.371-.01-.57-.01-.198 0-.52.074-.792.372-.272.297-1.04 1.016-1.04 2.479 0 1.462 1.065 2.875 1.213 3.074.149.198 2.096 3.2 5.077 4.487.709.306 1.262.489 1.694.625.712.227 1.36.195 1.871.118.571-.085 1.758-.719 2.006-1.413.248-.694.248-1.289.173-1.413-.074-.124-.272-.198-.57-.347z"/>
+                      <path d="M12 0C5.373 0 0 5.373 0 12c0 2.124.558 4.117 1.532 5.845L.057 23.285a.75.75 0 00.906.882l5.515-1.447A11.93 11.93 0 0012 24c6.627 0 12-5.373 12-12S18.627 0 12 0zm0 21.75a9.74 9.74 0 01-4.975-1.367l-.356-.212-3.698.97.987-3.607-.232-.37A9.712 9.712 0 012.25 12C2.25 6.615 6.615 2.25 12 2.25S21.75 6.615 21.75 12 17.385 21.75 12 21.75z"/>
+                    </svg>
+                    Register Interest
+                  </a>
+                </div>
+
+                {/* Right: Poster */}
+                <div className="flex justify-center lg:justify-end order-1 lg:order-2">
+                  <div className="relative w-full max-w-sm rounded-2xl overflow-hidden shadow-2xl border-4 border-yellow-400/30">
+                    <Image
+                      src="/images/SummerCamp.jpeg"
+                      alt="Summer Camp 2026"
+                      width={480}
+                      height={600}
+                      className="object-cover w-full"
+                      style={{ maxHeight: "480px", objectFit: "cover" }}
+                    />
+                  </div>
+                </div>
+
+              </div>
+            </AnimateOnScroll>
+          </div>
+        </section>
+
+        {/* ═══════════════════════════════════════════════
             COACHES
         ═══════════════════════════════════════════════ */}
         <section id="coaches" className="py-14 border-t-4 border-primary bg-white">
@@ -826,7 +889,7 @@ export default function HomePage() {
               <div className="grid sm:grid-cols-3 gap-4 max-w-xl mx-auto mb-10">
                 {/* WhatsApp */}
                 <a
-                  href="https://wa.me/91XXXXXXXXXX"
+                  href={`https://wa.me/${process.env.NEXT_PUBLIC_FOUNDER_WHATSAPP ?? ""}`}
                   className="flex flex-col items-center gap-2 p-5 rounded-xl bg-white/10 hover:bg-white/20 transition-colors group"
                 >
                   <div className="w-12 h-12 rounded-full bg-green-500 flex items-center justify-center shadow-md group-hover:bg-green-400 transition-colors">
@@ -834,14 +897,13 @@ export default function HomePage() {
                   </div>
                   <div>
                     <div className="font-semibold text-sm">WhatsApp</div>
-                    {/* TODO: Replace with actual WhatsApp number */}
-                    <div className="text-white/65 text-xs mt-0.5">+91 XXXXX XXXXX</div>
+                    <div className="text-white/65 text-xs mt-0.5">+{process.env.NEXT_PUBLIC_FOUNDER_WHATSAPP ?? ""}</div>
                   </div>
                 </a>
 
                 {/* Email */}
                 <a
-                  href="mailto:info@sharwintt.com"
+                  href="mailto:sharwinttacademy@gmail.com"
                   className="flex flex-col items-center gap-2 p-5 rounded-xl bg-white/10 hover:bg-white/20 transition-colors group"
                 >
                   <div className="w-12 h-12 rounded-full bg-blue-500 flex items-center justify-center shadow-md group-hover:bg-blue-400 transition-colors">
@@ -849,8 +911,7 @@ export default function HomePage() {
                   </div>
                   <div>
                     <div className="font-semibold text-sm">Email</div>
-                    {/* TODO: Replace with actual email */}
-                    <div className="text-white/65 text-xs mt-0.5">info@sharwintt.com</div>
+                    <div className="text-white/65 text-xs mt-0.5">sharwinttacademy@gmail.com</div>
                   </div>
                 </a>
 
@@ -861,7 +922,7 @@ export default function HomePage() {
                   </div>
                   <div>
                     <div className="font-semibold text-sm">Location</div>
-                    <div className="text-white/65 text-xs mt-0.5">Bangalore, Karnataka</div>
+                    <div className="text-white/65 text-xs mt-0.5">Dommasandra, Bengaluru 562125</div>
                   </div>
                 </div>
               </div>

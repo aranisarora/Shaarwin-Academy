@@ -15,7 +15,8 @@ import { FrequencySelector } from "@/components/booking/frequency-selector";
 import { BookingCheckout } from "@/components/booking/booking-checkout";
 import { PaymentStep } from "@/components/booking/payment-step";
 import { formatTime } from "@/lib/utils";
-import { MapPin, ArrowLeft, ArrowRight, UserPlus, CalendarCheck, X } from "lucide-react";
+import { MapPin, ArrowLeft, ArrowRight, CalendarCheck, X } from "lucide-react";
+import { PRICING } from "@/config/pricing";
 
 export function PrivateStepper() {
   const router = useRouter();
@@ -135,7 +136,6 @@ export function PrivateStepper() {
                 value={locationAddress}
                 onChange={(e) => setLocationAddress(e.target.value)}
                 placeholder="Street address or landmark"
-                required
               />
             </div>
 
@@ -244,6 +244,9 @@ export function PrivateStepper() {
               stepNumber={3}
               onBack={() => setCurrentStep(2)}
               onConfirmed={() => setPaymentConfirmed(true)}
+              totalAmount={slots.length * PRICING.privateSlotPrice}
+              whatsappMessage={`Hi, I want to book a private session at ${locationName.trim()} (${locationAddress.trim()}), ${frequency === "weekly" ? "Weekly" : "One-time"}, ${slots.map((s) => `${s.day} ${formatTime(s.startTime)}`).join(" & ")} — ₹${(slots.length * PRICING.privateSlotPrice).toLocaleString("en-IN")}`}
+              founderPhone={process.env.NEXT_PUBLIC_FOUNDER_WHATSAPP ?? ""}
             />
           </CardContent>
         </Card>

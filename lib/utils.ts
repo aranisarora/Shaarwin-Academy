@@ -7,6 +7,16 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
 }
 
+/** Validates an Indian mobile number in E.164 format: +91 followed by 10 digits starting with 6–9 */
+export function isValidIndianPhone(phone: string): boolean {
+  return /^\+91[6-9]\d{9}$/.test(phone.replace(/\s/g, ""));
+}
+
+/** Normalises a phone string to E.164 by stripping spaces */
+export function normalisePhone(phone: string): string {
+  return phone.replace(/\s/g, "");
+}
+
 export function generateRRule(dayCodes: string[], untilDate: Date): string {
   const rruleDays = dayCodes
     .map((day) => DAY_TO_RRULE[day] || day)

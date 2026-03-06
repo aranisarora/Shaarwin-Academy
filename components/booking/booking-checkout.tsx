@@ -10,6 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { toast } from "sonner";
 import { createGroupBooking, createPrivateBooking } from "@/actions/bookings";
 import { getProfile } from "@/actions/auth";
+import { isValidIndianPhone, normalisePhone } from "@/lib/utils";
 import type { Profile } from "@/types/database";
 import type { User } from "@supabase/supabase-js";
 
@@ -74,11 +75,13 @@ export function BookingCheckout({
   }, []);
 
   const needsPhone = user && profile && !profile.phone_number;
+  const phoneNormalised = normalisePhone(phoneNumber);
+  const phoneValid = isValidIndianPhone(phoneNormalised);
 
   const buildPayload = () => {
     const userName = profile?.full_name || "";
     const phone = needsPhone
-      ? phoneNumber.trim()
+      ? phoneNormalised
       : profile?.phone_number || "";
 
     if (bookingType === "group") {
@@ -96,8 +99,8 @@ export function BookingCheckout({
   };
 
   const handleDirectBooking = async () => {
-    if (needsPhone && !phoneNumber.trim()) {
-      toast.error("Please enter your phone number");
+    if (needsPhone && !phoneValid) {
+      toast.error("Please enter a valid Indian mobile number (+91XXXXXXXXXX)");
       return;
     }
     setLoading(true);
@@ -148,22 +151,29 @@ export function BookingCheckout({
         {/* Only show phone field if authenticated but missing phone */}
         {needsPhone && (
           <div className="space-y-2">
-            <Label htmlFor="checkout-phone">Phone Number</Label>
+            <Label htmlFor="checkout-phone">WhatsApp Number</Label>
             <Input
               id="checkout-phone"
               value={phoneNumber}
               onChange={(e) => setPhoneNumber(e.target.value)}
-              placeholder="Enter your phone number"
+              placeholder="+91 98765 43210"
               type="tel"
               required
             />
+            {phoneNumber && !phoneValid ? (
+              <p className="text-xs text-destructive">
+                Enter a valid Indian mobile number starting with +91 (e.g. +91 98765 43210)
+              </p>
+            ) : (
+              <p className="text-xs text-muted-foreground">Format: +91XXXXXXXXXX</p>
+            )}
           </div>
         )}
 
         {user ? (
           <Button
             onClick={handleDirectBooking}
-            disabled={loading || disabled}
+            disabled={loading || disabled || (needsPhone ? !phoneValid : false)}
             className="w-full"
             size="lg"
           >

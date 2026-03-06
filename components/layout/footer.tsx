@@ -60,27 +60,25 @@ export function Footer() {
             <ul className="space-y-3 text-sm text-blue-200/70">
               <li>
                 <a
-                  href="https://wa.me/91XXXXXXXXXX"
+                  href={`https://wa.me/${process.env.NEXT_PUBLIC_FOUNDER_WHATSAPP ?? ""}`}
                   className="flex items-center gap-2 hover:text-white transition-colors"
                 >
                   <MessageCircle className="h-4 w-4 text-green-400 shrink-0" />
-                  {/* TODO: Replace with actual number */}
-                  +91 XXXXX XXXXX
+                  +{process.env.NEXT_PUBLIC_FOUNDER_WHATSAPP ?? ""}
                 </a>
               </li>
               <li>
                 <a
-                  href="mailto:info@sharwintt.com"
+                  href="mailto:sharwinttacademy@gmail.com"
                   className="flex items-center gap-2 hover:text-white transition-colors"
                 >
                   <Mail className="h-4 w-4 text-blue-400 shrink-0" />
-                  {/* TODO: Replace with actual email */}
-                  info@sharwintt.com
+                  sharwinttacademy@gmail.com
                 </a>
               </li>
               <li className="flex items-start gap-2">
                 <MapPin className="h-4 w-4 text-yellow-400 shrink-0 mt-0.5" />
-                Bangalore, Karnataka
+                No. 594, 4th Cross, 7th Ward, Gundappa Beedi, Dommasandra 562125
               </li>
             </ul>
           </div>

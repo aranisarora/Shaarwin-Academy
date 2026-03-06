@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { isValidIndianPhone, normalisePhone } from "@/lib/utils";
 
 interface PhoneCollectFormProps {
   onComplete: (phoneNumber: string) => void;
@@ -14,10 +15,13 @@ interface PhoneCollectFormProps {
 export function PhoneCollectForm({ onComplete, loading }: PhoneCollectFormProps) {
   const [phoneNumber, setPhoneNumber] = useState("");
 
+  const normalised = normalisePhone(phoneNumber);
+  const isValid = isValidIndianPhone(normalised);
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (phoneNumber.trim()) {
-      onComplete(phoneNumber.trim());
+    if (isValid) {
+      onComplete(normalised);
     }
   };
 
@@ -32,19 +36,26 @@ export function PhoneCollectForm({ onComplete, loading }: PhoneCollectFormProps)
       <CardContent>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="phone-collect">Phone Number</Label>
+            <Label htmlFor="phone-collect">WhatsApp Number</Label>
             <Input
               id="phone-collect"
               value={phoneNumber}
               onChange={(e) => setPhoneNumber(e.target.value)}
-              placeholder="Enter your phone number"
+              placeholder="+91 98765 43210"
               type="tel"
               required
             />
+            {phoneNumber && !isValid ? (
+              <p className="text-xs text-destructive">
+                Enter a valid Indian mobile number starting with +91 (e.g. +91 98765 43210)
+              </p>
+            ) : (
+              <p className="text-xs text-muted-foreground">Format: +91XXXXXXXXXX</p>
+            )}
           </div>
           <Button
             type="submit"
-            disabled={!phoneNumber.trim() || loading}
+            disabled={!isValid || loading}
             className="w-full"
             size="lg"
           >

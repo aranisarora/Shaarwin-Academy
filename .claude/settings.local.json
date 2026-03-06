@@ -9,7 +9,14 @@
       "Bash(npx tsc:*)",
       "Bash(cd /c/Users/arani/Projects/ShaarwinAcademyV4 && npm run build 2>&1)",
       "Bash(taskkill:*)",
-      "Bash(tail:*)"
+      "Bash(tail:*)",
+      "Bash(ls:*)",
+      "Bash(cd:*)",
+      "WebFetch(domain:whapi.cloud)",
+      "WebFetch(domain:support.whapi.cloud)",
+      "WebFetch(domain:whapi.readme.io)",
+      "WebFetch(domain:developers.google.com)",
+      "Bash(npm install:*)"
     ]
   }
 }

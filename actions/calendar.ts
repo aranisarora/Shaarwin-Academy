@@ -14,6 +14,7 @@ import {
 } from "@/lib/utils";
 import { TIMEZONE } from "@/config/operating-hours";
 import type { UserScheduleEvent } from "@/types/calendar";
+import { notifyAbsenceConfirmed, notifyRescheduleConfirmed } from "@/lib/whatsapp";
 
 export async function getUserSchedule(): Promise<UserScheduleEvent[]> {
   const supabase = await createClient();
@@ -41,6 +42,12 @@ export async function markAbsent(data: {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user?.email) throw new Error("Not authenticated");
+
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("full_name, phone_number")
+    .eq("id", user.id)
+    .single();
 
   // Get the event
   const event = await getEvent(data.eventId, data.calendarId);
@@ -88,6 +95,31 @@ export async function markAbsent(data: {
       data.calendarId
     );
   }
+
+  // TODO: WhatsApp notifications — Coming Soon
+  // try {
+  //   if (profile?.phone_number) {
+  //     const dateStr = event.start?.dateTime
+  //       ? new Date(event.start.dateTime).toLocaleString("en-IN", {
+  //           weekday: "long",
+  //           day: "numeric",
+  //           month: "long",
+  //           hour: "2-digit",
+  //           minute: "2-digit",
+  //           timeZone: "Asia/Kolkata",
+  //           hour12: true,
+  //         })
+  //       : "";
+  //     await notifyAbsenceConfirmed(
+  //       profile.phone_number,
+  //       profile.full_name || "Student",
+  //       event.summary || "Class",
+  //       dateStr
+  //     );
+  //   }
+  // } catch (e) {
+  //   console.warn("markAbsent: WA notification failed (non-blocking)", e);
+  // }
 
   return { success: true };
 }
@@ -182,6 +214,29 @@ export async function reschedule(data: {
     attendees: [{ email: user.email, displayName: userName }],
     calendarId: data.oldCalendarId,
   });
+
+  // TODO: WhatsApp notifications — Coming Soon
+  // try {
+  //   if (phoneNumber) {
+  //     const newDateStr = new Date(data.newSlotDateTime).toLocaleString("en-IN", {
+  //       weekday: "long",
+  //       day: "numeric",
+  //       month: "long",
+  //       hour: "2-digit",
+  //       minute: "2-digit",
+  //       timeZone: "Asia/Kolkata",
+  //       hour12: true,
+  //     });
+  //     await notifyRescheduleConfirmed(
+  //       phoneNumber,
+  //       userName || "Student",
+  //       newEvent.summary || "Class",
+  //       newDateStr
+  //     );
+  //   }
+  // } catch (e) {
+  //   console.warn("reschedule: WA notification failed (non-blocking)", e);
+  // }
 
   return { success: true, newEventId: newEvent.id };
 }

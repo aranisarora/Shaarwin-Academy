@@ -7,8 +7,10 @@ import { getProfile, updateProfile } from "@/actions/auth";
 import { PhoneCollectForm } from "@/components/booking/phone-collect-form";
 import { PaymentStep } from "@/components/booking/payment-step";
 import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
+import { PRICING } from "@/config/pricing";
 import type {
   PendingBooking,
   GroupBookingPayload,
@@ -17,6 +19,27 @@ import type {
 import type { Profile } from "@/types/database";
 
 type Stage = "loading" | "needs-phone" | "payment" | "processing";
+
+function computeTotal(pending: PendingBooking): number {
+  if (pending.type === "group") {
+    const payload = pending.data as GroupBookingPayload;
+    return payload.batchIds.length * PRICING.groupBatchPrice;
+  } else {
+    const payload = pending.data as PrivateBookingPayload;
+    return payload.slots.length * PRICING.privateSlotPrice;
+  }
+}
+
+function buildWhatsappMessage(pending: PendingBooking): string {
+  const total = computeTotal(pending);
+  if (pending.type === "group") {
+    const payload = pending.data as GroupBookingPayload;
+    return `Hi, I want to book a group class — ${payload.batchIds.length} batch(es), ₹${total.toLocaleString("en-IN")}`;
+  } else {
+    const payload = pending.data as PrivateBookingPayload;
+    return `Hi, I want to book a private session — ${payload.slots.length} slot(s), ₹${total.toLocaleString("en-IN")}`;
+  }
+}
 
 export default function BookingCompletePage() {
   const router = useRouter();
@@ -42,7 +65,6 @@ export default function BookingCompletePage() {
         let userProfile = await getProfile();
 
         if (!userProfile) {
-          // Not authenticated — redirect to register with pending booking intact
           router.replace("/register?next=/book/complete");
           return;
         }
@@ -54,7 +76,7 @@ export default function BookingCompletePage() {
             await updateProfile({ phone_number: pendingPhone });
             userProfile = { ...userProfile, phone_number: pendingPhone };
           } catch {
-            // Non-fatal — user will be asked for phone below
+            // Non-fatal
           } finally {
             localStorage.removeItem("pendingPhone");
           }
@@ -71,13 +93,11 @@ export default function BookingCompletePage() {
           return;
         }
 
-        // Need a phone number before we can book
         if (!userProfile.phone_number) {
           setStage("needs-phone");
           return;
         }
 
-        // Everything ready — show payment step
         setStage("payment");
       } catch {
         localStorage.removeItem("pendingBooking");
@@ -121,7 +141,7 @@ export default function BookingCompletePage() {
     }
   }
 
-  const handlePaymentConfirmed = () => {
+  const handlePaymentConfirmed = async (_screenshot: File | null) => {
     if (!pendingData || !profile) return;
     processBooking(pendingData, profile.full_name || "", profile.phone_number || "");
   };
@@ -155,24 +175,37 @@ export default function BookingCompletePage() {
   if (stage === "needs-phone") {
     return (
       <div className="flex min-h-[60vh] flex-col items-center justify-center">
-        <PhoneCollectForm
-          onComplete={handlePhoneComplete}
-          loading={phoneLoading}
-        />
+        <div className="w-full max-w-md space-y-3">
+          <PhoneCollectForm
+            onComplete={handlePhoneComplete}
+            loading={phoneLoading}
+          />
+          <div className="text-center">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="text-muted-foreground"
+              onClick={() => setStage("payment")}
+            >
+              Skip for now
+            </Button>
+          </div>
+        </div>
       </div>
     );
   }
 
   // ── Payment ──
   if (stage === "payment") {
+    const total = pendingData ? computeTotal(pendingData) : undefined;
+    const whatsappMessage = pendingData ? buildWhatsappMessage(pendingData) : "";
     return (
       <div className="flex min-h-[60vh] flex-col items-center justify-center px-4">
         <div className="w-full max-w-md space-y-4">
           <div>
-            <h1 className="text-2xl font-bold">Complete Payment</h1>
+            <h1 className="text-2xl font-bold">Complete Your Booking</h1>
             <p className="mt-1 text-muted-foreground">
-              Scan the QR code to pay, then upload your payment screenshot to
-              confirm your booking.
+              Message the founder on WhatsApp to confirm your payment and booking.
             </p>
           </div>
           <Card>
@@ -180,6 +213,9 @@ export default function BookingCompletePage() {
               <PaymentStep
                 onBack={() => router.push("/book")}
                 onConfirmed={handlePaymentConfirmed}
+                totalAmount={total}
+                whatsappMessage={whatsappMessage}
+                founderPhone={process.env.NEXT_PUBLIC_FOUNDER_WHATSAPP ?? ""}
               />
             </CardContent>
           </Card>

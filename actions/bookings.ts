@@ -16,8 +16,13 @@ import {
   addAttendeeToDescription,
 } from "@/lib/utils";
 import { TIMEZONE } from "@/config/operating-hours";
+import { PRICING } from "@/config/pricing";
 import { BOOKING_DURATION_MONTHS, DAY_TO_RRULE } from "@/lib/constants";
 import type { Batch } from "@/types/database";
+import {
+  notifyBookingConfirmed,
+  notifyFounderNewBooking,
+} from "@/lib/whatsapp";
 
 /**
  * Count active bookings per batch. Uses admin client to bypass RLS
@@ -78,6 +83,7 @@ export async function createGroupBooking(data: {
   batchIds: number[];
   userName: string;
   phoneNumber: string;
+  screenshotUrl?: string;
 }) {
   const supabase = await createClient();
   const admin = createAdminClient();
@@ -108,6 +114,7 @@ export async function createGroupBooking(data: {
   }
 
   const results: { batchId: number; eventId: string }[] = [];
+  const batchDetailLines: string[] = [];
 
   for (const batchId of data.batchIds) {
     // Fetch batch with location
@@ -299,8 +306,21 @@ export async function createGroupBooking(data: {
       );
     }
 
+    batchDetailLines.push(
+      `• ${typedBatch.title} (${typedBatch.day_codes.join(", ")} at ${typedBatch.start_time}–${typedBatch.end_time})`
+    );
     results.push({ batchId, eventId: eventIds[0] });
   }
+
+  // TODO: WhatsApp notifications — Coming Soon
+  // try {
+  //   const details = batchDetailLines.join("\n");
+  //   const totalAmount = data.batchIds.length * PRICING.groupBatchPrice;
+  //   await notifyBookingConfirmed("918904506670", data.userName, details);
+  //   await notifyFounderNewBooking(data.userName, data.phoneNumber, details, data.screenshotUrl, totalAmount);
+  // } catch (e) {
+  //   console.warn("createGroupBooking: WA notification failed (non-blocking)", e);
+  // }
 
   return { success: true, results };
 }
@@ -312,6 +332,7 @@ export async function createPrivateBooking(data: {
   frequency: "one-time" | "weekly";
   userName: string;
   phoneNumber: string;
+  screenshotUrl?: string;
 }) {
   const supabase = await createClient();
 
@@ -456,6 +477,21 @@ export async function createPrivateBooking(data: {
 
     results.push({ batchId: newBatch.id, eventId: gcalEvent.id });
   }
+
+  // TODO: WhatsApp notifications — Coming Soon
+  // try {
+  //   const slotLines = data.slots.map((s) => `• ${s.day} at ${s.startTime}`);
+  //   const details = [
+  //     `Private Class at ${data.locationName}`,
+  //     `Frequency: ${data.frequency}`,
+  //     ...slotLines,
+  //   ].join("\n");
+  //   const totalAmount = data.slots.length * PRICING.privateSlotPrice;
+  //   await notifyBookingConfirmed(data.phoneNumber, data.userName, details);
+  //   await notifyFounderNewBooking(data.userName, data.phoneNumber, details, data.screenshotUrl, totalAmount);
+  // } catch (e) {
+  //   console.warn("createPrivateBooking: WA notification failed (non-blocking)", e);
+  // }
 
   return { success: true, results };
 }
