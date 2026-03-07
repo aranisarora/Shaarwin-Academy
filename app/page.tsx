@@ -42,16 +42,19 @@ const coaches = [
     name: "Sampath",
     initials: "SA",
     image: "/images/SampathMug.jpeg",
+    quote: "Every point starts with the right mindset.",
+    bio: "Coach Sampath brings nearly a decade of competitive and coaching experience. Known for his methodical approach, he focuses on footwork fundamentals and tactical awareness, helping players build a solid foundation from day one.",
     qualifications: [
       "9+ years of coaching experience",
       "ITTF certified coach",
-      "150+ students trained",
     ],
   },
   {
     name: "Jerald",
     initials: "JE",
     image: "/images/JeraldMug.jpeg",
+    quote: "Technique is the language the body speaks on the table.",
+    bio: "Coach Jerald is a dual-certified ITTF and NIS coach with a reputation for precision training. His deep understanding of spin mechanics and serve strategy has helped numerous players elevate their competitive game.",
     qualifications: [
       "8+ years of coaching experience",
       "ITTF certified coach",
@@ -62,41 +65,45 @@ const coaches = [
     name: "Augustine",
     initials: "AU",
     image: "/images/AugustineMug.jpeg",
+    quote: "Consistency wins matches. Confidence wins championships.",
+    bio: "Coach Augustine is passionate about developing mental resilience alongside technical skill. With 7 years of coaching across all age groups, he has a gift for breaking down complex techniques into simple, actionable steps.",
     qualifications: [
       "7+ years of coaching experience",
       "ITTF certified coach",
-      "150+ students trained",
     ],
   },
   {
     name: "Purnendu",
     initials: "PU",
     image: "/images/PurnenduMug.jpeg",
+    quote: "Every player has a champion inside — my job is to bring it out.",
+    bio: "A dual-certified ITTF and NIS coach, Purnendu specialises in competitive training for aspiring tournament players. His structured, goal-oriented programs are designed to fast-track improvement at every level.",
     qualifications: [
       "9+ years of coaching experience",
       "ITTF certified coach",
       "NIS certified coach",
-      "150+ students trained",
     ],
   },
   {
     name: "Mahaveer",
     initials: "MA",
     image: "/images/MahaveerMug.jpeg",
+    quote: "In this sport, patience and persistence always prevail.",
+    bio: "With over a decade of coaching experience, Mahaveer is the team's most seasoned coach. He excels at long-term player development, guiding beginners to competitive players with a patient, progressive style.",
     qualifications: [
       "10+ years of coaching experience",
       "ITTF certified coach",
-      "150+ students trained",
     ],
   },
   {
     name: "Sunil",
     initials: "SU",
     image: "/images/SunilMug.jpeg",
+    quote: "The best players never stop learning — and neither do I.",
+    bio: "Coach Sunil brings energy and enthusiasm to every session. Committed to continuous learning himself, he keeps his methods fresh and adaptive, ensuring players of all levels are constantly challenged and improving.",
     qualifications: [
       "8+ years of coaching experience",
       "ITTF certified coach",
-      "150+ students trained",
     ],
   },
 ];
@@ -750,12 +757,18 @@ export default function HomePage() {
                           </div>
                         )}
                       </div>
-                      <div className="p-4">
-                        <div className="flex items-start justify-between mb-2">
-                          <h3 className="text-base font-bold">Coach: {coach.name}</h3>
+                      <div className="p-4 space-y-3">
+                        <div className="flex items-start justify-between">
+                          <h3 className="text-base font-bold">Coach {coach.name}</h3>
                           <Award className="h-4 w-4 text-primary/40 shrink-0 mt-0.5" />
                         </div>
-                        <ul className="space-y-1.5">
+                        <p className="text-xs italic text-primary/80 border-l-2 border-primary/30 pl-2.5 leading-relaxed">
+                          &ldquo;{coach.quote}&rdquo;
+                        </p>
+                        <p className="text-xs text-muted-foreground leading-relaxed">
+                          {coach.bio}
+                        </p>
+                        <ul className="space-y-1.5 pt-1">
                           {coach.qualifications.map((q) => (
                             <li key={q} className="flex items-start gap-2 text-xs text-muted-foreground">
                               <CheckCircle2 className="h-3.5 w-3.5 text-primary mt-0.5 shrink-0" />

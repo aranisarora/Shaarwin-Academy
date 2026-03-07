@@ -47,6 +47,9 @@ export async function Header() {
           <a href="/#benefits" className="text-muted-foreground hover:text-foreground transition-colors">
             Why Us
           </a>
+          <a href="/#join-us" className="text-muted-foreground hover:text-foreground transition-colors">
+            Join Our Team
+          </a>
           <a href="/#contact" className="text-muted-foreground hover:text-foreground transition-colors">
             Contact
           </a>
