@@ -1013,7 +1013,7 @@ export default function HomePage() {
                   },
                   {
                     q: "Do I need to bring my own equipment?",
-                    a: "No. We provide bats and balls for all sessions. If you eventually want your own equipment, our coaches are happy to guide you on what to buy based on your level and playing style.",
+                    a: "Yes, but only your racket. We provide balls for all sessions. If you want to get your own racket, our coaches are happy to guide you on the best options for your level and playing style.",
                   },
                   {
                     q: "Where do classes take place?",
@@ -1037,7 +1037,7 @@ export default function HomePage() {
                   },
                   {
                     q: "How do I pay for classes?",
-                    a: "Payment is handled online through our booking system. We accept UPI, cards, and other common payment methods. Session credits are added to your account upon payment and deducted when you attend.",
+                    a: "To pay for classes, simply message our founder (see contact section below) to confirm your booking. You'll receive a UPI payment link or QR code for payment. Payment is handled directly via UPI before your session.",
                   },
                 ].map((item, idx) => (
                   <details
