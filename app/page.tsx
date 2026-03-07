@@ -274,7 +274,7 @@ export default function HomePage() {
                     />
                   </div>
                   <div className="absolute -bottom-3 left-1/2 -translate-x-1/2 bg-yellow-400 text-yellow-950 rounded-xl px-4 py-2 shadow-lg text-sm font-bold flex items-center gap-1.5 whitespace-nowrap">
-                    <Trophy className="h-4 w-4 shrink-0" /> 15+ Titles Won
+                    <Trophy className="h-4 w-4 shrink-0" /> 175+ Titles Won
                   </div>
                 </div>
               </div>
