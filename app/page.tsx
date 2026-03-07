@@ -435,7 +435,7 @@ export default function HomePage() {
                   {[
                     "ITTF Certified",
                     "PTT Certified",
-                    "15+ Years Experience",
+                    "17+ Years Experience",
                     "National Level Coach",
                     "International Tournaments",
                   ].map((cert) => (
@@ -453,7 +453,7 @@ export default function HomePage() {
               <AnimateOnScroll delay={150} className="space-y-6">
                 <div>
                   <div className="text-sm font-semibold uppercase tracking-widest text-blue-300 mb-2">
-                    15+ Years of Excellence
+                    17+ Years of Excellence
                   </div>
                   <h3 className="text-2xl sm:text-3xl font-bold leading-tight">
                     A Mission to Make Table Tennis Accessible to All
@@ -463,8 +463,8 @@ export default function HomePage() {
                 <div className="space-y-4 text-blue-100/80 leading-relaxed text-sm sm:text-base">
                   <p>
                     <span className="font-semibold text-white">Stalin</span>, founder of Sharwin Table
-                    Tennis Academy, is an ITTF and PTT (Paralympic Table Tennis) certified coach with
-                    over 15 years of dedicated coaching and team management experience.
+                    Tennis Academy, is an ITTF and PTT certified coach with
+                    over 17 years of dedicated coaching and team management experience.
                   </p>
                   <p>
                     He has led teams at national and international levels — including India&apos;s U19
@@ -484,7 +484,7 @@ export default function HomePage() {
                     on your schedule.
                   </p>
                   <p>
-                    Today, with over 1,000 students trained and a team of 6 certified coaches, Sharwin
+                    Today, with over 1,000 students trained and a team of 6+ certified coaches, Sharwin
                     Table Tennis Academy stands as Bangalore&apos;s most trusted and accessible table
                     tennis institution — and the mission is far from over.
                   </p>
@@ -513,10 +513,10 @@ export default function HomePage() {
             <AnimateOnScroll delay={150} className="mt-20 md:mt-24">
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4 max-w-4xl mx-auto">
                 {[
-                  { value: "15+",    label: "Years of Coaching" },
+                  { value: "17+",    label: "Years of Coaching" },
                   { value: "1,000+", label: "Students Trained" },
                   { value: "350+",   label: "Tournaments Mentored" },
-                  { value: "2",      label: "International Deployments" },
+                  { value: "3 years",      label: "International Experience" },
                 ].map((stat) => (
                   <div
                     key={stat.label}
