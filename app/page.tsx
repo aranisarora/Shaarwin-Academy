@@ -104,7 +104,7 @@ const coaches = [
 const testimonials = [
   {
     name: "Rajan K.",
-    duration: "3 months",
+    duration: "1 year",
     before:
       "Couldn't sustain a 10-shot rally. Struggled with basic footwork and felt completely lost on the table.",
     after:
@@ -113,7 +113,7 @@ const testimonials = [
   },
   {
     name: "Priya S.",
-    duration: "4 months",
+    duration: "9 months",
     before:
       "Played purely defensively out of fear. Fast topspin balls terrified me and I had no attacking game.",
     after:
@@ -122,7 +122,7 @@ const testimonials = [
   },
   {
     name: "Arjun M.",
-    duration: "6 months",
+    duration: "1 year",
     before:
       "A complete beginner who had never held a paddle properly. Absolutely zero match experience.",
     after:
@@ -131,7 +131,7 @@ const testimonials = [
   },
   {
     name: "Divya R.",
-    duration: "2 months",
+    duration: "2 years",
     before:
       "Predictable serves and weak returns. Opponents easily read my game and exploited it every time.",
     after:
@@ -140,7 +140,7 @@ const testimonials = [
   },
   {
     name: "Karthik V.",
-    duration: "5 months",
+    duration: "1.5 years",
     before:
       "I crumbled under match pressure even when technically superior to my opponents. Lost close games repeatedly.",
     after:
@@ -149,7 +149,7 @@ const testimonials = [
   },
   {
     name: "Sneha L.",
-    duration: "8 months",
+    duration: "1 year",
     before:
       "Joined purely to stay active. No real ambition to compete — just wanted some exercise.",
     after:
@@ -230,8 +230,8 @@ export default function HomePage() {
                 <div className="hero-anim-4 grid grid-cols-2 sm:grid-cols-4 gap-3 max-w-lg mx-auto lg:mx-0 pt-1">
                   {[
                     { value: "1000+", label: "Students" },
-                    { value: "6",     label: "Coaches" },
-                    { value: "15+",   label: "Years" },
+                    { value: "6+",     label: "Coaches" },
+                    { value: "17+",   label: "Years" },
                     { value: "350+",  label: "Tournaments" },
                   ].map((s) => (
                     <div key={s.label} className="bg-white/10 rounded-xl px-3 py-3 text-center">
@@ -403,7 +403,7 @@ export default function HomePage() {
                 </a>
               </h2>
               <p className="text-blue-200/65 text-base md:text-lg leading-relaxed">
-                Over 15 years of unwavering commitment to a single belief — that world-class
+                Over 17 years of unwavering commitment to a single belief — that world-class
                 table tennis coaching should be within reach of every player, at every level,
                 wherever they are.
               </p>
@@ -659,7 +659,7 @@ export default function HomePage() {
                   </div>
 
                   <h2 className="text-3xl font-bold leading-tight sm:text-4xl">
-                    Sharwin TT Summer Camp
+                    Sharwin Table Tennis Summer Camp
                   </h2>
 
                   <p className="text-muted-foreground leading-relaxed">
@@ -856,6 +856,53 @@ export default function HomePage() {
                 </AnimateOnScroll>
               ))}
             </div>
+          </div>
+        </section>
+
+        {/* ═══════════════════════════════════════════════
+            JOIN OUR TEAM
+        ═══════════════════════════════════════════════ */}
+        <section id="join-us" className="py-14 bg-slate-900 text-white border-t-4 border-slate-700">
+          <div className="container mx-auto px-4">
+            <AnimateOnScroll>
+              <div className="max-w-2xl mx-auto text-center">
+                <div className="inline-flex items-center gap-2 rounded-full border border-yellow-400/50 bg-yellow-400/10 px-4 py-1.5 text-sm font-semibold text-yellow-400 mb-4">
+                  <Trophy className="h-4 w-4" />
+                  We&apos;re Hiring Coaches
+                </div>
+
+                <h2 className="text-3xl font-bold mb-4">Join Our Coaching Team</h2>
+
+                <p className="text-slate-300 leading-relaxed mb-4">
+                  Passionate about table tennis? We&apos;re always looking for skilled, motivated
+                  coaches to join the Sharwin Table Tennis Academy family. If you have a
+                  strong playing background and a desire to develop players at all levels,
+                  we&apos;d love to hear from you.
+                </p>
+
+                <p className="text-slate-400 text-sm leading-relaxed mb-8">
+                  To apply, send us a WhatsApp message with your playing videos, coaching
+                  qualifications, and years of experience. Our founder will personally review
+                  your application and get back to you.
+                </p>
+
+                <a
+                  href={`https://wa.me/${process.env.NEXT_PUBLIC_FOUNDER_WHATSAPP ?? ""}?text=${encodeURIComponent(
+                    "Hi! I'm interested in joining Sharwin Table Tennis Academy as a coach. I'd like to share my playing videos, coaching qualifications, and experience with you. Please let me know the next steps."
+                  )}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-3 px-6 py-3 rounded-xl bg-green-500 hover:bg-green-400 text-white font-semibold transition-colors shadow-lg"
+                >
+                  <MessageCircle className="h-5 w-5" />
+                  Apply via WhatsApp
+                </a>
+
+                <p className="text-slate-500 text-xs mt-4">
+                  Tapping the button will open WhatsApp with a pre-filled message — just hit send.
+                </p>
+              </div>
+            </AnimateOnScroll>
           </div>
         </section>
 

@@ -14,21 +14,24 @@ export async function Header() {
   return (
     <header className="sticky top-0 z-50 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
       <div className="container mx-auto flex h-16 items-center justify-between px-4">
-        <Link href="/" className="flex items-center gap-2 shrink-0">
-          <Image
-            src="/images/Logo.jpeg"
-            alt="Sharwin Table Tennis Academy"
-            width={36}
-            height={36}
-            className="rounded-full object-cover"
-          />
-          <span className="text-base font-bold tracking-tight text-primary hidden sm:block">
-            Sharwin Table Tennis Academy
-          </span>
-          <span className="text-base font-bold tracking-tight text-primary sm:hidden">
-            Sharwin Table Tennis Academy
-          </span>
-        </Link>
+        <div className="flex items-center gap-2">
+          <MobileMenu isLoggedIn={!!user} />
+          <Link href="/" className="flex items-center gap-2 shrink-0">
+            <Image
+              src="/images/Logo.jpeg"
+              alt="Sharwin Table Tennis Academy"
+              width={36}
+              height={36}
+              className="rounded-full object-cover"
+            />
+            <span className="text-base font-bold tracking-tight text-primary hidden sm:block">
+              Sharwin Table Tennis Academy
+            </span>
+            <span className="text-base font-bold tracking-tight text-primary sm:hidden">
+              Sharwin Table Tennis Academy
+            </span>
+          </Link>
+        </div>
 
         {/* Section navigation — desktop only */}
         <nav className="hidden lg:flex items-center gap-5 text-sm">
@@ -71,7 +74,6 @@ export async function Header() {
               <Link href="/login">Sign In</Link>
             </Button>
           )}
-          <MobileMenu isLoggedIn={!!user} />
         </nav>
       </div>
     </header>
