@@ -39,11 +39,11 @@ const socialProofImages: Array<{ src: string; caption: string }> = [
 
 const coaches = [
   {
-    name: "Augustine",
-    initials: "AU",
-    image: "/images/AugustineMug.jpeg",
+    name: "Sampath",
+    initials: "SA",
+    image: "/images/SampathMug.jpeg",
     qualifications: [
-      "8+ years of coaching experience",
+      "9+ years of coaching experience",
       "ITTF certified coach",
       "150+ students trained",
     ],
@@ -53,9 +53,30 @@ const coaches = [
     initials: "JE",
     image: "/images/JeraldMug.jpeg",
     qualifications: [
-      "6+ years of coaching experience",
+      "8+ years of coaching experience",
       "ITTF certified coach",
       "NIS certified coach",
+    ],
+  },
+  {
+    name: "Augustine",
+    initials: "AU",
+    image: "/images/AugustineMug.jpeg",
+    qualifications: [
+      "7+ years of coaching experience",
+      "ITTF certified coach",
+      "150+ students trained",
+    ],
+  },
+  {
+    name: "Purnendu",
+    initials: "PU",
+    image: "/images/PurnenduMug.jpeg",
+    qualifications: [
+      "9+ years of coaching experience",
+      "ITTF certified coach",
+      "NIS certified coach",
+      "150+ students trained",
     ],
   },
   {
@@ -69,31 +90,11 @@ const coaches = [
     ],
   },
   {
-    name: "Purnendu",
-    initials: "PU",
-    image: "/images/PurnenduMug.jpeg",
-    qualifications: [
-      "5+ years of coaching experience",
-      "ITTF certified coach",
-      "150+ students trained",
-    ],
-  },
-  {
-    name: "SampathMug",
-    initials: "SA",
-    image: "/images/SampathMug.jpeg",
-    qualifications: [
-      "9+ years of coaching experience",
-      "ITTF certified coach",
-      "150+ students trained",
-    ],
-  },
-  {
     name: "Sunil",
     initials: "SU",
     image: "/images/SunilMug.jpeg",
     qualifications: [
-      "7+ years of coaching experience",
+      "8+ years of coaching experience",
       "ITTF certified coach",
       "150+ students trained",
     ],
