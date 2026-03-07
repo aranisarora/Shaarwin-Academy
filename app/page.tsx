@@ -22,6 +22,9 @@ import {
   Link2,
   Home,
   MessageCircle,
+  School,
+  Building2,
+  GraduationCap,
 } from "lucide-react";
 
 const FOUNDER_IMAGE = "/images/Stalin.jpeg";
@@ -837,6 +840,52 @@ export default function HomePage() {
                 </div>
               </div>
             </AnimateOnScroll>
+
+            {/* Where We Coach */}
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+              {[
+                {
+                  icon: <Home className="h-6 w-6 text-blue-600" />,
+                  bg: "bg-blue-50 border-blue-100",
+                  iconBg: "bg-blue-100",
+                  label: "Your Home",
+                  desc: "We come straight to your doorstep — no commute, no hassle.",
+                },
+                {
+                  icon: <School className="h-6 w-6 text-green-600" />,
+                  bg: "bg-green-50 border-green-100",
+                  iconBg: "bg-green-100",
+                  label: "Schools",
+                  desc: "After-school programs and lunchtime sessions for students.",
+                },
+                {
+                  icon: <GraduationCap className="h-6 w-6 text-purple-600" />,
+                  bg: "bg-purple-50 border-purple-100",
+                  iconBg: "bg-purple-100",
+                  label: "Colleges",
+                  desc: "Campus coaching for college players and sports clubs.",
+                },
+                {
+                  icon: <Building2 className="h-6 w-6 text-orange-600" />,
+                  bg: "bg-orange-50 border-orange-100",
+                  iconBg: "bg-orange-100",
+                  label: "Offices",
+                  desc: "Corporate wellness sessions at your workplace.",
+                },
+              ].map((loc, idx) => (
+                <AnimateOnScroll key={loc.label} delay={idx * 80}>
+                  <div className={`rounded-xl border p-4 ${loc.bg} flex flex-col gap-3 h-full`}>
+                    <div className={`inline-flex items-center justify-center w-11 h-11 rounded-lg ${loc.iconBg} shrink-0`}>
+                      {loc.icon}
+                    </div>
+                    <div>
+                      <p className="font-semibold text-sm text-foreground mb-1">{loc.label}</p>
+                      <p className="text-xs text-muted-foreground leading-relaxed">{loc.desc}</p>
+                    </div>
+                  </div>
+                </AnimateOnScroll>
+              ))}
+            </div>
 
             <div className="grid gap-5 md:grid-cols-3">
               {[
