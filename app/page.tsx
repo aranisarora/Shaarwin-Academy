@@ -856,21 +856,21 @@ export default function HomePage() {
                   bg: "bg-green-50 border-green-100",
                   iconBg: "bg-green-100",
                   label: "Schools",
-                  desc: "We conduct table tennis coaching classes for schools, and help build and train your school team.",
+                  desc: "We conduct table tennis coaching classes for schools, including after-school programs, morning school team practice, PE coaching, and internal tournaments. We help build and train your school team.",
                 },
                 {
                   icon: <GraduationCap className="h-6 w-6 text-purple-600" />,
                   bg: "bg-purple-50 border-purple-100",
                   iconBg: "bg-purple-100",
                   label: "Colleges",
-                  desc: "We conduct table tennis coaching classes for colleges, and help build and train your college team.",
+                    desc: "We conduct table tennis coaching classes for colleges, help build and train your college team, and organise internal tournaments to prepare for external competitions.",
                 },
                 {
                   icon: <Building2 className="h-6 w-6 text-orange-600" />,
                   bg: "bg-orange-50 border-orange-100",
                   iconBg: "bg-orange-100",
                   label: "Offices",
-                  desc: "Corporate wellness sessions at your workplace.",
+                  desc: "We conduct table tennis coaching classes for offices, fostering teamwork, workplace bonding, and boosting morale through fun, active sessions. Build and train your office team while strengthening camaraderie.",
                 },
               ].map((loc, idx) => (
                 <AnimateOnScroll key={loc.label} delay={idx * 80}>
