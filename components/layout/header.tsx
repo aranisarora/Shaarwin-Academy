@@ -3,6 +3,7 @@ import Image from "next/image";
 import { createClient } from "@/lib/supabase/server";
 import { Button } from "@/components/ui/button";
 import { UserMenu } from "@/components/layout/user-menu";
+import { MobileMenu } from "@/components/layout/mobile-menu";
 
 export async function Header() {
   const supabase = await createClient();
@@ -25,7 +26,7 @@ export async function Header() {
             Sharwin Table Tennis Academy
           </span>
           <span className="text-base font-bold tracking-tight text-primary sm:hidden">
-            Sharwin TTA
+            Sharwin Table Tennis Academy
           </span>
         </Link>
 
@@ -66,10 +67,11 @@ export async function Header() {
           {user ? (
             <UserMenu user={user} />
           ) : (
-            <Button asChild size="sm">
+            <Button asChild size="sm" className="hidden md:flex">
               <Link href="/login">Sign In</Link>
             </Button>
           )}
+          <MobileMenu isLoggedIn={!!user} />
         </nav>
       </div>
     </header>

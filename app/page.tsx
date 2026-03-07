@@ -43,7 +43,7 @@ const coaches = [
     initials: "AU",
     image: "/images/AugustineMug.jpeg",
     qualifications: [
-      "7+ years of coaching experience",
+      "8+ years of coaching experience",
       "ITTF certified coach",
       "150+ students trained",
     ],
@@ -53,7 +53,7 @@ const coaches = [
     initials: "JE",
     image: "/images/JeraldMug.jpeg",
     qualifications: [
-      "7+ years of coaching experience",
+      "6+ years of coaching experience",
       "ITTF certified coach",
       "NIS certified coach",
     ],
@@ -63,7 +63,7 @@ const coaches = [
     initials: "MA",
     image: "/images/MahaveerMug.jpeg",
     qualifications: [
-      "7+ years of coaching experience",
+      "10+ years of coaching experience",
       "ITTF certified coach",
       "150+ students trained",
     ],
@@ -73,7 +73,7 @@ const coaches = [
     initials: "PU",
     image: "/images/PurnenduMug.jpeg",
     qualifications: [
-      "7+ years of coaching experience",
+      "5+ years of coaching experience",
       "ITTF certified coach",
       "150+ students trained",
     ],
@@ -83,7 +83,7 @@ const coaches = [
     initials: "SA",
     image: "/images/SampathMug.jpeg",
     qualifications: [
-      "7+ years of coaching experience",
+      "9+ years of coaching experience",
       "ITTF certified coach",
       "150+ students trained",
     ],
