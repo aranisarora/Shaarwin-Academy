@@ -980,6 +980,83 @@ export default function HomePage() {
         </section>
 
         {/* ═══════════════════════════════════════════════
+            FAQ
+        ═══════════════════════════════════════════════ */}
+        <section id="faq" className="py-16 bg-white border-t border-gray-100">
+          <div className="container mx-auto px-4 max-w-3xl">
+            <AnimateOnScroll>
+              <div className="text-center mb-10">
+                <div className="text-sm font-semibold uppercase tracking-widest text-primary mb-2">
+                  FAQ
+                </div>
+                <h2 className="text-3xl font-bold mb-3">
+                  <a
+                    href="#faq"
+                    className="group/h inline-flex items-center justify-center gap-2 hover:text-primary/80 transition-colors"
+                  >
+                    Frequently Asked Questions
+                    <Link2 className="h-5 w-5 opacity-0 group-hover/h:opacity-40 transition-opacity shrink-0" />
+                  </a>
+                </h2>
+                <p className="text-muted-foreground max-w-md mx-auto">
+                  Everything you need to know before getting started.
+                </p>
+              </div>
+            </AnimateOnScroll>
+
+            <AnimateOnScroll delay={100}>
+              <div className="flex flex-col divide-y divide-gray-100 border border-gray-100 rounded-2xl overflow-hidden shadow-sm">
+                {[
+                  {
+                    q: "Who can join the academy?",
+                    a: "Anyone! We welcome complete beginners, recreational players, and competitive athletes of all ages — kids, teens, and adults. Whether you've never held a paddle or you're training for tournaments, we have a programme for you.",
+                  },
+                  {
+                    q: "Do I need to bring my own equipment?",
+                    a: "No. We provide bats and balls for all sessions. If you eventually want your own equipment, our coaches are happy to guide you on what to buy based on your level and playing style.",
+                  },
+                  {
+                    q: "Where do classes take place?",
+                    a: "We come to you. Sessions are conducted at your home, apartment complex, office, school, or college — wherever you have a suitable table or space. We cover locations across Bengaluru.",
+                  },
+                  {
+                    q: "What is the difference between group classes and private sessions?",
+                    a: "Group classes are batch sessions with multiple students — great for social learning and a lower cost per session. Private (1-on-1) sessions are tailored entirely to your goals, pace, and schedule for faster individual progress.",
+                  },
+                  {
+                    q: "How do I book a class?",
+                    a: "You can book directly through our online booking system — just click 'Book a Class' at the top of the page. You'll be able to choose your session type, preferred time slots, and manage everything from your dashboard.",
+                  },
+                  {
+                    q: "Do you offer trial sessions?",
+                    a: "Yes. We offer a trial class so you can experience the coaching style and decide if it's the right fit before committing. Reach out via WhatsApp or email to arrange one.",
+                  },
+                  {
+                    q: "What are the class timings?",
+                    a: "Sessions are available on flexible schedules throughout the week, including mornings, evenings, and weekends. Exact slots depend on your location and coach availability — check the booking page for real-time slots.",
+                  },
+                  {
+                    q: "How do I pay for classes?",
+                    a: "Payment is handled online through our booking system. We accept UPI, cards, and other common payment methods. Session credits are added to your account upon payment and deducted when you attend.",
+                  },
+                ].map((item, idx) => (
+                  <details
+                    key={idx}
+                    className="group px-6 py-4 bg-white hover:bg-gray-50/60 transition-colors [&_summary::-webkit-details-marker]:hidden"
+                  >
+                    <summary className="flex items-center justify-between gap-4 cursor-pointer list-none">
+                      <span className="font-semibold text-sm text-foreground">{item.q}</span>
+                      <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0 transition-transform duration-200 group-open:rotate-90" />
+                    </summary>
+                    <p className="mt-3 text-sm text-muted-foreground leading-relaxed">{item.a}</p>
+                  </details>
+                ))}
+              </div>
+            </AnimateOnScroll>
+          </div>
+        </section>
+
+        {/* ═══════════════════════════════════════════════
             CONTACT
         ═══════════════════════════════════════════════ */}
         <section

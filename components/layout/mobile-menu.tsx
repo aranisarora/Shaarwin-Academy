@@ -10,6 +10,7 @@ const navLinks = [
   { href: "/#coaches", label: "Coaches" },
   { href: "/#benefits", label: "Why Us" },
   { href: "/#join-us", label: "Join Our Team" },
+  { href: "/#faq", label: "FAQ" },
   { href: "/#contact", label: "Contact" },
 ];
 
