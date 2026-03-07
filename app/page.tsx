@@ -924,8 +924,19 @@ export default function HomePage() {
         {/* ═══════════════════════════════════════════════
             JOIN OUR TEAM
         ═══════════════════════════════════════════════ */}
-        <section id="join-us" className="py-14 bg-slate-900 text-white border-t-4 border-slate-700">
-          <div className="container mx-auto px-4">
+        <section id="join-us" className="relative py-14 text-white border-t-4 border-slate-700 overflow-hidden">
+          {/* Background image */}
+          <Image
+            src="/images/Stock1.jpeg"
+            alt=""
+            fill
+            className="object-cover object-center"
+            sizes="100vw"
+          />
+          {/* Dark overlay */}
+          <div className="absolute inset-0 bg-slate-900/80" />
+
+          <div className="relative container mx-auto px-4">
             <AnimateOnScroll>
               <div className="max-w-2xl mx-auto text-center">
                 <div className="inline-flex items-center gap-2 rounded-full border border-yellow-400/50 bg-yellow-400/10 px-4 py-1.5 text-sm font-semibold text-yellow-400 mb-4">
