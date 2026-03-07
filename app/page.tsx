@@ -810,7 +810,7 @@ export default function HomePage() {
                   </div>
                   <h3 className="text-2xl font-bold mb-3">We Come to You</h3>
                   <p className="text-blue-100 max-w-2xl mx-auto text-base leading-relaxed">
-                    No need to travel. Our expert coaches come to your home, society, or community hall
+                    No need to travel. Our expert coaches come to your home, office, school, or college
                     across Bangalore. Professional table tennis coaching, delivered to your doorstep —
                     on your schedule.
                   </p>
@@ -830,12 +830,12 @@ export default function HomePage() {
                 {
                   icon: <Users className="h-7 w-7 text-primary" />,
                   title: "Group Classes",
-                  desc: "Batch sessions with flexible schedules throughout the week.",
+                  desc: "Batch sessions with flexible schedules throughout the week. Conducted at homes, offices, schools, or colleges.",
                 },
                 {
                   icon: <Clock className="h-7 w-7 text-primary" />,
                   title: "Private Sessions",
-                  desc: "One-on-one coaching tailored entirely to your goals and availability.",
+                  desc: "One-on-one coaching tailored entirely to your goals and availability. Conducted at your place.",
                 },
                 {
                   icon: <CalendarDays className="h-7 w-7 text-primary" />,
