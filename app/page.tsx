@@ -45,7 +45,7 @@ const coaches = [
     quote: "Every point starts with the right mindset.",
     bio: "Coach Sampath brings nearly a decade of competitive and coaching experience. Known for his methodical approach, he focuses on footwork fundamentals and tactical awareness, helping players build a solid foundation from day one.",
     qualifications: [
-      "9+ years of coaching experience",
+      "7+ years of coaching experience",
       "ITTF certified coach",
     ],
   },
@@ -91,7 +91,7 @@ const coaches = [
     quote: "In this sport, patience and persistence always prevail.",
     bio: "With over a decade of coaching experience, Mahaveer is the team's most seasoned coach. He excels at long-term player development, guiding beginners to competitive players with a patient, progressive style.",
     qualifications: [
-      "10+ years of coaching experience",
+      "8+ years of coaching experience",
       "ITTF certified coach",
     ],
   },
