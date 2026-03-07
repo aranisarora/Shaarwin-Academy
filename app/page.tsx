@@ -856,14 +856,14 @@ export default function HomePage() {
                   bg: "bg-green-50 border-green-100",
                   iconBg: "bg-green-100",
                   label: "Schools",
-                  desc: "We conduct table tennis classes for schools, and help build and train your school team.",
+                  desc: "We conduct table tennis coaching classes for schools, and help build and train your school team.",
                 },
                 {
                   icon: <GraduationCap className="h-6 w-6 text-purple-600" />,
                   bg: "bg-purple-50 border-purple-100",
                   iconBg: "bg-purple-100",
                   label: "Colleges",
-                  desc: "We conduct table tennis classes for colleges, and help build and train your college team.",
+                  desc: "We conduct table tennis coaching classes for colleges, and help build and train your college team.",
                 },
                 {
                   icon: <Building2 className="h-6 w-6 text-orange-600" />,
