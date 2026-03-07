@@ -430,13 +430,13 @@ export default function HomePage() {
                 >
                   <Image
                     src={FOUNDER_IMAGE}
-                    alt="Stalin — Founder & Head Coach"
+                    alt="Stalin Prabhu C — Founder & Head Coach"
                     fill
                     className="object-cover"
                     sizes="(max-width: 1024px) 300px, 360px"
                   />
                   <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/85 via-black/25 to-transparent px-5 py-5">
-                    <div className="font-bold text-white text-xl leading-tight">Stalin</div>
+                    <div className="font-bold text-white text-xl leading-tight">Stalin Prabhu C</div>
                     <div className="text-blue-200 text-sm mt-0.5">Founder &amp; Head Coach</div>
                   </div>
                 </div>
@@ -472,7 +472,7 @@ export default function HomePage() {
 
                 <div className="space-y-4 text-blue-100/80 leading-relaxed text-sm sm:text-base">
                   <p>
-                    <span className="font-semibold text-white">Stalin</span>, founder of Sharwin Table
+                    <span className="font-semibold text-white">Stalin Prabhu C</span>, founder of Sharwin Table
                     Tennis Academy, is an ITTF and PTT certified coach with
                     over 17 years of dedicated coaching and team management experience.
                   </p>
@@ -506,7 +506,7 @@ export default function HomePage() {
                     but in life. That&rsquo;s what Sharwin stands for.&rdquo;
                   </p>
                   <cite className="text-blue-300 text-xs mt-2 block not-italic">
-                    — Stalin, Founder &amp; Head Coach
+                    — Stalin Prabhu C, Founder &amp; Head Coach
                   </cite>
                 </blockquote>
 
