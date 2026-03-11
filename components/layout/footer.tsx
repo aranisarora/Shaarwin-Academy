@@ -78,7 +78,17 @@ export function Footer() {
               </li>
               <li className="flex items-start gap-2">
                 <MapPin className="h-4 w-4 text-yellow-400 shrink-0 mt-0.5" />
-                No. 594, 4th Cross, 7th Ward, Gundappa Beedi, Dommasandra 562125
+                <a
+                  href="https://maps.google.com/?q=No.+594,+4th+Cross,+7th+Ward,+Gundappa+Beedi,+Dommasandra+562125"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="hover:text-white transition-colors"
+                >
+                  No. 594, 4th Cross, 7th Ward, Gundappa Beedi, Dommasandra 562125
+                </a>
+              </li>
+              <li className="text-blue-200/50 text-xs pt-1">
+                Reg. No: 38/DOM/CE/0013/2026
               </li>
             </ul>
           </div>
