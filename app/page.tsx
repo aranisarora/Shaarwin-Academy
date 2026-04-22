@@ -116,7 +116,7 @@ const coaches = [
     quote: "Master the basics, and the rest will follow.",
     bio: "Coach Nishchith is known for his calm, detail-oriented coaching style that puts technique at the forefront. With a keen eye for subtle flaws in footwork and stroke mechanics, he helps players build strong habits that translate directly into match performance.",
     qualifications: [
-      "8+ years of coaching experience",
+      "4+ years of coaching experience",
       "ITTF certified coach",
     ],
   },
