@@ -27,7 +27,7 @@ import {
   GraduationCap,
 } from "lucide-react";
 
-const FOUNDER_IMAGE = "/images/Stalin.jpeg";
+const FOUNDER_IMAGE = "/images/StalinMug.jpeg";
 const LOGO_IMAGE = "/images/Logo.jpeg";
 
 const socialProofImages: Array<{ src: string; caption: string }> = [
