@@ -27,7 +27,7 @@ import {
   GraduationCap,
 } from "lucide-react";
 
-const FOUNDER_IMAGE = "/images/Stalin.jpeg";
+const FOUNDER_IMAGE = "/images/FounderFinal.jpeg";
 const LOGO_IMAGE = "/images/Logo.jpeg";
 
 const socialProofImages: Array<{ src: string; caption: string }> = [
@@ -106,6 +106,7 @@ const coaches = [
     qualifications: [
       "3 years of coaching experience",
       "ITTF certified coach",
+      "Played State and National level",
     ],
   },
   {
@@ -528,7 +529,7 @@ export default function HomePage() {
                     on your schedule.
                   </p>
                   <p>
-                    Today, with over 1,000 students trained and a team of 8+ certified coaches, Sharwin
+                    Today, with over 1,000 students trained and a team of 9+ certified coaches, Sharwin
                     Table Tennis Academy stands as Bangalore&apos;s most trusted and accessible table
                     tennis institution — and the mission is far from over.
                   </p>
