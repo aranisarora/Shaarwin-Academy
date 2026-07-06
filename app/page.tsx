@@ -53,18 +53,6 @@ const coaches = [
     ],
   },
   {
-    name: "Jerald",
-    initials: "JE",
-    image: "/images/JeraldMug.jpeg",
-    quote: "Technique is the language the body speaks on the table.",
-    bio: "Coach Jerald is a dual-certified ITTF and NIS coach with a reputation for precision training. His deep understanding of spin mechanics and serve strategy has helped numerous players elevate their competitive game.",
-    qualifications: [
-      "8+ years of coaching experience",
-      "ITTF certified coach",
-      "NIS certified coach",
-    ],
-  },
-  {
     name: "Augustine",
     initials: "AU",
     image: "/images/AugustineMug.jpeg",
@@ -85,17 +73,6 @@ const coaches = [
       "9+ years of coaching experience",
       "ITTF certified coach",
       "NIS certified coach",
-    ],
-  },
-  {
-    name: "Mahaveer",
-    initials: "MA",
-    image: "/images/MahaveerMug.jpeg",
-    quote: "In this sport, patience and persistence always prevail.",
-    bio: "With over a decade of coaching experience, Mahaveer is the team's most seasoned coach. He excels at long-term player development, guiding beginners to competitive players with a patient, progressive style.",
-    qualifications: [
-      "8+ years of coaching experience",
-      "ITTF certified coach",
     ],
   },
   {
@@ -127,7 +104,7 @@ const coaches = [
     quote: "Mastering the basics is the first step to mastering the table.",
     bio: "Coach Rushi focuses on building strong fundamentals and agility. With a patient and structured approach, he helps young talents and beginners master ball control, reaction time, and basic stroke play to build confidence.",
     qualifications: [
-      "2 years of coaching experience",
+      "3 years of coaching experience",
       "ITTF certified coach",
     ],
   },
@@ -551,7 +528,7 @@ export default function HomePage() {
                     on your schedule.
                   </p>
                   <p>
-                    Today, with over 1,000 students trained and a team of 10+ certified coaches, Sharwin
+                    Today, with over 1,000 students trained and a team of 8+ certified coaches, Sharwin
                     Table Tennis Academy stands as Bangalore&apos;s most trusted and accessible table
                     tennis institution — and the mission is far from over.
                   </p>
@@ -792,7 +769,7 @@ export default function HomePage() {
                 </a>
               </h2>
               <p className="mt-3 text-muted-foreground max-w-xl mx-auto text-sm">
-                Ten dedicated professionals with a genuine passion for developing the next generation
+                Nine dedicated professionals with a genuine passion for developing the next generation
                 of table tennis players.
               </p>
             </AnimateOnScroll>
