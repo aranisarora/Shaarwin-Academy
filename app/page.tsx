@@ -120,6 +120,52 @@ const coaches = [
       "ITTF certified coach",
     ],
   },
+  {
+    name: "Rushi",
+    initials: "RU",
+    image: "/images/RushiMug.jpeg",
+    quote: "Mastering the basics is the first step to mastering the table.",
+    bio: "Coach Rushi focuses on building strong fundamentals and agility. With a patient and structured approach, he helps young talents and beginners master ball control, reaction time, and basic stroke play to build confidence.",
+    qualifications: [
+      "2 years of coaching experience",
+      "ITTF certified coach",
+    ],
+  },
+  {
+    name: "Nandan",
+    initials: "NA",
+    image: "/images/NandanMug.jpeg",
+    quote: "Play with courage, win with strategy.",
+    bio: "A former State and National level player, Coach Nandan combines competitive experience with structured coaching. He specializes in speed drills, match tactics, and mental preparation, helping players build a championship mindset.",
+    qualifications: [
+      "4+ years of coaching experience",
+      "ITTF certified coach",
+      "Played State and National level",
+    ],
+  },
+  {
+    name: "Mohammed Samir",
+    initials: "MS",
+    image: "/images/SamirMug.jpeg",
+    quote: "Success on the table is built through dedication off the table.",
+    bio: "Coach Samir brings 6 years of coaching excellence, backed by his achievements as a State and National level competitor. He focuses on advanced spin techniques, footwork patterns, and customized game plans for tournament players.",
+    qualifications: [
+      "6 years of coaching experience",
+      "ITTF certified coach",
+      "Played State and National level",
+    ],
+  },
+  {
+    name: "Shreyangshu Sen",
+    initials: "SS",
+    image: "/images/ShreyangshuMug.jpeg",
+    quote: "Turn every defense into a powerful counter-attack.",
+    bio: "Coach Shreyangshu is an experienced State and National level player who brings high-energy training to the court. He focuses on offensive strategies, rapid transitions, and helping intermediate players transition into competitive league play.",
+    qualifications: [
+      "3+ years of coaching experience",
+      "Played State and National level",
+    ],
+  },
 ];
 
 const testimonials = [
@@ -505,7 +551,7 @@ export default function HomePage() {
                     on your schedule.
                   </p>
                   <p>
-                    Today, with over 1,000 students trained and a team of 6+ certified coaches, Sharwin
+                    Today, with over 1,000 students trained and a team of 10+ certified coaches, Sharwin
                     Table Tennis Academy stands as Bangalore&apos;s most trusted and accessible table
                     tennis institution — and the mission is far from over.
                   </p>
@@ -746,7 +792,7 @@ export default function HomePage() {
                 </a>
               </h2>
               <p className="mt-3 text-muted-foreground max-w-xl mx-auto text-sm">
-                Six dedicated professionals with a genuine passion for developing the next generation
+                Ten dedicated professionals with a genuine passion for developing the next generation
                 of table tennis players.
               </p>
             </AnimateOnScroll>
