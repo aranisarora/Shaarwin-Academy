@@ -1,0 +1,364 @@
+import Image from "next/image";
+import Link from "next/link";
+import { StageShell } from "@/components/shells/StageShell";
+import { SectionDivider } from "@/components/ui/SectionDivider";
+import { ButtonLink } from "@/components/ui/Button";
+import { Reveal } from "@/components/Reveal";
+import { Parallax } from "@/components/marketing/Parallax";
+import { VenueMap } from "@/components/marketing/VenueMap";
+import { Faq } from "@/components/marketing/Faq";
+import { getPlans, getVenues, getCoaches, formatPrice } from "@/lib/data";
+
+import heroServe from "@/public/images/hero-serve.jpg";
+import heroServeMobile from "@/public/images/hero-serve-mobile.jpg";
+import programGroup from "@/public/images/program-group.jpg";
+import programPrivate from "@/public/images/program-private.jpg";
+import textureBallLine from "@/public/images/texture-ball-line.jpg";
+import founderClose from "@/public/images/founder-close.jpg";
+
+const academyStats = [
+  { value: "17+", label: "Years of coaching" },
+  { value: "1,000+", label: "Students trained" },
+  { value: "175+", label: "Championship titles" },
+  { value: "350+", label: "Tournaments mentored" },
+];
+
+export default async function LandingPage() {
+  const [plans, venues, coaches] = await Promise.all([
+    getPlans(),
+    getVenues(),
+    getCoaches(),
+  ]);
+
+  const groupFrom = plans.length
+    ? formatPrice(Math.min(...plans.map((p) => p.price_pence)))
+    : "£180";
+  const privatePlan = plans.find((p) => p.private_minutes_per_quarter > 0);
+
+  // WhatsApp-first onboarding: land straight in a chat with the academy bot.
+  const waNumber = process.env.NEXT_PUBLIC_WHATSAPP_NUMBER?.replace(/[^0-9]/g, "");
+  const waHref = waNumber
+    ? `https://wa.me/${waNumber}?text=${encodeURIComponent("Hi! I'd like to know more about the academy.")}`
+    : null;
+
+  return (
+    <StageShell>
+      {/* HERO — art-directed swap: 16:9 desktop, 4:5 mobile */}
+      <section className="relative min-h-[92dvh] overflow-hidden">
+        <Parallax>
+          <Image
+            src={heroServe}
+            alt="A player frozen at the moment of a serve toss in a dark tournament hall"
+            fill
+            priority
+            placeholder="blur"
+            sizes="100vw"
+            className="hidden object-cover md:block"
+          />
+          <Image
+            src={heroServeMobile}
+            alt="A player frozen at the moment of a serve toss in a dark tournament hall"
+            fill
+            priority
+            placeholder="blur"
+            sizes="100vw"
+            className="object-cover md:hidden"
+          />
+        </Parallax>
+        <div className="scrim-ink-bottom absolute inset-0" aria-hidden />
+        <div className="absolute inset-x-0 bottom-0">
+          <div className="mx-auto max-w-6xl px-6 pb-20 md:pb-28">
+            <Reveal>
+              <h1 className="display-xl max-w-[14ch] text-ivory">
+                Play faster. Think faster.
+              </h1>
+            </Reveal>
+            <Reveal delay={180}>
+              <p className="mt-4 max-w-md text-lg text-smoke md:text-xl">
+                Group classes across Bengaluru and private coaching at your own
+                table. Taught properly, from the first serve.
+              </p>
+            </Reveal>
+            <Reveal delay={360}>
+              <div className="mt-8 flex flex-wrap gap-3">
+                {waHref ? (
+                  <ButtonLink href={waHref} size="lg" target="_blank" rel="noopener">
+                    <span aria-hidden className="h-2 w-2 rounded-full bg-ivory" />
+                    Chat on WhatsApp
+                  </ButtonLink>
+                ) : (
+                  <ButtonLink href="/signup" size="lg">
+                    <span aria-hidden className="h-2 w-2 rounded-full bg-ivory" />
+                    Find a class
+                  </ButtonLink>
+                )}
+                <ButtonLink href="/pricing" variant="ghost" size="lg">
+                  How it works
+                </ButtonLink>
+              </div>
+            </Reveal>
+          </div>
+        </div>
+      </section>
+
+      {/* STATS — the record, in numbers */}
+      <section className="border-b border-line">
+        <div className="mx-auto grid max-w-6xl grid-cols-2 gap-y-10 px-6 py-14 md:grid-cols-4 md:py-16">
+          {academyStats.map((stat, i) => (
+            <Reveal key={stat.label} delay={i * 90}>
+              <div>
+                <p className="font-display tnum text-4xl text-ivory md:text-5xl">
+                  {stat.value}
+                </p>
+                <p className="label mt-2">{stat.label}</p>
+              </div>
+            </Reveal>
+          ))}
+        </div>
+      </section>
+
+      {/* PROGRAMS */}
+      <section className="mx-auto max-w-6xl px-6 py-20 md:py-36">
+        <Reveal>
+          <p className="label mb-3">Programs</p>
+          <h2 className="font-display mb-10 max-w-[22ch] text-3xl md:text-5xl">
+            Two ways to get better
+          </h2>
+        </Reveal>
+        <div className="grid gap-6 md:grid-cols-2">
+          <Reveal delay={80}>
+            <Link
+              href="/pricing"
+              className="group relative block aspect-[3/2] overflow-hidden rounded-[12px] border border-line"
+            >
+              <Image
+                src={programGroup}
+                alt="An evening group coaching session under stage lighting"
+                fill
+                placeholder="blur"
+                sizes="(min-width: 768px) 50vw, 100vw"
+                className="object-cover transition-transform duration-700 group-hover:scale-[1.03]"
+              />
+              <div className="scrim-card absolute inset-0" aria-hidden />
+              <div className="absolute inset-x-0 bottom-0 p-6">
+                <p className="label mb-1 !text-smoke">Group classes</p>
+                <p className="font-display text-2xl text-ivory md:text-3xl">
+                  From {groupFrom} a quarter
+                </p>
+              </div>
+            </Link>
+          </Reveal>
+          <Reveal delay={220}>
+            <Link
+              href="/pricing"
+              className="group relative block aspect-[3/2] overflow-hidden rounded-[12px] border border-line"
+            >
+              <Image
+                src={programPrivate}
+                alt="A private coaching session at a home table at dusk"
+                fill
+                placeholder="blur"
+                sizes="(min-width: 768px) 50vw, 100vw"
+                className="object-cover transition-transform duration-700 group-hover:scale-[1.03]"
+              />
+              <div className="scrim-card absolute inset-0" aria-hidden />
+              <div className="absolute inset-x-0 bottom-0 p-6">
+                <p className="label mb-1 !text-smoke">Private, at yours</p>
+                <p className="font-display text-2xl text-ivory md:text-3xl">
+                  {privatePlan
+                    ? `${formatPrice(privatePlan.price_pence)} a quarter`
+                    : "A coach at your door"}
+                </p>
+              </div>
+            </Link>
+          </Reveal>
+        </div>
+      </section>
+
+      <SectionDivider className="mx-auto max-w-6xl px-6" />
+
+      {/* FIND US — live venues map */}
+      <section className="mx-auto max-w-6xl px-6 py-20 md:py-36">
+        <Reveal>
+          <p className="label mb-3">Find us</p>
+          <h2 className="font-display mb-10 max-w-[22ch] text-3xl md:text-5xl">
+            Tables across Bengaluru
+          </h2>
+        </Reveal>
+        <Reveal>
+          <VenueMap venues={venues} />
+        </Reveal>
+      </section>
+
+      {/* PRICING banner */}
+      <section className="relative overflow-hidden py-20 md:py-36">
+        <Image
+          src={textureBallLine}
+          alt=""
+          fill
+          placeholder="blur"
+          sizes="100vw"
+          className="object-cover opacity-60"
+          aria-hidden
+        />
+        <div className="absolute inset-0 bg-ink/60" aria-hidden />
+        <div className="relative mx-auto max-w-6xl px-6">
+          <Reveal>
+            <p className="label mb-3">Membership</p>
+            <h2 className="font-display mb-10 max-w-[22ch] text-3xl md:text-5xl">
+              Quarterly. Simple. No asterisks.
+            </h2>
+          </Reveal>
+          <div className="grid gap-6 md:grid-cols-3">
+            {plans.map((plan, i) => (
+              <Reveal key={plan.id} delay={i * 120}>
+                <div
+                  className={`flex h-full flex-col rounded-[12px] border bg-ink-2 p-6 ${
+                    i === 1 ? "border-ember" : "border-line"
+                  }`}
+                >
+                  {i === 1 && <p className="label mb-2 !text-ember">Most popular</p>}
+                  <p className="font-display text-xl text-ivory">{plan.name}</p>
+                  <p className="font-display tnum mt-2 text-4xl text-ivory">
+                    {formatPrice(plan.price_pence)}
+                    <span className="ml-1 font-ui text-sm text-smoke">/ quarter</span>
+                  </p>
+                  <p className="mt-3 flex-1 text-sm text-smoke">{plan.description}</p>
+                  <ButtonLink
+                    href={`/signup?plan=${plan.id}`}
+                    variant={i === 1 ? "primary" : "ghost"}
+                    className="mt-6"
+                  >
+                    Choose {plan.name}
+                  </ButtonLink>
+                </div>
+              </Reveal>
+            ))}
+            {plans.length === 0 && (
+              <p className="text-smoke">
+                Plans are being set up — check back shortly.
+              </p>
+            )}
+          </div>
+        </div>
+      </section>
+
+      <SectionDivider className="mx-auto max-w-6xl px-6" />
+
+      {/* FOUNDER */}
+      <section className="mx-auto max-w-6xl px-6 py-20 md:py-36">
+        <div className="grid items-center gap-10 md:grid-cols-[380px_1fr] md:gap-16">
+          <Reveal>
+            <div className="relative aspect-[4/5] overflow-hidden rounded-[12px] border border-line">
+              <Image
+                src={founderClose}
+                alt="Portrait of Stalin Prabhu C, founder and head coach"
+                fill
+                placeholder="blur"
+                sizes="(min-width: 768px) 380px, 100vw"
+                className="object-cover"
+              />
+            </div>
+          </Reveal>
+          <Reveal delay={150}>
+            <p className="label mb-3">The founder</p>
+            <h2 className="font-display mb-6 max-w-[20ch] text-3xl md:text-5xl">
+              Stalin Prabhu C
+            </h2>
+            <p className="max-w-[52ch] text-lg text-smoke">
+              ITTF and Para Table Tennis certified, Stalin has coached at the
+              national level for over seventeen years. He led India&apos;s
+              Under-19 ISSO team at the world championships in Bahrain in
+              2024, and coaches Karnataka&apos;s CISCE squads — Under-14
+              through Under-19 — at the national table tennis championships.
+            </p>
+            <p className="mt-4 max-w-[52ch] text-smoke">
+              His method is simple: precise mechanics, structured discipline,
+              and a calm head under pressure come before trophies. Get those
+              right and the trophies follow.
+            </p>
+          </Reveal>
+        </div>
+      </section>
+
+      <SectionDivider className="mx-auto max-w-6xl px-6" />
+
+      {/* COACHES */}
+      <section className="mx-auto max-w-6xl px-6 py-20 md:py-36">
+        <Reveal>
+          <p className="label mb-3">The coaches</p>
+          <h2 className="font-display mb-10 max-w-[22ch] text-3xl md:text-5xl">
+            One studio, one standard
+          </h2>
+        </Reveal>
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+          {coaches.slice(0, 5).map((coach, i) => (
+            <Reveal key={coach.slug} delay={i * 90}>
+              <div>
+                <div className="relative aspect-[4/5] overflow-hidden rounded-[12px] border border-line">
+                  <Image
+                    src={coach.image}
+                    alt={`Portrait of coach ${coach.name}`}
+                    fill
+                    sizes="(min-width: 1024px) 20vw, 40vw"
+                    className="object-cover"
+                  />
+                </div>
+                <p className="mt-3 font-medium text-ivory">{coach.name}</p>
+                <p className="text-sm text-smoke">{coach.level}</p>
+              </div>
+            </Reveal>
+          ))}
+        </div>
+        <Reveal>
+          <ButtonLink href="/coaches" variant="ghost" className="mt-10">
+            Meet all the coaches
+          </ButtonLink>
+        </Reveal>
+      </section>
+
+      <SectionDivider className="mx-auto max-w-6xl px-6" />
+
+      {/* COMMUNITY — real tournament photos */}
+      <section className="mx-auto max-w-6xl px-6 py-20 md:py-36">
+        <Reveal>
+          <p className="label mb-3">The academy</p>
+          <h2 className="font-display mb-10 max-w-[24ch] text-3xl md:text-5xl">
+            Tournaments, ladders, and a lot of table time
+          </h2>
+        </Reveal>
+        <div className="grid grid-cols-2 gap-4 md:grid-cols-3">
+          {[1, 2, 3, 4, 5, 6].map((n, i) => (
+            <Reveal key={n} delay={(i % 3) * 100}>
+              <div className="relative aspect-[3/2] overflow-hidden rounded-[12px] border border-line">
+                <Image
+                  src={`/images/tournament/Group${n}.jpeg`}
+                  alt="Players at a Sharwin TTA tournament"
+                  fill
+                  sizes="(min-width: 768px) 33vw, 50vw"
+                  className="object-cover"
+                />
+              </div>
+            </Reveal>
+          ))}
+        </div>
+      </section>
+
+      {/* FAQ */}
+      <section className="mx-auto max-w-3xl px-6 pb-28 pt-8 md:pb-40">
+        <Reveal>
+          <p className="label mb-3">Questions</p>
+          <h2 className="font-display mb-10 text-3xl md:text-5xl">Before you ask</h2>
+        </Reveal>
+        <Faq />
+      </section>
+
+      {/* Sticky bottom CTA — phones only */}
+      <div className="pb-safe fixed inset-x-0 bottom-0 z-30 border-t border-line bg-ink/95 p-3 backdrop-blur sm:hidden">
+        <ButtonLink href="/signup" className="w-full">
+          Find a class
+        </ButtonLink>
+      </div>
+    </StageShell>
+  );
+}

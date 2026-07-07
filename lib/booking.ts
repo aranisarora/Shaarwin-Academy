@@ -1,0 +1,149 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
+
+export type BrowseSession = {
+  id: string;
+  starts_at: string;
+  ends_at: string;
+  classTitle: string;
+  level: string;
+  durationMinutes: number;
+  capacity: number;
+  confirmed: number;
+  venue: { id: string; name: string; postcode: string; lat: number; lng: number } | null;
+  coachName: string | null;
+};
+
+/** Sessions for the browse screen with live seat counts. */
+export async function getBrowseSessions(
+  supabase: SupabaseClient,
+  days = 14
+): Promise<BrowseSession[]> {
+  const until = new Date(Date.now() + days * 86400000).toISOString();
+  const { data: sessions } = await supabase
+    .from("class_sessions")
+    .select(
+      "id,starts_at,ends_at,capacity_override,coach_id,classes!inner(id,title,skill_level,capacity,duration_minutes,class_type,venues(id,name,postcode,lat,lng))"
+    )
+    .eq("status", "scheduled")
+    .eq("classes.class_type", "group")
+    .gt("starts_at", new Date().toISOString())
+    .lt("starts_at", until)
+    .order("starts_at");
+
+  if (!sessions || sessions.length === 0) return [];
+
+  const ids = sessions.map((s) => s.id);
+  const [{ data: bookingRows }, coachNames] = await Promise.all([
+    supabase
+      .from("bookings")
+      .select("session_id")
+      .in("session_id", ids)
+      .eq("status", "confirmed"),
+    getCoachNames(
+      supabase,
+      sessions.map((s) => s.coach_id).filter(Boolean) as string[]
+    ),
+  ]);
+
+  const counts = new Map<string, number>();
+  for (const row of bookingRows ?? []) {
+    counts.set(row.session_id, (counts.get(row.session_id) ?? 0) + 1);
+  }
+
+  return sessions.map((s) => {
+    const cls = s.classes as unknown as {
+      id: string;
+      title: string;
+      skill_level: string;
+      capacity: number;
+      duration_minutes: number;
+      venues: { id: string; name: string; postcode: string; lat: number; lng: number } | null;
+    };
+    return {
+      id: s.id,
+      starts_at: s.starts_at,
+      ends_at: s.ends_at,
+      classTitle: cls.title,
+      level: cls.skill_level,
+      durationMinutes: cls.duration_minutes,
+      capacity: s.capacity_override ?? cls.capacity,
+      confirmed: counts.get(s.id) ?? 0,
+      venue: cls.venues,
+      coachName: s.coach_id ? (coachNames.get(s.coach_id) ?? null) : null,
+    };
+  });
+}
+
+async function getCoachNames(supabase: SupabaseClient, ids: string[]) {
+  const map = new Map<string, string>();
+  if (ids.length === 0) return map;
+  const { data } = await supabase
+    .from("profiles")
+    .select("id,full_name")
+    .in("id", [...new Set(ids)]);
+  for (const row of data ?? []) map.set(row.id, row.full_name);
+  return map;
+}
+
+export type MyBooking = {
+  id: string;
+  status: string;
+  waitlist_position: number | null;
+  playerName: string;
+  session: {
+    id: string;
+    starts_at: string;
+    ends_at: string;
+    classTitle: string;
+    isPrivate: boolean;
+    venueName: string | null;
+    coachName: string | null;
+  };
+};
+
+export async function getMyBookings(
+  supabase: SupabaseClient,
+  clientId: string
+): Promise<MyBooking[]> {
+  const { data } = await supabase
+    .from("bookings")
+    .select(
+      "id,status,waitlist_position,players(full_name),class_sessions!inner(id,starts_at,ends_at,coach_id,classes!inner(title,class_type,venues(name)))"
+    )
+    .eq("client_id", clientId)
+    .in("status", ["confirmed", "waitlisted", "attended", "no_show"])
+    .order("starts_at", { referencedTable: "class_sessions", ascending: true });
+
+  if (!data) return [];
+
+  const coachIds = data
+    .map((b) => (b.class_sessions as unknown as { coach_id: string | null }).coach_id)
+    .filter(Boolean) as string[];
+  const coachNames = await getCoachNames(supabase, coachIds);
+
+  return data.map((b) => {
+    const s = b.class_sessions as unknown as {
+      id: string;
+      starts_at: string;
+      ends_at: string;
+      coach_id: string | null;
+      classes: { title: string; class_type: string; venues: { name: string } | null };
+    };
+    return {
+      id: b.id,
+      status: b.status,
+      waitlist_position: b.waitlist_position,
+      playerName:
+        (b.players as unknown as { full_name: string } | null)?.full_name ?? "",
+      session: {
+        id: s.id,
+        starts_at: s.starts_at,
+        ends_at: s.ends_at,
+        classTitle: s.classes.title,
+        isPrivate: s.classes.class_type === "private",
+        venueName: s.classes.venues?.name ?? null,
+        coachName: s.coach_id ? (coachNames.get(s.coach_id) ?? null) : null,
+      },
+    };
+  });
+}

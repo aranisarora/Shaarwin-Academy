@@ -1,0 +1,91 @@
+import Link from "next/link";
+import { StageHeader } from "./StageHeader";
+
+const footerCols = [
+  {
+    title: "Academy",
+    links: [
+      { href: "/locations", label: "Locations" },
+      { href: "/pricing", label: "Pricing" },
+      { href: "/coaches", label: "Coaches" },
+    ],
+  },
+  {
+    title: "Account",
+    links: [
+      { href: "/login", label: "Log in" },
+      { href: "/signup", label: "Sign up" },
+      { href: "/app", label: "Member app" },
+    ],
+  },
+  {
+    title: "Legal",
+    links: [
+      { href: "/legal/terms", label: "Terms" },
+      { href: "/legal/privacy", label: "Privacy" },
+      { href: "/legal/safeguarding", label: "Safeguarding" },
+    ],
+  },
+];
+
+/** Ink marketing shell: transparent header gaining ink+hairline on scroll, footer. */
+export function StageShell({ children }: { children: React.ReactNode }) {
+  return (
+    <div data-mood="stage" className="flex min-h-dvh flex-col bg-surface text-fg">
+      <StageHeader />
+      <main className="flex-1">{children}</main>
+      <footer className="border-t border-line">
+        <div className="mx-auto grid max-w-6xl gap-10 px-6 py-14 sm:grid-cols-2 lg:grid-cols-4">
+          <div>
+            <Link href="/" className="flex items-center gap-2 font-display text-xl">
+              <span aria-hidden className="h-2.5 w-2.5 rounded-full bg-ember" />
+              SHARWIN
+            </Link>
+            <p className="mt-3 max-w-[26ch] text-sm text-fg-2">
+              Table tennis, taught properly. ITTF-certified coaching at your
+              society, school, college or office — across Bengaluru.
+            </p>
+            <ul className="mt-4 space-y-1.5 text-sm text-fg-2">
+              <li>
+                <a
+                  href="https://wa.me/918431435758"
+                  className="transition-colors hover:text-fg"
+                >
+                  WhatsApp: +91 84314 35758
+                </a>
+              </li>
+              <li>
+                <a
+                  href="mailto:sharwinttacademy@gmail.com"
+                  className="transition-colors hover:text-fg"
+                >
+                  sharwinttacademy@gmail.com
+                </a>
+              </li>
+            </ul>
+          </div>
+          {footerCols.map((col) => (
+            <div key={col.title}>
+              <p className="label mb-4">{col.title}</p>
+              <ul className="space-y-2.5">
+                {col.links.map((l) => (
+                  <li key={l.href}>
+                    <Link
+                      href={l.href}
+                      className="text-sm text-fg-2 transition-colors hover:text-fg"
+                    >
+                      {l.label}
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
+        <div className="border-t border-line py-5 text-center text-xs text-fg-2">
+          © {new Date().getFullYear()} Sharwin Table Tennis Academy, Bengaluru
+        </div>
+      </footer>
+    </div>
+  );
+}
