@@ -1,7 +1,9 @@
-/* Sharwin TTA service worker — app-shell caching + push handlers (P12).
+/* Sharwin TTA service worker — static-asset caching + push handlers (P12).
+ * Deliberately does NOT cache HTML documents/navigations: those vary by auth
+ * state, so caching them served stale signed-out pages (e.g. the home page).
  * Mutations are never queued offline: the app disables them with a banner. */
-const CACHE = "sharwin-v1";
-const PRECACHE = ["/app", "/icon-192.png", "/icon-512.png"];
+const CACHE = "sharwin-v2";
+const PRECACHE = ["/icon-192.png", "/icon-512.png"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -24,30 +26,26 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
 
-  // stale-while-revalidate for static assets; network-first with cache fallback for pages
-  if (url.pathname.startsWith("/_next/static") || url.pathname.startsWith("/images/")) {
-    event.respondWith(
-      caches.match(request).then(
-        (cached) =>
-          cached ||
-          fetch(request).then((res) => {
-            const copy = res.clone();
-            caches.open(CACHE).then((cache) => cache.put(request, copy));
-            return res;
-          })
-      )
-    );
-    return;
-  }
+  // Only ever cache content-hashed static assets and images. Everything else —
+  // navigations, HTML documents, API/auth calls — goes straight to the network
+  // so the server always renders the correct auth state.
+  const isStaticAsset =
+    url.pathname.startsWith("/_next/static") ||
+    url.pathname.startsWith("/images/") ||
+    /\.(?:svg|png|jpg|jpeg|gif|webp|ico|woff2?)$/.test(url.pathname);
+  if (!isStaticAsset) return;
 
+  // stale-while-revalidate for static assets
   event.respondWith(
-    fetch(request)
-      .then((res) => {
-        const copy = res.clone();
-        caches.open(CACHE).then((cache) => cache.put(request, copy));
-        return res;
-      })
-      .catch(() => caches.match(request).then((cached) => cached ?? caches.match("/app")))
+    caches.match(request).then(
+      (cached) =>
+        cached ||
+        fetch(request).then((res) => {
+          const copy = res.clone();
+          caches.open(CACHE).then((cache) => cache.put(request, copy));
+          return res;
+        })
+    )
   );
 });
 
