@@ -26,7 +26,7 @@ export default async function PrivateBookingPage() {
   }));
 
   return (
-    <ClientShell title="Private, at yours">
+    <ClientShell title="Private">
       <PrivateWizard
         players={playersRes.data ?? []}
         coaches={coaches}

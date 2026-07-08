@@ -105,7 +105,7 @@ export function ScheduleList({
             <EmptyState
               image="/images/empty-ivory.jpg"
               copy="Nothing booked. The table's free."
-              action={<ButtonLink href="/app/book">Book a class</ButtonLink>}
+              action={<ButtonLink href="/app/book">Join group</ButtonLink>}
             />
           )}
           {upcoming.map((b) => (

@@ -23,7 +23,7 @@ export default async function BookPage() {
   ]);
 
   return (
-    <ClientShell title="Book a class">
+    <ClientShell title="Join group">
       <RealtimeRefresh tables={["bookings", "class_sessions"]} />
       <BookBrowser
         sessions={sessions}

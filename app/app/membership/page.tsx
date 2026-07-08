@@ -72,7 +72,7 @@ export default async function MembershipPage() {
                   href="/app/book"
                   className="inline-flex min-h-11 items-center rounded-[8px] border border-line px-5 font-semibold hover:border-ember hover:text-ember"
                 >
-                  Book a class
+                  Join group
                 </Link>
               </div>
             </Card.Content>

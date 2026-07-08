@@ -56,7 +56,7 @@ export default async function AppHomePage() {
           <EmptyState
             image="/images/empty-ivory.jpg"
             copy="Nothing booked. The table's free."
-            action={<ButtonLink href="/app/book">Book a class</ButtonLink>}
+            action={<ButtonLink href="/app/book">Join group</ButtonLink>}
           />
         )}
 
@@ -70,10 +70,10 @@ export default async function AppHomePage() {
 
         <div className="grid grid-cols-2 gap-3">
           <ButtonLink href="/app/book" className="w-full">
-            Book a class
+            Join group
           </ButtonLink>
           <ButtonLink href="/app/book/private" variant="ghost" className="w-full">
-            Private at yours
+            Private
           </ButtonLink>
         </div>
 
