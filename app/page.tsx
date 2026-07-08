@@ -92,7 +92,7 @@ export default async function LandingPage() {
           <div className="mx-auto max-w-6xl px-6 pb-20 md:pb-28">
             <Reveal>
               <h1 className="display-xl max-w-[14ch] text-ivory">
-                Think smarter. Play smarter.
+                Think smarter. Play faster.
               </h1>
             </Reveal>
             <Reveal delay={180}>

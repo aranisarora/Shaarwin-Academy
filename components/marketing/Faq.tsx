@@ -9,11 +9,11 @@ const faqs = [
   },
   {
     q: "Do I need my own equipment?",
-    a: "No. Tables, nets and balls are provided at every venue. Bring trainers and a paddle if you have one — we have spares if you don't.",
+    a: "You'll need your own table tennis bat. A table should be available at your venue or home — let us know when you sign up and we'll advise. Balls are provided.",
   },
   {
     q: "Do you offer trial sessions?",
-    a: "Yes. We offer a trial class so you can experience the coaching before committing. Reach out on WhatsApp or by email to arrange one.",
+    a: "Yes — we offer one free group trial session so you can experience the coaching before committing. Reach out on WhatsApp or by email to book yours.",
   },
   {
     q: "What are the class timings?",
