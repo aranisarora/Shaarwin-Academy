@@ -136,7 +136,7 @@ export default function SchoolsPage() {
         <Reveal>
           <div className="rounded-[16px] border border-line bg-ink-2 p-8 md:p-14">
             <h2 className="font-display max-w-[18ch] text-3xl md:text-5xl">
-              Bring Sharwin to your school
+              Bring Sharwin Table Tennis Academy to your school
             </h2>
             <p className="mt-4 max-w-[56ch] text-lg text-smoke">
               Planning a programme for your students? Start a conversation and

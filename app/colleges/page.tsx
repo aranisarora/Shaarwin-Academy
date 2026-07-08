@@ -8,13 +8,13 @@ import { whatsappLink, CONTACT_EMAIL } from "@/lib/contact";
 export const metadata: Metadata = {
   title: "For colleges",
   description:
-    "A table tennis programme for colleges — build and train a competitive squad for intercollege, intercity, state and national tournaments, and open the sport up to every student.",
+    "A table tennis programme for colleges — build and train a competitive squad for intercollege, interuniversity, state and national tournaments, and open the sport up to every student.",
 };
 
 const offerings = [
   {
     title: "Build & train your team",
-    body: "We assemble and develop your college squad from the ground up — technique, tactics, fitness and match temperament — and prepare them for competition at intercollege, intercity, state and national level.",
+    body: "We assemble and develop your college squad from the ground up — technique, tactics, fitness and match temperament — and prepare them for competition at intercollege, interuniversity, state and national level.",
   },
   {
     title: "Sport for every student",
@@ -32,7 +32,7 @@ const pathway = [
     body: "We prepare and enter your squad for intercollege fixtures — the proving ground for your strongest players.",
   },
   {
-    stage: "Intercity",
+    stage: "Interuniversity",
     body: "Trained to travel and compete against colleges from across the region.",
   },
   {
@@ -61,7 +61,7 @@ export default function CollegesPage() {
           <p className="mt-6 max-w-[60ch] text-lg text-smoke md:text-xl">
             A table tennis programme for colleges across Bengaluru — from
             opening the sport up to every student, to building and training a
-            squad that competes at intercollege, intercity, state and national
+            squad that competes at intercollege, interuniversity, state and national
             level. On your campus, led by certified coaches.
           </p>
         </Reveal>
@@ -132,7 +132,7 @@ export default function CollegesPage() {
         <Reveal>
           <div className="rounded-[16px] border border-line bg-ink-2 p-8 md:p-14">
             <h2 className="font-display max-w-[18ch] text-3xl md:text-5xl">
-              Bring Sharwin to your college
+              Bring Sharwin Table Tennis Academy to your college
             </h2>
             <p className="mt-4 max-w-[56ch] text-lg text-smoke">
               Ready to build a squad worth cheering for? Start a conversation
