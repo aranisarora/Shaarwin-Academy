@@ -42,7 +42,7 @@ export function StageShell({ children }: { children: React.ReactNode }) {
               <Image
                 src={logo}
                 alt="Sharwin Table Tennis Academy"
-                className="h-16 w-auto"
+                className="h-20 w-auto"
               />
             </Link>
             <p className="mt-3 max-w-[26ch] text-sm text-fg-2">

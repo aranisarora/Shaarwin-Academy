@@ -28,21 +28,21 @@ export function StageHeader() {
           : "border-b border-transparent bg-transparent"
       }`}
     >
-      <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-6">
+      <div className="mx-auto flex h-20 max-w-6xl items-center justify-between px-6">
         <Link
           href="/"
           aria-label="Sharwin Table Tennis Academy — home"
-          className="flex items-center gap-2.5"
+          className="flex items-center gap-3"
         >
           <Image
             src={logo}
             alt=""
             aria-hidden
             priority
-            className="h-10 w-auto md:h-11"
+            className="h-14 w-auto md:h-16"
           />
-          <span className="hidden font-display text-lg tracking-wide sm:inline">
-            SHARWIN TABLE TENNIS ACADEMY
+          <span className="hidden font-display text-sm font-semibold uppercase tracking-widest sm:inline">
+            Sharwin Table Tennis Academy
           </span>
         </Link>
         <nav aria-label="Main" className="flex items-center gap-1 sm:gap-2">
