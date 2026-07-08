@@ -4,7 +4,7 @@ const tabs = [
   { href: "/coach", label: "Today", icon: "●" },
   { href: "/coach/calendar", label: "Calendar", icon: "▦" },
   { href: "/coach/clients", label: "Clients", icon: "◎" },
-  { href: "/coach/availability", label: "More", icon: "≡" },
+  { href: "/coach/more", label: "More", icon: "≡" },
 ];
 
 export function CoachShell({

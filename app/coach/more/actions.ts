@@ -27,7 +27,7 @@ export async function addWindow(
     start_time: start,
     end_time: end,
   });
-  revalidatePath("/coach/availability");
+  revalidatePath("/coach/more");
   return error ? { ok: false, error: "Couldn't add window." } : { ok: true };
 }
 
@@ -39,7 +39,7 @@ export async function removeWindow(windowId: string): Promise<Result> {
     .delete()
     .eq("id", windowId)
     .eq("coach_id", id);
-  revalidatePath("/coach/availability");
+  revalidatePath("/coach/more");
   return { ok: true };
 }
 
@@ -87,7 +87,7 @@ export async function requestTimeOff(
     });
     if (error) return { ok: false, error: "Couldn't request time off." };
     await notifyFounder(supabase, id, startsAt, endsAt);
-    revalidatePath("/coach/availability");
+    revalidatePath("/coach/more");
     return { ok: true, overlaps: overlapping!.length };
   }
 
@@ -102,7 +102,7 @@ export async function requestTimeOff(
     await notifyFounder(supabase, id, startsAt, endsAt);
   }
 
-  revalidatePath("/coach/availability");
+  revalidatePath("/coach/more");
   return { ok: true, overlaps: 0 };
 }
 
@@ -122,4 +122,33 @@ async function notifyFounder(supabase: any, coach: string, startsAt: string, end
       data: { coach_id: coach, starts_at: startsAt, ends_at: endsAt, url: "/admin/coaches" },
     }))
   );
+}
+
+export async function saveCoachProfile(input: {
+  bio: string;
+  baseLat: number;
+  baseLng: number;
+  radiusKm: number;
+}): Promise<{ ok: boolean; error?: string }> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Sign in first." };
+  if (!Number.isFinite(input.radiusKm) || input.radiusKm < 1 || input.radiusKm > 50) {
+    return { ok: false, error: "Radius must be between 1 and 50 km." };
+  }
+
+  const { error } = await supabase
+    .from("coaches")
+    .update({
+      bio: input.bio.trim() || null,
+      base_lat: input.baseLat,
+      base_lng: input.baseLng,
+      travel_radius_km: input.radiusKm,
+    })
+    .eq("id", user.id);
+  if (error) return { ok: false, error: "Couldn't save." };
+  revalidatePath("/coach/more");
+  return { ok: true };
 }

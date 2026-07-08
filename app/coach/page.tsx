@@ -5,6 +5,7 @@ import { getCoachSessions } from "@/lib/coach-data";
 import { CoachShell } from "@/components/app/CoachShell";
 import { Badge } from "@/components/ui/Badge";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { WhatsAppConnect } from "@/components/app/WhatsAppConnect";
 
 export const metadata: Metadata = { title: "Today" };
 
@@ -40,6 +41,10 @@ export default async function CoachTodayPage() {
           }).format(new Date())}{" "}
           — {header}
         </p>
+
+        <div className="mb-6">
+          <WhatsAppConnect />
+        </div>
 
         {sessions.length === 0 && (
           <EmptyState image="/images/empty-ivory.jpg" copy="No sessions today." />

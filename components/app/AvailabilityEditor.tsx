@@ -10,7 +10,7 @@ import {
   addWindow,
   removeWindow,
   requestTimeOff,
-} from "@/app/coach/availability/actions";
+} from "@/app/coach/more/actions";
 
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 

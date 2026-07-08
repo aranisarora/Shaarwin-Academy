@@ -276,7 +276,7 @@ export async function decideTimeOffCore(
     body: approve
       ? "Your sessions in the range are being covered."
       : "Talk to the founder if you need this changed.",
-    data: { url: "/coach/availability" },
+    data: { url: "/coach/more" },
   });
 
   return { ok: true };

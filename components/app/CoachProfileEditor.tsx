@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Spinner } from "@/components/ui/Spinner";
-import { saveCoachProfile } from "@/app/coach/profile/actions";
+import { saveCoachProfile } from "@/app/coach/more/actions";
 
 export function CoachProfileEditor({
   fullName,

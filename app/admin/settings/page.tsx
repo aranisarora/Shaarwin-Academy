@@ -3,7 +3,6 @@ import { requireUser } from "@/lib/auth";
 import { AdminShell } from "@/components/app/AdminShell";
 import { SettingsEditor } from "@/components/app/SettingsEditor";
 import { SignOutButton } from "@/components/app/SignOutButton";
-import { WhatsAppConnect } from "@/components/app/WhatsAppConnect";
 
 export const metadata: Metadata = { title: "Settings" };
 
@@ -30,7 +29,6 @@ export default async function AdminSettingsPage() {
   return (
     <AdminShell title="Settings" actions={<SignOutButton />}>
       <div className="mx-auto max-w-xl space-y-8">
-        <WhatsAppConnect />
         <SettingsEditor values={values} />
       </div>
     </AdminShell>

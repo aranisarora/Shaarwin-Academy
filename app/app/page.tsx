@@ -60,6 +60,8 @@ export default async function AppHomePage() {
           />
         )}
 
+        <WhatsAppConnect />
+
         <p className="text-sm text-fg-2">
           {summary.active
             ? `${summary.planName} — renews ${formatRenewalDate(summary.periodEnd)}${
@@ -76,8 +78,6 @@ export default async function AppHomePage() {
             Private
           </ButtonLink>
         </div>
-
-        <WhatsAppConnect />
 
         {attended > 0 && (
           <p className="tnum text-sm text-fg-2">
