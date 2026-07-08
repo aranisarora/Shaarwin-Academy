@@ -1,18 +1,25 @@
+import Link from "next/link";
 import { Reveal } from "@/components/Reveal";
 import { ButtonLink } from "@/components/ui/Button";
 
-const places = [
+const places: {
+  title: string;
+  body: string;
+  href?: string;
+}[] = [
   {
     title: "Your home",
     body: "We come straight to your doorstep — no commute, no hassle.",
   },
   {
     title: "Schools",
-    body: "After-school programs, morning team practice, PE coaching and internal tournaments. We build and train your school team.",
+    body: "PE coaching, after-school programs, morning team practice and a full tournament pathway. We build and train your school team.",
+    href: "/schools",
   },
   {
     title: "Colleges",
-    body: "Classes, team building and internal tournaments to prepare your college squad for external competition.",
+    body: "Team building and structured training to prepare your college squad for intercollege, state and national competition.",
+    href: "/colleges",
   },
   {
     title: "Offices",
@@ -52,14 +59,38 @@ export function WeComeToYou() {
       </Reveal>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {places.map((place, i) => (
-          <Reveal key={place.title} delay={i * 90}>
-            <div className="flex h-full flex-col rounded-[12px] border border-line bg-ink-2 p-6">
+        {places.map((place, i) => {
+          const inner = (
+            <>
               <p className="font-display text-xl text-ivory">{place.title}</p>
               <p className="mt-3 text-sm text-smoke">{place.body}</p>
-            </div>
-          </Reveal>
-        ))}
+              {place.href && (
+                <span className="mt-4 inline-flex items-center gap-1 text-sm font-semibold text-ember">
+                  What we do
+                  <span aria-hidden className="transition-transform group-hover:translate-x-0.5">
+                    →
+                  </span>
+                </span>
+              )}
+            </>
+          );
+          return (
+            <Reveal key={place.title} delay={i * 90}>
+              {place.href ? (
+                <Link
+                  href={place.href}
+                  className="group flex h-full flex-col rounded-[12px] border border-line bg-ink-2 p-6 transition-colors hover:border-ember"
+                >
+                  {inner}
+                </Link>
+              ) : (
+                <div className="flex h-full flex-col rounded-[12px] border border-line bg-ink-2 p-6">
+                  {inner}
+                </div>
+              )}
+            </Reveal>
+          );
+        })}
       </div>
 
       <div className="mt-4 grid gap-4 md:grid-cols-3">
