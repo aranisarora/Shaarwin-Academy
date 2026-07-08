@@ -33,14 +33,18 @@ export function StageHeader() {
         <Link
           href="/"
           aria-label="Sharwin Table Tennis Academy — home"
-          className="flex items-center"
+          className="flex items-center gap-2.5"
         >
           <Image
             src={logo}
-            alt="Sharwin Table Tennis Academy"
+            alt=""
+            aria-hidden
             priority
             className="h-10 w-auto md:h-11"
           />
+          <span className="hidden font-display text-lg tracking-wide sm:inline">
+            SHARWIN TABLE TENNIS ACADEMY
+          </span>
         </Link>
         <nav aria-label="Main" className="flex items-center gap-1 sm:gap-2">
           {nav.map((item) => (
