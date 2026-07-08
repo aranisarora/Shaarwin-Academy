@@ -34,7 +34,7 @@ function systemPrompt(profile: Profile | null): string {
     client:
       "They can view/book/cancel/reschedule group sessions, book private sessions (uses their minutes), and check their membership. Payments can NOT happen in chat — for buying or changing a plan, send them to " +
       appUrl +
-      "/pricing.",
+      "/app/membership.",
     coach:
       "They can view their teaching schedule and rosters, manage weekly availability windows, and request time off (founder approves).",
     founder:

@@ -8,7 +8,6 @@ const footerCols = [
     title: "Academy",
     links: [
       { href: "/locations", label: "Locations" },
-      { href: "/pricing", label: "Pricing" },
       { href: "/coaches", label: "Coaches" },
     ],
   },

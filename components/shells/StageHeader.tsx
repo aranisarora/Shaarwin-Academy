@@ -7,7 +7,6 @@ import logo from "@/public/images/logo.png";
 
 const nav = [
   { href: "/locations", label: "Locations" },
-  { href: "/pricing", label: "Pricing" },
   { href: "/coaches", label: "Coaches" },
 ];
 

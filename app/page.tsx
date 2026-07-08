@@ -13,14 +13,13 @@ import { Testimonials } from "@/components/marketing/Testimonials";
 import { SummerCamp } from "@/components/marketing/SummerCamp";
 import { JoinTeam } from "@/components/marketing/JoinTeam";
 import { ContactSection } from "@/components/marketing/ContactSection";
-import { getPlans, getVenues, getCoaches, formatPrice } from "@/lib/data";
+import { getVenues, getCoaches } from "@/lib/data";
 import { createClient } from "@/lib/supabase/server";
 
 import heroServe from "@/public/images/hero-serve.jpg";
 import heroServeMobile from "@/public/images/hero-serve-mobile.jpg";
 import programGroup from "@/public/images/program-group.jpg";
 import programPrivate from "@/public/images/program-private.jpg";
-import textureBallLine from "@/public/images/texture-ball-line.jpg";
 import founderClose from "@/public/images/founder-close.jpg";
 
 const academyStats = [
@@ -53,16 +52,7 @@ const communityPhotos: {
 ];
 
 export default async function LandingPage() {
-  const [plans, venues, coaches] = await Promise.all([
-    getPlans(),
-    getVenues(),
-    getCoaches(),
-  ]);
-
-  const groupFrom = plans.length
-    ? formatPrice(Math.min(...plans.map((p) => p.price_pence)))
-    : "£180";
-  const privatePlan = plans.find((p) => p.private_minutes_per_quarter > 0);
+  const [venues, coaches] = await Promise.all([getVenues(), getCoaches()]);
 
   // The WhatsApp companion needs a linked account to be useful, so it lives
   // inside the app. Signed-in visitors go straight there; everyone else is
@@ -173,7 +163,7 @@ export default async function LandingPage() {
         <div className="grid gap-6 md:grid-cols-2">
           <Reveal delay={80}>
             <Link
-              href="/pricing"
+              href="/signup"
               className="group relative block aspect-[3/2] overflow-hidden rounded-[12px] border border-line"
             >
               <Image
@@ -188,14 +178,14 @@ export default async function LandingPage() {
               <div className="absolute inset-x-0 bottom-0 p-6">
                 <p className="label mb-1 !text-smoke">Group classes</p>
                 <p className="font-display text-2xl text-ivory md:text-3xl">
-                  From {groupFrom} a quarter
+                  Train with a group
                 </p>
               </div>
             </Link>
           </Reveal>
           <Reveal delay={220}>
             <Link
-              href="/pricing"
+              href="/signup"
               className="group relative block aspect-[3/2] overflow-hidden rounded-[12px] border border-line"
             >
               <Image
@@ -210,9 +200,7 @@ export default async function LandingPage() {
               <div className="absolute inset-x-0 bottom-0 p-6">
                 <p className="label mb-1 !text-smoke">Private, at yours</p>
                 <p className="font-display text-2xl text-ivory md:text-3xl">
-                  {privatePlan
-                    ? `${formatPrice(privatePlan.price_pence)} a quarter`
-                    : "A coach at your door"}
+                  A coach at your door
                 </p>
               </div>
             </Link>
@@ -243,59 +231,6 @@ export default async function LandingPage() {
             See all locations
           </ButtonLink>
         </Reveal>
-      </section>
-
-      {/* PRICING banner */}
-      <section className="relative overflow-hidden py-20 md:py-36">
-        <Image
-          src={textureBallLine}
-          alt=""
-          fill
-          placeholder="blur"
-          sizes="100vw"
-          className="object-cover opacity-60"
-          aria-hidden
-        />
-        <div className="absolute inset-0 bg-ink/60" aria-hidden />
-        <div className="relative mx-auto max-w-6xl px-6">
-          <Reveal>
-            <p className="label mb-3">Membership</p>
-            <h2 className="font-display mb-10 max-w-[22ch] text-3xl md:text-5xl">
-              Quarterly. Simple. No asterisks.
-            </h2>
-          </Reveal>
-          <div className="grid gap-6 md:grid-cols-3">
-            {plans.map((plan, i) => (
-              <Reveal key={plan.id} delay={i * 120}>
-                <div
-                  className={`flex h-full flex-col rounded-[12px] border bg-ink-2 p-6 ${
-                    i === 1 ? "border-ember" : "border-line"
-                  }`}
-                >
-                  {i === 1 && <p className="label mb-2 !text-ember">Most popular</p>}
-                  <p className="font-display text-xl text-ivory">{plan.name}</p>
-                  <p className="font-display tnum mt-2 text-4xl text-ivory">
-                    {formatPrice(plan.price_pence)}
-                    <span className="ml-1 font-ui text-sm text-smoke">/ quarter</span>
-                  </p>
-                  <p className="mt-3 flex-1 text-sm text-smoke">{plan.description}</p>
-                  <ButtonLink
-                    href={`/signup?plan=${plan.id}`}
-                    variant={i === 1 ? "primary" : "ghost"}
-                    className="mt-6"
-                  >
-                    Choose {plan.name}
-                  </ButtonLink>
-                </div>
-              </Reveal>
-            ))}
-            {plans.length === 0 && (
-              <p className="text-smoke">
-                Plans are being set up — check back shortly.
-              </p>
-            )}
-          </div>
-        </div>
       </section>
 
       <SectionDivider className="mx-auto max-w-6xl px-6" />

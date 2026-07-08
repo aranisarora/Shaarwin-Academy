@@ -17,7 +17,7 @@ token. Two secrets are still placeholders — see Go-live below.
 
 ## What's live right now
 
-- **Marketing site** `/` `/locations` `/pricing` `/coaches` `/legal/*` — reads
+- **Marketing site** `/` `/locations` `/coaches` `/schools` `/colleges` `/legal/*` — reads
   venues, plans, classes and sessions from the live Supabase project (already
   seeded: 3 venues, 3 plans, 4 classes, 4 weeks of sessions, settings).
 - **Auth** — email OTP + Google via Supabase; role-routed by `proxy.ts`

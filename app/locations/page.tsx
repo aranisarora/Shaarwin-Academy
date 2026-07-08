@@ -112,9 +112,6 @@ export default async function LocationsPage() {
             <ButtonLink href="/signup?next=/app/book" size="lg">
               Book a class
             </ButtonLink>
-            <ButtonLink href="/pricing" variant="ghost" size="lg">
-              See pricing
-            </ButtonLink>
           </div>
         </div>
       </div>
