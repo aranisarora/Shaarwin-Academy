@@ -1,5 +1,7 @@
+import Image from "next/image";
 import Link from "next/link";
 import { StageHeader } from "./StageHeader";
+import logo from "@/public/images/logo.png";
 
 const footerCols = [
   {
@@ -37,9 +39,12 @@ export function StageShell({ children }: { children: React.ReactNode }) {
       <footer className="border-t border-line">
         <div className="mx-auto grid max-w-6xl gap-10 px-6 py-14 sm:grid-cols-2 lg:grid-cols-4">
           <div>
-            <Link href="/" className="flex items-center gap-2 font-display text-xl">
-              <span aria-hidden className="h-2.5 w-2.5 rounded-full bg-ember" />
-              SHARWIN TABLE TENNIS ACADEMY
+            <Link href="/" className="inline-flex items-center">
+              <Image
+                src={logo}
+                alt="Sharwin Table Tennis Academy"
+                className="h-16 w-auto"
+              />
             </Link>
             <p className="mt-3 max-w-[26ch] text-sm text-fg-2">
               Table tennis, taught properly. ITTF-certified coaching at your

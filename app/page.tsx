@@ -16,6 +16,7 @@ import { ContactSection } from "@/components/marketing/ContactSection";
 import { getPlans, getVenues, getCoaches, formatPrice } from "@/lib/data";
 import { createClient } from "@/lib/supabase/server";
 
+import logo from "@/public/images/logo.png";
 import heroServe from "@/public/images/hero-serve.jpg";
 import heroServeMobile from "@/public/images/hero-serve-mobile.jpg";
 import programGroup from "@/public/images/program-group.jpg";
@@ -100,6 +101,15 @@ export default async function LandingPage() {
         <div className="scrim-ink-bottom absolute inset-0" aria-hidden />
         <div className="absolute inset-x-0 bottom-0">
           <div className="mx-auto max-w-6xl px-6 pb-20 md:pb-28">
+            <Reveal>
+              <Image
+                src={logo}
+                alt=""
+                aria-hidden
+                priority
+                className="mb-6 h-auto w-44 md:w-56"
+              />
+            </Reveal>
             <Reveal>
               <h1 className="display-xl max-w-[14ch] text-ivory">
                 Play faster. Think faster.

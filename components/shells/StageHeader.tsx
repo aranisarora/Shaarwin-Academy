@@ -1,7 +1,9 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import logo from "@/public/images/logo.png";
 
 const nav = [
   { href: "/locations", label: "Locations" },
@@ -30,10 +32,15 @@ export function StageHeader() {
       <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-6">
         <Link
           href="/"
-          className="flex items-center gap-2 font-display text-lg tracking-wide"
+          aria-label="Sharwin Table Tennis Academy — home"
+          className="flex items-center"
         >
-          <span aria-hidden className="h-2.5 w-2.5 rounded-full bg-ember" />
-          SHARWIN TABLE TENNIS ACADEMY
+          <Image
+            src={logo}
+            alt="Sharwin Table Tennis Academy"
+            priority
+            className="h-10 w-auto md:h-11"
+          />
         </Link>
         <nav aria-label="Main" className="flex items-center gap-1 sm:gap-2">
           {nav.map((item) => (
