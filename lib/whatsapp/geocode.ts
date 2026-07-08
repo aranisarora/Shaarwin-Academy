@@ -9,7 +9,7 @@ export async function geocode(address: string): Promise<GeoHit | null> {
   const res = await fetch(
     `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(
       address
-    )}.json?limit=1&access_token=${token}`
+    )}.json?limit=1&country=in&proximity=77.5946,12.9716&access_token=${token}`
   );
   if (!res.ok) return null;
   const json = (await res.json()) as {

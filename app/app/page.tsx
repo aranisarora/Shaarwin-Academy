@@ -56,9 +56,17 @@ export default async function AppHomePage() {
           <EmptyState
             image="/images/empty-ivory.jpg"
             copy="Nothing booked. The table's free."
-            action={<ButtonLink href="/app/book">Join group</ButtonLink>}
           />
         )}
+
+        <div className="grid grid-cols-2 gap-3">
+          <ButtonLink href="/app/book" size="lg" className="w-full">
+            Join group
+          </ButtonLink>
+          <ButtonLink href="/app/book/private" size="lg" className="w-full">
+            Book private
+          </ButtonLink>
+        </div>
 
         <WhatsAppConnect />
 
@@ -69,15 +77,6 @@ export default async function AppHomePage() {
               }`
             : "No active membership — choose a plan to start booking."}
         </p>
-
-        <div className="grid grid-cols-2 gap-3">
-          <ButtonLink href="/app/book" className="w-full">
-            Join group
-          </ButtonLink>
-          <ButtonLink href="/app/book/private" variant="ghost" className="w-full">
-            Private
-          </ButtonLink>
-        </div>
 
         {attended > 0 && (
           <p className="tnum text-sm text-fg-2">
