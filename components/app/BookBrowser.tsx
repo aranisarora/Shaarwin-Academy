@@ -320,14 +320,6 @@ export function BookBrowser({
                     weeks are booked automatically — manage it from your schedule.
                   </p>
                 )}
-                <div className="mt-3 flex justify-center gap-3">
-                  <Link
-                    href="/app/schedule"
-                    className="text-sm text-ember underline-offset-4 hover:underline"
-                  >
-                    View schedule
-                  </Link>
-                </div>
                 {pushState === null ? (
                   <button
                     onClick={async () => setPushState(await enablePush())}
