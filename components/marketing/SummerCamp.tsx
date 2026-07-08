@@ -30,7 +30,7 @@ export function SummerCamp() {
           </ButtonLink>
         </Reveal>
         <Reveal delay={150}>
-          <div className="relative aspect-[1280/904] overflow-hidden rounded-[12px] border border-line bg-ink-2">
+          <div className="relative aspect-[904/1280] overflow-hidden rounded-[12px] border border-line bg-ink-2">
             <Image
               src="/images/summer-camp.jpg"
               alt="Young players training at the Sharwin summer camp"
