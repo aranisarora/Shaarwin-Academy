@@ -97,7 +97,7 @@ export default async function LocationsPage() {
             )}
           </div>
           <div className="order-1 lg:order-2 lg:sticky lg:top-24 lg:self-start">
-            <VenueMap venues={venues} height="60vh" />
+            <VenueMap venues={venues} height="60vh" ctaHref="/signup?next=/app/book" ctaLabel="Book a class" />
           </div>
         </div>
 

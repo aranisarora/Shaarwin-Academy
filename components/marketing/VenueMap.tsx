@@ -4,21 +4,32 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import type { Venue } from "@/lib/data";
 
-/** Dark Mapbox map with ember venue pins. Tap pin → mini card → /locations. */
+/** Dark Mapbox map with ember venue pins. Tap pin → mini card. Locate-me button shows user position. */
 export function VenueMap({
   venues,
   height = "480px",
   interactiveCard = true,
+  ctaHref = "/locations",
+  ctaLabel = "See classes",
 }: {
   venues: Venue[];
   height?: string;
   interactiveCard?: boolean;
+  ctaHref?: string;
+  ctaLabel?: string;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const mapRef = useRef<any>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const mapboxglRef = useRef<any>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const userMarkerRef = useRef<any>(null);
+
   const [selected, setSelected] = useState<Venue | null>(null);
   const [failed, setFailed] = useState(false);
+  const [locating, setLocating] = useState(false);
+  const [locationDenied, setLocationDenied] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -34,6 +45,7 @@ export function VenueMap({
         await import("mapbox-gl/dist/mapbox-gl.css");
         if (cancelled || !containerRef.current) return;
 
+        mapboxglRef.current = mapboxgl;
         mapboxgl.accessToken = token;
         const map = new mapboxgl.Map({
           container: containerRef.current,
@@ -67,9 +79,43 @@ export function VenueMap({
       cancelled = true;
       mapRef.current?.remove();
       mapRef.current = null;
+      mapboxglRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  function locateMe() {
+    if (!navigator.geolocation) return;
+    setLocating(true);
+    setLocationDenied(false);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setLocating(false);
+        const { latitude: lat, longitude: lng } = pos.coords;
+        const map = mapRef.current;
+        const mapboxgl = mapboxglRef.current;
+        if (!map || !mapboxgl) return;
+
+        // Remove previous user marker
+        userMarkerRef.current?.remove();
+
+        const el = document.createElement("div");
+        el.setAttribute("aria-label", "Your location");
+        el.style.cssText =
+          "width:14px;height:14px;border-radius:999px;background:#3B82F6;border:2px solid #fff;box-shadow:0 0 0 4px rgb(59 130 246 / 0.3)";
+        userMarkerRef.current = new mapboxgl.Marker({ element: el })
+          .setLngLat([lng, lat])
+          .addTo(map);
+
+        map.flyTo({ center: [lng, lat], zoom: 12, duration: 1200 });
+      },
+      () => {
+        setLocating(false);
+        setLocationDenied(true);
+      },
+      { timeout: 10000 }
+    );
+  }
 
   if (failed) {
     return (
@@ -94,6 +140,35 @@ export function VenueMap({
   return (
     <div className="relative overflow-hidden rounded-[12px] border border-line" style={{ height }}>
       <div ref={containerRef} className="h-full w-full" />
+
+      {/* Locate-me button */}
+      <button
+        onClick={locateMe}
+        disabled={locating}
+        title="Show my location"
+        aria-label="Show my location on the map"
+        className="absolute right-3 top-3 z-10 flex h-9 w-9 items-center justify-center rounded-[8px] border border-line-d bg-ink-2 text-ivory shadow transition hover:bg-ink disabled:opacity-60"
+      >
+        {locating ? (
+          <svg className="h-4 w-4 animate-spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <circle cx="12" cy="12" r="10" strokeOpacity="0.25" />
+            <path d="M12 2a10 10 0 0 1 10 10" />
+          </svg>
+        ) : (
+          <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="3" />
+            <path d="M12 2v3M12 19v3M2 12h3M19 12h3" />
+          </svg>
+        )}
+      </button>
+
+      {/* Permission denied notice */}
+      {locationDenied && (
+        <div className="absolute right-3 top-14 z-10 max-w-[200px] rounded-[8px] border border-line-d bg-ink-2 px-3 py-2 text-xs text-smoke shadow">
+          Location access denied. Enable it in your browser settings.
+        </div>
+      )}
+
       {selected && interactiveCard && (
         <div className="absolute inset-x-4 bottom-4 rounded-[12px] border border-line-d bg-ink-2 p-4 sm:left-auto sm:w-80">
           <div className="flex items-start justify-between gap-3">
@@ -112,10 +187,10 @@ export function VenueMap({
             </button>
           </div>
           <Link
-            href="/locations"
+            href={ctaHref}
             className="mt-3 inline-flex min-h-11 items-center rounded-[8px] bg-ember px-4 text-sm font-semibold text-ivory hover:bg-ember-2"
           >
-            See classes
+            {ctaLabel}
           </Link>
         </div>
       )}
