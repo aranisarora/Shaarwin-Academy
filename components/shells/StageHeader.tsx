@@ -33,7 +33,7 @@ export function StageHeader() {
           className="flex items-center gap-2 font-display text-lg tracking-wide"
         >
           <span aria-hidden className="h-2.5 w-2.5 rounded-full bg-ember" />
-          SHARWIN
+          SHARWIN TABLE TENNIS ACADEMY
         </Link>
         <nav aria-label="Main" className="flex items-center gap-1 sm:gap-2">
           {nav.map((item) => (

@@ -33,8 +33,24 @@ export default async function CoachesPage() {
                 />
               </div>
               <h2 className="mt-3 font-medium">{coach.name}</h2>
-              <p className="label mt-0.5">Teaches to {coach.level}</p>
-              <p className="mt-2 text-sm text-smoke">{coach.bio}</p>
+              {coach.credentials && coach.credentials.length > 0 && (
+                <ul className="mt-2 flex flex-wrap gap-1.5">
+                  {coach.credentials.map((c) => (
+                    <li
+                      key={c}
+                      className="rounded-full border border-ember px-2.5 py-0.5 text-[11px] font-medium uppercase tracking-[0.08em] text-ember"
+                    >
+                      {c}
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <p className="mt-3 text-sm text-smoke">{coach.bio}</p>
+              {coach.quote && (
+                <p className="mt-3 text-sm italic text-slate">
+                  &ldquo;{coach.quote}&rdquo;
+                </p>
+              )}
             </article>
           ))}
         </div>
