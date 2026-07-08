@@ -2,7 +2,6 @@ import type { Metadata } from "next";
 import { requireUser } from "@/lib/auth";
 import { ClientShell } from "@/components/app/ClientShell";
 import { ProfileEditor } from "@/components/app/ProfileEditor";
-import { WhatsAppConnect } from "@/components/app/WhatsAppConnect";
 
 export const metadata: Metadata = { title: "Profile" };
 
@@ -17,7 +16,6 @@ export default async function ProfilePage() {
   return (
     <ClientShell title="Profile">
       <div className="mx-auto max-w-xl space-y-8">
-        <WhatsAppConnect />
         <ProfileEditor
           profile={{
             fullName: profile.full_name,

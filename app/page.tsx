@@ -8,6 +8,7 @@ import { Parallax } from "@/components/marketing/Parallax";
 import { VenueMap } from "@/components/marketing/VenueMap";
 import { Faq } from "@/components/marketing/Faq";
 import { getPlans, getVenues, getCoaches, formatPrice } from "@/lib/data";
+import { createClient } from "@/lib/supabase/server";
 
 import heroServe from "@/public/images/hero-serve.jpg";
 import heroServeMobile from "@/public/images/hero-serve-mobile.jpg";
@@ -35,11 +36,14 @@ export default async function LandingPage() {
     : "£180";
   const privatePlan = plans.find((p) => p.private_minutes_per_quarter > 0);
 
-  // WhatsApp-first onboarding: land straight in a chat with the academy bot.
-  const waNumber = process.env.NEXT_PUBLIC_WHATSAPP_NUMBER?.replace(/[^0-9]/g, "");
-  const waHref = waNumber
-    ? `https://wa.me/${waNumber}?text=${encodeURIComponent("Hi! I'd like to know more about the academy.")}`
-    : null;
+  // The WhatsApp companion needs a linked account to be useful, so it lives
+  // inside the app. Signed-in visitors go straight there; everyone else is
+  // pointed at sign-up first rather than a dead-end chat.
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  const signedIn = Boolean(user);
 
   return (
     <StageShell>
@@ -81,10 +85,10 @@ export default async function LandingPage() {
             </Reveal>
             <Reveal delay={360}>
               <div className="mt-8 flex flex-wrap gap-3">
-                {waHref ? (
-                  <ButtonLink href={waHref} size="lg" target="_blank" rel="noopener">
+                {signedIn ? (
+                  <ButtonLink href="/app" size="lg">
                     <span aria-hidden className="h-2 w-2 rounded-full bg-ivory" />
-                    Chat on WhatsApp
+                    Open your app
                   </ButtonLink>
                 ) : (
                   <ButtonLink href="/signup" size="lg">
@@ -355,8 +359,8 @@ export default async function LandingPage() {
 
       {/* Sticky bottom CTA — phones only */}
       <div className="pb-safe fixed inset-x-0 bottom-0 z-30 border-t border-line bg-ink/95 p-3 backdrop-blur sm:hidden">
-        <ButtonLink href="/signup" className="w-full">
-          Find a class
+        <ButtonLink href={signedIn ? "/app" : "/signup"} className="w-full">
+          {signedIn ? "Open your app" : "Find a class"}
         </ButtonLink>
       </div>
     </StageShell>

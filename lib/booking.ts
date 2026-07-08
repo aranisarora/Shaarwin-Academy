@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 export type BrowseSession = {
   id: string;
+  classId: string;
   starts_at: string;
   ends_at: string;
   classTitle: string;
@@ -61,6 +62,7 @@ export async function getBrowseSessions(
     };
     return {
       id: s.id,
+      classId: cls.id,
       starts_at: s.starts_at,
       ends_at: s.ends_at,
       classTitle: cls.title,
@@ -89,6 +91,7 @@ export type MyBooking = {
   id: string;
   status: string;
   waitlist_position: number | null;
+  seriesId: string | null;
   playerName: string;
   session: {
     id: string;
@@ -108,7 +111,7 @@ export async function getMyBookings(
   const { data } = await supabase
     .from("bookings")
     .select(
-      "id,status,waitlist_position,players(full_name),class_sessions!inner(id,starts_at,ends_at,coach_id,classes!inner(title,class_type,venues(name)))"
+      "id,status,waitlist_position,series_id,players(full_name),class_sessions!inner(id,starts_at,ends_at,coach_id,classes!inner(title,class_type,venues(name)))"
     )
     .eq("client_id", clientId)
     .in("status", ["confirmed", "waitlisted", "attended", "no_show"])
@@ -133,6 +136,7 @@ export async function getMyBookings(
       id: b.id,
       status: b.status,
       waitlist_position: b.waitlist_position,
+      seriesId: (b as unknown as { series_id: string | null }).series_id ?? null,
       playerName:
         (b.players as unknown as { full_name: string } | null)?.full_name ?? "",
       session: {

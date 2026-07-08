@@ -11,9 +11,14 @@ import {
   checkCoverage,
   recordAreaInterest,
   getSlots,
-  requestPrivateClass,
+  requestPrivateSeries,
   type Slot,
 } from "@/app/app/book/private/actions";
+
+const WEEKDAY_FMT = new Intl.DateTimeFormat("en-GB", {
+  weekday: "long",
+  timeZone: "Asia/Kolkata",
+});
 
 type Coach = { id: string; name: string; lat: number; lng: number; radiusKm: number };
 
@@ -61,8 +66,11 @@ export function PrivateWizard({
   const [slot, setSlot] = useState<string | null>(null);
   const [preferredCoach, setPreferredCoach] = useState("");
 
+  const [recurring, setRecurring] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [parked, setParked] = useState(false);
+  const [booked, setBooked] = useState(1);
+  const [ranOut, setRanOut] = useState(false);
   const [pending, startTransition] = useTransition();
 
   const mapContainer = useRef<HTMLDivElement>(null);
@@ -147,20 +155,25 @@ export function PrivateWizard({
     if (!pin || !slot || !address) return;
     setError(null);
     startTransition(async () => {
-      const result = await requestPrivateClass({
-        playerId,
-        duration,
-        startsAt: slot,
-        address,
-        postcode,
-        lat: pin.lat,
-        lng: pin.lng,
-        hasTable,
-        accessNotes,
-        preferredCoach: preferredCoach || undefined,
-      });
+      const result = await requestPrivateSeries(
+        {
+          playerId,
+          duration,
+          startsAt: slot,
+          address,
+          postcode,
+          lat: pin.lat,
+          lng: pin.lng,
+          hasTable,
+          accessNotes,
+          preferredCoach: preferredCoach || undefined,
+        },
+        recurring
+      );
       if (result.ok) {
-        setParked(result.parked);
+        setParked(result.parked > 0);
+        setBooked(result.booked);
+        setRanOut(result.ranOut);
         setStep(4);
       } else {
         setError(result.error);
@@ -398,11 +411,36 @@ export function PrivateWizard({
             <p className="text-fg-2">{address}</p>
             <p className="text-fg-2">{duration} minutes</p>
             <p className="tnum text-sm">
-              Uses {duration} of your {minutesBalance} min — {minutesBalance - duration} left after.
+              Uses {duration} of your {minutesBalance} min
+              {recurring ? " per week, while minutes last" : ` — ${minutesBalance - duration} left after`}.
             </p>
             <p className="text-sm text-fg-2">
               Coach: assigned automatically — we&apos;ll introduce them right away.
             </p>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <button
+              type="button"
+              onClick={() => setRecurring(true)}
+              aria-pressed={recurring}
+              className={`rounded-[10px] border p-3 text-left ${recurring ? "border-ember bg-ember/5" : "border-line hover:border-fg-2"}`}
+            >
+              <p className="text-sm font-semibold">Every week</p>
+              <p className="mt-0.5 text-xs text-fg-2">
+                {WEEKDAY_FMT.format(new Date(slot))}s at this time, until your minutes
+                run out.
+              </p>
+            </button>
+            <button
+              type="button"
+              onClick={() => setRecurring(false)}
+              aria-pressed={!recurring}
+              className={`rounded-[10px] border p-3 text-left ${!recurring ? "border-ember bg-ember/5" : "border-line hover:border-fg-2"}`}
+            >
+              <p className="text-sm font-semibold">Just once</p>
+              <p className="mt-0.5 text-xs text-fg-2">Only {fmtSlot(slot)}.</p>
+            </button>
           </div>
           {error && <p className="text-sm text-err">{error}</p>}
           <div className="flex gap-3">
@@ -423,9 +461,11 @@ export function PrivateWizard({
             {parked ? "We're confirming your coach" : "You're on."}
           </h2>
           <p className="mt-2 text-fg-2">
-            {parked
-              ? "You'll hear from us within 24 hours."
-              : "Coach confirmed — details are in your schedule."}
+            {booked > 1
+              ? `${booked} weekly sessions booked${ranOut ? " — as far as your minutes stretch" : ""}.`
+              : parked
+                ? "You'll hear from us within 24 hours."
+                : "Coach confirmed — details are in your schedule."}
           </p>
           <Link
             href="/app/schedule"

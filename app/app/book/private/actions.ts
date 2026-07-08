@@ -109,6 +109,70 @@ export type PrivateResult =
   | { ok: true; sessionId: string; parked: boolean }
   | { ok: false; error: string };
 
+export type PrivateSeriesResult =
+  | { ok: true; booked: number; parked: number; ranOut: boolean }
+  | { ok: false; error: string };
+
+const MAX_PRIVATE_WEEKS = 12; // cap the forward run (≈ one quarter)
+
+/**
+ * Book a private slot, optionally repeating weekly. Because private sessions
+ * debit a finite minutes balance and have no session generator, a recurring
+ * request books forward week-by-week (same weekday + time) until the balance
+ * can't cover another session — then stops and reports how far it got.
+ */
+export async function requestPrivateSeries(
+  req: PrivateRequest,
+  recurring: boolean
+): Promise<PrivateSeriesResult> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Sign in first." };
+
+  if (!recurring) {
+    const single = await requestPrivateClass(req);
+    if (!single.ok) return { ok: false, error: single.error };
+    return { ok: true, booked: 1, parked: single.parked ? 1 : 0, ranOut: false };
+  }
+
+  const summary = await getSubscriptionSummary(supabase, user.id);
+  let remaining = summary.minutesBalance;
+  const affordable = Math.min(MAX_PRIVATE_WEEKS, Math.floor(remaining / req.duration));
+  if (affordable < 1) {
+    return { ok: false, error: "Not enough private minutes left this quarter." };
+  }
+
+  const base = new Date(req.startsAt).getTime();
+  let booked = 0;
+  let parked = 0;
+  let ranOut = false;
+
+  for (let i = 0; i < affordable; i++) {
+    if (remaining < req.duration) {
+      ranOut = true;
+      break;
+    }
+    const startsAt = new Date(base + i * 7 * 86400000).toISOString();
+    const r = await requestPrivateClass({ ...req, startsAt });
+    if (r.ok) {
+      booked += 1;
+      if (r.parked) parked += 1;
+      remaining -= req.duration;
+    } else {
+      // Out of minutes mid-run: keep what booked, stop cleanly.
+      if (r.error.includes("minutes")) ranOut = true;
+      // First week failing for another reason is a hard error.
+      else if (i === 0) return { ok: false, error: r.error };
+      break;
+    }
+  }
+
+  if (booked < affordable) ranOut = true;
+  return { ok: true, booked, parked, ranOut };
+}
+
 export async function requestPrivateClass(req: PrivateRequest): Promise<PrivateResult> {
   const supabase = await createClient();
   const {

@@ -100,6 +100,12 @@ export default async function MembershipPage() {
             <p className="text-sm text-fg-2">{profile.email}</p>
             <div className="mt-4 flex flex-wrap gap-3">
               <Link
+                href="/app/profile"
+                className="inline-flex min-h-11 items-center rounded-[8px] border border-line px-5 text-sm font-semibold hover:border-ember hover:text-ember"
+              >
+                Edit profile
+              </Link>
+              <Link
                 href="/app/notifications"
                 className="inline-flex min-h-11 items-center rounded-[8px] border border-line px-5 text-sm font-semibold hover:border-ember hover:text-ember"
               >

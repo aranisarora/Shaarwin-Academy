@@ -8,6 +8,7 @@ import { ClientShell } from "@/components/app/ClientShell";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ButtonLink } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
+import { WhatsAppConnect } from "@/components/app/WhatsAppConnect";
 
 export const metadata: Metadata = { title: "Home" };
 
@@ -75,6 +76,8 @@ export default async function AppHomePage() {
             Private at yours
           </ButtonLink>
         </div>
+
+        <WhatsAppConnect />
 
         {attended > 0 && (
           <p className="tnum text-sm text-fg-2">

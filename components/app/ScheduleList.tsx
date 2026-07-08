@@ -9,6 +9,7 @@ import { Spinner } from "@/components/ui/Spinner";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ButtonLink } from "@/components/ui/Button";
 import { cancelBooking } from "@/app/app/book/actions";
+import { cancelSeries } from "@/app/app/schedule/actions";
 import { RescheduleSheet } from "@/components/app/RescheduleSheet";
 import type { MyBooking } from "@/lib/booking";
 
@@ -47,6 +48,7 @@ function BookingCard({
       </div>
       <div className="flex flex-col items-end gap-1.5">
         {booking.session.isPrivate && <Badge>Private</Badge>}
+        {booking.seriesId && <Badge tone="ember">Weekly</Badge>}
         {booking.status === "waitlisted" && (
           <Badge tone="ember">Waitlist #{booking.waitlist_position}</Badge>
         )}
@@ -79,6 +81,15 @@ export function ScheduleList({
       const r = await cancelBooking(selected.id);
       if (r.ok) setSelected(null);
       else setError(r.error ?? "Cancel failed.");
+    });
+  }
+
+  function doCancelSeries() {
+    if (!selected?.seriesId) return;
+    startTransition(async () => {
+      const r = await cancelSeries(selected.seriesId!);
+      if (r.ok) setSelected(null);
+      else setError(r.error ?? "Couldn't stop the recurring booking.");
     });
   }
 
@@ -156,12 +167,24 @@ export function ScheduleList({
             >
               {pending ? (
                 <Spinner />
+              ) : selected.seriesId ? (
+                cancelIsFree ? "Cancel just this week (free)" : "Cancel just this week (uses your session)"
               ) : cancelIsFree ? (
                 "Cancel (free)"
               ) : (
                 "Cancel (uses your session)"
               )}
             </Button>
+            {selected.seriesId && (
+              <Button
+                variant="ghost"
+                onClick={doCancelSeries}
+                disabled={pending}
+                className="w-full"
+              >
+                Stop recurring booking (all future weeks)
+              </Button>
+            )}
             {!cancelIsFree && (
               <p className="text-xs text-fg-2">
                 Inside 24 hours of the start, cancelled sessions count as used.

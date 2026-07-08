@@ -8,14 +8,93 @@ export type BookResult =
   | { ok: true; status: "confirmed" | "waitlisted"; bookingId: string }
   | { ok: false; error: string };
 
+/** Result of booking a slot that may span many future weeks. */
+export type BookSlotResult =
+  | {
+      ok: true;
+      recurring: boolean;
+      firstStatus: "confirmed" | "waitlisted" | "skipped";
+      confirmed: number;
+      waitlisted: number;
+      skipped: number;
+    }
+  | { ok: false; error: string };
+
 const errorCopy: Record<string, string> = {
   no_active_subscription: "You need an active membership to book.",
   weekly_cap_reached: "You've used your group sessions for this week.",
   session_not_bookable: "This session can't be booked any more.",
   player_double_booked: "That player already has a session at this time.",
+  player_not_in_household: "That player isn't on your account.",
   already_booked: "Already booked — you're in.",
   booking_failed: "Booking didn't go through. Try again.",
 };
+
+/**
+ * Book a slot. When `recurring` is true the RPC enrols every future occurrence
+ * of the slot (same weekday + time) and keeps a standing series so newly
+ * generated weeks are booked automatically. `recurring` false books just the
+ * one session.
+ */
+export async function bookSlot(
+  sessionId: string,
+  playerId: string,
+  recurring: boolean
+): Promise<BookSlotResult> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Sign in to book." };
+
+  const { data, error } = await supabase.rpc("book_series", {
+    p_session: sessionId,
+    p_player: playerId,
+    p_recurring: recurring,
+  });
+
+  if (!error && data) {
+    revalidatePath("/app");
+    revalidatePath("/app/schedule");
+    const d = data as {
+      confirmed: number;
+      waitlisted: number;
+      skipped: number;
+      first_status: string;
+    };
+    const first =
+      d.first_status === "confirmed"
+        ? "confirmed"
+        : d.first_status === "waitlisted"
+          ? "waitlisted"
+          : "skipped";
+    return {
+      ok: true,
+      recurring,
+      firstStatus: first,
+      confirmed: d.confirmed ?? 0,
+      waitlisted: d.waitlisted ?? 0,
+      skipped: d.skipped ?? 0,
+    };
+  }
+
+  if (error && !isFunctionMissing(error.code)) {
+    const key = Object.keys(errorCopy).find((k) => error.message.includes(k));
+    return { ok: false, error: key ? errorCopy[key] : errorCopy.booking_failed };
+  }
+
+  // Fallback (RPC not applied yet): book just the immediate session in JS.
+  const single = await bookSession(sessionId, playerId);
+  if (!single.ok) return { ok: false, error: single.error };
+  return {
+    ok: true,
+    recurring: false,
+    firstStatus: single.status,
+    confirmed: single.status === "confirmed" ? 1 : 0,
+    waitlisted: single.status === "waitlisted" ? 1 : 0,
+    skipped: 0,
+  };
+}
 
 export async function bookSession(
   sessionId: string,

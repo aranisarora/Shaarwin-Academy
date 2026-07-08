@@ -8,6 +8,7 @@ import { Spinner } from "@/components/ui/Spinner";
 import {
   getRescheduleTargets,
   rescheduleGroupBooking,
+  rescheduleSeries,
   getPrivateRescheduleSlots,
   previewPrivateReschedule,
   confirmPrivateReschedule,
@@ -39,6 +40,8 @@ export function RescheduleSheet({
   const [slots, setSlots] = useState<{ starts_at: string; coach_count: number }[] | null>(null);
   const [isPrivate, setIsPrivate] = useState(false);
   const [picked, setPicked] = useState<string | null>(null);
+  // For recurring bookings, hold the picked target until the user chooses scope.
+  const [scopeTarget, setScopeTarget] = useState<RescheduleTarget | null>(null);
   const [preview, setPreview] = useState<{ coachName: string | null; changed: boolean } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -53,6 +56,7 @@ export function RescheduleSheet({
     setTargets(null);
     setSlots(null);
     setPicked(null);
+    setScopeTarget(null);
     setPreview(null);
     setError(null);
     setSuccess(null);
@@ -73,12 +77,27 @@ export function RescheduleSheet({
   function pickGroup(target: RescheduleTarget) {
     if (!booking) return;
     setError(null);
+    // Recurring booking → ask whether to move just this week or the whole series.
+    if (booking.seriesId) {
+      setScopeTarget(target);
+      return;
+    }
+    commitMove(target, false);
+  }
+
+  function commitMove(target: RescheduleTarget, following: boolean) {
+    if (!booking) return;
+    setError(null);
     startTransition(async () => {
-      const r = await rescheduleGroupBooking(booking.id, target.sessionId);
+      const r = following
+        ? await rescheduleSeries(booking.id, target.sessionId)
+        : await rescheduleGroupBooking(booking.id, target.sessionId);
       if (r.ok) {
+        setScopeTarget(null);
         setSuccess(fmt(target.starts_at));
       } else {
         setError(r.error ?? null);
+        setScopeTarget(null);
         // refresh the list — the slot may have just filled
         const refreshed = await getRescheduleTargets(booking.id);
         setTargets(refreshed.targets);
@@ -146,7 +165,43 @@ export function RescheduleSheet({
                 </div>
               )}
 
-              {!isPrivate && targets && (
+              {!isPrivate && scopeTarget && (
+                <div className="space-y-3 rounded-[12px] border border-line bg-surface p-4">
+                  <div>
+                    <p className="text-sm text-fg-2">Move to</p>
+                    <p className="tnum font-medium">{fmt(scopeTarget.starts_at)}</p>
+                  </div>
+                  <p className="text-sm text-fg-2">
+                    This is a recurring booking. Move just this week, or shift every
+                    following week to the new slot too?
+                  </p>
+                  <div className="grid gap-2">
+                    <Button
+                      onClick={() => commitMove(scopeTarget, false)}
+                      disabled={pending}
+                      className="w-full"
+                    >
+                      {pending ? <Spinner /> : "Just this week"}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      onClick={() => commitMove(scopeTarget, true)}
+                      disabled={pending}
+                      className="w-full"
+                    >
+                      This &amp; every following week
+                    </Button>
+                    <button
+                      onClick={() => setScopeTarget(null)}
+                      className="text-sm text-fg-2 underline-offset-4 hover:underline"
+                    >
+                      Pick another time
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {!isPrivate && targets && !scopeTarget && (
                 <div className="max-h-80 space-y-2 overflow-y-auto pr-1">
                   {targets.length === 0 && (
                     <p className="py-4 text-sm text-fg-2">

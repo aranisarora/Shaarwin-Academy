@@ -25,28 +25,15 @@ export function WhatsAppConnect() {
           </p>
         </div>
 
-        {result?.ok ? (
+        {result?.ok && !result.waLink ? (
+          // Fallback: no WhatsApp number configured, so the user has to send
+          // the link message manually — the only case where we surface the code.
           <div className="space-y-3">
             <p className="text-sm text-muted">
-              Send this code to the academy WhatsApp number within{" "}
-              {result.expiresMinutes} minutes:
+              Message the academy WhatsApp number within {result.expiresMinutes}{" "}
+              minutes with:
             </p>
-            <p className="text-2xl font-black tracking-[0.2em] text-ember">
-              {result.code}
-            </p>
-            {result.waLink ? (
-              <Button
-                onClick={() => window.open(result.waLink!, "_blank")}
-                variant="primary"
-              >
-                Open WhatsApp
-              </Button>
-            ) : (
-              <p className="text-sm text-muted">
-                Message the academy WhatsApp number with:{" "}
-                <span className="text-fg">Link my account: {result.code}</span>
-              </p>
-            )}
+            <p className="text-fg">Link my account: {result.code}</p>
           </div>
         ) : (
           <>
@@ -54,11 +41,15 @@ export function WhatsAppConnect() {
               <p className="text-sm text-err">{result.error}</p>
             )}
             <Button
-              variant="ghost"
+              variant="primary"
               disabled={pending}
               onClick={() =>
                 startTransition(async () => {
-                  setResult(await generateWhatsAppLinkCode());
+                  const res = await generateWhatsAppLinkCode();
+                  setResult(res);
+                  if (res.ok && res.waLink) {
+                    window.open(res.waLink, "_blank");
+                  }
                 })
               }
             >

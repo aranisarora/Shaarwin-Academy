@@ -169,6 +169,43 @@ export async function rescheduleGroupBooking(
   return { ok: true, newBookingId: (data as { id: string })?.id };
 }
 
+/**
+ * Reschedule "this + following": move the picked week to the target and
+ * re-point the whole standing series onto the target's slot.
+ */
+export async function rescheduleSeries(
+  bookingId: string,
+  targetSessionId: string
+): Promise<{ ok: boolean; error?: string }> {
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("reschedule_series", {
+    p_booking: bookingId,
+    p_target_session: targetSessionId,
+  });
+  if (error) {
+    const key = Object.keys(rescheduleErrors).find((k) => error.message.includes(k));
+    return {
+      ok: false,
+      error: key ? rescheduleErrors[key] : "Reschedule failed — your original booking is untouched.",
+    };
+  }
+  revalidatePath("/app/schedule");
+  revalidatePath("/app");
+  return { ok: true };
+}
+
+/** Cancel a standing series: stops it and frees all future weeks. */
+export async function cancelSeries(
+  seriesId: string
+): Promise<{ ok: boolean; cancelled?: number; error?: string }> {
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc("cancel_series", { p_series: seriesId });
+  if (error) return { ok: false, error: "Couldn't stop the recurring booking. Try again." };
+  revalidatePath("/app/schedule");
+  revalidatePath("/app");
+  return { ok: true, cancelled: (data as number) ?? 0 };
+}
+
 export type PrivatePreview = {
   ok: boolean;
   proposedCoach?: string | null;

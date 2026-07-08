@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { StudioShell } from "@/components/shells/StudioShell";
 
 const tabs = [
@@ -17,7 +18,21 @@ export function ClientShell({
   children: React.ReactNode;
 }) {
   return (
-    <StudioShell title={title} tabs={tabs} actions={actions}>
+    <StudioShell
+      title={title}
+      tabs={tabs}
+      actions={
+        <>
+          {actions}
+          <Link
+            href="/app/profile"
+            className="flex min-h-11 items-center rounded-[8px] border border-line px-4 text-sm font-medium text-fg-2 transition-colors hover:border-ember hover:text-ember"
+          >
+            Profile
+          </Link>
+        </>
+      }
+    >
       {children}
     </StudioShell>
   );
