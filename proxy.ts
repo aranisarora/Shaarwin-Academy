@@ -73,5 +73,12 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/app/:path*", "/coach/:path*", "/admin/:path*", "/app", "/coach", "/admin"],
+  // Run on every route except static assets so the Supabase session is
+  // refreshed and re-persisted everywhere — including marketing pages like `/`.
+  // A Server Component can't write refreshed cookies, so if the proxy skips a
+  // route, any token refresh triggered during render is lost and rotates the
+  // stored refresh token into an invalid state → the visitor gets signed out.
+  matcher: [
+    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|mp4)$).*)",
+  ],
 };
