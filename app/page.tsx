@@ -76,7 +76,7 @@ export default async function LandingPage() {
   return (
     <StageShell>
       {/* HERO — art-directed swap: 16:9 desktop, 4:5 mobile */}
-      <section className="relative min-h-[92dvh] overflow-hidden">
+      <section className="relative min-h-[100dvh] overflow-hidden">
         <Parallax>
           <Image
             src={heroServe}
