@@ -1,37 +1,17 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { createClient } from "@/lib/supabase/server";
+import { requireFounder } from "@/lib/founder";
+import { saveSettingsCore } from "@/lib/admin-ops";
 
 export async function saveSettings(
   values: Record<string, number>
 ): Promise<{ ok: boolean; error?: string }> {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return { ok: false, error: "Sign in first." };
+  const { supabase, founder } = await requireFounder();
+  if (!founder) return { ok: false, error: "Founder only." };
 
-  const { data: me } = await supabase
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .maybeSingle();
-  if (me?.role !== "founder") return { ok: false, error: "Founder only." };
-
-  for (const [key, value] of Object.entries(values)) {
-    if (!Number.isFinite(value) || value < 0) continue;
-    await supabase
-      .from("settings")
-      .upsert({ key, value, updated_by: user.id }, { onConflict: "key" });
-  }
-
-  await supabase.from("audit_log").insert({
-    actor_id: user.id,
-    action: "settings.update",
-    entity: "settings",
-    meta: values,
-  });
+  const result = await saveSettingsCore(supabase, founder.id, values);
+  if (!result.ok) return result;
 
   revalidatePath("/admin/settings");
   return { ok: true };

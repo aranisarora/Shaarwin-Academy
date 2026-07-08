@@ -7,6 +7,15 @@ import { academyOffsetMinutes } from "@/lib/academy-time";
 
 export type OpResult = { ok: boolean; error?: string };
 
+// Domain cores split out to keep files small — re-exported so `@/lib/admin-ops`
+// stays the single import surface for both the admin actions and the bot.
+export * from "@/lib/admin-ops-classes";
+export * from "@/lib/admin-ops-calendar";
+export * from "@/lib/admin-ops-coaches";
+export * from "@/lib/admin-ops-clients";
+export * from "@/lib/admin-ops-venues";
+export * from "@/lib/admin-ops-settings";
+
 export type NewClass = {
   title: string;
   description: string;

@@ -7,10 +7,16 @@ import {
   cancelSessionCore,
   createGroupClassCore,
   grantCompCore,
+  saveVenueCore,
+  setClassActiveCore,
+  setVenueActiveCore,
+  deleteVenueCore,
+  type VenueInput,
 } from "@/lib/admin-ops";
 import type { NewClass } from "@/lib/admin-ops";
 
 type Result = { ok: boolean; error?: string };
+export type { VenueInput };
 
 // ── Classes ──────────────────────────────────────────────────────────────────
 
@@ -29,13 +35,8 @@ export async function createGroupClass(input: NewClass): Promise<Result> {
 export async function setClassActive(classId: string, active: boolean): Promise<Result> {
   const { supabase, founder } = await requireFounder();
   if (!founder) return { ok: false, error: "Founder only." };
-  await supabase.from("classes").update({ active }).eq("id", classId);
-  await supabase.from("audit_log").insert({
-    actor_id: founder.id,
-    action: active ? "class.activate" : "class.deactivate",
-    entity: "classes",
-    entity_id: classId,
-  });
+  const result = await setClassActiveCore(supabase, founder.id, classId, active);
+  if (!result.ok) return result;
   revalidatePath("/admin/classes");
   return { ok: true };
 }
@@ -55,37 +56,11 @@ export async function cancelSession(sessionId: string, reason: string): Promise<
 
 // ── Venues ───────────────────────────────────────────────────────────────────
 
-export type VenueInput = {
-  id?: string;
-  name: string;
-  address: string;
-  postcode: string;
-  lat: number;
-  lng: number;
-};
-
 export async function saveVenue(input: VenueInput): Promise<Result> {
   const { supabase, founder } = await requireFounder();
   if (!founder) return { ok: false, error: "Founder only." };
-  const row = {
-    name: input.name,
-    address: input.address,
-    postcode: input.postcode,
-    lat: input.lat,
-    lng: input.lng,
-    photo_url: "/images/venue-hall.jpg",
-  };
-  const { error } = input.id
-    ? await supabase.from("venues").update(row).eq("id", input.id)
-    : await supabase.from("venues").insert(row);
-  if (error) return { ok: false, error: "Couldn't save the venue." };
-  await supabase.from("audit_log").insert({
-    actor_id: founder.id,
-    action: input.id ? "venue.update" : "venue.create",
-    entity: "venues",
-    entity_id: input.id ?? null,
-    meta: { name: input.name },
-  });
+  const result = await saveVenueCore(supabase, founder.id, input);
+  if (!result.ok) return result;
   revalidatePath("/admin/venues");
   return { ok: true };
 }
@@ -93,7 +68,8 @@ export async function saveVenue(input: VenueInput): Promise<Result> {
 export async function setVenueActive(venueId: string, active: boolean): Promise<Result> {
   const { supabase, founder } = await requireFounder();
   if (!founder) return { ok: false, error: "Founder only." };
-  await supabase.from("venues").update({ active }).eq("id", venueId);
+  const result = await setVenueActiveCore(supabase, founder.id, venueId, active);
+  if (!result.ok) return result;
   revalidatePath("/admin/venues");
   return { ok: true };
 }
@@ -101,25 +77,8 @@ export async function setVenueActive(venueId: string, active: boolean): Promise<
 export async function deleteVenue(venueId: string): Promise<Result> {
   const { supabase, founder } = await requireFounder();
   if (!founder) return { ok: false, error: "Founder only." };
-  const { count } = await supabase
-    .from("classes")
-    .select("id", { count: "exact", head: true })
-    .eq("venue_id", venueId);
-  if ((count ?? 0) > 0) {
-    return {
-      ok: false,
-      error:
-        "This venue has classes attached, so it can't be deleted. Use “Hide venue” instead — nothing gets lost.",
-    };
-  }
-  const { error } = await supabase.from("venues").delete().eq("id", venueId);
-  if (error) return { ok: false, error: "Couldn't delete the venue." };
-  await supabase.from("audit_log").insert({
-    actor_id: founder.id,
-    action: "venue.delete",
-    entity: "venues",
-    entity_id: venueId,
-  });
+  const result = await deleteVenueCore(supabase, founder.id, venueId);
+  if (!result.ok) return result;
   revalidatePath("/admin/venues");
   return { ok: true };
 }

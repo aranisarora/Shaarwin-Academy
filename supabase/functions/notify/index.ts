@@ -18,6 +18,11 @@ const RESEND_KEY = Deno.env.get("RESEND_API_KEY");
 const TWILIO_SID = Deno.env.get("TWILIO_ACCOUNT_SID");
 const TWILIO_TOKEN = Deno.env.get("TWILIO_AUTH_TOKEN");
 const TWILIO_FROM = Deno.env.get("TWILIO_WHATSAPP_FROM"); // "whatsapp:+1..."
+// Approved Twilio Content template SID for out-of-24h-window sends. One generic
+// Utility template with two variables: {{1}} = first name, {{2}} = the message.
+// Free-form is used instead whenever the user messaged within the last 24h.
+const TWILIO_TEMPLATE_SID = Deno.env.get("TWILIO_WA_TEMPLATE_SID");
+const WINDOW_MS = 24 * 60 * 60 * 1000;
 
 // Types that ignore user prefs (always deliver).
 const TRANSACTIONAL = new Set(["payment_failed", "session_cancelled"]);
@@ -150,20 +155,21 @@ async function deliver(row: {
   body: string;
   data: { url?: string };
 }): Promise<boolean> {
-  // WhatsApp first for linked users (Twilio can only deliver freeform inside
-  // the 24h session window — outside it the send fails and we fall through
-  // to email; register an approved template to lift that limit).
-  if (await deliverWhatsApp(row)) return true;
-
-  // Email fallback via Resend (web push needs VAPID keys — add them and a
-  // push library here when keys are provisioned; email is the reliable path).
-  if (!RESEND_KEY) return true; // nothing configured — count as delivered to avoid loops
-
   const { data: profile } = await supabase
     .from("profiles")
     .select("email,full_name")
     .eq("id", row.user_id)
     .maybeSingle();
+  const firstName = (profile?.full_name ?? "").trim().split(/\s+/)[0] || "there";
+
+  // WhatsApp first for linked users. Inside the 24h service window we send rich
+  // free-form text; outside it we fall back to the approved template (with the
+  // member's name), and only then to email.
+  if (await deliverWhatsApp(row, firstName)) return true;
+
+  // Email fallback via Resend (web push needs VAPID keys — add them and a
+  // push library here when keys are provisioned; email is the reliable path).
+  if (!RESEND_KEY) return true; // nothing configured — count as delivered to avoid loops
   if (!profile?.email) return false;
 
   const deepLink = `${Deno.env.get("APP_URL") ?? "http://localhost:3000"}${row.data?.url ?? "/app"}`;
@@ -191,11 +197,10 @@ async function deliver(row: {
   return res.ok;
 }
 
-async function deliverWhatsApp(row: {
-  user_id: string;
-  title: string;
-  body: string;
-}): Promise<boolean> {
+async function deliverWhatsApp(
+  row: { user_id: string; title: string; body: string },
+  firstName: string
+): Promise<boolean> {
   if (!TWILIO_SID || !TWILIO_TOKEN || !TWILIO_FROM) return false;
 
   const { data: link } = await supabase
@@ -205,20 +210,41 @@ async function deliverWhatsApp(row: {
     .maybeSingle();
   if (!link?.phone) return false;
 
-  const res = await fetch(
-    `https://api.twilio.com/2010-04-01/Accounts/${TWILIO_SID}/Messages.json`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Basic ${btoa(`${TWILIO_SID}:${TWILIO_TOKEN}`)}`,
-        "Content-Type": "application/x-www-form-urlencoded",
-      },
-      body: new URLSearchParams({
-        From: TWILIO_FROM,
-        To: `whatsapp:${link.phone}`,
-        Body: `*${row.title}*\n${row.body}`,
-      }),
-    }
-  );
+  // Is the user inside the 24h WhatsApp service window? (Did they message us
+  // within the last day?) If so we may send free-form text.
+  const { data: lastInbound } = await supabase
+    .from("wa_messages")
+    .select("created_at")
+    .eq("phone", link.phone)
+    .eq("role", "user")
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  const inWindow =
+    !!lastInbound && Date.now() - new Date(lastInbound.created_at).getTime() < WINDOW_MS;
+
+  const auth = `Basic ${btoa(`${TWILIO_SID}:${TWILIO_TOKEN}`)}`;
+  const endpoint = `https://api.twilio.com/2010-04-01/Accounts/${TWILIO_SID}/Messages.json`;
+
+  const params = new URLSearchParams({ From: TWILIO_FROM, To: `whatsapp:${link.phone}` });
+  if (inWindow) {
+    params.set("Body", `*${row.title}*\n${row.body}`);
+  } else if (TWILIO_TEMPLATE_SID) {
+    // Business-initiated outside the window → approved Utility template.
+    params.set("ContentSid", TWILIO_TEMPLATE_SID);
+    params.set(
+      "ContentVariables",
+      JSON.stringify({ "1": firstName, "2": `${row.title} — ${row.body}` })
+    );
+  } else {
+    // No template configured and outside the window: can't send free-form.
+    return false;
+  }
+
+  const res = await fetch(endpoint, {
+    method: "POST",
+    headers: { Authorization: auth, "Content-Type": "application/x-www-form-urlencoded" },
+    body: params,
+  });
   return res.ok;
 }

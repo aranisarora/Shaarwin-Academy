@@ -10,6 +10,7 @@ import {
   grantCompCore,
 } from "@/lib/admin-ops";
 import { fail, fmtIST, ok, type WaTool } from "./types";
+import { founderAdminTools } from "./founder-admin";
 
 const overview: WaTool = {
   name: "academy_overview",
@@ -447,4 +448,5 @@ export const founderTools: WaTool[] = [
   adjustCredits,
   pendingTimeOff,
   decideTimeOff,
+  ...founderAdminTools,
 ];

@@ -15,8 +15,17 @@ import {
 } from "@supabase/supabase-js";
 import { randomBytes } from "crypto";
 import type { Profile } from "@/lib/auth";
+import { normalizePhone } from "./phone";
 
 const LINK_CODE_TTL_MINUTES = 15;
+
+/** Supabase Auth needs an email; for phone-first users we mint a synthetic one
+ *  that never receives mail. The phone (in wa_links + profiles.phone) is the
+ *  real identity. */
+export function syntheticEmailFor(phone: string): string {
+  const digits = phone.replace(/\D/g, "");
+  return `wa${digits}@sharwin.local`;
+}
 
 export function adminClient(): SupabaseClient {
   return createSupabaseClient(
@@ -26,22 +35,122 @@ export function adminClient(): SupabaseClient {
   );
 }
 
-/** Phone (E.164, no whatsapp: prefix) → linked profile, or null. */
+/** Why a message is being handled without a linked account — for logging. */
+export type GuestReason = "not_linked" | "db_error";
+
+export type IdentityResult =
+  | { profile: Profile; reason: null }
+  | { profile: null; reason: GuestReason };
+
+/**
+ * Resolve the account behind a phone number. Order:
+ *   1. Explicit wa_links row (the canonical link).
+ *   2. Fallback: a profile whose profiles.phone matches (e.g. a web-created
+ *      account that never redeemed a code) — auto-link it so step 1 hits next
+ *      time. This is what makes "sign up on the web, just message the bot" work.
+ * Returns a typed reason when nothing matches so the caller can log/act.
+ */
+export async function resolveIdentity(
+  admin: SupabaseClient,
+  rawPhone: string
+): Promise<IdentityResult> {
+  const phone = normalizePhone(rawPhone);
+  if (!phone) return { profile: null, reason: "not_linked" };
+
+  try {
+    const { data: link, error: linkErr } = await admin
+      .from("wa_links")
+      .select("user_id")
+      .eq("phone", phone)
+      .maybeSingle();
+    if (linkErr) {
+      console.error("wa: wa_links lookup failed", linkErr.message);
+      return { profile: null, reason: "db_error" };
+    }
+
+    if (link) {
+      const { data: profile } = await admin
+        .from("profiles")
+        .select("*")
+        .eq("id", link.user_id)
+        .maybeSingle();
+      if (profile) return { profile: profile as Profile, reason: null };
+    }
+
+    // No link row — try matching an existing account by phone and auto-link it.
+    const { data: byPhone } = await admin
+      .from("profiles")
+      .select("*")
+      .eq("phone", phone)
+      .maybeSingle();
+    if (byPhone) {
+      await admin
+        .from("wa_links")
+        .upsert({ phone, user_id: byPhone.id }, { onConflict: "phone" });
+      return { profile: byPhone as Profile, reason: null };
+    }
+
+    return { profile: null, reason: "not_linked" };
+  } catch (err) {
+    console.error("wa: resolveIdentity crashed", err);
+    return { profile: null, reason: "db_error" };
+  }
+}
+
+/** @deprecated use resolveIdentity — kept for callers that only need the profile. */
 export async function resolveLinkedProfile(
   admin: SupabaseClient,
   phone: string
 ): Promise<Profile | null> {
-  const { data: link } = await admin
-    .from("wa_links")
-    .select("user_id")
-    .eq("phone", phone)
+  return (await resolveIdentity(admin, phone)).profile;
+}
+
+/**
+ * Phone-first onboarding: the number is already Twilio-verified, so create a
+ * client account bound to it (synthetic email, no OTP, no code) and link it.
+ * fullName is a placeholder until the bot collects the real one via
+ * update_profile. Returns the fresh profile, or null on failure.
+ */
+export async function autoProvisionClient(
+  admin: SupabaseClient,
+  rawPhone: string
+): Promise<Profile | null> {
+  const phone = normalizePhone(rawPhone);
+  if (!phone) return null;
+
+  const email = syntheticEmailFor(phone);
+  const { data: created, error } = await admin.auth.admin.createUser({
+    email,
+    email_confirm: true,
+    user_metadata: { full_name: "" },
+  });
+  if (error || !created.user) {
+    console.error("wa: autoProvisionClient createUser failed", error?.message);
+    return null;
+  }
+
+  const userId = created.user.id;
+  // handle_new_user trigger usually provisions these; belt & braces.
+  const { data: existing } = await admin
+    .from("profiles")
+    .select("*")
+    .eq("id", userId)
     .maybeSingle();
-  if (!link) return null;
+  if (!existing) {
+    await admin
+      .from("profiles")
+      .insert({ id: userId, role: "client", full_name: "", email });
+    await admin.from("players").insert({ client_id: userId, full_name: "there" });
+  }
+
+  await admin.from("wa_links").delete().eq("phone", phone);
+  await admin.from("wa_links").insert({ phone, user_id: userId });
+  await admin.from("profiles").update({ phone }).eq("id", userId);
 
   const { data: profile } = await admin
     .from("profiles")
     .select("*")
-    .eq("id", link.user_id)
+    .eq("id", userId)
     .maybeSingle();
   return (profile as Profile) ?? null;
 }
@@ -118,8 +227,10 @@ export async function createLinkCode(userId: string): Promise<string> {
 export async function consumeLinkCode(
   admin: SupabaseClient,
   rawCode: string,
-  phone: string
+  rawPhone: string
 ): Promise<{ ok: true; userId: string } | { ok: false; error: string }> {
+  const phone = normalizePhone(rawPhone);
+  if (!phone) return { ok: false, error: "code_not_found" };
   const code = rawCode.trim().toUpperCase();
   const { data: row } = await admin
     .from("wa_link_codes")
@@ -150,10 +261,12 @@ export async function consumeLinkCode(
 /** Bot side: brand-new client signs up entirely in chat. */
 export async function signUpNewClient(
   admin: SupabaseClient,
-  phone: string,
+  rawPhone: string,
   fullName: string,
   email: string
 ): Promise<{ ok: true; userId: string } | { ok: false; error: string }> {
+  const phone = normalizePhone(rawPhone);
+  if (!phone) return { ok: false, error: "signup_failed" };
   const cleanEmail = email.trim().toLowerCase();
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
     return { ok: false, error: "invalid_email" };

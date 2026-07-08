@@ -5,7 +5,9 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { getBrowseSessions, getMyBookings } from "@/lib/booking";
 import { getSubscriptionSummary } from "@/lib/billing";
-import { fail, fmtIST, ok, type ToolContext, type WaTool } from "./types";
+import { getRazorpay } from "@/lib/razorpay";
+import { geocode } from "@/lib/whatsapp/geocode";
+import { fail, fmtIST, formatPricePence, ok, type ToolContext, type WaTool } from "./types";
 
 const RPC_ERROR_COPY: Record<string, string> = {
   no_active_subscription: "No active membership — buy one on the website pricing page first.",
@@ -52,20 +54,6 @@ async function resolvePlayer(
   return {
     error: `Multiple players on this account — ask which one: ${players.map((p) => p.full_name).join(", ")}.`,
   };
-}
-
-async function geocode(address: string): Promise<{ lat: number; lng: number; place: string } | null> {
-  const token = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN;
-  if (!token) return null;
-  const res = await fetch(
-    `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(address)}.json?limit=1&access_token=${token}`
-  );
-  if (!res.ok) return null;
-  const json = (await res.json()) as {
-    features?: { center: [number, number]; place_name: string }[];
-  };
-  const hit = json.features?.[0];
-  return hit ? { lat: hit.center[1], lng: hit.center[0], place: hit.place_name } : null;
 }
 
 const mySchedule: WaTool = {
@@ -294,6 +282,154 @@ const bookPrivate: WaTool = {
   },
 };
 
+const listPlans: WaTool = {
+  name: "list_membership_plans",
+  description:
+    "The membership plans the user could buy, with plan_id, price, weekly group allowance and quarterly private minutes. Use before sending a checkout link.",
+  input_schema: { type: "object", properties: {} },
+  run: async (_input, ctx) => {
+    const { data } = await ctx.supabase!
+      .from("plans")
+      .select("id,name,description,price_pence,group_sessions_per_week,private_minutes_per_quarter")
+      .eq("active", true)
+      .order("price_pence");
+    return ok(
+      (data ?? []).map((p) => ({
+        plan_id: p.id,
+        name: p.name,
+        description: p.description,
+        price_per_quarter: formatPricePence(p.price_pence),
+        group_sessions_per_week: p.group_sessions_per_week,
+        private_minutes_per_quarter: p.private_minutes_per_quarter,
+      }))
+    );
+  },
+};
+
+const checkoutLink: WaTool = {
+  name: "send_membership_checkout_link",
+  description:
+    "Start buying/renewing a membership. Card payment can't happen in chat, so this creates a secure Razorpay checkout link the user taps to pay. plan_id from list_membership_plans. The membership activates automatically once payment succeeds.",
+  input_schema: {
+    type: "object",
+    properties: { plan_id: { type: "string" } },
+    required: ["plan_id"],
+  },
+  run: async (input, ctx) => {
+    const razorpay = getRazorpay();
+    if (!razorpay) return fail("Online payments aren't set up yet — please try the website.");
+    const { data: plan } = await ctx.supabase!
+      .from("plans")
+      .select("id,name,razorpay_plan_id")
+      .eq("id", input.plan_id)
+      .eq("active", true)
+      .maybeSingle();
+    if (!plan?.razorpay_plan_id) return fail("That plan isn't available for checkout.");
+    try {
+      const sub = await razorpay.post<{ id: string; short_url?: string }>("/subscriptions", {
+        plan_id: plan.razorpay_plan_id,
+        total_count: 40,
+        quantity: 1,
+        customer_notify: 1,
+        notes: {
+          supabase_user_id: ctx.profile!.id,
+          plan_id: plan.id,
+          email: ctx.profile!.email,
+          full_name: ctx.profile!.full_name,
+        },
+      });
+      if (!sub.short_url) return fail("Couldn't create the checkout link — try the website.");
+      return ok({
+        plan: plan.name,
+        checkout_url: sub.short_url,
+        note: "Send them this link to complete payment. Membership activates automatically afterwards.",
+      });
+    } catch (err) {
+      console.error("wa checkout link failed", err);
+      return fail("Couldn't start checkout just now — try again shortly.");
+    }
+  },
+};
+
+const updateProfile: WaTool = {
+  name: "update_profile",
+  description:
+    "Update the user's own name and/or default address. Use this to record a new member's name after they tell you.",
+  input_schema: {
+    type: "object",
+    properties: {
+      full_name: { type: "string" },
+      default_address: { type: "string" },
+    },
+  },
+  run: async (input, ctx) => {
+    const patch: Record<string, string> = {};
+    if (input.full_name != null && String(input.full_name).trim().length >= 2) {
+      patch.full_name = String(input.full_name).trim();
+    }
+    if (input.default_address != null) {
+      patch.default_address = String(input.default_address).trim();
+    }
+    if (Object.keys(patch).length === 0) return fail("Nothing valid to update.");
+    const { error } = await ctx.supabase!.from("profiles").update(patch).eq("id", ctx.profile!.id);
+    if (error) return fail("Couldn't save that.");
+    // Keep the household's default player name in step with the account name.
+    if (patch.full_name) {
+      await ctx.supabase!
+        .from("players")
+        .update({ full_name: patch.full_name })
+        .eq("client_id", ctx.profile!.id)
+        .in("full_name", ["", "there"]);
+    }
+    return ok({ updated: Object.keys(patch) });
+  },
+};
+
+const addPlayer: WaTool = {
+  name: "add_player",
+  description:
+    "Add a household player (e.g. a child) to the account so they can be booked into sessions.",
+  input_schema: {
+    type: "object",
+    properties: { full_name: { type: "string" } },
+    required: ["full_name"],
+  },
+  run: async (input, ctx) => {
+    const name = String(input.full_name ?? "").trim();
+    if (name.length < 2) return fail("Need the player's name.");
+    const { error } = await ctx.supabase!
+      .from("players")
+      .insert({ client_id: ctx.profile!.id, full_name: name });
+    if (error) return fail("Couldn't add that player.");
+    return ok({ added: name });
+  },
+};
+
+const renamePlayer: WaTool = {
+  name: "rename_player",
+  description: "Rename a household player. Match the current name; confirm the new one.",
+  input_schema: {
+    type: "object",
+    properties: {
+      current_name: { type: "string" },
+      new_name: { type: "string" },
+    },
+    required: ["current_name", "new_name"],
+  },
+  run: async (input, ctx) => {
+    const player = await resolvePlayer(ctx, String(input.current_name));
+    if ("error" in player) return fail(player.error);
+    const newName = String(input.new_name ?? "").trim();
+    if (newName.length < 2) return fail("Need a valid new name.");
+    const { error } = await ctx.supabase!
+      .from("players")
+      .update({ full_name: newName })
+      .eq("id", player.id);
+    if (error) return fail("Couldn't rename that player.");
+    return ok({ renamed_to: newName });
+  },
+};
+
 export const clientTools: WaTool[] = [
   mySchedule,
   browseSessions,
@@ -303,4 +439,9 @@ export const clientTools: WaTool[] = [
   membership,
   privateSlots,
   bookPrivate,
+  listPlans,
+  checkoutLink,
+  updateProfile,
+  addPlayer,
+  renamePlayer,
 ];

@@ -8,9 +8,11 @@ import { after } from "next/server";
 import { runAgent } from "@/lib/whatsapp/agent";
 import {
   adminClient,
-  resolveLinkedProfile,
+  autoProvisionClient,
+  resolveIdentity,
   userClientFor,
 } from "@/lib/whatsapp/identity";
+import { normalizePhone } from "@/lib/whatsapp/phone";
 import {
   sendWhatsApp,
   stripWhatsappPrefix,
@@ -54,7 +56,11 @@ export async function POST(request: Request) {
   const from = params.From ?? "";
   const body = (params.Body ?? "").trim();
   if (!from.startsWith("whatsapp:")) return EMPTY_TWIML;
-  const phone = stripWhatsappPrefix(from);
+  const phone = normalizePhone(stripWhatsappPrefix(from));
+  if (!phone) {
+    console.warn("wa: unparseable sender", from);
+    return EMPTY_TWIML;
+  }
 
   after(async () => {
     try {
@@ -93,12 +99,30 @@ async function handleMessage(phone: string, body: string, hasMedia: boolean) {
     return;
   }
 
-  const profile = await resolveLinkedProfile(admin, phone);
-  const supabase = profile ? await userClientFor(profile.email) : null;
-  if (profile && !supabase) {
+  // Phone-first identity: resolve, and if the number is genuinely unknown,
+  // provision a client account for it (the number is Twilio-verified, so no
+  // code or OTP is needed). A DB error must NOT silently degrade to guest.
+  const identity = await resolveIdentity(admin, phone);
+  let profile = identity.profile;
+  if (!profile && identity.reason === "not_linked") {
+    profile = await autoProvisionClient(admin, phone);
+    if (profile) console.info("wa: auto-provisioned client for", phone);
+  }
+  if (!profile) {
+    console.warn("wa: no profile for", phone, "reason", identity.reason);
     await sendWhatsApp(
       phone,
-      "I couldn't securely access your account just now. Please try again, or re-link from the webapp profile page."
+      "I'm having trouble reaching your account right now — please try again in a minute."
+    );
+    return;
+  }
+
+  const supabase = await userClientFor(profile.email);
+  if (!supabase) {
+    console.error("wa: session mint failed for", profile.id);
+    await sendWhatsApp(
+      phone,
+      "I couldn't securely access your account just now. Please try again in a minute."
     );
     return;
   }

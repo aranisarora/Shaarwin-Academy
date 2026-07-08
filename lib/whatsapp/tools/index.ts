@@ -2,7 +2,7 @@
 // the actual security boundary.
 
 import { adminClient } from "@/lib/whatsapp/identity";
-import { academyInfo, guestTools } from "./guest";
+import { academyInfo, guestTools, linkAccount } from "./guest";
 import { clientTools } from "./client";
 import { coachTools } from "./coach";
 import { founderTools } from "./founder";
@@ -25,11 +25,11 @@ const unlinkAccount: WaTool = {
 export function toolsForRole(role: "guest" | "client" | "coach" | "founder"): WaTool[] {
   switch (role) {
     case "client":
-      return [...clientTools, academyInfo, unlinkAccount];
+      return [...clientTools, academyInfo, linkAccount, unlinkAccount];
     case "coach":
-      return [...coachTools, academyInfo, unlinkAccount];
+      return [...coachTools, academyInfo, linkAccount, unlinkAccount];
     case "founder":
-      return [...founderTools, academyInfo, unlinkAccount];
+      return [...founderTools, academyInfo, linkAccount, unlinkAccount];
     default:
       return guestTools;
   }

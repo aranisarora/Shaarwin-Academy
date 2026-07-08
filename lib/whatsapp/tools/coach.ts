@@ -223,6 +223,132 @@ const requestTimeOff: WaTool = {
   },
 };
 
+const markAttendance: WaTool = {
+  name: "mark_attendance",
+  description:
+    "Mark a player attended or a no-show for one of the coach's sessions (session_id from my_coach_sessions, player from session_roster). Only works from 15 minutes before the session up to 48 hours after. status: attended | no_show | confirmed (to undo).",
+  input_schema: {
+    type: "object",
+    properties: {
+      session_id: { type: "string" },
+      player_name: { type: "string" },
+      status: { type: "string", description: "attended | no_show | confirmed" },
+    },
+    required: ["session_id", "player_name", "status"],
+  },
+  run: async (input, ctx) => {
+    const status = String(input.status);
+    if (!["attended", "no_show", "confirmed"].includes(status)) {
+      return fail("status must be attended, no_show or confirmed.");
+    }
+    const { data: session } = await ctx.supabase!
+      .from("class_sessions")
+      .select("id,coach_id,starts_at")
+      .eq("id", input.session_id)
+      .maybeSingle();
+    if (!session || session.coach_id !== ctx.profile!.id) {
+      return fail("That session isn't on this coach's schedule.");
+    }
+    const start = new Date(session.starts_at).getTime();
+    if (Date.now() < start - 15 * 60000 || Date.now() > start + 48 * 3600000) {
+      return fail("Attendance can only be set around the session (from 15 min before to 48h after).");
+    }
+    const needle = String(input.player_name).trim().toLowerCase();
+    const { data: bookings } = await ctx.supabase!
+      .from("bookings")
+      .select("id,players(full_name)")
+      .eq("session_id", input.session_id)
+      .in("status", ["confirmed", "attended", "no_show"]);
+    const matches = (bookings ?? []).filter((b) =>
+      ((b.players as unknown as { full_name: string } | null)?.full_name ?? "")
+        .toLowerCase()
+        .includes(needle)
+    );
+    if (matches.length !== 1) {
+      return fail(
+        matches.length === 0
+          ? "No booked player matches that name on this session."
+          : "That name matches more than one player — be more specific."
+      );
+    }
+    const { error } = await ctx.supabase!
+      .from("bookings")
+      .update({ status })
+      .eq("id", matches[0].id);
+    if (error) return fail("Couldn't save attendance.");
+    return ok({ player: input.player_name, status });
+  },
+};
+
+const saveSessionNotes: WaTool = {
+  name: "save_session_notes",
+  description: "Save coaching notes on one of the coach's sessions (session_id from my_coach_sessions).",
+  input_schema: {
+    type: "object",
+    properties: { session_id: { type: "string" }, notes: { type: "string" } },
+    required: ["session_id", "notes"],
+  },
+  run: async (input, ctx) => {
+    const { data: session } = await ctx.supabase!
+      .from("class_sessions")
+      .select("id,coach_id")
+      .eq("id", input.session_id)
+      .maybeSingle();
+    if (!session || session.coach_id !== ctx.profile!.id) {
+      return fail("That session isn't on this coach's schedule.");
+    }
+    const { error } = await ctx.supabase!
+      .from("class_sessions")
+      .update({ coach_notes: String(input.notes) })
+      .eq("id", input.session_id);
+    return error ? fail("Couldn't save notes.") : ok({ saved: true });
+  },
+};
+
+const cantMakeSession: WaTool = {
+  name: "cant_make_session",
+  description:
+    "Report that the coach can't take an upcoming session (session_id from my_coach_sessions). Triggers cover arrangement and alerts the founder. Confirm first.",
+  input_schema: {
+    type: "object",
+    properties: { session_id: { type: "string" } },
+    required: ["session_id"],
+  },
+  run: async (input, ctx) => {
+    const supabase = ctx.supabase!;
+    const { data: session } = await supabase
+      .from("class_sessions")
+      .select("id,coach_id,starts_at,ends_at")
+      .eq("id", input.session_id)
+      .maybeSingle();
+    if (!session || session.coach_id !== ctx.profile!.id) {
+      return fail("That session isn't on this coach's schedule.");
+    }
+    const { error } = await supabase.rpc("handle_coach_dropout", {
+      p_coach: ctx.profile!.id,
+      p_from: session.starts_at,
+      p_to: session.ends_at,
+    });
+    if (error) {
+      // Engine not applied — unassign and alert founders directly.
+      await supabase.from("class_sessions").update({ coach_id: null }).eq("id", input.session_id);
+      const { data: founders } = await supabase.from("profiles").select("id").eq("role", "founder");
+      if (founders?.length) {
+        await supabase.from("notifications").insert(
+          founders.map((f) => ({
+            user_id: f.id,
+            type: "session_unassigned",
+            title: "Cover needed",
+            body: "A coach dropped a session.",
+            data: { session_id: input.session_id, url: "/admin/calendar" },
+          }))
+        );
+      }
+    }
+    return ok({ reported: true, note: "Cover is being arranged and the founder has been alerted." });
+  },
+};
+
 export const coachTools: WaTool[] = [
   mySessions,
   roster,
@@ -230,4 +356,7 @@ export const coachTools: WaTool[] = [
   addWindow,
   removeWindow,
   requestTimeOff,
+  markAttendance,
+  saveSessionNotes,
+  cantMakeSession,
 ];
