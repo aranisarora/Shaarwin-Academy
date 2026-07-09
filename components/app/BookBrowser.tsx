@@ -216,7 +216,7 @@ export function BookBrowser({
       </div>
 
       <div className="order-1 lg:order-2 lg:sticky lg:top-20 lg:self-start">
-        <VenueMap venues={venues} height="42vh" interactiveCard={false} />
+        <VenueMap venues={venues} height="42vh" interactiveCard={false} autoLocate />
       </div>
 
       <Sheet

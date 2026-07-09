@@ -11,12 +11,15 @@ export function VenueMap({
   interactiveCard = true,
   ctaHref = "/locations",
   ctaLabel = "See classes",
+  autoLocate = false,
 }: {
   venues: Venue[];
   height?: string;
   interactiveCard?: boolean;
   ctaHref?: string;
   ctaLabel?: string;
+  /** Prompt for the visitor's location on load and drop a "you are here" pin. */
+  autoLocate?: boolean;
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -70,6 +73,14 @@ export function VenueMap({
           bounds.extend([venue.lng, venue.lat]);
         }
         if (venues.length > 1) map.fitBounds(bounds, { padding: 72, maxZoom: 12 });
+
+        // Automatically show the visitor's location (prompts for permission).
+        // Fit the view to include them without yanking the camera off the venues.
+        if (autoLocate) {
+          map.once("load", () => {
+            if (!cancelled) locateMe(false);
+          });
+        }
       } catch {
         if (!cancelled) setFailed(true);
       }
@@ -84,7 +95,7 @@ export function VenueMap({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  function locateMe() {
+  function locateMe(fly = true) {
     if (!navigator.geolocation) return;
     setLocating(true);
     setLocationDenied(false);
@@ -107,11 +118,21 @@ export function VenueMap({
           .setLngLat([lng, lat])
           .addTo(map);
 
-        map.flyTo({ center: [lng, lat], zoom: 12, duration: 1200 });
+        if (fly) {
+          map.flyTo({ center: [lng, lat], zoom: 12, duration: 1200 });
+        } else {
+          // Auto-locate: keep the venues in frame, just widen to include the user.
+          const bounds = new mapboxgl.LngLatBounds();
+          bounds.extend([lng, lat]);
+          for (const venue of venues) bounds.extend([venue.lng, venue.lat]);
+          map.fitBounds(bounds, { padding: 72, maxZoom: 12, duration: 1200 });
+        }
       },
       () => {
         setLocating(false);
-        setLocationDenied(true);
+        // Only surface the denial notice for an explicit user action, not the
+        // automatic prompt on load.
+        if (fly) setLocationDenied(true);
       },
       { timeout: 10000 }
     );
@@ -143,7 +164,7 @@ export function VenueMap({
 
       {/* Locate-me button */}
       <button
-        onClick={locateMe}
+        onClick={() => locateMe(true)}
         disabled={locating}
         title="Show my location"
         aria-label="Show my location on the map"
