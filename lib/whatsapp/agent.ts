@@ -2,14 +2,74 @@
 // tools → plain-English reply out. History lives in wa_messages so context
 // survives serverless cold starts.
 
+import { createSign } from "crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Profile } from "@/lib/auth";
 import { toolsForRole, type ToolContext, type WaTool } from "./tools";
 
-const MODEL = process.env.WHATSAPP_BOT_MODEL ?? "gemini-2.5-flash";
-const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`;
 const MAX_TOOL_ROUNDS = 8;
 const HISTORY_MESSAGES = 24;
+
+// ---------------------------------------------------------------------------
+// Vertex AI auth — service-account JWT → short-lived OAuth token
+// ---------------------------------------------------------------------------
+
+// Parse the service-account key ONCE at module load rather than on every
+// request/token refresh. Lazy + memoised so a missing env var only throws when
+// the bot actually runs (mirrors the route's config guard), not at import time.
+type ServiceAccount = { client_email: string; private_key: string; project_id: string };
+let _sa: ServiceAccount | null = null;
+function serviceAccount(): ServiceAccount {
+  if (!_sa) _sa = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON!) as ServiceAccount;
+  return _sa;
+}
+
+let _tokenCache: { token: string; expiresAt: number } | null = null;
+
+async function getVertexToken(): Promise<string> {
+  const nowSec = Math.floor(Date.now() / 1000);
+  if (_tokenCache && _tokenCache.expiresAt > nowSec + 60) return _tokenCache.token;
+
+  const sa = serviceAccount();
+  const iat = nowSec;
+  const exp = iat + 3600;
+
+  const header = Buffer.from(JSON.stringify({ alg: "RS256", typ: "JWT" })).toString("base64url");
+  const payload = Buffer.from(
+    JSON.stringify({
+      iss: sa.client_email,
+      scope: "https://www.googleapis.com/auth/cloud-platform",
+      aud: "https://oauth2.googleapis.com/token",
+      exp,
+      iat,
+    })
+  ).toString("base64url");
+
+  const sigInput = `${header}.${payload}`;
+  const signer = createSign("RSA-SHA256");
+  signer.update(sigInput);
+  const sig = signer.sign(sa.private_key, "base64url");
+  const jwt = `${sigInput}.${sig}`;
+
+  const res = await fetch("https://oauth2.googleapis.com/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer",
+      assertion: jwt,
+    }),
+  });
+  if (!res.ok) throw new Error(`vertex_token_${res.status}: ${await res.text().catch(() => "")}`);
+  const { access_token } = (await res.json()) as { access_token: string };
+  _tokenCache = { token: access_token, expiresAt: exp };
+  return access_token;
+}
+
+function vertexUrl(model: string): string {
+  const { project_id } = serviceAccount();
+  const location = process.env.VERTEX_LOCATION ?? "asia-south1";
+  return `https://${location}-aiplatform.googleapis.com/v1/projects/${project_id}/locations/${location}/publishers/google/models/${model}:generateContent`;
+}
 
 type Part =
   | { text: string }
@@ -101,38 +161,54 @@ function functionDeclaration(tool: WaTool) {
   };
 }
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
 async function callGemini(
   system: string,
   messages: ApiMessage[],
   tools: WaTool[]
 ): Promise<Part[]> {
-  const res = await fetch(GEMINI_URL, {
-    method: "POST",
-    headers: {
-      "x-goog-api-key": process.env.GEMINI_API_KEY!,
-      "content-type": "application/json",
+  const model = process.env.WHATSAPP_BOT_MODEL ?? "gemini-2.5-flash";
+  const body = JSON.stringify({
+    systemInstruction: { parts: [{ text: system }] },
+    contents: messages,
+    tools: [{ functionDeclarations: tools.map(functionDeclaration) }],
+    generationConfig: {
+      maxOutputTokens: 2048,
+      // A small thinking budget markedly improves tool-calling reliability
+      // (the model reliably decides to CALL a tool instead of deflecting)
+      // while keeping WhatsApp latency acceptable.
+      thinkingConfig: { thinkingBudget: 512 },
     },
-    body: JSON.stringify({
-      systemInstruction: { parts: [{ text: system }] },
-      contents: messages,
-      tools: [{ functionDeclarations: tools.map(functionDeclaration) }],
-      generationConfig: {
-        maxOutputTokens: 2048,
-        // A small thinking budget markedly improves tool-calling reliability
-        // (the model reliably decides to CALL a tool instead of deflecting)
-        // while keeping WhatsApp latency acceptable.
-        thinkingConfig: { thinkingBudget: 512 },
-      },
-    }),
   });
-  if (!res.ok) {
+
+  // Transient-error backoff: Vertex returns 429 (rate/quota) and 503 (model
+  // overloaded) under load. Retry a couple of times with exponential backoff so
+  // a brief spike doesn't drop a user's message. Auth/4xx errors are not
+  // retried — they won't fix themselves.
+  const MAX_ATTEMPTS = 3;
+  for (let attempt = 1; ; attempt++) {
+    const token = await getVertexToken();
+    const res = await fetch(vertexUrl(model), {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body,
+    });
+    if (res.ok) {
+      const json = (await res.json()) as { candidates?: { content?: { parts?: Part[] } }[] };
+      return json.candidates?.[0]?.content?.parts ?? [];
+    }
+
     const detail = await res.text().catch(() => "");
-    throw new Error(`gemini_${res.status}: ${detail.slice(0, 300)}`);
+    const retryable = res.status === 429 || res.status === 503;
+    if (!retryable || attempt >= MAX_ATTEMPTS) {
+      throw new Error(`gemini_${res.status}: ${detail.slice(0, 300)}`);
+    }
+    // 0.5s, then 1s (+jitter). Well within WhatsApp's after() budget.
+    const backoff = 500 * 2 ** (attempt - 1) + Math.floor(Math.random() * 250);
+    console.warn(`wa: gemini ${res.status}, retry ${attempt}/${MAX_ATTEMPTS - 1} in ${backoff}ms`);
+    await sleep(backoff);
   }
-  const body = (await res.json()) as {
-    candidates?: { content?: { parts?: Part[] } }[];
-  };
-  return body.candidates?.[0]?.content?.parts ?? [];
 }
 
 /** History as alternating turns; consecutive same-role rows get merged. */

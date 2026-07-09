@@ -28,7 +28,7 @@ const EMPTY_TWIML = new Response(
 const RATE_LIMIT_PER_MINUTE = 12;
 
 export async function POST(request: Request) {
-  if (!twilioConfigured() || !process.env.GEMINI_API_KEY) {
+  if (!twilioConfigured() || !process.env.GOOGLE_SERVICE_ACCOUNT_JSON) {
     return new Response("not configured", { status: 503 });
   }
 
