@@ -102,6 +102,12 @@ export const signUp: WaTool = {
       };
       return fail(copy[result.error] ?? "Signup failed.");
     }
+    if (result.role === "coach") {
+      return ok({
+        created: true,
+        note: "Account created as a coach (they were on the invite list) and this number is now linked. Their next message will be handled with coach tools — greet them and offer their schedule, rosters and availability.",
+      });
+    }
     return ok({
       created: true,
       note: "Account created and this number is now linked. They can browse sessions right away; to book they'll need a membership (payments happen on the website pricing page).",

@@ -150,6 +150,22 @@ create table public.coaches (
   created_at timestamptz default now() not null
 );
 
+create table public.coach_invites (
+  id uuid default gen_random_uuid() not null,
+  email text not null,
+  full_name text,
+  phone text,
+  bio text,
+  tier smallint default 1 not null,
+  max_teachable_level skill_level default 'advanced'::skill_level not null,
+  travel_radius_km numeric(5,1) default 10 not null,
+  dbs_checked boolean default false not null,
+  created_by uuid,
+  created_at timestamptz default now() not null,
+  claimed_at timestamptz,
+  claimed_by uuid
+);
+
 create table public.invoices (
   id uuid default gen_random_uuid() not null,
   client_id uuid not null,
@@ -372,6 +388,10 @@ ALTER TABLE public.coach_time_off ADD CONSTRAINT coach_time_off_decided_by_fkey 
 ALTER TABLE public.coach_time_off ADD CONSTRAINT time_off_window CHECK ((starts_at < ends_at));
 ALTER TABLE public.coaches ADD CONSTRAINT coaches_pkey PRIMARY KEY (id);
 ALTER TABLE public.coaches ADD CONSTRAINT coaches_id_fkey FOREIGN KEY (id) REFERENCES profiles(id) ON DELETE CASCADE;
+ALTER TABLE public.coach_invites ADD CONSTRAINT coach_invites_pkey PRIMARY KEY (id);
+ALTER TABLE public.coach_invites ADD CONSTRAINT coach_invites_email_key UNIQUE (email);
+ALTER TABLE public.coach_invites ADD CONSTRAINT coach_invites_created_by_fkey FOREIGN KEY (created_by) REFERENCES profiles(id) ON DELETE SET NULL;
+ALTER TABLE public.coach_invites ADD CONSTRAINT coach_invites_claimed_by_fkey FOREIGN KEY (claimed_by) REFERENCES profiles(id) ON DELETE SET NULL;
 ALTER TABLE public.invoices ADD CONSTRAINT invoices_stripe_invoice_id_key UNIQUE (stripe_invoice_id);
 ALTER TABLE public.invoices ADD CONSTRAINT invoices_pkey PRIMARY KEY (id);
 ALTER TABLE public.invoices ADD CONSTRAINT invoices_client_id_fkey FOREIGN KEY (client_id) REFERENCES profiles(id) ON DELETE CASCADE;
@@ -437,6 +457,7 @@ CREATE INDEX classes_venue_id_idx ON public.classes USING btree (venue_id) WHERE
 CREATE INDEX coach_assignments_session_id_status_idx ON public.coach_assignments USING btree (session_id, status);
 CREATE INDEX coach_availability_coach_id_weekday_idx ON public.coach_availability USING btree (coach_id, weekday);
 CREATE INDEX coach_time_off_coach_id_starts_at_idx ON public.coach_time_off USING btree (coach_id, starts_at);
+CREATE INDEX coach_invites_phone_idx ON public.coach_invites USING btree (phone) WHERE (phone IS NOT NULL);
 CREATE INDEX notifications_status_scheduled_for_idx ON public.notifications USING btree (status, scheduled_for);
 CREATE INDEX student_notes_player_created_idx ON public.student_notes USING btree (player_id, created_at DESC);
 CREATE INDEX players_client_id_idx ON public.players USING btree (client_id);
@@ -512,7 +533,7 @@ begin
       if p_notify then
         insert into notifications (user_id, type, title, body, data, scheduled_for) values
           (p_client, 'booking_confirmed', 'Booked.',
-           to_char(v_session.starts_at at time zone v_tz, 'Dy DD Mon, HH24:MI') || ' — ' || v_class.title,
+           to_char(v_session.starts_at at time zone v_tz, 'Dy DD Mon, FMHH12:MI am') || ' — ' || v_class.title,
            jsonb_build_object('booking_id', v_booking.id, 'session_id', p_session, 'url', '/app/schedule'),
            now());
       end if;
@@ -767,7 +788,7 @@ begin
     -- confirmation + reminders (P11 delivers)
     insert into notifications (user_id, type, title, body, data, scheduled_for) values
       (v_client, 'booking_confirmed', 'Booked.',
-       to_char(v_session.starts_at at time zone 'Asia/Kolkata', 'Dy DD Mon, HH24:MI') || ' — ' || v_class.title,
+       to_char(v_session.starts_at at time zone 'Asia/Kolkata', 'Dy DD Mon, FMHH12:MI am') || ' — ' || v_class.title,
        jsonb_build_object('booking_id', v_booking.id, 'session_id', p_session, 'url', '/app/schedule'),
        now()),
       (v_client, 'reminder_24h', 'Tomorrow', v_class.title,
@@ -1332,7 +1353,43 @@ CREATE OR REPLACE FUNCTION public.handle_new_user()
 AS $function$
 declare
   v_name text := coalesce(new.raw_user_meta_data->>'full_name', split_part(new.email, '@', 1));
+  v_invite public.coach_invites%rowtype;
 begin
+  select * into v_invite
+  from public.coach_invites
+  where lower(email) = lower(new.email)
+    and claimed_at is null
+  order by created_at
+  limit 1;
+
+  if found then
+    insert into profiles (id, role, full_name, email, phone)
+    values (
+      new.id,
+      'coach',
+      coalesce(nullif(v_invite.full_name, ''), v_name),
+      new.email,
+      v_invite.phone
+    )
+    on conflict (id) do nothing;
+
+    insert into coaches (
+      id, bio, base_lat, base_lng, travel_radius_km,
+      max_teachable_level, dbs_checked, tier, active
+    )
+    values (
+      new.id, v_invite.bio, 12.9716, 77.5946, v_invite.travel_radius_km,
+      v_invite.max_teachable_level, v_invite.dbs_checked, v_invite.tier, true
+    )
+    on conflict (id) do nothing;
+
+    update public.coach_invites
+    set claimed_at = now(), claimed_by = new.id
+    where id = v_invite.id;
+
+    return new;
+  end if;
+
   insert into profiles (id, role, full_name, email)
   values (new.id, 'client', v_name, new.email)
   on conflict (id) do nothing;
@@ -1342,6 +1399,45 @@ begin
   where not exists (select 1 from players where client_id = new.id);
 
   return new;
+end;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.claim_coach_invite_by_phone(p_user uuid, p_phone text)
+ RETURNS boolean
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare
+  v_invite public.coach_invites%rowtype;
+begin
+  select * into v_invite
+  from public.coach_invites
+  where phone = p_phone
+    and claimed_at is null
+  order by created_at
+  limit 1;
+  if not found then
+    return false;
+  end if;
+
+  update profiles set role = 'coach' where id = p_user;
+
+  insert into coaches (
+    id, bio, base_lat, base_lng, travel_radius_km,
+    max_teachable_level, dbs_checked, tier, active
+  )
+  values (
+    p_user, v_invite.bio, 12.9716, 77.5946, v_invite.travel_radius_km,
+    v_invite.max_teachable_level, v_invite.dbs_checked, v_invite.tier, true
+  )
+  on conflict (id) do nothing;
+
+  update public.coach_invites
+  set claimed_at = now(), claimed_by = p_user
+  where id = v_invite.id;
+
+  return true;
 end;
 $function$;
 
@@ -1565,10 +1661,10 @@ begin
   if v_coach is not null then
     insert into notifications (user_id, type, title, body, data) values
       (v_client, 'coach_assigned', 'You''re on.',
-       'Coach confirmed for ' || to_char(v_start at time zone 'Asia/Kolkata', 'Dy DD Mon HH24:MI') || '.',
+       'Coach confirmed for ' || to_char(v_start at time zone 'Asia/Kolkata', 'Dy DD Mon FMHH12:MI am') || '.',
        jsonb_build_object('session_id', v_session_id, 'coach_id', v_coach, 'url', '/app/schedule')),
       (v_coach, 'new_private_session', 'New private session',
-       to_char(v_start at time zone 'Asia/Kolkata', 'Dy DD Mon HH24:MI') || ' — ' || (payload->>'address'),
+       to_char(v_start at time zone 'Asia/Kolkata', 'Dy DD Mon FMHH12:MI am') || ' — ' || (payload->>'address'),
        jsonb_build_object('session_id', v_session_id, 'url', '/coach/session/' || v_session_id));
   else
     insert into notifications (user_id, type, title, body, data)
@@ -1668,7 +1764,7 @@ begin
 
   insert into notifications (user_id, type, title, body, data) values
     (v_client, 'booking_rescheduled', 'Rescheduled.',
-     to_char(v_target.starts_at at time zone 'Asia/Kolkata', 'Dy DD Mon HH24:MI'),
+     to_char(v_target.starts_at at time zone 'Asia/Kolkata', 'Dy DD Mon FMHH12:MI am'),
      jsonb_build_object('booking_id', v_new.id, 'url', '/app/schedule'));
 
   -- fresh reminders; sweep old ones
@@ -1777,7 +1873,7 @@ begin
 
   insert into notifications (user_id, type, title, body, data) values
     (v_client, 'booking_rescheduled', 'Rescheduled.',
-     to_char(p_new_start at time zone 'Asia/Kolkata', 'Dy DD Mon HH24:MI'),
+     to_char(p_new_start at time zone 'Asia/Kolkata', 'Dy DD Mon FMHH12:MI am'),
      jsonb_build_object('session_id', p_session, 'url', '/app/schedule'));
   if v_old_coach is not null and v_old_coach <> v_new_coach then
     insert into notifications (user_id, type, title, body, data) values
@@ -1787,7 +1883,7 @@ begin
   end if;
   insert into notifications (user_id, type, title, body, data) values
     (v_new_coach, 'new_private_session', 'Private session (rescheduled)',
-     to_char(p_new_start at time zone 'Asia/Kolkata', 'Dy DD Mon HH24:MI'),
+     to_char(p_new_start at time zone 'Asia/Kolkata', 'Dy DD Mon FMHH12:MI am'),
      jsonb_build_object('session_id', p_session, 'url', '/coach/session/' || p_session));
 
   return query select v_new_coach, (v_new_coach is distinct from v_old_coach);
@@ -1950,6 +2046,7 @@ alter table public.classes enable row level security;
 alter table public.coach_assignments enable row level security;
 alter table public.coach_availability enable row level security;
 alter table public.coach_time_off enable row level security;
+alter table public.coach_invites enable row level security;
 alter table public.coaches enable row level security;
 alter table public.invoices enable row level security;
 alter table public.notifications enable row level security;
@@ -1994,6 +2091,7 @@ CREATE POLICY "coach own time off" ON public.coach_time_off AS PERMISSIVE FOR AL
 CREATE POLICY "founder all time off" ON public.coach_time_off AS PERMISSIVE FOR ALL TO public USING (is_founder());
 CREATE POLICY "coach writes own row" ON public.coaches AS PERMISSIVE FOR UPDATE TO public USING ((id = auth.uid()));
 CREATE POLICY "founder all coaches" ON public.coaches AS PERMISSIVE FOR ALL TO public USING (is_founder());
+CREATE POLICY "founder all coach invites" ON public.coach_invites AS PERMISSIVE FOR ALL TO public USING (is_founder());
 CREATE POLICY "public reads active coaches" ON public.coaches AS PERMISSIVE FOR SELECT TO public USING (((active = true) OR (id = auth.uid()) OR is_founder()));
 CREATE POLICY "own invoices" ON public.invoices AS PERMISSIVE FOR SELECT TO public USING (((client_id = auth.uid()) OR is_founder()));
 CREATE POLICY "mark own notifications read" ON public.notifications AS PERMISSIVE FOR UPDATE TO public USING ((user_id = auth.uid()));

@@ -8,12 +8,19 @@ import { Select } from "@/components/ui/Select";
 import { Sheet } from "@/components/ui/Sheet";
 import { Spinner } from "@/components/ui/Spinner";
 import { InfoTip } from "@/components/ui/InfoTip";
-import { promoteToCoach, saveCoach, setCoachActive } from "@/app/admin/coaches/actions";
+import {
+  addCoach,
+  deletePendingCoach,
+  saveCoach,
+  savePendingCoach,
+  setCoachActive,
+} from "@/app/admin/coaches/actions";
 
 export type CoachRow = {
   id: string;
   name: string;
   email: string;
+  phone: string;
   bio: string;
   travelRadiusKm: number;
   maxTeachableLevel: string;
@@ -22,46 +29,187 @@ export type CoachRow = {
   active: boolean;
 };
 
-type Candidate = { id: string; name: string; email: string };
+export type PendingCoachRow = {
+  id: string;
+  name: string;
+  email: string;
+  phone: string;
+  bio: string;
+  travelRadiusKm: number;
+  maxTeachableLevel: string;
+  tier: number;
+  dbsChecked: boolean;
+};
 
 const LEVELS = ["beginner", "intermediate", "advanced", "elite"] as const;
 
+type Form = {
+  name: string;
+  email: string;
+  phone: string;
+  bio: string;
+  tier: number;
+  maxTeachableLevel: string;
+  travelRadiusKm: number;
+  dbsChecked: boolean;
+};
+
+const EMPTY_FORM: Form = {
+  name: "",
+  email: "",
+  phone: "",
+  bio: "",
+  tier: 1,
+  maxTeachableLevel: "advanced",
+  travelRadiusKm: 10,
+  dbsChecked: false,
+};
+
+function toForm(c: CoachRow | PendingCoachRow): Form {
+  return {
+    name: c.name,
+    email: c.email,
+    phone: c.phone,
+    bio: c.bio,
+    tier: c.tier,
+    maxTeachableLevel: c.maxTeachableLevel,
+    travelRadiusKm: c.travelRadiusKm,
+    dbsChecked: c.dbsChecked,
+  };
+}
+
+type Mode = "add" | "edit" | "pending" | null;
+
 export function CoachManager({
   coaches,
-  candidates,
+  pending,
 }: {
   coaches: CoachRow[];
-  candidates: Candidate[];
+  pending: PendingCoachRow[];
 }) {
-  const [editing, setEditing] = useState<CoachRow | null>(null);
-  const [adding, setAdding] = useState(false);
-  const [search, setSearch] = useState("");
+  const [mode, setMode] = useState<Mode>(null);
+  const [form, setForm] = useState<Form>(EMPTY_FORM);
+  const [editId, setEditId] = useState<string | null>(null);
+  const [editActive, setEditActive] = useState(true);
+  const [addResult, setAddResult] = useState<{ pending: boolean; name: string } | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [sheetMessage, setSheetMessage] = useState<string | null>(null);
-  const [pending, startTransition] = useTransition();
+  const [isPending, startTransition] = useTransition();
 
-  const matches = candidates.filter(
-    (c) =>
-      c.name.toLowerCase().includes(search.toLowerCase()) ||
-      c.email.toLowerCase().includes(search.toLowerCase())
-  );
+  const patch = (p: Partial<Form>) => setForm((f) => ({ ...f, ...p }));
 
-  function save() {
-    if (!editing) return;
+  function close() {
+    setMode(null);
+    setAddResult(null);
+    setSheetMessage(null);
+  }
+
+  function openAdd() {
+    setForm(EMPTY_FORM);
+    setAddResult(null);
+    setSheetMessage(null);
+    setMode("add");
+  }
+
+  function openEdit(c: CoachRow) {
+    setForm(toForm(c));
+    setEditId(c.id);
+    setEditActive(c.active);
+    setSheetMessage(null);
+    setMode("edit");
+  }
+
+  function openPending(p: PendingCoachRow) {
+    setForm(toForm(p));
+    setEditId(p.id);
+    setSheetMessage(null);
+    setMode("pending");
+  }
+
+  async function copyLink() {
+    const url = `${window.location.origin}/signup`;
+    try {
+      await navigator.clipboard.writeText(url);
+      setMessage("Signup link copied — send it to your coach.");
+    } catch {
+      setMessage(url);
+    }
+  }
+
+  function submitAdd() {
+    startTransition(async () => {
+      const r = await addCoach({
+        fullName: form.name,
+        email: form.email,
+        phone: form.phone,
+        bio: form.bio,
+        tier: Number(form.tier),
+        maxTeachableLevel: form.maxTeachableLevel,
+        travelRadiusKm: Number(form.travelRadiusKm),
+        dbsChecked: form.dbsChecked,
+      });
+      if (r.ok) {
+        setAddResult({ pending: Boolean(r.pending), name: form.name.trim() });
+      } else {
+        setSheetMessage(r.error ?? "Couldn't add the coach.");
+      }
+    });
+  }
+
+  function submitEdit() {
+    if (!editId) return;
     startTransition(async () => {
       const r = await saveCoach({
-        id: editing.id,
-        bio: editing.bio,
-        travelRadiusKm: Number(editing.travelRadiusKm),
-        maxTeachableLevel: editing.maxTeachableLevel,
-        tier: Number(editing.tier),
-        dbsChecked: editing.dbsChecked,
+        id: editId,
+        bio: form.bio,
+        travelRadiusKm: Number(form.travelRadiusKm),
+        maxTeachableLevel: form.maxTeachableLevel,
+        tier: Number(form.tier),
+        dbsChecked: form.dbsChecked,
+        fullName: form.name,
+        phone: form.phone,
       });
       if (r.ok) {
         setMessage("Coach saved.");
-        setEditing(null);
+        close();
       } else {
         setSheetMessage(r.error ?? "Save failed.");
+      }
+    });
+  }
+
+  function submitPending() {
+    if (!editId) return;
+    startTransition(async () => {
+      const r = await savePendingCoach(editId, {
+        fullName: form.name,
+        email: form.email,
+        phone: form.phone,
+        bio: form.bio,
+        tier: Number(form.tier),
+        maxTeachableLevel: form.maxTeachableLevel,
+        travelRadiusKm: Number(form.travelRadiusKm),
+        dbsChecked: form.dbsChecked,
+      });
+      if (r.ok) {
+        setMessage("Invite saved.");
+        close();
+      } else {
+        setSheetMessage(r.error ?? "Save failed.");
+      }
+    });
+  }
+
+  function revokePending() {
+    if (!editId) return;
+    if (!window.confirm("Remove this invite? They won't become a coach when they sign up.")) return;
+    startTransition(async () => {
+      const r = await deletePendingCoach(editId);
+      if (r.ok) {
+        setMessage("Invite removed.");
+        close();
+      } else {
+        setSheetMessage(r.error ?? "Failed.");
       }
     });
   }
@@ -70,15 +218,7 @@ export function CoachManager({
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <p className="label">Coaches</p>
-        <Button
-          onClick={() => {
-            setAdding(true);
-            setSearch("");
-            setSheetMessage(null);
-          }}
-        >
-          Add a coach
-        </Button>
+        <Button onClick={openAdd}>Add a coach</Button>
       </div>
       {message && <p className="text-sm text-fg-2">{message}</p>}
 
@@ -86,13 +226,7 @@ export function CoachManager({
         {coaches.map((c) => (
           <li key={c.id} className="px-4 py-3">
             <div className="flex items-center justify-between gap-3">
-              <button
-                onClick={() => {
-                  setEditing({ ...c });
-                  setSheetMessage(null);
-                }}
-                className="text-left hover:text-ember"
-              >
+              <button onClick={() => openEdit(c)} className="text-left hover:text-ember">
                 <p className="font-medium">{c.name}</p>
                 <p className="text-sm text-fg-2">
                   {c.email} · travels up to {c.travelRadiusKm} km
@@ -114,139 +248,201 @@ export function CoachManager({
         )}
       </ul>
 
-      {/* ── Edit coach ── */}
-      <Sheet open={editing !== null} onClose={() => setEditing(null)} title={editing?.name}>
-        {editing && (
-          <div className="space-y-4">
-            <p className="text-sm text-fg-2">{editing.email}</p>
-            <Input
-              label="Short bio"
-              value={editing.bio}
-              onChange={(e) => setEditing({ ...editing, bio: e.target.value })}
-              placeholder="A line or two shown to clients"
-            />
-            <Input
-              label="Travels up to (km)"
-              type="number"
-              min={1}
-              hint="How far they'll go for home sessions."
-              value={editing.travelRadiusKm}
-              onChange={(e) =>
-                setEditing({ ...editing, travelRadiusKm: Number(e.target.value) })
-              }
-            />
-            <Select
-              label="Can teach up to"
-              hint="They won't be given classes above this level."
-              value={editing.maxTeachableLevel}
-              onChange={(e) => setEditing({ ...editing, maxTeachableLevel: e.target.value })}
-            >
-              {LEVELS.map((l) => (
-                <option key={l} value={l}>
-                  {l}
-                </option>
-              ))}
-            </Select>
-            <Select
-              label="Seniority"
-              hint="When two coaches fit equally, the more senior one is picked."
-              value={editing.tier}
-              onChange={(e) => setEditing({ ...editing, tier: Number(e.target.value) })}
-            >
-              <option value={1}>Junior</option>
-              <option value={2}>Senior</option>
-              <option value={3}>Head coach</option>
-            </Select>
-            <label className="flex items-center gap-3 text-sm">
-              <input
-                type="checkbox"
-                checked={editing.dbsChecked}
-                onChange={(e) => setEditing({ ...editing, dbsChecked: e.target.checked })}
-                className="h-5 w-5 accent-[var(--ember)]"
-              />
-              Background check verified
-              <InfoTip text="Needed before they can coach anyone under 18. Tick this once you've seen their certificate." />
-            </label>
+      {/* ── Pending invites ── */}
+      {pending.length > 0 && (
+        <div className="space-y-2">
+          <p className="label">Invited — waiting to sign up</p>
+          <ul className="divide-y divide-line rounded-[12px] border border-line bg-surface-2">
+            {pending.map((p) => (
+              <li key={p.id} className="px-4 py-3">
+                <div className="flex items-center justify-between gap-3">
+                  <button onClick={() => openPending(p)} className="text-left hover:text-ember">
+                    <p className="font-medium">{p.name || p.email}</p>
+                    <p className="text-sm text-fg-2">{p.email}</p>
+                  </button>
+                  <Badge tone="ember">Awaiting signup</Badge>
+                </div>
+              </li>
+            ))}
+          </ul>
+          <button onClick={copyLink} className="text-sm text-ember hover:underline">
+            Copy signup link to send
+          </button>
+        </div>
+      )}
 
-            <Button onClick={save} disabled={pending} className="w-full">
-              {pending ? <Spinner /> : "Save coach"}
+      {/* ── Add coach ── */}
+      <Sheet open={mode === "add"} onClose={close} title="Add a coach">
+        {addResult ? (
+          <div className="space-y-4">
+            <p className="text-sm text-fg-2">
+              {addResult.pending
+                ? `Saved. When ${addResult.name || "they"} sign up on the website with that email, their account becomes a coach automatically.`
+                : `${addResult.name || "They"} is now a coach — tap their name to fine-tune details.`}
+            </p>
+            {addResult.pending && (
+              <Button onClick={copyLink} className="w-full">
+                Copy signup link to send
+              </Button>
+            )}
+            <Button variant="ghost" onClick={close} className="w-full">
+              Done
             </Button>
-            <Button
-              variant={editing.active ? "destructive" : "ghost"}
-              disabled={pending}
-              className="w-full"
-              onClick={() => {
-                const msg = editing.active
-                  ? "Pause this coach? They stop getting new sessions. Sessions already on their calendar stay until you reassign them."
-                  : "Put this coach back to work?";
-                if (!window.confirm(msg)) return;
-                startTransition(async () => {
-                  const r = await setCoachActive(editing.id, !editing.active);
-                  if (r.ok) {
-                    setMessage(editing.active ? "Coach paused." : "Coach is back.");
-                    setEditing(null);
-                  } else {
-                    setSheetMessage(r.error ?? "Failed.");
-                  }
-                });
-              }}
-            >
-              {editing.active ? "Pause coach" : "Unpause coach"}
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <p className="text-sm text-fg-2">
+              Enter their details. If they already have an account they become a coach right
+              away; otherwise they become a coach the moment they sign up with this email.
+            </p>
+            <DetailFields form={form} onChange={patch} emailMode="edit" />
+            <Button onClick={submitAdd} disabled={isPending} className="w-full">
+              {isPending ? <Spinner /> : "Add coach"}
             </Button>
             {sheetMessage && <p className="text-sm text-err">{sheetMessage}</p>}
           </div>
         )}
       </Sheet>
 
-      {/* ── Add coach (promote an existing account) ── */}
-      <Sheet open={adding} onClose={() => setAdding(false)} title="Add a coach">
+      {/* ── Edit coach ── */}
+      <Sheet open={mode === "edit"} onClose={close} title={form.name}>
+        <div className="space-y-4">
+          <DetailFields form={form} onChange={patch} emailMode="readonly" />
+          <Button onClick={submitEdit} disabled={isPending} className="w-full">
+            {isPending ? <Spinner /> : "Save coach"}
+          </Button>
+          <Button
+            variant={editActive ? "destructive" : "ghost"}
+            disabled={isPending}
+            className="w-full"
+            onClick={() => {
+              if (!editId) return;
+              const msg = editActive
+                ? "Pause this coach? They stop getting new sessions. Sessions already on their calendar stay until you reassign them."
+                : "Put this coach back to work?";
+              if (!window.confirm(msg)) return;
+              startTransition(async () => {
+                const r = await setCoachActive(editId, !editActive);
+                if (r.ok) {
+                  setMessage(editActive ? "Coach paused." : "Coach is back.");
+                  close();
+                } else {
+                  setSheetMessage(r.error ?? "Failed.");
+                }
+              });
+            }}
+          >
+            {editActive ? "Pause coach" : "Unpause coach"}
+          </Button>
+          {sheetMessage && <p className="text-sm text-err">{sheetMessage}</p>}
+        </div>
+      </Sheet>
+
+      {/* ── Edit pending invite ── */}
+      <Sheet open={mode === "pending"} onClose={close} title="Edit invite">
         <div className="space-y-4">
           <p className="text-sm text-fg-2">
-            Coaches use a normal account. First, ask them to sign up on the website like any
-            client. Then find their name below and make them a coach.
+            They haven’t signed up yet. These details apply automatically when they do.
           </p>
-          <Input
-            placeholder="Search by name or email…"
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-          />
-          <ul className="max-h-72 divide-y divide-line overflow-y-auto rounded-[12px] border border-line">
-            {matches.slice(0, 20).map((c) => (
-              <li key={c.id} className="flex items-center justify-between gap-3 px-4 py-3">
-                <div>
-                  <p className="font-medium">{c.name}</p>
-                  <p className="text-sm text-fg-2">{c.email}</p>
-                </div>
-                <Button
-                  variant="ghost"
-                  disabled={pending}
-                  onClick={() => {
-                    if (!window.confirm(`Make ${c.name} a coach?`)) return;
-                    startTransition(async () => {
-                      const r = await promoteToCoach(c.id);
-                      if (r.ok) {
-                        setMessage(`${c.name} is now a coach — tap their name to set details.`);
-                        setAdding(false);
-                      } else {
-                        setSheetMessage(r.error ?? "Failed.");
-                      }
-                    });
-                  }}
-                >
-                  Make coach
-                </Button>
-              </li>
-            ))}
-            {matches.length === 0 && (
-              <li className="px-4 py-6 text-center text-sm text-fg-2">
-                No account found. Ask them to sign up on the website first — they&apos;ll
-                appear here right after.
-              </li>
-            )}
-          </ul>
+          <DetailFields form={form} onChange={patch} emailMode="edit" />
+          <Button onClick={submitPending} disabled={isPending} className="w-full">
+            {isPending ? <Spinner /> : "Save invite"}
+          </Button>
+          <Button variant="destructive" disabled={isPending} className="w-full" onClick={revokePending}>
+            Remove invite
+          </Button>
           {sheetMessage && <p className="text-sm text-err">{sheetMessage}</p>}
         </div>
       </Sheet>
     </div>
+  );
+}
+
+function DetailFields({
+  form,
+  onChange,
+  emailMode,
+}: {
+  form: Form;
+  onChange: (patch: Partial<Form>) => void;
+  emailMode: "edit" | "readonly";
+}) {
+  return (
+    <>
+      <Input
+        label="Full name"
+        value={form.name}
+        onChange={(e) => onChange({ name: e.target.value })}
+        placeholder="Coach's name"
+      />
+      {emailMode === "edit" ? (
+        <Input
+          label="Email"
+          type="email"
+          hint="They become a coach when they sign up with this email."
+          value={form.email}
+          onChange={(e) => onChange({ email: e.target.value })}
+          placeholder="name@example.com"
+        />
+      ) : (
+        <div>
+          <p className="label">Email</p>
+          <p className="text-sm text-fg-2">{form.email}</p>
+        </div>
+      )}
+      <Input
+        label="Phone"
+        hint="Lets them use the WhatsApp assistant from this number."
+        value={form.phone}
+        onChange={(e) => onChange({ phone: e.target.value })}
+        placeholder="+91…"
+      />
+      <Input
+        label="Short bio"
+        value={form.bio}
+        onChange={(e) => onChange({ bio: e.target.value })}
+        placeholder="A line or two shown to clients"
+      />
+      <Input
+        label="Travels up to (km)"
+        type="number"
+        min={1}
+        hint="How far they'll go for home sessions."
+        value={form.travelRadiusKm}
+        onChange={(e) => onChange({ travelRadiusKm: Number(e.target.value) })}
+      />
+      <Select
+        label="Can teach up to"
+        hint="They won't be given classes above this level."
+        value={form.maxTeachableLevel}
+        onChange={(e) => onChange({ maxTeachableLevel: e.target.value })}
+      >
+        {LEVELS.map((l) => (
+          <option key={l} value={l}>
+            {l}
+          </option>
+        ))}
+      </Select>
+      <Select
+        label="Seniority"
+        hint="When two coaches fit equally, the more senior one is picked."
+        value={form.tier}
+        onChange={(e) => onChange({ tier: Number(e.target.value) })}
+      >
+        <option value={1}>Junior</option>
+        <option value={2}>Senior</option>
+        <option value={3}>Head coach</option>
+      </Select>
+      <label className="flex items-center gap-3 text-sm">
+        <input
+          type="checkbox"
+          checked={form.dbsChecked}
+          onChange={(e) => onChange({ dbsChecked: e.target.checked })}
+          className="h-5 w-5 accent-[var(--ember)]"
+        />
+        Background check verified
+        <InfoTip text="Needed before they can coach anyone under 18. Tick this once you've seen their certificate." />
+      </label>
+    </>
   );
 }

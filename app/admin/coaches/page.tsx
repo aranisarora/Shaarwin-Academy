@@ -2,17 +2,21 @@ import type { Metadata } from "next";
 import { requireUser } from "@/lib/auth";
 import { AdminShell } from "@/components/app/AdminShell";
 import { TimeOffDecision } from "@/components/app/TimeOffDecision";
-import { CoachManager, type CoachRow } from "@/components/app/CoachManager";
+import {
+  CoachManager,
+  type CoachRow,
+  type PendingCoachRow,
+} from "@/components/app/CoachManager";
 
 export const metadata: Metadata = { title: "Coaches" };
 
 export default async function AdminCoachesPage() {
   const { supabase } = await requireUser("/admin/coaches");
-  const [{ data: coaches }, { data: pendingTimeOff }, { data: candidates }] = await Promise.all([
+  const [{ data: coaches }, { data: pendingTimeOff }, { data: invites }] = await Promise.all([
     supabase
       .from("coaches")
       .select(
-        "id,bio,travel_radius_km,max_teachable_level,dbs_checked,tier,active,profiles!inner(full_name,email)"
+        "id,bio,travel_radius_km,max_teachable_level,dbs_checked,tier,active,profiles!inner(full_name,email,phone)"
       )
       .order("active", { ascending: false })
       .order("tier", { ascending: false }),
@@ -21,20 +25,23 @@ export default async function AdminCoachesPage() {
       .select("id,coach_id,starts_at,ends_at,reason,profiles!coach_time_off_coach_id_fkey(full_name)")
       .eq("status", "pending"),
     supabase
-      .from("profiles")
-      .select("id,full_name,email")
-      .eq("role", "client")
-      .is("deleted_at", null)
-      .order("full_name")
-      .limit(300),
+      .from("coach_invites")
+      .select("id,full_name,email,phone,bio,tier,max_teachable_level,travel_radius_km,dbs_checked")
+      .is("claimed_at", null)
+      .order("created_at", { ascending: false }),
   ]);
 
   const rows: CoachRow[] = (coaches ?? []).map((c) => {
-    const profile = c.profiles as unknown as { full_name: string; email: string };
+    const profile = c.profiles as unknown as {
+      full_name: string;
+      email: string;
+      phone: string | null;
+    };
     return {
       id: c.id,
       name: profile.full_name,
       email: profile.email,
+      phone: profile.phone ?? "",
       bio: c.bio ?? "",
       travelRadiusKm: Number(c.travel_radius_km),
       maxTeachableLevel: c.max_teachable_level,
@@ -43,6 +50,18 @@ export default async function AdminCoachesPage() {
       active: c.active,
     };
   });
+
+  const pending: PendingCoachRow[] = (invites ?? []).map((i) => ({
+    id: i.id,
+    name: i.full_name ?? "",
+    email: i.email,
+    phone: i.phone ?? "",
+    bio: i.bio ?? "",
+    travelRadiusKm: Number(i.travel_radius_km),
+    maxTeachableLevel: i.max_teachable_level,
+    tier: i.tier,
+    dbsChecked: i.dbs_checked,
+  }));
 
   return (
     <AdminShell title="Coaches">
@@ -66,14 +85,7 @@ export default async function AdminCoachesPage() {
           </div>
         )}
 
-        <CoachManager
-          coaches={rows}
-          candidates={(candidates ?? []).map((c) => ({
-            id: c.id,
-            name: c.full_name,
-            email: c.email,
-          }))}
-        />
+        <CoachManager coaches={rows} pending={pending} />
       </div>
     </AdminShell>
   );
