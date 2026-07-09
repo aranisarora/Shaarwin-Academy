@@ -68,14 +68,17 @@ export default async function CoachTodayPage() {
                     ── travel ──
                   </p>
                 )}
-                <Link
-                  href={`/coach/session/${s.id}`}
-                  className="mb-3 flex items-center justify-between gap-3 rounded-[12px] border border-line bg-surface-2 px-4 py-3.5 hover:border-ember"
-                >
+                <div className="relative mb-3 flex items-center justify-between gap-3 rounded-[12px] border border-line bg-surface-2 px-4 py-3.5 hover:border-ember">
                   <div>
-                    <p className="tnum font-display text-xl">
-                      {fmtTime(s.starts_at)}
-                    </p>
+                    <Link
+                      href={`/coach/session/${s.id}`}
+                      aria-label={`${s.classTitle} at ${fmtTime(s.starts_at)}`}
+                      className="after:absolute after:inset-0 after:content-['']"
+                    >
+                      <p className="tnum font-display text-xl">
+                        {fmtTime(s.starts_at)}
+                      </p>
+                    </Link>
                     <p className="text-sm text-fg-2">
                       {s.classTitle} —{" "}
                       {s.venueName ?? s.privateAddress ?? "Location TBC"}
@@ -85,8 +88,7 @@ export default async function CoachTodayPage() {
                         href={mapsUrl}
                         target="_blank"
                         rel="noreferrer"
-                        onClick={(e) => e.stopPropagation()}
-                        className="text-xs text-ember underline-offset-4 hover:underline"
+                        className="relative z-10 text-xs text-ember underline-offset-4 hover:underline"
                       >
                         Navigate
                       </a>
@@ -100,7 +102,7 @@ export default async function CoachTodayPage() {
                       {s.confirmed}/{s.capacity}
                     </span>
                   </div>
-                </Link>
+                </div>
               </li>
             );
           })}
