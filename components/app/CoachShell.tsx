@@ -1,8 +1,7 @@
 import { StudioShell } from "@/components/shells/StudioShell";
 
 const tabs = [
-  { href: "/coach", label: "Today", icon: "●" },
-  { href: "/coach/calendar", label: "Calendar", icon: "▦" },
+  { href: "/coach", label: "Schedule", icon: "▦" },
   { href: "/coach/clients", label: "Clients", icon: "◎" },
   { href: "/coach/more", label: "More", icon: "≡" },
 ];

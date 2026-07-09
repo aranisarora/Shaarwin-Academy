@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Spinner } from "@/components/ui/Spinner";
+import { AddressSearch, type GeocodeHit } from "@/components/app/AddressSearch";
 import { saveCoachProfile } from "@/app/coach/more/actions";
 
 export function CoachProfileEditor({
@@ -20,11 +21,15 @@ export function CoachProfileEditor({
   radiusKm: number;
 }) {
   const [form, setForm] = useState({ bio, baseLat, baseLng, radiusKm });
+  const [addressQuery, setAddressQuery] = useState("");
+  const [addressSelected, setAddressSelected] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const mapContainer = useRef<HTMLDivElement>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const mapRef = useRef<any>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const markerRef = useRef<any>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -53,14 +58,25 @@ export function CoachProfileEditor({
         const pos = marker.getLngLat();
         setForm((f) => ({ ...f, baseLat: pos.lat, baseLng: pos.lng }));
       });
+      markerRef.current = marker;
     })();
     return () => {
       cancelled = true;
       mapRef.current?.remove();
       mapRef.current = null;
+      markerRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  function pickAddress(hit: GeocodeHit) {
+    const [lng, lat] = hit.center;
+    setForm((f) => ({ ...f, baseLat: lat, baseLng: lng }));
+    setAddressQuery(hit.place_name);
+    setAddressSelected(true);
+    markerRef.current?.setLngLat([lng, lat]);
+    mapRef.current?.easeTo({ center: [lng, lat], zoom: 14 });
+  }
 
   return (
     <div className="space-y-5">
@@ -83,7 +99,20 @@ export function CoachProfileEditor({
       </div>
 
       <div>
-        <p className="label mb-2">Base location (drag) & travel radius</p>
+        <p className="label mb-2">Base location — type an address or drag the pin</p>
+        <div className="mb-3">
+          <AddressSearch
+            label="Search your address"
+            placeholder="Start typing your address…"
+            query={addressQuery}
+            selected={addressSelected}
+            onQueryChange={(q) => {
+              setAddressQuery(q);
+              setAddressSelected(false);
+            }}
+            onSelect={pickAddress}
+          />
+        </div>
         <div
           ref={mapContainer}
           className="mb-3 h-56 overflow-hidden rounded-[12px] border border-line"

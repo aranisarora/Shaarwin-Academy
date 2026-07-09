@@ -69,58 +69,70 @@ export function SessionRoster({
   return (
     <div className="space-y-6">
       <div>
-        <p className="label mb-2">Roster</p>
+        <p className="mb-1 text-lg font-semibold">Mark attendance</p>
+        <p className="mb-3 text-sm text-fg-2">
+          Tap each player as they arrive to record who showed up.
+          {!attendanceOpen && " Opens 15 minutes before the session starts."}
+        </p>
         {rows.length === 0 && (
           <p className="text-sm text-fg-2">No bookings yet.</p>
         )}
         <ul className="divide-y divide-line rounded-[12px] border border-line bg-surface-2">
-          {rows.map((row) => (
-            <li key={row.id} className="flex items-center justify-between gap-3 px-4 py-3">
-              <div>
-                <p className="font-medium">
-                  {row.name}
-                  {row.junior && (
-                    <Badge className="ml-2" tone="ember">
-                      Junior
-                    </Badge>
-                  )}
-                </p>
-                <p className="text-xs text-fg-2">{row.level}</p>
-              </div>
-              <div className="flex gap-1.5">
-                <button
-                  aria-label={`Mark ${row.name} attended`}
-                  disabled={!attendanceOpen}
-                  onClick={() => toggle(row.id, "attended")}
-                  className={`flex h-11 w-11 items-center justify-center rounded-[8px] border text-lg disabled:opacity-30 ${
-                    row.status === "attended"
-                      ? "border-ok bg-ok text-ivory"
-                      : "border-line text-fg-2 hover:border-ok"
-                  }`}
-                >
-                  ✓
-                </button>
-                <button
-                  aria-label={`Mark ${row.name} no-show`}
-                  disabled={!attendanceOpen}
-                  onClick={() => toggle(row.id, "no_show")}
-                  className={`flex h-11 w-11 items-center justify-center rounded-[8px] border text-lg disabled:opacity-30 ${
-                    row.status === "no_show"
-                      ? "border-err bg-err text-ivory"
-                      : "border-line text-fg-2 hover:border-err"
-                  }`}
-                >
-                  ✗
-                </button>
-              </div>
-            </li>
-          ))}
+          {rows.map((row) => {
+            const present = row.status === "attended";
+            const absent = row.status === "no_show";
+            return (
+              <li
+                key={row.id}
+                className={`px-4 py-3 ${
+                  present ? "bg-ok/10" : absent ? "bg-err/10" : ""
+                }`}
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <p className="font-medium">
+                      {row.name}
+                      {row.junior && (
+                        <Badge className="ml-2" tone="ember">
+                          Junior
+                        </Badge>
+                      )}
+                    </p>
+                    <p className="text-xs text-fg-2">{row.level}</p>
+                  </div>
+                  <div className="flex shrink-0 gap-2">
+                    <button
+                      aria-label={`Mark ${row.name} present`}
+                      aria-pressed={present}
+                      disabled={!attendanceOpen}
+                      onClick={() => toggle(row.id, "attended")}
+                      className={`flex h-11 items-center gap-1.5 rounded-[8px] border px-3 text-sm font-semibold disabled:opacity-30 ${
+                        present
+                          ? "border-ok bg-ok text-ivory"
+                          : "border-line text-fg-2 hover:border-ok"
+                      }`}
+                    >
+                      ✓ Present
+                    </button>
+                    <button
+                      aria-label={`Mark ${row.name} no-show`}
+                      aria-pressed={absent}
+                      disabled={!attendanceOpen}
+                      onClick={() => toggle(row.id, "no_show")}
+                      className={`flex h-11 items-center gap-1.5 rounded-[8px] border px-3 text-sm font-semibold disabled:opacity-30 ${
+                        absent
+                          ? "border-err bg-err text-ivory"
+                          : "border-line text-fg-2 hover:border-err"
+                      }`}
+                    >
+                      ✗ Absent
+                    </button>
+                  </div>
+                </div>
+              </li>
+            );
+          })}
         </ul>
-        {!attendanceOpen && rows.length > 0 && (
-          <p className="mt-2 text-xs text-fg-2">
-            Attendance opens 15 minutes before the session.
-          </p>
-        )}
       </div>
 
       <div>

@@ -159,7 +159,7 @@ export async function cancelSessionCore(
       type: "session_cancelled",
       title: "Session cancelled",
       body: cls.title,
-      data: { session_id: sessionId, url: "/coach/calendar" },
+      data: { session_id: sessionId, url: "/coach" },
     });
   }
 

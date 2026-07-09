@@ -4,6 +4,8 @@ import { requireUser } from "@/lib/auth";
 import { CoachShell } from "@/components/app/CoachShell";
 import { Badge } from "@/components/ui/Badge";
 import { SessionRoster } from "@/components/app/SessionRoster";
+import { NavigateButton } from "@/components/app/NavigateButton";
+import { ACADEMY_TZ } from "@/lib/academy-time";
 
 export const metadata: Metadata = { title: "Session" };
 
@@ -18,7 +20,7 @@ export default async function CoachSessionPage({
   const { data: session } = await supabase
     .from("class_sessions")
     .select(
-      "id,starts_at,ends_at,coach_id,coach_notes,classes!inner(title,skill_level,class_type,venues(name,address,postcode),private_class_details(address,postcode,access_notes,has_table))"
+      "id,starts_at,ends_at,coach_id,coach_notes,classes!inner(title,skill_level,class_type,venues(name,address,postcode,lat,lng),private_class_details(address,postcode,lat,lng,access_notes,has_table))"
     )
     .eq("id", id)
     .maybeSingle();
@@ -29,12 +31,27 @@ export default async function CoachSessionPage({
     title: string;
     skill_level: string;
     class_type: string;
-    venues: { name: string; address: string; postcode: string } | null;
+    venues: {
+      name: string;
+      address: string;
+      postcode: string;
+      lat: number;
+      lng: number;
+    } | null;
     private_class_details:
-      | { address: string; postcode: string; access_notes: string | null; has_table: boolean }[]
+      | {
+          address: string;
+          postcode: string;
+          lat: number;
+          lng: number;
+          access_notes: string | null;
+          has_table: boolean;
+        }[]
       | null;
   };
   const priv = cls.private_class_details?.[0] ?? null;
+  const lat = cls.venues?.lat ?? priv?.lat ?? null;
+  const lng = cls.venues?.lng ?? priv?.lng ?? null;
 
   const { data: roster } = await supabase
     .from("bookings")
@@ -62,14 +79,20 @@ export default async function CoachSessionPage({
     };
   });
 
-  const when = new Intl.DateTimeFormat("en-GB", {
+  const dayLabel = new Intl.DateTimeFormat("en-GB", {
     weekday: "long",
     day: "numeric",
     month: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-    timeZone: "Asia/Kolkata",
+    timeZone: ACADEMY_TZ,
   }).format(new Date(session.starts_at));
+  const fmtClock = (iso: string) =>
+    new Intl.DateTimeFormat("en-GB", {
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+      timeZone: ACADEMY_TZ,
+    }).format(new Date(iso));
+  const when = `${dayLabel}, ${fmtClock(session.starts_at)} – ${fmtClock(session.ends_at)}`;
 
   return (
     <CoachShell title={cls.title}>
@@ -83,7 +106,8 @@ export default async function CoachSessionPage({
                 ? `${priv.address}, ${priv.postcode}`
                 : "Location TBC"}
           </p>
-          <div className="mt-2 flex gap-2">
+          <NavigateButton lat={lat} lng={lng} className="mt-3" />
+          <div className="mt-3 flex gap-2">
             <Badge tone={cls.class_type === "private" ? "ember" : "neutral"}>
               {cls.class_type}
             </Badge>

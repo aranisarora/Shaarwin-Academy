@@ -129,7 +129,7 @@ export async function updateGroupClassCore(
         type: "class_updated",
         title: "Class schedule changed",
         body: `${input.title} moved — check your calendar.`,
-        data: { url: "/coach/calendar" },
+        data: { url: "/coach" },
       });
     }
   }
@@ -211,7 +211,7 @@ export async function endGroupClassCore(
         type: "session_cancelled",
         title: "Class ended",
         body: `${cls.title} has ended — its sessions are off your calendar.`,
-        data: { url: "/coach/calendar" },
+        data: { url: "/coach" },
       });
     }
   }

@@ -3,6 +3,7 @@ import { requireUser } from "@/lib/auth";
 import { CoachShell } from "@/components/app/CoachShell";
 import { CoachProfileEditor } from "@/components/app/CoachProfileEditor";
 import { AvailabilityEditor } from "@/components/app/AvailabilityEditor";
+import { WhatsAppConnect } from "@/components/app/WhatsAppConnect";
 import { SignOutButton } from "@/components/app/SignOutButton";
 
 export const metadata: Metadata = { title: "More" };
@@ -36,11 +37,12 @@ export default async function CoachMorePage() {
         <CoachProfileEditor
           fullName={profile.full_name}
           bio={coach?.bio ?? ""}
-          baseLat={coach?.base_lat ?? 51.5074}
-          baseLng={coach?.base_lng ?? -0.1278}
+          baseLat={coach?.base_lat ?? 12.9716}
+          baseLng={coach?.base_lng ?? 77.5946}
           radiusKm={Number(coach?.travel_radius_km ?? 10)}
         />
         <AvailabilityEditor windows={windows ?? []} timeOff={timeOff ?? []} />
+        <WhatsAppConnect />
       </div>
     </CoachShell>
   );

@@ -5,108 +5,123 @@ import { getCoachSessions } from "@/lib/coach-data";
 import { CoachShell } from "@/components/app/CoachShell";
 import { Badge } from "@/components/ui/Badge";
 import { EmptyState } from "@/components/ui/EmptyState";
-import { WhatsAppConnect } from "@/components/app/WhatsAppConnect";
+import { NavigateButton } from "@/components/app/NavigateButton";
+import { ACADEMY_TZ } from "@/lib/academy-time";
 
-export const metadata: Metadata = { title: "Today" };
+export const metadata: Metadata = { title: "Schedule" };
 
 function fmtTime(iso: string) {
   return new Intl.DateTimeFormat("en-GB", {
-    hour: "2-digit",
+    hour: "numeric",
     minute: "2-digit",
-    timeZone: "Asia/Kolkata",
+    hour12: true,
+    timeZone: ACADEMY_TZ,
   }).format(new Date(iso));
 }
 
-export default async function CoachTodayPage() {
-  const { supabase, user } = await requireUser("/coach");
-  const start = new Date();
-  start.setHours(0, 0, 0, 0);
-  const end = new Date(start.getTime() + 86400000);
-  const sessions = await getCoachSessions(supabase, user.id, start, end);
+function dayLabel(iso: string) {
+  return new Intl.DateTimeFormat("en-GB", {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    timeZone: ACADEMY_TZ,
+  }).format(new Date(iso));
+}
 
-  const header =
-    sessions.length > 0
-      ? `${sessions.length} session${sessions.length === 1 ? "" : "s"} · ${fmtTime(sessions[0].starts_at)}–${fmtTime(sessions[sessions.length - 1].ends_at)}`
-      : "No sessions today.";
+export default async function CoachSchedulePage() {
+  const { supabase, user } = await requireUser("/coach");
+  const from = new Date();
+  from.setHours(0, 0, 0, 0);
+  const to = new Date(from.getTime() + 28 * 86400000);
+  const sessions = await getCoachSessions(supabase, user.id, from, to);
+
+  const todayKey = dayLabel(new Date().toISOString());
+
+  const byDay = new Map<string, typeof sessions>();
+  for (const s of sessions) {
+    const key = dayLabel(s.starts_at);
+    const list = byDay.get(key) ?? [];
+    list.push(s);
+    byDay.set(key, list);
+  }
 
   return (
-    <CoachShell title="Today">
-      <div className="mx-auto max-w-2xl">
-        <p className="mb-6 text-fg-2">
-          {new Intl.DateTimeFormat("en-GB", {
-            weekday: "long",
-            day: "numeric",
-            month: "long",
-            timeZone: "Asia/Kolkata",
-          }).format(new Date())}{" "}
-          — {header}
-        </p>
-
-        <div className="mb-6">
-          <WhatsAppConnect />
-        </div>
-
+    <CoachShell title="Schedule">
+      <div className="mx-auto max-w-2xl space-y-8">
         {sessions.length === 0 && (
-          <EmptyState image="/images/empty-ivory.jpg" copy="No sessions today." />
+          <EmptyState
+            image="/images/empty-ivory.jpg"
+            copy="Nothing scheduled in the next four weeks."
+          />
         )}
 
-        <ol className="space-y-0">
-          {sessions.map((s, i) => {
-            const prev = sessions[i - 1];
-            const travelGap =
-              prev &&
-              (prev.venueName ?? prev.privateAddress) !==
-                (s.venueName ?? s.privateAddress);
-            const mapsUrl =
-              s.lat !== null
-                ? `https://www.google.com/maps/dir/?api=1&destination=${s.lat},${s.lng}`
-                : null;
-            return (
-              <li key={s.id}>
-                {travelGap && (
-                  <p className="tnum py-2 text-center text-xs text-fg-2">
-                    ── travel ──
-                  </p>
-                )}
-                <div className="relative mb-3 flex items-center justify-between gap-3 rounded-[12px] border border-line bg-surface-2 px-4 py-3.5 hover:border-ember">
-                  <div>
-                    <Link
-                      href={`/coach/session/${s.id}`}
-                      aria-label={`${s.classTitle} at ${fmtTime(s.starts_at)}`}
-                      className="after:absolute after:inset-0 after:content-['']"
-                    >
-                      <p className="tnum font-display text-xl">
-                        {fmtTime(s.starts_at)}
-                      </p>
-                    </Link>
-                    <p className="text-sm text-fg-2">
-                      {s.classTitle} —{" "}
-                      {s.venueName ?? s.privateAddress ?? "Location TBC"}
-                    </p>
-                    {mapsUrl && (
-                      <a
-                        href={mapsUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="relative z-10 text-xs text-ember underline-offset-4 hover:underline"
-                      >
-                        Navigate
-                      </a>
-                    )}
-                  </div>
-                  <div className="flex flex-col items-end gap-1.5">
-                    <Badge tone={s.isPrivate ? "ember" : "neutral"}>
-                      {s.isPrivate ? "Private" : "Group"}
-                    </Badge>
-                    <span className="tnum text-xs text-fg-2">
-                      {s.confirmed}/{s.capacity}
-                    </span>
-                  </div>
-                </div>
-              </li>
-            );
-          })}
-        </ol>
+        {[...byDay.entries()].map(([day, rows]) => {
+          const isToday = day === todayKey;
+          return (
+            <section key={day}>
+              <div className="mb-3 border-b border-line pb-2">
+                <p className="font-display text-2xl">
+                  {isToday ? "Today" : day}
+                </p>
+                {isToday && <p className="text-sm text-fg-2">{day}</p>}
+              </div>
+
+              <ol className="space-y-0">
+                {rows.map((s, i) => {
+                  const prev = rows[i - 1];
+                  const travelGap =
+                    prev &&
+                    (prev.venueName ?? prev.privateAddress) !==
+                      (s.venueName ?? s.privateAddress);
+                  const locationName =
+                    s.venueName ?? s.privateAddress ?? "Location TBC";
+                  const addressLine = s.venueName
+                    ? [s.venueAddress, s.venuePostcode].filter(Boolean).join(", ")
+                    : null;
+                  const showAddressLine = !!s.venueName && !!addressLine;
+                  return (
+                    <li key={s.id}>
+                      {travelGap && (
+                        <p className="tnum py-2 text-center text-xs text-fg-2">
+                          ── travel ──
+                        </p>
+                      )}
+                      <div className="relative mb-3 rounded-[12px] border border-line bg-surface-2 px-4 py-3.5 hover:border-ember">
+                        <div className="flex items-start justify-between gap-3">
+                          <Link
+                            href={`/coach/session/${s.id}`}
+                            aria-label={`${s.classTitle} at ${fmtTime(s.starts_at)}`}
+                            className="min-w-0 after:absolute after:inset-0 after:content-['']"
+                          >
+                            <p className="tnum font-display text-2xl">
+                              {fmtTime(s.starts_at)} – {fmtTime(s.ends_at)}
+                            </p>
+                            <p className="mt-0.5 font-semibold">{locationName}</p>
+                            {showAddressLine && (
+                              <p className="text-sm text-fg-2">{addressLine}</p>
+                            )}
+                            <p className="mt-0.5 text-sm text-fg-2">
+                              {s.classTitle}
+                            </p>
+                          </Link>
+                          <div className="flex shrink-0 flex-col items-end gap-1.5">
+                            <Badge tone={s.isPrivate ? "ember" : "neutral"}>
+                              {s.isPrivate ? "Private" : "Group"}
+                            </Badge>
+                            <span className="tnum text-xs text-fg-2">
+                              {s.confirmed}/{s.capacity}
+                            </span>
+                          </div>
+                        </div>
+                        <NavigateButton lat={s.lat} lng={s.lng} className="mt-2.5" />
+                      </div>
+                    </li>
+                  );
+                })}
+              </ol>
+            </section>
+          );
+        })}
       </div>
     </CoachShell>
   );

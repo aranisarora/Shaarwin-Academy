@@ -131,7 +131,7 @@ export async function moveSessionCore(
       type: "session_moved",
       title: coachCleared ? "Session moved off your calendar" : "Session moved",
       body: `${cls.title} — ${coachCleared ? "the new time clashed for you" : `now ${when}`}.`,
-      data: { session_id: sessionId, url: "/coach/calendar" },
+      data: { session_id: sessionId, url: "/coach" },
     });
   }
 

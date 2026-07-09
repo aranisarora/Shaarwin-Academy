@@ -12,7 +12,9 @@ export type CoachSession = {
   confirmed: number;
   venueName: string | null;
   venueAddress: string | null;
+  venuePostcode: string | null;
   privateAddress: string | null;
+  privatePostcode: string | null;
   lat: number | null;
   lng: number | null;
 };
@@ -52,8 +54,16 @@ export async function getCoachSessions(
       skill_level: string;
       capacity: number;
       class_type: string;
-      venues: { name: string; address: string; lat: number; lng: number } | null;
-      private_class_details: { address: string; lat: number; lng: number }[] | null;
+      venues: {
+        name: string;
+        address: string;
+        postcode: string;
+        lat: number;
+        lng: number;
+      } | null;
+      private_class_details:
+        | { address: string; postcode: string; lat: number; lng: number }[]
+        | null;
     };
     const priv = cls.private_class_details?.[0] ?? null;
     return {
@@ -68,7 +78,9 @@ export async function getCoachSessions(
       confirmed: counts.get(s.id) ?? 0,
       venueName: cls.venues?.name ?? null,
       venueAddress: cls.venues?.address ?? null,
+      venuePostcode: cls.venues?.postcode ?? null,
       privateAddress: priv?.address ?? null,
+      privatePostcode: priv?.postcode ?? null,
       lat: cls.venues?.lat ?? priv?.lat ?? null,
       lng: cls.venues?.lng ?? priv?.lng ?? null,
     };
