@@ -218,6 +218,7 @@ async function loadHistory(admin: SupabaseClient, phone: string): Promise<ApiMes
     .select("role,content")
     .eq("phone", phone)
     .order("created_at", { ascending: false })
+    .order("id", { ascending: false })
     .limit(HISTORY_MESSAGES);
 
   const rows = (data ?? []).reverse();
