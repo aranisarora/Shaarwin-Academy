@@ -94,6 +94,7 @@ export async function StageShell({ children }: { children: React.ReactNode }) {
         </div>
         <div className="border-t border-line py-5 text-center text-xs text-fg-2">
           © {new Date().getFullYear()} Sharwin Table Tennis Academy, Bengaluru
+          {" · "}Reg. No. 38/DOM/CE/0013/2026
         </div>
       </footer>
     </div>
