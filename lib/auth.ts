@@ -1,5 +1,19 @@
+import { cache } from "react";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+
+/**
+ * The current auth user, or null. Wrapped in React `cache` so multiple callers
+ * within the same request (e.g. a page body and the shell header) share a
+ * single getUser round-trip instead of each hitting the auth server.
+ */
+export const getCurrentUser = cache(async () => {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  return user;
+});
 
 export type Profile = {
   id: string;

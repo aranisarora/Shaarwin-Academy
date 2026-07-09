@@ -10,7 +10,7 @@ const nav = [
   { href: "/coaches", label: "Coaches" },
 ];
 
-export function StageHeader() {
+export function StageHeader({ signedIn }: { signedIn: boolean }) {
   const [scrolled, setScrolled] = useState(false);
 
   useEffect(() => {
@@ -55,18 +55,29 @@ export function StageHeader() {
               {item.label}
             </Link>
           ))}
-          <Link
-            href="/login"
-            className="inline-flex min-h-11 items-center rounded-[8px] px-3 text-sm text-fg-2 transition-colors hover:text-fg"
-          >
-            Log in
-          </Link>
-          <Link
-            href="/signup"
-            className="inline-flex min-h-11 items-center rounded-[8px] bg-ember px-4 text-sm font-semibold text-ivory transition-colors hover:bg-ember-2"
-          >
-            Find a class
-          </Link>
+          {signedIn ? (
+            <Link
+              href="/app"
+              className="inline-flex min-h-11 items-center rounded-[8px] bg-ember px-4 text-sm font-semibold text-ivory transition-colors hover:bg-ember-2"
+            >
+              Open app
+            </Link>
+          ) : (
+            <>
+              <Link
+                href="/login"
+                className="inline-flex min-h-11 items-center rounded-[8px] px-3 text-sm text-fg-2 transition-colors hover:text-fg"
+              >
+                Log in
+              </Link>
+              <Link
+                href="/signup"
+                className="inline-flex min-h-11 items-center rounded-[8px] bg-ember px-4 text-sm font-semibold text-ivory transition-colors hover:bg-ember-2"
+              >
+                Find a class
+              </Link>
+            </>
+          )}
         </nav>
       </div>
     </header>

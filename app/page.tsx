@@ -14,7 +14,7 @@ import { SummerCamp } from "@/components/marketing/SummerCamp";
 import { JoinTeam } from "@/components/marketing/JoinTeam";
 import { ContactSection } from "@/components/marketing/ContactSection";
 import { getVenues, getCoaches } from "@/lib/data";
-import { createClient } from "@/lib/supabase/server";
+import { getCurrentUser } from "@/lib/auth";
 
 import heroServe from "@/public/images/hero-serve.jpg";
 import heroServeMobile from "@/public/images/hero-serve-mobile.jpg";
@@ -57,11 +57,7 @@ export default async function LandingPage() {
   // The WhatsApp companion needs a linked account to be useful, so it lives
   // inside the app. Signed-in visitors go straight there; everyone else is
   // pointed at sign-up first rather than a dead-end chat.
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  const signedIn = Boolean(user);
+  const signedIn = Boolean(await getCurrentUser());
 
   return (
     <StageShell>
