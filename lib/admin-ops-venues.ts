@@ -1,7 +1,7 @@
 // Venue CRUD cores — shared by the admin actions and the WhatsApp bot.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { OpResult } from "@/lib/admin-ops";
+import type { OpResult } from "@/lib/admin-ops-types";
 
 export type VenueInput = {
   id?: string;

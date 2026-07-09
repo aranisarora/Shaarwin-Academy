@@ -3,7 +3,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { normalizePhone } from "@/lib/whatsapp/phone";
-import type { OpResult } from "@/lib/admin-ops";
+import type { OpResult } from "@/lib/admin-ops-types";
 
 export async function updateClientCore(
   supabase: SupabaseClient,

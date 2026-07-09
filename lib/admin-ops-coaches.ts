@@ -2,7 +2,7 @@
 // admin actions and the WhatsApp bot; RLS enforces on the caller's client.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { OpResult } from "@/lib/admin-ops";
+import type { OpResult } from "@/lib/admin-ops-types";
 
 const BENGALURU = { lat: 12.9716, lng: 77.5946 };
 

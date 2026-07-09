@@ -3,7 +3,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { academyWallToUtc, utcToAcademyWall } from "@/lib/academy-time";
-import type { OpResult } from "@/lib/admin-ops";
+import type { OpResult } from "@/lib/admin-ops-types";
 
 const WEEKDAY_NUM: Record<string, number> = { MO: 1, TU: 2, WE: 3, TH: 4, FR: 5, SA: 6, SU: 7 };
 

@@ -3,7 +3,7 @@
 // etc.). Shared by the admin actions and the WhatsApp bot.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { OpResult } from "@/lib/admin-ops";
+import type { OpResult } from "@/lib/admin-ops-types";
 
 export async function getSettingsCore(
   supabase: SupabaseClient

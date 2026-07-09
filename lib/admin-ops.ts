@@ -4,8 +4,11 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { academyOffsetMinutes } from "@/lib/academy-time";
+import type { OpResult } from "@/lib/admin-ops-types";
 
-export type OpResult = { ok: boolean; error?: string };
+// OpResult lives in a leaf module (admin-ops-types) so the domain cores can
+// import it without pointing back at this barrel — see admin-ops-types.ts.
+export type { OpResult } from "@/lib/admin-ops-types";
 
 // Domain cores split out to keep files small — re-exported so `@/lib/admin-ops`
 // stays the single import surface for both the admin actions and the bot.

@@ -4,7 +4,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { academyWallToUtc } from "@/lib/academy-time";
-import type { OpResult } from "@/lib/admin-ops";
+import type { OpResult } from "@/lib/admin-ops-types";
 
 function whenIST(d: Date): string {
   return new Intl.DateTimeFormat("en-GB", {
