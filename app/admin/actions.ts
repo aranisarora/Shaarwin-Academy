@@ -16,7 +16,6 @@ import {
 import type { NewClass } from "@/lib/admin-ops";
 
 type Result = { ok: boolean; error?: string };
-export type { VenueInput };
 
 // ── Classes ──────────────────────────────────────────────────────────────────
 

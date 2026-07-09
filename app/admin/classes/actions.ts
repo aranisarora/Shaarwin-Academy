@@ -11,7 +11,6 @@ import {
 } from "@/lib/admin-ops";
 
 type Result = { ok: boolean; error?: string };
-export type { ClassUpdate };
 
 export async function updateGroupClass(input: ClassUpdate): Promise<Result> {
   const { supabase, founder } = await requireFounder();

@@ -12,7 +12,6 @@ import {
 } from "@/lib/admin-ops";
 
 type Result = { ok: boolean; error?: string };
-export type { CoachInput };
 
 export async function promoteToCoach(profileId: string): Promise<Result> {
   const { supabase, founder } = await requireFounder();
