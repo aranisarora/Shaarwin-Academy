@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { requireUser } from "@/lib/auth";
 import { CoachShell } from "@/components/app/CoachShell";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -16,11 +17,15 @@ export default async function CoachClientsPage() {
     .eq("class_sessions.coach_id", user.id)
     .in("status", ["confirmed", "attended", "no_show"]);
 
-  const unique = new Map<string, { name: string; level: string; sessions: number }>();
+  const unique = new Map<
+    string,
+    { id: string; name: string; level: string; sessions: number }
+  >();
   for (const row of rows ?? []) {
     const player = row.players as unknown as { full_name: string; skill_level: string } | null;
     if (!player) continue;
     const entry = unique.get(row.player_id) ?? {
+      id: row.player_id,
       name: player.full_name,
       level: player.skill_level,
       sessions: 0,
@@ -42,14 +47,24 @@ export default async function CoachClientsPage() {
         ) : (
           <ul className="divide-y divide-line rounded-[12px] border border-line bg-surface-2">
             {players.map((p) => (
-              <li key={p.name} className="flex items-center justify-between px-4 py-3">
-                <div>
-                  <p className="font-medium">{p.name}</p>
-                  <p className="tnum text-xs text-fg-2">
-                    {p.sessions} session{p.sessions === 1 ? "" : "s"} with you
-                  </p>
-                </div>
-                <Badge>{p.level}</Badge>
+              <li key={p.id}>
+                <Link
+                  href={`/coach/clients/${p.id}`}
+                  className="group flex items-center justify-between px-4 py-3 transition-colors"
+                >
+                  <div>
+                    <p className="font-medium group-hover:text-ember">{p.name}</p>
+                    <p className="tnum text-xs text-fg-2">
+                      {p.sessions} session{p.sessions === 1 ? "" : "s"} with you
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Badge>{p.level}</Badge>
+                    <span className="text-fg-2" aria-hidden>
+                      ›
+                    </span>
+                  </div>
+                </Link>
               </li>
             ))}
           </ul>

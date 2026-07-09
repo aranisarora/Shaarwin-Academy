@@ -70,6 +70,37 @@ export async function saveSessionNotes(sessionId: string, notes: string): Promis
   return error ? { ok: false, error: "Couldn't save notes." } : { ok: true };
 }
 
+export async function markArrived(sessionId: string): Promise<Result> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Sign in first." };
+
+  const { error } = await supabase.rpc("coach_mark_arrival", {
+    p_session: sessionId,
+    p_late: false,
+  });
+  if (error) return { ok: false, error: "Couldn't send. Try again." };
+  revalidatePath(`/coach/session/${sessionId}`);
+  return { ok: true };
+}
+
+export async function markRunningLate(sessionId: string): Promise<Result> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Sign in first." };
+
+  const { error } = await supabase.rpc("coach_mark_arrival", {
+    p_session: sessionId,
+    p_late: true,
+  });
+  if (error) return { ok: false, error: "Couldn't send. Try again." };
+  return { ok: true };
+}
+
 export async function reportProblem(sessionId: string): Promise<Result> {
   const { supabase, user, session } = await requireCoachSession(sessionId);
   if (!session || !user) return { ok: false, error: "Not your session." };

@@ -4,6 +4,7 @@ import { requireUser } from "@/lib/auth";
 import { CoachShell } from "@/components/app/CoachShell";
 import { Badge } from "@/components/ui/Badge";
 import { SessionRoster } from "@/components/app/SessionRoster";
+import { SessionArrival } from "@/components/app/SessionArrival";
 import { NavigateButton } from "@/components/app/NavigateButton";
 import { ACADEMY_TZ } from "@/lib/academy-time";
 
@@ -20,7 +21,7 @@ export default async function CoachSessionPage({
   const { data: session } = await supabase
     .from("class_sessions")
     .select(
-      "id,starts_at,ends_at,coach_id,coach_notes,classes!inner(title,skill_level,class_type,venues(name,address,postcode,lat,lng),private_class_details(address,postcode,lat,lng,access_notes,has_table))"
+      "id,starts_at,ends_at,coach_id,coach_notes,coach_arrived_at,classes!inner(title,skill_level,class_type,venues(name,address,postcode,lat,lng),private_class_details(address,postcode,lat,lng,access_notes,has_table))"
     )
     .eq("id", id)
     .maybeSingle();
@@ -127,6 +128,13 @@ export default async function CoachSessionPage({
             </div>
           )}
         </div>
+
+        <SessionArrival
+          sessionId={session.id}
+          startsAt={session.starts_at}
+          endsAt={session.ends_at}
+          coachArrivedAt={session.coach_arrived_at}
+        />
 
         <SessionRoster
           sessionId={session.id}

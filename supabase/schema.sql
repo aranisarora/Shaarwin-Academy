@@ -85,7 +85,8 @@ create table public.class_sessions (
   capacity_override integer,
   coach_notes text,
   cancel_reason text,
-  created_at timestamptz default now() not null
+  created_at timestamptz default now() not null,
+  coach_arrived_at timestamptz
 );
 
 create table public.classes (
@@ -175,6 +176,14 @@ create table public.notifications (
   status notification_status default 'pending'::notification_status not null,
   sent_at timestamptz,
   read_at timestamptz,
+  created_at timestamptz default now() not null
+);
+
+create table public.student_notes (
+  id uuid default gen_random_uuid() not null,
+  player_id uuid not null,
+  author_id uuid not null,
+  body text not null,
   created_at timestamptz default now() not null
 );
 
@@ -369,6 +378,9 @@ ALTER TABLE public.invoices ADD CONSTRAINT invoices_client_id_fkey FOREIGN KEY (
 ALTER TABLE public.invoices ADD CONSTRAINT invoices_subscription_id_fkey FOREIGN KEY (subscription_id) REFERENCES subscriptions(id) ON DELETE SET NULL;
 ALTER TABLE public.notifications ADD CONSTRAINT notifications_pkey PRIMARY KEY (id);
 ALTER TABLE public.notifications ADD CONSTRAINT notifications_user_id_fkey FOREIGN KEY (user_id) REFERENCES profiles(id) ON DELETE CASCADE;
+ALTER TABLE public.student_notes ADD CONSTRAINT student_notes_pkey PRIMARY KEY (id);
+ALTER TABLE public.student_notes ADD CONSTRAINT student_notes_player_id_fkey FOREIGN KEY (player_id) REFERENCES players(id) ON DELETE CASCADE;
+ALTER TABLE public.student_notes ADD CONSTRAINT student_notes_author_id_fkey FOREIGN KEY (author_id) REFERENCES profiles(id);
 ALTER TABLE public.plans ADD CONSTRAINT plans_razorpay_plan_id_key UNIQUE (razorpay_plan_id);
 ALTER TABLE public.plans ADD CONSTRAINT plans_stripe_price_id_key UNIQUE (stripe_price_id);
 ALTER TABLE public.plans ADD CONSTRAINT plans_pkey PRIMARY KEY (id);
@@ -426,6 +438,7 @@ CREATE INDEX coach_assignments_session_id_status_idx ON public.coach_assignments
 CREATE INDEX coach_availability_coach_id_weekday_idx ON public.coach_availability USING btree (coach_id, weekday);
 CREATE INDEX coach_time_off_coach_id_starts_at_idx ON public.coach_time_off USING btree (coach_id, starts_at);
 CREATE INDEX notifications_status_scheduled_for_idx ON public.notifications USING btree (status, scheduled_for);
+CREATE INDEX student_notes_player_created_idx ON public.student_notes USING btree (player_id, created_at DESC);
 CREATE INDEX players_client_id_idx ON public.players USING btree (client_id);
 CREATE INDEX private_credit_ledger_client_id_idx ON public.private_credit_ledger USING btree (client_id);
 CREATE INDEX subscriptions_client_id_status_idx ON public.subscriptions USING btree (client_id, status);
@@ -1830,6 +1843,99 @@ AS $function$
     and s.ends_at < now() - interval '48 hours';
 $function$;
 
+CREATE OR REPLACE FUNCTION public.coach_mark_arrival(p_session uuid, p_late boolean DEFAULT false)
+ RETURNS timestamptz
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare
+  v_coach   uuid;
+  v_starts  timestamptz;
+  v_class   uuid;
+  v_name    text;
+  v_location text;
+  v_time    text;
+  v_type    text;
+  v_title   text;
+  v_body    text;
+  v_arrived timestamptz;
+begin
+  select coach_id, starts_at, class_id
+    into v_coach, v_starts, v_class
+    from class_sessions where id = p_session;
+
+  if v_coach is null or v_coach <> auth.uid() then
+    raise exception 'not_your_session';
+  end if;
+
+  select split_part(coalesce(nullif(trim(full_name), ''), 'Your coach'), ' ', 1)
+    into v_name
+    from profiles where id = v_coach;
+
+  select coalesce(v.name, pcd.address, 'the venue')
+    into v_location
+    from classes c
+    left join venues v on v.id = c.venue_id
+    left join private_class_details pcd on pcd.class_id = c.id
+    where c.id = v_class
+    limit 1;
+
+  v_time := to_char(v_starts at time zone 'Asia/Kolkata', 'FMHH12:MI AM');
+
+  if p_late then
+    v_type  := 'coach_late';
+    v_title := 'Coach running late';
+    v_body  := 'Coach ' || v_name || ' is running a few minutes late for the '
+               || v_time || ' session.';
+  else
+    update class_sessions
+       set coach_arrived_at = coalesce(coach_arrived_at, now())
+     where id = p_session
+     returning coach_arrived_at into v_arrived;
+    v_type  := 'coach_arrived';
+    v_title := 'Coach has arrived';
+    v_body  := 'Coach ' || v_name || ' is at ' || v_location
+               || ' for the ' || v_time || ' session.';
+  end if;
+
+  insert into notifications (user_id, type, title, body, data)
+  select distinct b.client_id, v_type, v_title, v_body,
+         jsonb_build_object('session_id', p_session, 'url', '/app')
+    from bookings b
+   where b.session_id = p_session
+     and b.status in ('confirmed', 'attended');
+
+  insert into notifications (user_id, type, title, body, data)
+  select p.id, v_type, v_title, v_body,
+         jsonb_build_object('session_id', p_session, 'url', '/admin/calendar')
+    from profiles p where p.role = 'founder';
+
+  return v_arrived;
+end;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.get_player_notes(p_player uuid)
+ RETURNS TABLE(id uuid, body text, created_at timestamptz, author_name text)
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+begin
+  if not (is_coach() or is_founder()) then
+    raise exception 'not_authorised';
+  end if;
+
+  return query
+    select n.id, n.body, n.created_at,
+           coalesce(nullif(trim(p.full_name), ''), 'Coach') as author_name
+      from student_notes n
+      left join profiles p on p.id = n.author_id
+     where n.player_id = p_player
+     order by n.created_at desc;
+end;
+$function$;
+
 -- ── View ─────────────────────────────────────────────────────────────────────
 CREATE OR REPLACE VIEW public.coach_client_view AS
   SELECT id, full_name, avatar_url FROM profiles p;
@@ -1854,6 +1960,7 @@ alter table public.private_credit_ledger enable row level security;
 alter table public.profiles enable row level security;
 alter table public.push_subscriptions enable row level security;
 alter table public.settings enable row level security;
+alter table public.student_notes enable row level security;
 alter table public.subscriptions enable row level security;
 alter table public.venues enable row level security;
 alter table public.wa_link_codes enable row level security;
@@ -1906,6 +2013,9 @@ CREATE POLICY "own profile" ON public.profiles AS PERMISSIVE FOR ALL TO public U
 CREATE POLICY "own push subscriptions" ON public.push_subscriptions AS PERMISSIVE FOR ALL TO public USING ((user_id = auth.uid())) WITH CHECK ((user_id = auth.uid()));
 CREATE POLICY "authenticated read settings" ON public.settings AS PERMISSIVE FOR SELECT TO public USING ((auth.uid() IS NOT NULL));
 CREATE POLICY "founder writes settings" ON public.settings AS PERMISSIVE FOR ALL TO public USING (is_founder());
+CREATE POLICY "coach or founder reads notes" ON public.student_notes AS PERMISSIVE FOR SELECT TO public USING ((is_coach() OR is_founder()));
+CREATE POLICY "coach or founder writes notes" ON public.student_notes AS PERMISSIVE FOR INSERT TO public WITH CHECK (((author_id = auth.uid()) AND (is_coach() OR is_founder())));
+CREATE POLICY "author or founder deletes note" ON public.student_notes AS PERMISSIVE FOR DELETE TO public USING (((author_id = auth.uid()) OR is_founder()));
 CREATE POLICY "founder writes subscriptions" ON public.subscriptions AS PERMISSIVE FOR ALL TO public USING (is_founder());
 CREATE POLICY "own subscriptions" ON public.subscriptions AS PERMISSIVE FOR SELECT TO public USING (((client_id = auth.uid()) OR is_founder()));
 CREATE POLICY "founder writes venues" ON public.venues AS PERMISSIVE FOR ALL TO public USING (is_founder());

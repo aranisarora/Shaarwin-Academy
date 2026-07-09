@@ -20,6 +20,7 @@ type SessionRow = {
   starts_at: string;
   ends_at: string;
   coachId: string | null;
+  coachArrivedAt: string | null;
   title: string;
   capacity: number;
   isPrivate: boolean;
@@ -130,6 +131,11 @@ export function AdminCalendar({
         {session.title}
         {session.venueName ? ` — ${session.venueName}` : ""}
       </p>
+      {session.coachId && session.coachArrivedAt && (
+        <span className="mt-1.5 inline-flex">
+          <Badge tone="ok">✓ Arrived {wallTime(session.coachArrivedAt)}</Badge>
+        </span>
+      )}
     </button>
   );
 
@@ -190,7 +196,17 @@ export function AdminCalendar({
               <p className="mt-1 text-fg-2">
                 {selected.venueName ?? "Private address"} · {selected.capacity} spots
               </p>
-              {selected.isPrivate && <Badge tone="ember">Private</Badge>}
+              <div className="mt-2 flex flex-wrap gap-2">
+                {selected.isPrivate && <Badge tone="ember">Private</Badge>}
+                {selected.coachId &&
+                  (selected.coachArrivedAt ? (
+                    <Badge tone="ok">
+                      ✓ Coach arrived {wallTime(selected.coachArrivedAt)}
+                    </Badge>
+                  ) : (
+                    <Badge tone="neutral">Coach not arrived yet</Badge>
+                  ))}
+              </div>
             </div>
 
             <div className="space-y-3 rounded-[12px] border border-line p-4">
