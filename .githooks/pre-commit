@@ -1,0 +1,28 @@
+#!/bin/sh
+# Guard: a schema change (new/edited migration) must ship with a fresh dump of
+# supabase/schema.sql in the same commit. See AGENTS.md -> Database.
+
+staged_migrations=$(git diff --cached --name-only --diff-filter=ACMR -- 'supabase/migrations/')
+if [ -z "$staged_migrations" ]; then
+  exit 0
+fi
+
+staged_schema=$(git diff --cached --name-only --diff-filter=ACMR -- 'supabase/schema.sql')
+if [ -n "$staged_schema" ]; then
+  exit 0
+fi
+
+echo "-------------------------------------------------------------------"
+echo "✖  Migration staged without an updated supabase/schema.sql"
+echo ""
+echo "   You staged changes under supabase/migrations/ but did not"
+echo "   refresh the canonical schema. Keep them in sync: regenerate"
+echo "   supabase/schema.sql from the live DB (via the Supabase MCP —"
+echo "   dump the public schema) and stage it:"
+echo ""
+echo "     git add supabase/schema.sql"
+echo ""
+echo "   Bypass (only if you know the schema is unchanged):"
+echo "     git commit --no-verify"
+echo "-------------------------------------------------------------------"
+exit 1
