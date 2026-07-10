@@ -12,14 +12,16 @@ import { cancelBooking } from "@/app/app/book/actions";
 import { cancelSeries } from "@/app/app/schedule/actions";
 import { RescheduleSheet } from "@/components/app/RescheduleSheet";
 import type { MyBooking } from "@/lib/booking";
+import { nowMs } from "@/lib/academy-time";
 
 function fmt(iso: string) {
   return new Intl.DateTimeFormat("en-GB", {
     weekday: "short",
     day: "numeric",
     month: "short",
-    hour: "2-digit",
+    hour: "numeric",
     minute: "2-digit",
+    hour12: true,
     timeZone: "Asia/Kolkata",
   }).format(new Date(iso));
 }
@@ -72,7 +74,7 @@ export function ScheduleList({
   const [pending, startTransition] = useTransition();
 
   const cancelIsFree = selected
-    ? new Date(selected.session.starts_at).getTime() - Date.now() >= 24 * 3600000
+    ? new Date(selected.session.starts_at).getTime() - nowMs() >= 24 * 3600000
     : true;
 
   function doCancel() {

@@ -4,6 +4,7 @@
 // the webapp uses (audit-logged), on the founder's own RLS-scoped session.
 
 import {
+  addCoachCore,
   createOneOffSessionCore,
   deleteGroupClassCore,
   deleteVenueCore,
@@ -285,14 +286,60 @@ const promoteCoach: WaTool = {
   },
 };
 
+const addCoach: WaTool = {
+  name: "add_coach",
+  description:
+    "Register a new coach by their details (name + email required). If an account already exists for that email it's promoted to coach now; otherwise they become a coach automatically the moment they sign up on the website with that email. Share the plain website signup link with them. Confirm details first.",
+  input_schema: {
+    type: "object",
+    properties: {
+      full_name: { type: "string" },
+      email: { type: "string" },
+      phone: { type: "string" },
+      bio: { type: "string" },
+      tier: { type: "number", description: "1 Junior | 2 Senior | 3 Head coach" },
+      max_teachable_level: {
+        type: "string",
+        description: "beginner | intermediate | advanced | elite",
+      },
+      travel_radius_km: { type: "number" },
+      dbs_checked: { type: "boolean" },
+    },
+    required: ["full_name", "email"],
+  },
+  run: async (input, ctx) => {
+    const result = await addCoachCore(ctx.supabase!, ctx.profile!.id, {
+      fullName: String(input.full_name ?? ""),
+      email: String(input.email ?? ""),
+      phone: input.phone != null ? String(input.phone) : "",
+      bio: input.bio != null ? String(input.bio) : "",
+      tier: input.tier != null ? Number(input.tier) : 1,
+      maxTeachableLevel:
+        input.max_teachable_level != null ? String(input.max_teachable_level) : "advanced",
+      travelRadiusKm: input.travel_radius_km != null ? Number(input.travel_radius_km) : 10,
+      dbsChecked: input.dbs_checked != null ? Boolean(input.dbs_checked) : false,
+    });
+    if (!result.ok) return fail(result.error ?? "Failed.");
+    return ok({
+      added: true,
+      pending: Boolean(result.pending),
+      note: result.pending
+        ? "Saved to the coach list. They become a coach as soon as they sign up on the website with that email — send them the signup link."
+        : "That account already existed and is now a coach.",
+    });
+  },
+};
+
 const updateCoach: WaTool = {
   name: "update_coach",
   description:
-    "Edit a coach's details (coach_id from list_coaches). Only pass what you're changing; the rest stay put.",
+    "Edit a coach's details, including name and phone (coach_id from list_coaches). Only pass what you're changing; the rest stay put.",
   input_schema: {
     type: "object",
     properties: {
       coach_id: { type: "string" },
+      full_name: { type: "string" },
+      phone: { type: "string" },
       bio: { type: "string" },
       travel_radius_km: { type: "number" },
       max_teachable_level: { type: "string", description: "beginner | intermediate | advanced" },
@@ -319,6 +366,8 @@ const updateCoach: WaTool = {
           : cur.max_teachable_level,
       tier: input.tier != null ? Number(input.tier) : cur.tier,
       dbsChecked: input.dbs_checked != null ? Boolean(input.dbs_checked) : cur.dbs_checked,
+      ...(input.full_name != null ? { fullName: String(input.full_name) } : {}),
+      ...(input.phone != null ? { phone: String(input.phone) } : {}),
     });
     return result.ok ? ok({ updated: true }) : fail(result.error ?? "Failed.");
   },
@@ -577,6 +626,7 @@ export const founderAdminTools: WaTool[] = [
   setSessionCapacity,
   createOneOff,
   promoteCoach,
+  addCoach,
   updateCoach,
   setCoachActive,
   updateClient,

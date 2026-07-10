@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/Button";
 import { markArrived, markRunningLate } from "@/app/coach/session/[id]/actions";
-import { ACADEMY_TZ } from "@/lib/academy-time";
+import { ACADEMY_TZ, nowMs } from "@/lib/academy-time";
 
 function fmtClock(iso: string) {
   return new Intl.DateTimeFormat("en-GB", {
@@ -32,8 +32,8 @@ export function SessionArrival({
   // Available from an hour before the session until it ends. Mirrors the
   // render-time window check in SessionRoster.
   const open =
-    Date.now() >= new Date(startsAt).getTime() - 60 * 60000 &&
-    Date.now() <= new Date(endsAt).getTime();
+    nowMs() >= new Date(startsAt).getTime() - 60 * 60000 &&
+    nowMs() <= new Date(endsAt).getTime();
 
   if (arrivedAt) {
     return (

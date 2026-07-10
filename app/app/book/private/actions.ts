@@ -109,52 +109,47 @@ export type PrivateResult =
   | { ok: true; sessionId: string; parked: boolean }
   | { ok: false; error: string };
 
-export type PrivateSeriesResult =
+export type PrivateSessionsResult =
   | { ok: true; booked: number; parked: number; ranOut: boolean }
   | { ok: false; error: string };
 
-const MAX_PRIVATE_WEEKS = 12; // cap the forward run (≈ one quarter)
+const MAX_PRIVATE_SLOTS = 12; // cap a single multi-select booking (≈ one quarter)
 
 /**
- * Book a private slot, optionally repeating weekly. Because private sessions
- * debit a finite minutes balance and have no session generator, a recurring
- * request books forward week-by-week (same weekday + time) until the balance
- * can't cover another session — then stops and reports how far it got.
+ * Book a set of explicitly chosen private slots in one go. Each session debits
+ * the finite minutes balance, so slots are booked in chronological order and
+ * the run stops once the balance can't cover the next one — then reports how
+ * far it got so the UI can tell the user which slots landed.
  */
-export async function requestPrivateSeries(
-  req: PrivateRequest,
-  recurring: boolean
-): Promise<PrivateSeriesResult> {
+export async function requestPrivateSessions(
+  req: Omit<PrivateRequest, "startsAt">,
+  startsAtList: string[]
+): Promise<PrivateSessionsResult> {
   const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return { ok: false, error: "Sign in first." };
 
-  if (!recurring) {
-    const single = await requestPrivateClass(req);
-    if (!single.ok) return { ok: false, error: single.error };
-    return { ok: true, booked: 1, parked: single.parked ? 1 : 0, ranOut: false };
-  }
+  // De-dupe and book earliest-first so a partial run keeps the soonest slots.
+  const slots = [...new Set(startsAtList)].sort().slice(0, MAX_PRIVATE_SLOTS);
+  if (slots.length === 0) return { ok: false, error: "Pick at least one time." };
 
   const summary = await getSubscriptionSummary(supabase, user.id);
   let remaining = summary.minutesBalance;
-  const affordable = Math.min(MAX_PRIVATE_WEEKS, Math.floor(remaining / req.duration));
-  if (affordable < 1) {
+  if (remaining < req.duration) {
     return { ok: false, error: "Not enough private minutes left this quarter." };
   }
 
-  const base = new Date(req.startsAt).getTime();
   let booked = 0;
   let parked = 0;
   let ranOut = false;
 
-  for (let i = 0; i < affordable; i++) {
+  for (const startsAt of slots) {
     if (remaining < req.duration) {
       ranOut = true;
       break;
     }
-    const startsAt = new Date(base + i * 7 * 86400000).toISOString();
     const r = await requestPrivateClass({ ...req, startsAt });
     if (r.ok) {
       booked += 1;
@@ -163,13 +158,13 @@ export async function requestPrivateSeries(
     } else {
       // Out of minutes mid-run: keep what booked, stop cleanly.
       if (r.error.includes("minutes")) ranOut = true;
-      // First week failing for another reason is a hard error.
-      else if (i === 0) return { ok: false, error: r.error };
+      // First slot failing for another reason is a hard error.
+      else if (booked === 0) return { ok: false, error: r.error };
       break;
     }
   }
 
-  if (booked < affordable) ranOut = true;
+  if (booked < slots.length) ranOut = true;
   return { ok: true, booked, parked, ranOut };
 }
 

@@ -113,8 +113,9 @@ export default async function AdminDashboardPage() {
                         weekday: "short",
                         day: "numeric",
                         month: "short",
-                        hour: "2-digit",
+                        hour: "numeric",
                         minute: "2-digit",
+                        hour12: true,
                         timeZone: "Asia/Kolkata",
                       }).format(new Date(s.starts_at))}
                     </p>

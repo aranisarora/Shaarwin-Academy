@@ -147,6 +147,9 @@ export async function autoProvisionClient(
   await admin.from("wa_links").insert({ phone, user_id: userId });
   await admin.from("profiles").update({ phone }).eq("id", userId);
 
+  // If an admin pre-registered this phone as a coach, upgrade the fresh account.
+  await admin.rpc("claim_coach_invite_by_phone", { p_user: userId, p_phone: phone });
+
   const { data: profile } = await admin
     .from("profiles")
     .select("*")
@@ -264,7 +267,7 @@ export async function signUpNewClient(
   rawPhone: string,
   fullName: string,
   email: string
-): Promise<{ ok: true; userId: string } | { ok: false; error: string }> {
+): Promise<{ ok: true; userId: string; role: string } | { ok: false; error: string }> {
   const phone = normalizePhone(rawPhone);
   if (!phone) return { ok: false, error: "signup_failed" };
   const cleanEmail = email.trim().toLowerCase();
@@ -285,11 +288,12 @@ export async function signUpNewClient(
     };
   }
 
-  // The handle_new_user trigger provisions profiles + players; belt & braces
-  // in case it hasn't run yet (mirrors requireUser()).
+  // The handle_new_user trigger provisions profiles + players — and upgrades the
+  // account to coach if the email was on the invite allowlist. Belt & braces in
+  // case the trigger hasn't run yet (mirrors requireUser()).
   const { data: profile } = await admin
     .from("profiles")
-    .select("id")
+    .select("id,role")
     .eq("id", created.user.id)
     .maybeSingle();
   if (!profile) {
@@ -308,5 +312,5 @@ export async function signUpNewClient(
   await admin.from("wa_links").insert({ phone, user_id: created.user.id });
   await admin.from("profiles").update({ phone }).eq("id", created.user.id);
 
-  return { ok: true, userId: created.user.id };
+  return { ok: true, userId: created.user.id, role: profile?.role ?? "client" };
 }

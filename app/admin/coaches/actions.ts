@@ -4,10 +4,14 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { requireFounder } from "@/lib/founder";
 import {
+  addCoachCore,
   decideTimeOffCore,
+  deletePendingCoachCore,
   promoteToCoachCore,
   saveCoachCore,
+  savePendingCoachCore,
   setCoachActiveCore,
+  type CoachDetails,
   type CoachInput,
 } from "@/lib/admin-ops";
 
@@ -17,6 +21,35 @@ export async function promoteToCoach(profileId: string): Promise<Result> {
   const { supabase, founder } = await requireFounder();
   if (!founder) return { ok: false, error: "Founder only." };
   const result = await promoteToCoachCore(supabase, founder.id, profileId);
+  if (!result.ok) return result;
+  revalidatePath("/admin/coaches");
+  return { ok: true };
+}
+
+export async function addCoach(
+  details: CoachDetails
+): Promise<Result & { pending?: boolean }> {
+  const { supabase, founder } = await requireFounder();
+  if (!founder) return { ok: false, error: "Founder only." };
+  const result = await addCoachCore(supabase, founder.id, details);
+  if (!result.ok) return result;
+  revalidatePath("/admin/coaches");
+  return { ok: true, pending: result.pending };
+}
+
+export async function savePendingCoach(id: string, details: CoachDetails): Promise<Result> {
+  const { supabase, founder } = await requireFounder();
+  if (!founder) return { ok: false, error: "Founder only." };
+  const result = await savePendingCoachCore(supabase, founder.id, id, details);
+  if (!result.ok) return result;
+  revalidatePath("/admin/coaches");
+  return { ok: true };
+}
+
+export async function deletePendingCoach(id: string): Promise<Result> {
+  const { supabase, founder } = await requireFounder();
+  if (!founder) return { ok: false, error: "Founder only." };
+  const result = await deletePendingCoachCore(supabase, founder.id, id);
   if (!result.ok) return result;
   revalidatePath("/admin/coaches");
   return { ok: true };

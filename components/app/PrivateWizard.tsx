@@ -11,14 +11,9 @@ import {
   checkCoverage,
   recordAreaInterest,
   getSlots,
-  requestPrivateSeries,
+  requestPrivateSessions,
   type Slot,
 } from "@/app/app/book/private/actions";
-
-const WEEKDAY_FMT = new Intl.DateTimeFormat("en-GB", {
-  weekday: "long",
-  timeZone: "Asia/Kolkata",
-});
 
 type Coach = { id: string; name: string; lat: number; lng: number; radiusKm: number };
 
@@ -29,8 +24,9 @@ function fmtSlot(iso: string) {
     weekday: "short",
     day: "numeric",
     month: "short",
-    hour: "2-digit",
+    hour: "numeric",
     minute: "2-digit",
+    hour12: true,
     timeZone: "Asia/Kolkata",
   }).format(new Date(iso));
 }
@@ -60,13 +56,12 @@ export function PrivateWizard({
   const [hasTable, setHasTable] = useState(true);
   const [accessNotes, setAccessNotes] = useState("");
 
-  // Step 2 — when
+  // Step 2 — when. Multiple slots can be picked; each becomes its own session.
   const [duration, setDuration] = useState<number>(60);
   const [slots, setSlots] = useState<Slot[] | null>(null);
-  const [slot, setSlot] = useState<string | null>(null);
+  const [selected, setSelected] = useState<string[]>([]);
   const [preferredCoach, setPreferredCoach] = useState("");
 
-  const [recurring, setRecurring] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [parked, setParked] = useState(false);
   const [booked, setBooked] = useState(1);
@@ -142,7 +137,7 @@ export function PrivateWizard({
 
   function changeDuration(d: number) {
     setDuration(d);
-    setSlot(null);
+    setSelected([]); // minutes-per-slot changed — start the pick over
     if (!pin) return;
     setSlots(null);
     startTransition(async () => {
@@ -151,15 +146,29 @@ export function PrivateWizard({
     });
   }
 
+  // How many sessions of this duration the balance can still cover.
+  const maxSlots = Math.floor(minutesBalance / duration);
+
+  function toggleSlot(startsAt: string) {
+    setSelected((prev) =>
+      prev.includes(startsAt)
+        ? prev.filter((s) => s !== startsAt)
+        : prev.length < maxSlots
+          ? [...prev, startsAt]
+          : prev
+    );
+  }
+
+  const sortedSelected = [...selected].sort();
+
   function confirm() {
-    if (!pin || !slot || !address) return;
+    if (!pin || selected.length === 0 || !address) return;
     setError(null);
     startTransition(async () => {
-      const result = await requestPrivateSeries(
+      const result = await requestPrivateSessions(
         {
           playerId,
           duration,
-          startsAt: slot,
           address,
           postcode,
           lat: pin.lat,
@@ -168,7 +177,7 @@ export function PrivateWizard({
           accessNotes,
           preferredCoach: preferredCoach || undefined,
         },
-        recurring
+        sortedSelected
       );
       if (result.ok) {
         setParked(result.parked > 0);
@@ -364,7 +373,14 @@ export function PrivateWizard({
           )}
 
           <div>
-            <p className="label mb-2">Pick a slot</p>
+            <div className="mb-2 flex items-baseline justify-between">
+              <p className="label">Pick one or more slots</p>
+              {selected.length > 0 && (
+                <p className="tnum text-xs text-fg-2">
+                  {selected.length} selected · {selected.length * duration} min
+                </p>
+              )}
+            </div>
             {slots === null ? (
               <div className="flex justify-center py-8">
                 <Spinner />
@@ -375,20 +391,32 @@ export function PrivateWizard({
               </p>
             ) : (
               <div className="grid max-h-72 grid-cols-2 gap-2 overflow-y-auto pr-1">
-                {slots.slice(0, 60).map((s) => (
-                  <button
-                    key={s.starts_at}
-                    onClick={() => setSlot(s.starts_at)}
-                    className={`tnum min-h-11 rounded-[8px] border px-2 text-sm ${
-                      slot === s.starts_at
-                        ? "border-ember bg-ember text-ivory"
-                        : "border-line hover:border-ember"
-                    }`}
-                  >
-                    {fmtSlot(s.starts_at)}
-                  </button>
-                ))}
+                {slots.slice(0, 60).map((s) => {
+                  const isSelected = selected.includes(s.starts_at);
+                  const atCap = !isSelected && selected.length >= maxSlots;
+                  return (
+                    <button
+                      key={s.starts_at}
+                      onClick={() => toggleSlot(s.starts_at)}
+                      disabled={atCap}
+                      aria-pressed={isSelected}
+                      title={atCap ? "Not enough minutes for another session" : undefined}
+                      className={`tnum min-h-11 rounded-[8px] border px-2 text-sm disabled:opacity-40 ${
+                        isSelected
+                          ? "border-ember bg-ember text-ivory"
+                          : "border-line hover:border-ember"
+                      }`}
+                    >
+                      {fmtSlot(s.starts_at)}
+                    </button>
+                  );
+                })}
               </div>
+            )}
+            {maxSlots > 1 && (
+              <p className="mt-2 text-xs text-fg-2">
+                Pick up to {maxSlots} — each uses {duration} of your {minutesBalance} minutes.
+              </p>
             )}
           </div>
 
@@ -396,51 +424,41 @@ export function PrivateWizard({
             <Button variant="ghost" onClick={() => setStep(1)}>
               Back
             </Button>
-            <Button onClick={() => setStep(3)} disabled={!slot} className="flex-1">
+            <Button
+              onClick={() => setStep(3)}
+              disabled={selected.length === 0}
+              className="flex-1"
+            >
               Review
             </Button>
           </div>
         </div>
       )}
 
-      {step === 3 && slot && (
+      {step === 3 && selected.length > 0 && (
         <div className="space-y-5">
           <h2 className="font-display text-2xl">Confirm</h2>
           <div className="space-y-3 rounded-[12px] border border-line bg-surface-2 p-5">
-            <p className="tnum font-display text-3xl">{fmtSlot(slot)}</p>
+            <p className="font-display text-2xl">
+              {selected.length} session{selected.length > 1 ? "s" : ""}
+            </p>
+            <ul className="tnum space-y-1 text-sm">
+              {sortedSelected.map((s) => (
+                <li key={s} className="flex items-center gap-2">
+                  <span aria-hidden className="h-1.5 w-1.5 shrink-0 rounded-full bg-ember" />
+                  {fmtSlot(s)}
+                </li>
+              ))}
+            </ul>
             <p className="text-fg-2">{address}</p>
-            <p className="text-fg-2">{duration} minutes</p>
+            <p className="text-fg-2">{duration} minutes each</p>
             <p className="tnum text-sm">
-              Uses {duration} of your {minutesBalance} min
-              {recurring ? " per week, while minutes last" : ` — ${minutesBalance - duration} left after`}.
+              Uses {selected.length * duration} of your {minutesBalance} min —{" "}
+              {minutesBalance - selected.length * duration} left after.
             </p>
             <p className="text-sm text-fg-2">
               Coach: assigned automatically — we&apos;ll introduce them right away.
             </p>
-          </div>
-
-          <div className="grid grid-cols-2 gap-2">
-            <button
-              type="button"
-              onClick={() => setRecurring(true)}
-              aria-pressed={recurring}
-              className={`rounded-[10px] border p-3 text-left ${recurring ? "border-ember bg-ember/5" : "border-line hover:border-fg-2"}`}
-            >
-              <p className="text-sm font-semibold">Every week</p>
-              <p className="mt-0.5 text-xs text-fg-2">
-                {WEEKDAY_FMT.format(new Date(slot))}s at this time, until your minutes
-                run out.
-              </p>
-            </button>
-            <button
-              type="button"
-              onClick={() => setRecurring(false)}
-              aria-pressed={!recurring}
-              className={`rounded-[10px] border p-3 text-left ${!recurring ? "border-ember bg-ember/5" : "border-line hover:border-fg-2"}`}
-            >
-              <p className="text-sm font-semibold">Just once</p>
-              <p className="mt-0.5 text-xs text-fg-2">Only {fmtSlot(slot)}.</p>
-            </button>
           </div>
           {error && <p className="text-sm text-err">{error}</p>}
           <div className="flex gap-3">
@@ -448,7 +466,9 @@ export function PrivateWizard({
               Back
             </Button>
             <Button onClick={confirm} disabled={pending} className="flex-1">
-              {pending ? <Spinner /> : "Request session"}
+              {pending
+                ? <Spinner />
+                : `Request ${selected.length} session${selected.length > 1 ? "s" : ""}`}
             </Button>
           </div>
         </div>
@@ -462,7 +482,7 @@ export function PrivateWizard({
           </h2>
           <p className="mt-2 text-fg-2">
             {booked > 1
-              ? `${booked} weekly sessions booked${ranOut ? " — as far as your minutes stretch" : ""}.`
+              ? `${booked} sessions booked${ranOut ? " — as far as your minutes stretched" : ""}.`
               : parked
                 ? "You'll hear from us within 24 hours."
                 : "Coach confirmed — details are in your schedule."}

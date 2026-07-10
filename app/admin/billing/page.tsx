@@ -4,6 +4,7 @@ import { AdminShell } from "@/components/app/AdminShell";
 import { Badge } from "@/components/ui/Badge";
 import { Card } from "@/components/ui/Card";
 import { formatPrice } from "@/lib/data";
+import { nowMs } from "@/lib/academy-time";
 
 export const metadata: Metadata = { title: "Billing" };
 
@@ -72,7 +73,7 @@ export default async function AdminBillingPage() {
                       Math.ceil(
                         (new Date(s.current_period_end).getTime() +
                           graceDays * 86400000 -
-                          Date.now()) /
+                          nowMs()) /
                           86400000
                       )
                     )

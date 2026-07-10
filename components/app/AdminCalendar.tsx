@@ -35,8 +35,9 @@ function fmt(iso: string) {
     weekday: "short",
     day: "numeric",
     month: "short",
-    hour: "2-digit",
+    hour: "numeric",
     minute: "2-digit",
+    hour12: true,
     timeZone: "Asia/Kolkata",
   }).format(new Date(iso));
 }
@@ -50,12 +51,23 @@ function wallDate(iso: string) {
   }).format(new Date(iso));
 }
 
+// 24-hour "HH:MM" — feeds the <input type="time"> value, which requires it.
 function wallTime(iso: string) {
   return new Intl.DateTimeFormat("en-GB", {
     timeZone: "Asia/Kolkata",
     hour: "2-digit",
     minute: "2-digit",
     hour12: false,
+  }).format(new Date(iso));
+}
+
+// 12-hour "5:00 pm" — for display.
+function clockTime(iso: string) {
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Kolkata",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
   }).format(new Date(iso));
 }
 
@@ -133,7 +145,7 @@ export function AdminCalendar({
       </p>
       {session.coachId && session.coachArrivedAt && (
         <span className="mt-1.5 inline-flex">
-          <Badge tone="ok">✓ Arrived {wallTime(session.coachArrivedAt)}</Badge>
+          <Badge tone="ok">✓ Arrived {clockTime(session.coachArrivedAt)}</Badge>
         </span>
       )}
     </button>
@@ -201,7 +213,7 @@ export function AdminCalendar({
                 {selected.coachId &&
                   (selected.coachArrivedAt ? (
                     <Badge tone="ok">
-                      ✓ Coach arrived {wallTime(selected.coachArrivedAt)}
+                      ✓ Coach arrived {clockTime(selected.coachArrivedAt)}
                     </Badge>
                   ) : (
                     <Badge tone="neutral">Coach not arrived yet</Badge>

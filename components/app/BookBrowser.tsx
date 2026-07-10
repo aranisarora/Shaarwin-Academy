@@ -24,8 +24,9 @@ function fmtDate(iso: string) {
     weekday: "short",
     day: "numeric",
     month: "short",
-    hour: "2-digit",
+    hour: "numeric",
     minute: "2-digit",
+    hour12: true,
     timeZone: TZ,
   }).format(new Date(iso));
 }
@@ -34,14 +35,14 @@ function fmtDate(iso: string) {
 function slotParts(iso: string) {
   const parts = new Intl.DateTimeFormat("en-GB", {
     weekday: "long",
-    hour: "2-digit",
+    hour: "numeric",
     minute: "2-digit",
-    hour12: false,
+    hour12: true,
     timeZone: TZ,
   }).formatToParts(new Date(iso));
   const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
   const weekday = get("weekday"); // "Monday"
-  const time = `${get("hour")}:${get("minute")}`; // "17:00"
+  const time = `${get("hour")}:${get("minute")} ${get("dayPeriod")}`; // "5:00 pm"
   return { weekday, weekdayShort: weekday.slice(0, 3), time };
 }
 

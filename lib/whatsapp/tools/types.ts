@@ -40,16 +40,16 @@ export function fail(error: string, detail?: unknown): string {
   return JSON.stringify({ ok: false, error, detail });
 }
 
-/** "Sat 12 Jul, 18:30" in academy time — what users should always see. */
+/** "Sat 12 Jul, 6:30 pm" in academy time — what users should always see. */
 export function fmtIST(iso: string): string {
   return new Intl.DateTimeFormat("en-IN", {
     timeZone: "Asia/Kolkata",
     weekday: "short",
     day: "numeric",
     month: "short",
-    hour: "2-digit",
+    hour: "numeric",
     minute: "2-digit",
-    hour12: false,
+    hour12: true,
   }).format(new Date(iso));
 }
 
