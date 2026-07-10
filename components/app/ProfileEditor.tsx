@@ -7,6 +7,11 @@ import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
 import { Spinner } from "@/components/ui/Spinner";
 import { enablePush, type PushState } from "@/lib/push";
+import { AddressForm } from "@/components/app/AddressForm";
+import {
+  fromDetails,
+  type StructuredAddress,
+} from "@/lib/address";
 import { saveProfile, addPlayer, removePlayer } from "@/app/app/profile/actions";
 
 // Per-type toggles; transactional types (payment_failed, session_cancelled)
@@ -35,11 +40,19 @@ export function ProfileEditor({
     fullName: string;
     phone: string;
     defaultAddress: string;
+    addressDetails: Partial<StructuredAddress> | null;
     prefs: Record<string, boolean>;
   };
   players: Player[];
 }) {
-  const [form, setForm] = useState(profile);
+  const [form, setForm] = useState({
+    fullName: profile.fullName,
+    phone: profile.phone,
+    prefs: profile.prefs,
+  });
+  const [address, setAddress] = useState<StructuredAddress>(() =>
+    fromDetails(profile.addressDetails, { address: profile.defaultAddress })
+  );
   const [newPlayer, setNewPlayer] = useState({ fullName: "", dateOfBirth: "", skillLevel: "beginner" });
   const [pushState, setPushState] = useState<PushState | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -60,11 +73,16 @@ export function ProfileEditor({
           value={form.phone}
           onChange={(e) => setForm({ ...form, phone: e.target.value })}
         />
-        <Input
-          label="Default address (prefills private bookings)"
-          value={form.defaultAddress}
-          onChange={(e) => setForm({ ...form, defaultAddress: e.target.value })}
-        />
+        <div>
+          <p className="label mb-2">Default address (prefills private bookings)</p>
+          <AddressForm
+            value={address}
+            onChange={setAddress}
+            searchLabel="Search your address"
+            searchPlaceholder="Start typing your address…"
+            showLabel
+          />
+        </div>
       </div>
 
       <div>
@@ -186,7 +204,11 @@ export function ProfileEditor({
         disabled={pending}
         onClick={() =>
           startTransition(async () => {
-            const r = await saveProfile(form);
+            const r = await saveProfile({
+              ...form,
+              defaultAddress: address.formatted,
+              addressDetails: address.formatted ? address : null,
+            });
             setMessage(r.ok ? "Saved." : (r.error ?? "Save failed."));
           })
         }

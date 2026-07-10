@@ -6,6 +6,7 @@ import { CoachShell } from "@/components/app/CoachShell";
 import { Badge } from "@/components/ui/Badge";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { NavigateButton } from "@/components/app/NavigateButton";
+import { formatAddressLine } from "@/lib/address-format";
 import { ACADEMY_TZ } from "@/lib/academy-time";
 
 export const metadata: Metadata = { title: "Schedule" };
@@ -74,7 +75,9 @@ export default async function CoachSchedulePage() {
                     (prev.venueName ?? prev.privateAddress) !==
                       (s.venueName ?? s.privateAddress);
                   const locationName =
-                    s.venueName ?? s.privateAddress ?? "Location TBC";
+                    s.venueName ??
+                    (s.address ? formatAddressLine(s.address) : s.privateAddress) ??
+                    "Location TBC";
                   const addressLine = s.venueName
                     ? [s.venueAddress, s.venuePostcode].filter(Boolean).join(", ")
                     : null;

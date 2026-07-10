@@ -3,6 +3,7 @@ import Link from "next/link";
 import { requireUser } from "@/lib/auth";
 import { AdminShell } from "@/components/app/AdminShell";
 import { AdminCalendar } from "@/components/app/AdminCalendar";
+import { fromDetails, type StructuredAddress } from "@/lib/address";
 
 export const metadata: Metadata = { title: "Master calendar" };
 
@@ -24,7 +25,7 @@ export default async function AdminCalendarPage({
     supabase
       .from("class_sessions")
       .select(
-        "id,starts_at,ends_at,coach_id,coach_arrived_at,capacity_override,classes!inner(title,capacity,class_type,venues(name))"
+        "id,starts_at,ends_at,coach_id,coach_arrived_at,capacity_override,classes!inner(title,capacity,class_type,venues(name,address,postcode,lat,lng,address_details),private_class_details(address,postcode,lat,lng,access_notes,address_details))"
       )
       .eq("status", "scheduled")
       .gte("starts_at", from.toISOString())
@@ -52,8 +53,42 @@ export default async function AdminCalendarPage({
       title: string;
       capacity: number;
       class_type: string;
-      venues: { name: string } | null;
+      venues: {
+        name: string;
+        address: string;
+        postcode: string;
+        lat: number;
+        lng: number;
+        address_details: Partial<StructuredAddress> | null;
+      } | null;
+      private_class_details:
+        | {
+            address: string;
+            postcode: string;
+            lat: number;
+            lng: number;
+            access_notes: string | null;
+            address_details: Partial<StructuredAddress> | null;
+          }[]
+        | null;
     };
+    const priv = cls.private_class_details?.[0] ?? null;
+    const address: StructuredAddress | null = cls.venues
+      ? fromDetails(cls.venues.address_details, {
+          address: cls.venues.address,
+          postcode: cls.venues.postcode,
+          lat: cls.venues.lat,
+          lng: cls.venues.lng,
+        })
+      : priv
+        ? fromDetails(priv.address_details, {
+            address: priv.address,
+            postcode: priv.postcode,
+            lat: priv.lat,
+            lng: priv.lng,
+            access_notes: priv.access_notes,
+          })
+        : null;
     return {
       id: s.id,
       starts_at: s.starts_at,
@@ -64,6 +99,7 @@ export default async function AdminCalendarPage({
       capacity: s.capacity_override ?? cls.capacity,
       isPrivate: cls.class_type === "private",
       venueName: cls.venues?.name ?? null,
+      address,
     };
   });
 

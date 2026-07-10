@@ -9,6 +9,7 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { ButtonLink } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { WhatsAppConnect } from "@/components/app/WhatsAppConnect";
+import { AddressDisplay } from "@/components/app/AddressDisplay";
 
 export const metadata: Metadata = { title: "Home" };
 
@@ -41,6 +42,13 @@ export default async function AppHomePage() {
               {next.session.venueName ? ` — ${next.session.venueName}` : " — at your address"}
               {next.session.coachName ? ` · Coach ${next.session.coachName}` : ""}
             </p>
+            {next.session.address && (
+              <AddressDisplay
+                address={next.session.address}
+                audience="public"
+                className="mt-2"
+              />
+            )}
             <div className="mt-4 flex flex-wrap items-center gap-3">
               {next.status === "waitlisted" && <Badge tone="ember">Waitlist</Badge>}
               {next.session.isPrivate && <Badge>Private</Badge>}

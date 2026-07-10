@@ -7,6 +7,12 @@ export type GeocodeHit = {
   place_name: string;
   center: [number, number];
   postcode: string;
+  // Extra context parsed from the /retrieve response so callers can prefill a
+  // structured address. All optional — older callers read only the three above.
+  locality?: string;
+  city?: string;
+  state?: string;
+  country?: string;
 };
 
 /** A /suggest candidate — no coordinates yet; those come from /retrieve. */
@@ -110,12 +116,19 @@ export function AddressSearch({
       const feat = body.features?.[0];
       if (!feat) return;
       const p = feat.properties ?? {};
+      const ctx = p.context ?? {};
       onSelect({
         place_name:
           p.full_address ||
           [p.name, p.place_formatted].filter(Boolean).join(", "),
         center: feat.geometry.coordinates as [number, number],
-        postcode: p.context?.postcode?.name ?? "",
+        postcode: ctx.postcode?.name ?? "",
+        // Bengaluru results expose area under neighborhood/locality; city under
+        // place, state under region. Any may be absent for a sparse result.
+        locality: ctx.neighborhood?.name ?? ctx.locality?.name ?? undefined,
+        city: ctx.place?.name ?? undefined,
+        state: ctx.region?.name ?? undefined,
+        country: ctx.country?.name ?? undefined,
       });
     } catch {
       // Retrieve failed — drop it; the user can pick again.

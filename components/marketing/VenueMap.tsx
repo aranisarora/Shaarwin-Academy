@@ -207,12 +207,22 @@ export function VenueMap({
               ✕
             </button>
           </div>
-          <Link
-            href={ctaHref}
-            className="mt-3 inline-flex min-h-11 items-center rounded-[8px] bg-ember px-4 text-sm font-semibold text-ivory hover:bg-ember-2"
-          >
-            {ctaLabel}
-          </Link>
+          <div className="mt-3 flex flex-wrap items-center gap-3">
+            <Link
+              href={ctaHref}
+              className="inline-flex min-h-11 items-center rounded-[8px] bg-ember px-4 text-sm font-semibold text-ivory hover:bg-ember-2"
+            >
+              {ctaLabel}
+            </Link>
+            <a
+              href={`https://www.google.com/maps/dir/?api=1&destination=${selected.lat},${selected.lng}`}
+              target="_blank"
+              rel="noreferrer"
+              className="text-sm text-smoke underline decoration-line-d underline-offset-4 hover:text-ivory"
+            >
+              ↗ Open in maps
+            </a>
+          </div>
         </div>
       )}
     </div>

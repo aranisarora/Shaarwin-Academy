@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
 import { Spinner } from "@/components/ui/Spinner";
-import { AddressSearch, type GeocodeHit } from "@/components/app/AddressSearch";
+import { AddressForm, isAddressComplete } from "@/components/app/AddressForm";
+import { EMPTY_ADDRESS, type StructuredAddress } from "@/lib/address";
 import {
   checkCoverage,
   recordAreaInterest,
@@ -44,17 +45,20 @@ export function PrivateWizard({
 }) {
   const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
 
-  // Step 1 — where
-  const [query, setQuery] = useState(defaultAddress ?? "");
-  const [address, setAddress] = useState<string | null>(null);
-  const [postcode, setPostcode] = useState("");
-  const [pin, setPin] = useState<{ lat: number; lng: number } | null>(null);
+  // Step 1 — where. A single structured address drives the whole step; the pin
+  // lives in addr.lat/lng.
+  const [addr, setAddr] = useState<StructuredAddress>(() =>
+    defaultAddress ? { ...EMPTY_ADDRESS, formatted: defaultAddress } : EMPTY_ADDRESS
+  );
   const [covered, setCovered] = useState<boolean | null>(null);
   const [interestEmail, setInterestEmail] = useState("");
   const [interestSent, setInterestSent] = useState(false);
   const [playerId, setPlayerId] = useState(players[0]?.id ?? "");
   const [hasTable, setHasTable] = useState(true);
-  const [accessNotes, setAccessNotes] = useState("");
+
+  const pin = addr.lat !== null && addr.lng !== null
+    ? { lat: addr.lat, lng: addr.lng }
+    : null;
 
   // Step 2 — when. Multiple slots can be picked; each becomes its own session.
   const [duration, setDuration] = useState<number>(60);
@@ -68,61 +72,27 @@ export function PrivateWizard({
   const [ranOut, setRanOut] = useState(false);
   const [pending, startTransition] = useTransition();
 
-  const mapContainer = useRef<HTMLDivElement>(null);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const markerRef = useRef<any>(null);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const mapRef = useRef<any>(null);
-
-  // Draggable pin map once an address is picked
+  // Re-check coverage whenever the pin moves (fresh geocode or drag). State is
+  // only set inside the async callback; the cleared-address case is handled in
+  // updateAddr so we never setState synchronously in the effect body.
   useEffect(() => {
-    if (!pin || !mapContainer.current || mapRef.current) return;
+    if (addr.lat === null || addr.lng === null) return;
+    const lat = addr.lat;
+    const lng = addr.lng;
     let cancelled = false;
     (async () => {
-      const token = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN;
-      if (!token) return;
-      const mapboxgl = (await import("mapbox-gl")).default;
-      await import("mapbox-gl/dist/mapbox-gl.css");
-      if (cancelled || !mapContainer.current) return;
-      mapboxgl.accessToken = token;
-      const map = new mapboxgl.Map({
-        container: mapContainer.current,
-        style: "mapbox://styles/mapbox/dark-v11",
-        center: [pin.lng, pin.lat],
-        zoom: 15,
-        attributionControl: false,
-      });
-      mapRef.current = map;
-      const el = document.createElement("div");
-      el.style.cssText =
-        "width:20px;height:20px;border-radius:999px;background:#E8590C;border:3px solid #F4F1EA;cursor:grab;box-shadow:0 0 0 6px rgb(232 89 12 / 0.25)";
-      const marker = new mapboxgl.Marker({ element: el, draggable: true })
-        .setLngLat([pin.lng, pin.lat])
-        .addTo(map);
-      marker.on("dragend", () => {
-        const pos = marker.getLngLat();
-        setPin({ lat: pos.lat, lng: pos.lng });
-      });
-      markerRef.current = marker;
+      const { covered } = await checkCoverage(lat, lng);
+      if (!cancelled) setCovered(covered);
     })();
     return () => {
       cancelled = true;
-      mapRef.current?.remove();
-      mapRef.current = null;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pin === null]);
+  }, [addr.lat, addr.lng]);
 
-  function pickAddress(hit: GeocodeHit) {
-    setAddress(hit.place_name);
-    setQuery(hit.place_name);
-    setPostcode(hit.postcode);
-    const [lng, lat] = hit.center;
-    setPin({ lat, lng });
-    startTransition(async () => {
-      const { covered } = await checkCoverage(lat, lng);
-      setCovered(covered);
-    });
+  // Wrap the address setter so clearing the pin also clears stale coverage.
+  function updateAddr(next: StructuredAddress) {
+    setAddr(next);
+    if (next.lat === null || next.lng === null) setCovered(null);
   }
 
   function toStep2() {
@@ -162,19 +132,20 @@ export function PrivateWizard({
   const sortedSelected = [...selected].sort();
 
   function confirm() {
-    if (!pin || selected.length === 0 || !address) return;
+    if (!pin || selected.length === 0 || !addr.formatted) return;
     setError(null);
     startTransition(async () => {
       const result = await requestPrivateSessions(
         {
           playerId,
           duration,
-          address,
-          postcode,
+          address: addr.formatted,
+          postcode: addr.postcode ?? "",
           lat: pin.lat,
           lng: pin.lng,
           hasTable,
-          accessNotes,
+          accessNotes: addr.accessNotes ?? "",
+          details: addr,
           preferredCoach: preferredCoach || undefined,
         },
         sortedSelected
@@ -212,27 +183,14 @@ export function PrivateWizard({
       {step === 1 && (
         <div className="space-y-5">
           <h2 className="font-display text-2xl">Where&apos;s the table?</h2>
-          <AddressSearch
-            placeholder="Start typing your address…"
-            query={query}
-            selected={address !== null}
-            onQueryChange={(q) => {
-              setQuery(q);
-              setAddress(null);
-              setCovered(null);
-            }}
-            onSelect={pickAddress}
+          <AddressForm
+            value={addr}
+            onChange={updateAddr}
+            requireFlat
+            showAccessNotes
+            searchLabel="Address"
+            searchPlaceholder="Start typing your address…"
           />
-
-          {pin && (
-            <div>
-              <p className="label mb-2">Drag to your door</p>
-              <div
-                ref={mapContainer}
-                className="h-56 overflow-hidden rounded-[12px] border border-line"
-              />
-            </div>
-          )}
 
           {covered === false && (
             <div className="rounded-[12px] border border-line bg-surface-2 p-4">
@@ -255,7 +213,7 @@ export function PrivateWizard({
                     onClick={() =>
                       startTransition(async () => {
                         if (!pin || !interestEmail) return;
-                        await recordAreaInterest(interestEmail, postcode, pin.lat, pin.lng);
+                        await recordAreaInterest(interestEmail, addr.postcode ?? "", pin.lat, pin.lng);
                         setInterestSent(true);
                       })
                     }
@@ -310,15 +268,14 @@ export function PrivateWizard({
             </button>
           </div>
 
-          <Input
-            label="Access notes (parking, gate codes…)"
-            value={accessNotes}
-            onChange={(e) => setAccessNotes(e.target.value)}
-          />
-
           <Button
             onClick={toStep2}
-            disabled={!pin || covered !== true || !hasTable || pending}
+            disabled={
+              !isAddressComplete(addr, true) ||
+              covered !== true ||
+              !hasTable ||
+              pending
+            }
             className="w-full"
           >
             {pending ? <Spinner /> : "Choose a time"}
@@ -450,7 +407,7 @@ export function PrivateWizard({
                 </li>
               ))}
             </ul>
-            <p className="text-fg-2">{address}</p>
+            <p className="text-fg-2">{addr.formatted}</p>
             <p className="text-fg-2">{duration} minutes each</p>
             <p className="tnum text-sm">
               Uses {selected.length * duration} of your {minutesBalance} min —{" "}

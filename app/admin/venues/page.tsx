@@ -9,7 +9,7 @@ export default async function AdminVenuesPage() {
   const { supabase } = await requireUser("/admin/venues");
   const { data: venues } = await supabase
     .from("venues")
-    .select("id,name,address,postcode,lat,lng,active")
+    .select("id,name,address,postcode,lat,lng,active,address_details")
     .order("name");
 
   return (

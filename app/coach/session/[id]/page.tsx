@@ -5,7 +5,8 @@ import { CoachShell } from "@/components/app/CoachShell";
 import { Badge } from "@/components/ui/Badge";
 import { SessionRoster } from "@/components/app/SessionRoster";
 import { SessionArrival } from "@/components/app/SessionArrival";
-import { NavigateButton } from "@/components/app/NavigateButton";
+import { AddressDisplay } from "@/components/app/AddressDisplay";
+import { fromDetails, type StructuredAddress } from "@/lib/address";
 import { ACADEMY_TZ, nowMs } from "@/lib/academy-time";
 
 export const metadata: Metadata = { title: "Session" };
@@ -21,7 +22,7 @@ export default async function CoachSessionPage({
   const { data: session } = await supabase
     .from("class_sessions")
     .select(
-      "id,starts_at,ends_at,coach_id,coach_notes,coach_arrived_at,classes!inner(title,skill_level,class_type,venues(name,address,postcode,lat,lng),private_class_details(address,postcode,lat,lng,access_notes,has_table))"
+      "id,starts_at,ends_at,coach_id,coach_notes,coach_arrived_at,classes!inner(title,skill_level,class_type,venues(name,address,postcode,lat,lng,address_details),private_class_details(address,postcode,lat,lng,access_notes,has_table,address_details))"
     )
     .eq("id", id)
     .maybeSingle();
@@ -38,6 +39,7 @@ export default async function CoachSessionPage({
       postcode: string;
       lat: number;
       lng: number;
+      address_details: Partial<StructuredAddress> | null;
     } | null;
     private_class_details:
       | {
@@ -47,12 +49,27 @@ export default async function CoachSessionPage({
           lng: number;
           access_notes: string | null;
           has_table: boolean;
+          address_details: Partial<StructuredAddress> | null;
         }[]
       | null;
   };
   const priv = cls.private_class_details?.[0] ?? null;
-  const lat = cls.venues?.lat ?? priv?.lat ?? null;
-  const lng = cls.venues?.lng ?? priv?.lng ?? null;
+  const address: StructuredAddress | null = cls.venues
+    ? fromDetails(cls.venues.address_details, {
+        address: cls.venues.address,
+        postcode: cls.venues.postcode,
+        lat: cls.venues.lat,
+        lng: cls.venues.lng,
+      })
+    : priv
+      ? fromDetails(priv.address_details, {
+          address: priv.address,
+          postcode: priv.postcode,
+          lat: priv.lat,
+          lng: priv.lng,
+          access_notes: priv.access_notes,
+        })
+      : null;
 
   const { data: roster } = await supabase
     .from("bookings")
@@ -100,14 +117,14 @@ export default async function CoachSessionPage({
       <div className="mx-auto max-w-2xl space-y-6">
         <div>
           <p className="tnum font-display text-3xl">{when}</p>
-          <p className="mt-1 text-fg-2">
-            {cls.venues
-              ? `${cls.venues.name} — ${cls.venues.address}, ${cls.venues.postcode}`
-              : priv
-                ? `${priv.address}, ${priv.postcode}`
-                : "Location TBC"}
-          </p>
-          <NavigateButton lat={lat} lng={lng} className="mt-3" />
+          {cls.venues && (
+            <p className="mt-1 font-medium">{cls.venues.name}</p>
+          )}
+          {address ? (
+            <AddressDisplay address={address} audience="staff" className="mt-1" />
+          ) : (
+            <p className="mt-1 text-fg-2">Location TBC</p>
+          )}
           <div className="mt-3 flex gap-2">
             <Badge tone={cls.class_type === "private" ? "ember" : "neutral"}>
               {cls.class_type}
@@ -120,11 +137,6 @@ export default async function CoachSessionPage({
                 <span className="label">Table:</span>{" "}
                 {priv.has_table ? "at the address" : "none — check with client"}
               </p>
-              {priv.access_notes && (
-                <p className="mt-1">
-                  <span className="label">Access:</span> {priv.access_notes}
-                </p>
-              )}
             </div>
           )}
         </div>

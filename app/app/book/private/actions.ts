@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getSubscriptionSummary } from "@/lib/billing";
+import type { StructuredAddress } from "@/lib/address";
 
 function isFunctionMissing(code: string | undefined): boolean {
   return code === "PGRST202" || code === "42883";
@@ -103,6 +104,7 @@ export type PrivateRequest = {
   hasTable: boolean;
   accessNotes: string;
   preferredCoach?: string;
+  details?: StructuredAddress | null;
 };
 
 export type PrivateResult =
@@ -186,6 +188,7 @@ export async function requestPrivateClass(req: PrivateRequest): Promise<PrivateR
     has_table: req.hasTable,
     access_notes: req.accessNotes,
     preferred_coach: req.preferredCoach ?? "",
+    address_details: req.details ?? null,
   };
 
   const { data, error } = await supabase.rpc("request_private_class", { payload });
@@ -233,6 +236,7 @@ export async function requestPrivateClass(req: PrivateRequest): Promise<PrivateR
     lng: req.lng,
     has_table: req.hasTable,
     access_notes: req.accessNotes,
+    address_details: req.details ?? null,
   });
 
   const ends = new Date(new Date(req.startsAt).getTime() + req.duration * 60000).toISOString();

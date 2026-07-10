@@ -286,6 +286,15 @@ const bookPrivate: WaTool = {
           lng: geo.lng,
           has_table: input.has_table ?? true,
           access_notes: input.access_notes ?? null,
+          // Minimal structured snapshot from the geocode so bot-booked
+          // sessions render through the same shared address display.
+          address_details: {
+            formatted: geo.place ?? String(input.address),
+            lat: geo.lat,
+            lng: geo.lng,
+            accessNotes: input.access_notes ?? null,
+            label: "home",
+          },
         },
       });
       if (error) {

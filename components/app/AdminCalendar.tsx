@@ -14,6 +14,8 @@ import {
   createOneOffSession,
 } from "@/app/admin/calendar/actions";
 import { getRankedCoaches, cancelSession } from "@/app/admin/actions";
+import { AddressDisplay } from "@/components/app/AddressDisplay";
+import type { StructuredAddress } from "@/lib/address";
 
 type SessionRow = {
   id: string;
@@ -25,6 +27,7 @@ type SessionRow = {
   capacity: number;
   isPrivate: boolean;
   venueName: string | null;
+  address: StructuredAddress | null;
 };
 
 type Coach = { id: string; name: string };
@@ -208,6 +211,13 @@ export function AdminCalendar({
               <p className="mt-1 text-fg-2">
                 {selected.venueName ?? "Private address"} · {selected.capacity} spots
               </p>
+              {selected.address && (
+                <AddressDisplay
+                  address={selected.address}
+                  audience="staff"
+                  className="mt-2"
+                />
+              )}
               <div className="mt-2 flex flex-wrap gap-2">
                 {selected.isPrivate && <Badge tone="ember">Private</Badge>}
                 {selected.coachId &&

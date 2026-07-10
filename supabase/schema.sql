@@ -143,6 +143,7 @@ create table public.coaches (
   base_lat float8 not null,
   base_lng float8 not null,
   travel_radius_km numeric(5,1) default 10 not null,
+  base_address text,
   max_teachable_level skill_level default 'advanced'::skill_level not null,
   dbs_checked boolean default false not null,
   tier smallint default 1 not null,
@@ -238,7 +239,8 @@ create table public.private_class_details (
   lat float8 not null,
   lng float8 not null,
   has_table boolean default true not null,
-  access_notes text
+  access_notes text,
+  address_details jsonb
 );
 
 create table public.private_credit_ledger (
@@ -262,6 +264,7 @@ create table public.profiles (
   default_address text,
   default_lat float8,
   default_lng float8,
+  address_details jsonb,
   stripe_customer_id text,
   notification_prefs jsonb default '{}'::jsonb not null,
   disputed boolean default false not null,
@@ -311,6 +314,7 @@ create table public.venues (
   lng float8 not null,
   notes text,
   photo_url text,
+  address_details jsonb,
   active boolean default true not null,
   created_at timestamptz default now() not null
 );
@@ -1635,13 +1639,14 @@ begin
   values ('private', 'Private session', 'beginner', 1, v_duration, (v_start at time zone 'Asia/Kolkata')::date, v_client)
   returning id into v_class_id;
 
-  insert into private_class_details (class_id, client_id, player_id, address, postcode, lat, lng, has_table, access_notes)
+  insert into private_class_details (class_id, client_id, player_id, address, postcode, lat, lng, has_table, access_notes, address_details)
   values (
     v_class_id, v_client, v_player,
     payload->>'address', coalesce(payload->>'postcode', ''),
     (payload->>'lat')::float8, (payload->>'lng')::float8,
     coalesce((payload->>'has_table')::boolean, true),
-    payload->>'access_notes'
+    payload->>'access_notes',
+    payload->'address_details'
   );
 
   insert into class_sessions (class_id, starts_at, ends_at)

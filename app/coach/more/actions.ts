@@ -129,6 +129,7 @@ export async function saveCoachProfile(input: {
   baseLat: number;
   baseLng: number;
   radiusKm: number;
+  baseAddress?: string | null;
 }): Promise<{ ok: boolean; error?: string }> {
   const supabase = await createClient();
   const {
@@ -146,6 +147,10 @@ export async function saveCoachProfile(input: {
       base_lat: input.baseLat,
       base_lng: input.baseLng,
       travel_radius_km: input.radiusKm,
+      // Only overwrite the label when the coach picked a fresh address.
+      ...(input.baseAddress !== undefined
+        ? { base_address: input.baseAddress?.trim() || null }
+        : {}),
     })
     .eq("id", user.id);
   if (error) return { ok: false, error: "Couldn't save." };

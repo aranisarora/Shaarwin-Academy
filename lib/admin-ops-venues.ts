@@ -2,6 +2,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { OpResult } from "@/lib/admin-ops-types";
+import type { StructuredAddress } from "@/lib/address";
 
 export type VenueInput = {
   id?: string;
@@ -10,6 +11,7 @@ export type VenueInput = {
   postcode: string;
   lat: number;
   lng: number;
+  details?: StructuredAddress | null;
 };
 
 export async function saveVenueCore(
@@ -27,6 +29,9 @@ export async function saveVenueCore(
     lat: input.lat,
     lng: input.lng,
     photo_url: "/images/venue-hall.jpg",
+    // Only touch the structured column when the caller supplies it, so a bare
+    // update (e.g. the WhatsApp tool) doesn't wipe backfilled details.
+    ...(input.details !== undefined ? { address_details: input.details } : {}),
   };
   const { error } = input.id
     ? await supabase.from("venues").update(row).eq("id", input.id)

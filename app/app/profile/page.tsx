@@ -7,11 +7,18 @@ export const metadata: Metadata = { title: "Profile" };
 
 export default async function ProfilePage() {
   const { supabase, user, profile } = await requireUser("/app/profile");
-  const { data: players } = await supabase
-    .from("players")
-    .select("id,full_name,date_of_birth,skill_level")
-    .eq("client_id", user.id)
-    .order("created_at");
+  const [{ data: players }, { data: addr }] = await Promise.all([
+    supabase
+      .from("players")
+      .select("id,full_name,date_of_birth,skill_level")
+      .eq("client_id", user.id)
+      .order("created_at"),
+    supabase
+      .from("profiles")
+      .select("address_details")
+      .eq("id", user.id)
+      .maybeSingle(),
+  ]);
 
   return (
     <ClientShell title="Profile">
@@ -21,6 +28,7 @@ export default async function ProfilePage() {
             fullName: profile.full_name,
             phone: profile.phone ?? "",
             defaultAddress: profile.default_address ?? "",
+            addressDetails: addr?.address_details ?? null,
             prefs: profile.notification_prefs ?? {},
           }}
           players={players ?? []}

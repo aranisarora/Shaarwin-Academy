@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { fromDetails, type StructuredAddress } from "@/lib/address";
 
 export type BrowseSession = {
   id: string;
@@ -101,6 +102,7 @@ export type MyBooking = {
     isPrivate: boolean;
     venueName: string | null;
     coachName: string | null;
+    address: StructuredAddress | null;
   };
 };
 
@@ -111,7 +113,7 @@ export async function getMyBookings(
   const { data } = await supabase
     .from("bookings")
     .select(
-      "id,status,waitlist_position,series_id,players(full_name),class_sessions!inner(id,starts_at,ends_at,coach_id,classes!inner(title,class_type,venues(name)))"
+      "id,status,waitlist_position,series_id,players(full_name),class_sessions!inner(id,starts_at,ends_at,coach_id,classes!inner(title,class_type,venues(name,address,postcode,lat,lng,address_details),private_class_details(address,postcode,lat,lng,address_details)))"
     )
     .eq("client_id", clientId)
     .in("status", ["confirmed", "waitlisted", "attended", "no_show"])
@@ -130,8 +132,45 @@ export async function getMyBookings(
       starts_at: string;
       ends_at: string;
       coach_id: string | null;
-      classes: { title: string; class_type: string; venues: { name: string } | null };
+      classes: {
+        title: string;
+        class_type: string;
+        venues: {
+          name: string;
+          address: string;
+          postcode: string;
+          lat: number;
+          lng: number;
+          address_details: Partial<StructuredAddress> | null;
+        } | null;
+        private_class_details:
+          | {
+              address: string;
+              postcode: string;
+              lat: number;
+              lng: number;
+              address_details: Partial<StructuredAddress> | null;
+            }[]
+          | null;
+      };
     };
+    const v = s.classes.venues;
+    const priv = s.classes.private_class_details?.[0] ?? null;
+    const address = v
+      ? fromDetails(v.address_details, {
+          address: v.address,
+          postcode: v.postcode,
+          lat: v.lat,
+          lng: v.lng,
+        })
+      : priv
+        ? fromDetails(priv.address_details, {
+            address: priv.address,
+            postcode: priv.postcode,
+            lat: priv.lat,
+            lng: priv.lng,
+          })
+        : null;
     return {
       id: b.id,
       status: b.status,
@@ -147,6 +186,7 @@ export async function getMyBookings(
         isPrivate: s.classes.class_type === "private",
         venueName: s.classes.venues?.name ?? null,
         coachName: s.coach_id ? (coachNames.get(s.coach_id) ?? null) : null,
+        address,
       },
     };
   });

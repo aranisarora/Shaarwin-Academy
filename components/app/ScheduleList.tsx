@@ -11,6 +11,7 @@ import { ButtonLink } from "@/components/ui/Button";
 import { cancelBooking } from "@/app/app/book/actions";
 import { cancelSeries } from "@/app/app/schedule/actions";
 import { RescheduleSheet } from "@/components/app/RescheduleSheet";
+import { AddressDisplay } from "@/components/app/AddressDisplay";
 import type { MyBooking } from "@/lib/booking";
 import { nowMs } from "@/lib/academy-time";
 
@@ -140,6 +141,13 @@ export function ScheduleList({
                 {selected.session.coachName ? ` · Coach ${selected.session.coachName}` : ""}
                 {selected.playerName ? ` · ${selected.playerName}` : ""}
               </p>
+              {selected.session.address && (
+                <AddressDisplay
+                  address={selected.session.address}
+                  audience="public"
+                  className="mt-2"
+                />
+              )}
             </div>
 
             <a

@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import type { StructuredAddress } from "@/lib/address";
 
 type Result = { ok: boolean; error?: string };
 
@@ -10,6 +11,7 @@ export async function saveProfile(input: {
   phone: string;
   defaultAddress: string;
   prefs: Record<string, boolean>;
+  addressDetails?: StructuredAddress | null;
 }): Promise<Result> {
   const supabase = await createClient();
   const {
@@ -18,13 +20,19 @@ export async function saveProfile(input: {
   if (!user) return { ok: false, error: "Sign in first." };
   if (!input.fullName.trim()) return { ok: false, error: "Name can't be empty." };
 
+  const d = input.addressDetails;
   const { error } = await supabase
     .from("profiles")
     .update({
       full_name: input.fullName.trim(),
       phone: input.phone.trim() || null,
-      default_address: input.defaultAddress.trim() || null,
+      // The formatted line stays the canonical flat value; the structured form
+      // (when present) also finally populates the long-unused lat/lng columns.
+      default_address: (d?.formatted || input.defaultAddress).trim() || null,
       notification_prefs: input.prefs,
+      ...(d !== undefined
+        ? { address_details: d, default_lat: d?.lat ?? null, default_lng: d?.lng ?? null }
+        : {}),
     })
     .eq("id", user.id);
   if (error) return { ok: false, error: "Couldn't save." };

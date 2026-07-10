@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { fromDetails, type StructuredAddress } from "@/lib/address";
 
 export type CoachSession = {
   id: string;
@@ -17,6 +18,8 @@ export type CoachSession = {
   privatePostcode: string | null;
   lat: number | null;
   lng: number | null;
+  // Full structured location (venue or private), for AddressDisplay.
+  address: StructuredAddress | null;
 };
 
 export async function getCoachSessions(
@@ -28,7 +31,7 @@ export async function getCoachSessions(
   const { data: sessions } = await supabase
     .from("class_sessions")
     .select(
-      "id,starts_at,ends_at,status,capacity_override,classes!inner(id,title,skill_level,capacity,class_type,venues(name,address,postcode,lat,lng),private_class_details(address,postcode,lat,lng))"
+      "id,starts_at,ends_at,status,capacity_override,classes!inner(id,title,skill_level,capacity,class_type,venues(name,address,postcode,lat,lng,address_details),private_class_details(address,postcode,lat,lng,access_notes,address_details))"
     )
     .eq("coach_id", coachId)
     .gte("starts_at", from.toISOString())
@@ -60,12 +63,36 @@ export async function getCoachSessions(
         postcode: string;
         lat: number;
         lng: number;
+        address_details: Partial<StructuredAddress> | null;
       } | null;
       private_class_details:
-        | { address: string; postcode: string; lat: number; lng: number }[]
+        | {
+            address: string;
+            postcode: string;
+            lat: number;
+            lng: number;
+            access_notes: string | null;
+            address_details: Partial<StructuredAddress> | null;
+          }[]
         | null;
     };
     const priv = cls.private_class_details?.[0] ?? null;
+    const address = cls.venues
+      ? fromDetails(cls.venues.address_details, {
+          address: cls.venues.address,
+          postcode: cls.venues.postcode,
+          lat: cls.venues.lat,
+          lng: cls.venues.lng,
+        })
+      : priv
+        ? fromDetails(priv.address_details, {
+            address: priv.address,
+            postcode: priv.postcode,
+            lat: priv.lat,
+            lng: priv.lng,
+            access_notes: priv.access_notes,
+          })
+        : null;
     return {
       id: s.id,
       starts_at: s.starts_at,
@@ -83,6 +110,7 @@ export async function getCoachSessions(
       privatePostcode: priv?.postcode ?? null,
       lat: cls.venues?.lat ?? priv?.lat ?? null,
       lng: cls.venues?.lng ?? priv?.lng ?? null,
+      address,
     };
   });
 }
