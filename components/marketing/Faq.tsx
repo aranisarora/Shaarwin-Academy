@@ -13,7 +13,7 @@ const faqs = [
   },
   {
     q: "Do you offer trial sessions?",
-    a: "Yes — we offer one free group trial session so you can experience the coaching before committing. Reach out on WhatsApp or by email to book yours.",
+    a: "Yes — every child's first group class is free, no payment details needed. Sign up, add your player and book the trial straight from the app. There's also a discounted intro offer on your first private session.",
   },
   {
     q: "What are the class timings?",
@@ -21,7 +21,7 @@ const faqs = [
   },
   {
     q: "How does membership work?",
-    a: "One quarterly payment. Group covers up to two sessions a week, Group+ is unlimited, and Private adds 240 minutes of one-to-one coaching at your home each quarter.",
+    a: "One monthly payment, cancel anytime. Group plans hold a weekly routine — one, two or three classes a week. Private plans book a weekly one-to-one session at your home, 60 or 90 minutes. You can also pay per class without any membership; plans just work out cheaper.",
   },
   {
     q: "What if I need to cancel a session?",
@@ -29,7 +29,7 @@ const faqs = [
   },
   {
     q: "Can I cancel my membership?",
-    a: "Any time, in two taps from your membership screen. Your access runs to the end of the quarter you've paid for.",
+    a: "Any time, in two taps from your membership screen. Your access runs to the end of the month you've paid for.",
   },
   {
     q: "Do you coach children?",

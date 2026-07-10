@@ -29,7 +29,11 @@ export default async function BookPage() {
         sessions={sessions}
         venues={venues}
         players={players}
-        hasSubscription={summary.active}
+        entitlement={{
+          hasGroupPlan: Boolean(summary.groupPlan?.active),
+          trialPlayerIds: summary.openTrialPlayerIds,
+          dropinCredits: summary.dropinCredits,
+        }}
       />
     </ClientShell>
   );

@@ -17,10 +17,13 @@ create extension if not exists btree_gist;     -- coach_no_overlap exclusion
 -- ── Enums ────────────────────────────────────────────────────────────────────
 create type public.assignment_status as enum ('active', 'superseded');
 create type public.booking_status as enum ('confirmed', 'waitlisted', 'attended', 'no_show', 'rescheduled', 'cancelled_by_client', 'cancelled_by_academy');
+create type public.class_credit_source as enum ('signup', 'purchase', 'manual');
+create type public.class_credit_type as enum ('group_trial', 'group_dropin');
 create type public.class_type as enum ('private', 'group');
 create type public.credit_reason as enum ('grant', 'booking', 'cancellation_refund', 'refund_adjustment', 'expiry', 'manual');
 create type public.notification_channel as enum ('push', 'email', 'in_app');
 create type public.notification_status as enum ('pending', 'sent', 'failed');
+create type public.product_kind as enum ('group_dropin', 'private_oneoff', 'private_intro');
 create type public.session_status as enum ('scheduled', 'completed', 'cancelled');
 create type public.skill_level as enum ('beginner', 'intermediate', 'advanced', 'elite');
 create type public.subscription_source as enum ('stripe', 'comp', 'razorpay');
@@ -73,6 +76,19 @@ create table public.bookings (
   cancelled_at timestamptz,
   cancel_reason text,
   series_id uuid
+);
+
+create table public.class_credits (
+  id uuid default gen_random_uuid() not null,
+  client_id uuid not null,
+  player_id uuid,
+  type class_credit_type not null,
+  source class_credit_source default 'manual'::class_credit_source not null,
+  order_id uuid,
+  booking_id uuid,
+  consumed_at timestamptz,
+  note text,
+  created_at timestamptz default now() not null
 );
 
 create table public.class_sessions (
@@ -204,6 +220,20 @@ create table public.student_notes (
   created_at timestamptz default now() not null
 );
 
+create table public.orders (
+  id uuid default gen_random_uuid() not null,
+  client_id uuid not null,
+  player_id uuid,
+  product_id text not null,
+  razorpay_order_id text,
+  razorpay_payment_id text,
+  amount_pence integer not null,
+  currency char(3) default 'inr'::bpchar not null,
+  status text default 'created'::text not null,  -- created | paid
+  paid_at timestamptz,
+  created_at timestamptz default now() not null
+);
+
 create table public.plans (
   id uuid default gen_random_uuid() not null,
   name text not null,
@@ -212,9 +242,11 @@ create table public.plans (
   stripe_price_id text,
   price_pence integer not null,
   currency char(3) default 'inr'::bpchar not null,
-  billing_interval_months smallint default 3 not null,
+  billing_interval_months smallint default 1 not null,
+  -- > 0: group plan with weekly cap; 0: private plan (no group access);
+  -- null: legacy "unlimited" (comp), treated as group.
   group_sessions_per_week integer,
-  private_minutes_per_quarter integer default 0 not null,
+  private_minutes_per_cycle integer default 0 not null,
   active boolean default true not null,
   created_at timestamptz default now() not null,
   razorpay_plan_id text
@@ -227,6 +259,19 @@ create table public.players (
   date_of_birth date,
   skill_level skill_level default 'beginner'::skill_level not null,
   notes text,
+  created_at timestamptz default now() not null
+);
+
+create table public.products (
+  id text not null,                              -- stable slug used in code
+  name text not null,
+  description text,
+  kind product_kind not null,
+  price_pence integer not null,                  -- paise
+  member_price_pence integer,                    -- with an active group plan
+  grants_minutes integer default 0 not null,     -- private products credit the ledger
+  duration_minutes integer,                      -- display only
+  active boolean default true not null,
   created_at timestamptz default now() not null
 );
 
@@ -366,6 +411,11 @@ ALTER TABLE public.bookings ADD CONSTRAINT bookings_player_id_fkey FOREIGN KEY (
 ALTER TABLE public.bookings ADD CONSTRAINT bookings_rescheduled_from_fkey FOREIGN KEY (rescheduled_from) REFERENCES bookings(id) ON DELETE SET NULL;
 ALTER TABLE public.bookings ADD CONSTRAINT bookings_series_id_fkey FOREIGN KEY (series_id) REFERENCES booking_series(id) ON DELETE SET NULL;
 ALTER TABLE public.bookings ADD CONSTRAINT bookings_session_id_fkey FOREIGN KEY (session_id) REFERENCES class_sessions(id) ON DELETE CASCADE;
+ALTER TABLE public.class_credits ADD CONSTRAINT class_credits_pkey PRIMARY KEY (id);
+ALTER TABLE public.class_credits ADD CONSTRAINT class_credits_client_id_fkey FOREIGN KEY (client_id) REFERENCES profiles(id) ON DELETE CASCADE;
+ALTER TABLE public.class_credits ADD CONSTRAINT class_credits_player_id_fkey FOREIGN KEY (player_id) REFERENCES players(id) ON DELETE CASCADE;
+ALTER TABLE public.class_credits ADD CONSTRAINT class_credits_order_id_fkey FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE SET NULL;
+ALTER TABLE public.class_credits ADD CONSTRAINT class_credits_booking_id_fkey FOREIGN KEY (booking_id) REFERENCES bookings(id) ON DELETE SET NULL;
 ALTER TABLE public.class_sessions ADD CONSTRAINT coach_no_overlap EXCLUDE USING gist (coach_id WITH =, tstzrange(starts_at, ends_at) WITH &&) WHERE (((status = 'scheduled'::session_status) AND (coach_id IS NOT NULL)));
 ALTER TABLE public.class_sessions ADD CONSTRAINT class_sessions_pkey PRIMARY KEY (id);
 ALTER TABLE public.class_sessions ADD CONSTRAINT class_sessions_class_id_fkey FOREIGN KEY (class_id) REFERENCES classes(id) ON DELETE CASCADE;
@@ -405,12 +455,20 @@ ALTER TABLE public.notifications ADD CONSTRAINT notifications_user_id_fkey FOREI
 ALTER TABLE public.student_notes ADD CONSTRAINT student_notes_pkey PRIMARY KEY (id);
 ALTER TABLE public.student_notes ADD CONSTRAINT student_notes_player_id_fkey FOREIGN KEY (player_id) REFERENCES players(id) ON DELETE CASCADE;
 ALTER TABLE public.student_notes ADD CONSTRAINT student_notes_author_id_fkey FOREIGN KEY (author_id) REFERENCES profiles(id);
+ALTER TABLE public.orders ADD CONSTRAINT orders_pkey PRIMARY KEY (id);
+ALTER TABLE public.orders ADD CONSTRAINT orders_razorpay_order_id_key UNIQUE (razorpay_order_id);
+ALTER TABLE public.orders ADD CONSTRAINT orders_client_id_fkey FOREIGN KEY (client_id) REFERENCES profiles(id) ON DELETE CASCADE;
+ALTER TABLE public.orders ADD CONSTRAINT orders_player_id_fkey FOREIGN KEY (player_id) REFERENCES players(id) ON DELETE SET NULL;
+ALTER TABLE public.orders ADD CONSTRAINT orders_product_id_fkey FOREIGN KEY (product_id) REFERENCES products(id);
 ALTER TABLE public.plans ADD CONSTRAINT plans_razorpay_plan_id_key UNIQUE (razorpay_plan_id);
 ALTER TABLE public.plans ADD CONSTRAINT plans_stripe_price_id_key UNIQUE (stripe_price_id);
 ALTER TABLE public.plans ADD CONSTRAINT plans_pkey PRIMARY KEY (id);
 ALTER TABLE public.plans ADD CONSTRAINT plans_price_pence_check CHECK ((price_pence >= 0));
 ALTER TABLE public.players ADD CONSTRAINT players_pkey PRIMARY KEY (id);
 ALTER TABLE public.players ADD CONSTRAINT players_client_id_fkey FOREIGN KEY (client_id) REFERENCES profiles(id) ON DELETE CASCADE;
+ALTER TABLE public.products ADD CONSTRAINT products_pkey PRIMARY KEY (id);
+ALTER TABLE public.products ADD CONSTRAINT products_price_pence_check CHECK ((price_pence >= 0));
+ALTER TABLE public.products ADD CONSTRAINT products_member_price_pence_check CHECK ((member_price_pence >= 0));
 ALTER TABLE public.private_class_details ADD CONSTRAINT private_class_details_pkey PRIMARY KEY (class_id);
 ALTER TABLE public.private_class_details ADD CONSTRAINT private_class_details_class_id_fkey FOREIGN KEY (class_id) REFERENCES classes(id) ON DELETE CASCADE;
 ALTER TABLE public.private_class_details ADD CONSTRAINT private_class_details_client_id_fkey FOREIGN KEY (client_id) REFERENCES profiles(id) ON DELETE CASCADE;
@@ -453,6 +511,8 @@ CREATE INDEX bookings_client_id_status_idx ON public.bookings USING btree (clien
 CREATE UNIQUE INDEX bookings_one_live_per_player ON public.bookings USING btree (session_id, player_id) WHERE (status = ANY (ARRAY['confirmed'::booking_status, 'waitlisted'::booking_status, 'attended'::booking_status, 'no_show'::booking_status]));
 CREATE INDEX bookings_series_id ON public.bookings USING btree (series_id) WHERE (series_id IS NOT NULL);
 CREATE INDEX bookings_session_id_idx ON public.bookings USING btree (session_id) WHERE (status = 'waitlisted'::booking_status);
+CREATE INDEX class_credits_client_open_idx ON public.class_credits USING btree (client_id) WHERE (consumed_at IS NULL);
+CREATE UNIQUE INDEX class_credits_one_trial_per_player ON public.class_credits USING btree (player_id) WHERE (type = 'group_trial'::class_credit_type);
 CREATE INDEX class_sessions_class_id_starts_at_idx ON public.class_sessions USING btree (class_id, starts_at);
 CREATE INDEX class_sessions_coach_id_starts_at_idx ON public.class_sessions USING btree (coach_id, starts_at) WHERE (status = 'scheduled'::session_status);
 CREATE INDEX class_sessions_starts_at_idx ON public.class_sessions USING btree (starts_at) WHERE (coach_id IS NULL);
@@ -462,6 +522,7 @@ CREATE INDEX coach_assignments_session_id_status_idx ON public.coach_assignments
 CREATE INDEX coach_availability_coach_id_weekday_idx ON public.coach_availability USING btree (coach_id, weekday);
 CREATE INDEX coach_time_off_coach_id_starts_at_idx ON public.coach_time_off USING btree (coach_id, starts_at);
 CREATE INDEX coach_invites_phone_idx ON public.coach_invites USING btree (phone) WHERE (phone IS NOT NULL);
+CREATE UNIQUE INDEX invoices_razorpay_payment_id_key ON public.invoices USING btree (razorpay_payment_id) WHERE (razorpay_payment_id IS NOT NULL);
 CREATE INDEX notifications_status_scheduled_for_idx ON public.notifications USING btree (status, scheduled_for);
 CREATE INDEX student_notes_player_created_idx ON public.student_notes USING btree (player_id, created_at DESC);
 CREATE INDEX players_client_id_idx ON public.players USING btree (client_id);
@@ -563,6 +624,37 @@ begin
 end;
 $function$;
 
+CREATE OR REPLACE FUNCTION public._consume_group_credit(p_client uuid, p_player uuid)
+ RETURNS uuid
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare
+  v_id uuid;
+begin
+  -- Consume one open class credit for a group booking: the player's free trial
+  -- first, then any drop-in. Raises no_entitlement when nothing is available.
+  select id into v_id
+  from class_credits
+  where client_id = p_client and consumed_at is null
+    and (
+      (type = 'group_trial' and player_id = p_player)
+      or (type = 'group_dropin' and (player_id is null or player_id = p_player))
+    )
+  order by case when type = 'group_trial' then 0 else 1 end, created_at
+  limit 1
+  for update skip locked;
+
+  if v_id is null then
+    raise exception 'no_entitlement';
+  end if;
+
+  update class_credits set consumed_at = now() where id = v_id;
+  return v_id;
+end;
+$function$;
+
 CREATE OR REPLACE FUNCTION public.assign_coach(p_session uuid, p_preferred uuid DEFAULT NULL::uuid)
  RETURNS uuid
  LANGUAGE plpgsql
@@ -648,6 +740,7 @@ declare
   v_status text;
   v_first text := null;
   v_confirmed int := 0; v_waitlisted int := 0; v_skipped int := 0;
+  v_booking bookings%rowtype;
   r record;
 begin
   if v_client is null then raise exception 'not_authenticated'; end if;
@@ -660,8 +753,20 @@ begin
   if not exists (select 1 from players where id = p_player and client_id = v_client) then
     raise exception 'player_not_in_household';
   end if;
-  if not has_active_subscription(v_client) then
-    raise exception 'no_active_subscription';
+
+  -- No group subscription: a single session can ride on a trial/drop-in credit
+  -- (book_session consumes it); a recurring series needs a membership.
+  if not has_group_subscription(v_client) then
+    if p_recurring then
+      raise exception 'recurring_needs_membership';
+    end if;
+    v_booking := book_session(p_session, p_player);
+    return jsonb_build_object(
+      'series_id', null,
+      'confirmed', case when v_booking.status = 'confirmed' then 1 else 0 end,
+      'waitlisted', case when v_booking.status = 'waitlisted' then 1 else 0 end,
+      'skipped', 0,
+      'first_status', v_booking.status::text);
   end if;
 
   v_weekday := extract(isodow from (v_session.starts_at at time zone v_tz))::int;
@@ -723,6 +828,7 @@ declare
   v_used int;
   v_booking bookings%rowtype;
   v_position int;
+  v_credit uuid := null;
   v_cutoff int := get_setting_int('booking_cutoff_minutes', 60);
 begin
   if v_client is null then
@@ -743,18 +849,20 @@ begin
     raise exception 'player_not_in_household';
   end if;
 
-  if not has_active_subscription(v_client) then
-    raise exception 'no_active_subscription';
+  -- Entitlement: a group subscription, else consume a trial/drop-in credit.
+  if not has_group_subscription(v_client) then
+    v_credit := _consume_group_credit(v_client, p_player);  -- raises no_entitlement
   end if;
 
-  -- Weekly cap (ISO week of the session, in class timezone)
+  -- Weekly cap (ISO week of the session, in class timezone) — subscription only
   select p.group_sessions_per_week into v_cap
   from subscriptions s join plans p on p.id = s.plan_id
   where s.client_id = v_client
     and s.status in ('active', 'trialing', 'past_due')
+    and (p.group_sessions_per_week is null or p.group_sessions_per_week > 0)
   order by s.created_at desc limit 1;
 
-  if v_cap is not null then
+  if v_credit is null and v_cap is not null then
     select count(*) into v_used
     from bookings b
     join class_sessions cs on cs.id = b.session_id
@@ -812,6 +920,10 @@ begin
     raise notice 'session_full_waitlisted';
   end if;
 
+  if v_credit is not null then
+    update class_credits set booking_id = v_booking.id where id = v_credit;
+  end if;
+
   return v_booking;
 exception
   when unique_violation then
@@ -859,6 +971,13 @@ begin
   if v_is_private and v_free then
     insert into private_credit_ledger (client_id, booking_id, delta_minutes, reason)
     values (v_booking.client_id, p_booking, v_duration, 'cancellation_refund');
+  end if;
+
+  -- Group credit (trial / drop-in): hand it back when cancelled in-window.
+  if v_free then
+    update class_credits
+    set consumed_at = null, booking_id = null
+    where booking_id = p_booking;
   end if;
 
   -- Offer-based waitlist promotion (A3): notify position 1, don't auto-confirm.
@@ -1445,6 +1564,22 @@ begin
 end;
 $function$;
 
+CREATE OR REPLACE FUNCTION public.grant_signup_trial()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+begin
+  -- Free trial: every new player gets one group-class credit, once, forever.
+  -- Fired by the players_grant_trial trigger (see Triggers below).
+  insert into class_credits (client_id, player_id, type, source, note)
+  values (new.client_id, new.id, 'group_trial', 'signup', 'Free trial class')
+  on conflict (player_id) where (type = 'group_trial') do nothing;
+  return new;
+end;
+$function$;
+
 CREATE OR REPLACE FUNCTION public.has_active_subscription(p_client uuid)
  RETURNS boolean
  LANGUAGE sql
@@ -1455,6 +1590,30 @@ AS $function$
     select 1
     from subscriptions s
     where s.client_id = p_client
+      and (
+        s.status in ('active', 'trialing')
+        or (
+          s.status = 'past_due'
+          and s.current_period_end is not null
+          and now() <= s.current_period_end
+              + make_interval(days => get_setting_int('dunning_grace_days', 7))
+        )
+      )
+  );
+$function$;
+
+CREATE OR REPLACE FUNCTION public.has_group_subscription(p_client uuid)
+ RETURNS boolean
+ LANGUAGE sql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+  select exists (
+    select 1
+    from subscriptions s
+    join plans p on p.id = s.plan_id
+    where s.client_id = p_client
+      and (p.group_sessions_per_week is null or p.group_sessions_per_week > 0)
       and (
         s.status in ('active', 'trialing')
         or (
@@ -1622,8 +1781,9 @@ declare
   v_balance int;
 begin
   if v_client is null then raise exception 'not_authenticated'; end if;
-  if not has_active_subscription(v_client) then raise exception 'no_active_subscription'; end if;
 
+  -- Minutes are the entitlement: they arrive from a private plan's monthly
+  -- grant or a one-off purchase. No subscription requirement.
   v_balance := private_minutes_balance(v_client);
   if v_balance < v_duration then raise exception 'insufficient_minutes'; end if;
 
@@ -2041,11 +2201,15 @@ $function$;
 CREATE OR REPLACE VIEW public.coach_client_view AS
   SELECT id, full_name, avatar_url FROM profiles p;
 
+-- ── Triggers ─────────────────────────────────────────────────────────────────
+CREATE TRIGGER players_grant_trial AFTER INSERT ON public.players FOR EACH ROW EXECUTE FUNCTION grant_signup_trial();
+
 -- ── Row Level Security ───────────────────────────────────────────────────────
 alter table public.area_interest enable row level security;
 alter table public.audit_log enable row level security;
 alter table public.booking_series enable row level security;
 alter table public.bookings enable row level security;
+alter table public.class_credits enable row level security;
 alter table public.class_sessions enable row level security;
 alter table public.classes enable row level security;
 alter table public.coach_assignments enable row level security;
@@ -2055,8 +2219,10 @@ alter table public.coach_invites enable row level security;
 alter table public.coaches enable row level security;
 alter table public.invoices enable row level security;
 alter table public.notifications enable row level security;
+alter table public.orders enable row level security;
 alter table public.plans enable row level security;
 alter table public.players enable row level security;
+alter table public.products enable row level security;
 alter table public.private_class_details enable row level security;
 alter table public.private_credit_ledger enable row level security;
 alter table public.profiles enable row level security;
@@ -2082,6 +2248,8 @@ CREATE POLICY "clients read own bookings" ON public.bookings AS PERMISSIVE FOR S
 CREATE POLICY "coaches read their rosters" ON public.bookings AS PERMISSIVE FOR SELECT TO public USING ((EXISTS ( SELECT 1 FROM class_sessions s WHERE ((s.id = bookings.session_id) AND (s.coach_id = auth.uid())))));
 CREATE POLICY "coaches write attendance" ON public.bookings AS PERMISSIVE FOR UPDATE TO public USING ((EXISTS ( SELECT 1 FROM class_sessions s WHERE ((s.id = bookings.session_id) AND (s.coach_id = auth.uid())))));
 CREATE POLICY "founder full access" ON public.bookings AS PERMISSIVE FOR ALL TO public USING (is_founder());
+CREATE POLICY "own credits" ON public.class_credits AS PERMISSIVE FOR SELECT TO public USING (((client_id = auth.uid()) OR is_founder()));
+CREATE POLICY "founder writes credits" ON public.class_credits AS PERMISSIVE FOR ALL TO public USING (is_founder());
 CREATE POLICY "coach updates own session notes" ON public.class_sessions AS PERMISSIVE FOR UPDATE TO public USING ((coach_id = auth.uid()));
 CREATE POLICY "founder writes sessions" ON public.class_sessions AS PERMISSIVE FOR ALL TO public USING (is_founder());
 CREATE POLICY "read scheduled sessions" ON public.class_sessions AS PERMISSIVE FOR SELECT TO public USING ((class_is_public_group(class_id) OR (coach_id = auth.uid()) OR is_founder() OR client_owns_private_class(class_id)));
@@ -2101,8 +2269,12 @@ CREATE POLICY "public reads active coaches" ON public.coaches AS PERMISSIVE FOR 
 CREATE POLICY "own invoices" ON public.invoices AS PERMISSIVE FOR SELECT TO public USING (((client_id = auth.uid()) OR is_founder()));
 CREATE POLICY "mark own notifications read" ON public.notifications AS PERMISSIVE FOR UPDATE TO public USING ((user_id = auth.uid()));
 CREATE POLICY "own notifications" ON public.notifications AS PERMISSIVE FOR SELECT TO public USING ((user_id = auth.uid()));
+CREATE POLICY "own orders" ON public.orders AS PERMISSIVE FOR SELECT TO public USING (((client_id = auth.uid()) OR is_founder()));
+CREATE POLICY "founder writes orders" ON public.orders AS PERMISSIVE FOR ALL TO public USING (is_founder());
 CREATE POLICY "anyone reads active plans" ON public.plans AS PERMISSIVE FOR SELECT TO public USING (((active = true) OR is_founder()));
 CREATE POLICY "founder writes plans" ON public.plans AS PERMISSIVE FOR ALL TO public USING (is_founder());
+CREATE POLICY "anyone reads active products" ON public.products AS PERMISSIVE FOR SELECT TO public USING (((active = true) OR is_founder()));
+CREATE POLICY "founder writes products" ON public.products AS PERMISSIVE FOR ALL TO public USING (is_founder());
 CREATE POLICY "coach reads own rosters players" ON public.players AS PERMISSIVE FOR SELECT TO public USING ((is_coach() AND coach_has_player(id)));
 CREATE POLICY "founder all players" ON public.players AS PERMISSIVE FOR ALL TO public USING (is_founder());
 CREATE POLICY "own household" ON public.players AS PERMISSIVE FOR ALL TO public USING ((client_id = auth.uid())) WITH CHECK ((client_id = auth.uid()));

@@ -7,7 +7,18 @@ export type Plan = {
   description: string | null;
   price_pence: number;
   group_sessions_per_week: number | null;
-  private_minutes_per_quarter: number;
+  private_minutes_per_cycle: number;
+};
+
+export type Product = {
+  id: string;
+  name: string;
+  description: string | null;
+  kind: "group_dropin" | "private_oneoff" | "private_intro";
+  price_pence: number;
+  member_price_pence: number | null;
+  grants_minutes: number;
+  duration_minutes: number | null;
 };
 
 export type Venue = {
@@ -44,7 +55,17 @@ export async function getPlans(): Promise<Plan[]> {
   const supabase = await createClient();
   const { data } = await supabase
     .from("plans")
-    .select("id,name,description,price_pence,group_sessions_per_week,private_minutes_per_quarter")
+    .select("id,name,description,price_pence,group_sessions_per_week,private_minutes_per_cycle")
+    .eq("active", true)
+    .order("price_pence");
+  return data ?? [];
+}
+
+export async function getProducts(): Promise<Product[]> {
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("products")
+    .select("id,name,description,kind,price_pence,member_price_pence,grants_minutes,duration_minutes")
     .eq("active", true)
     .order("price_pence");
   return data ?? [];
@@ -118,13 +139,7 @@ export async function getCoaches(): Promise<StaticCoach[]> {
 }
 
 /** `pence` holds paise (minor unit of INR). ₹1,800,000 paise → "₹18,000". */
-export function formatPrice(pence: number): string {
-  return new Intl.NumberFormat("en-IN", {
-    style: "currency",
-    currency: "INR",
-    maximumFractionDigits: 0,
-  }).format(pence / 100);
-}
+export { formatPrice } from "./format";
 
 export const ACADEMY_TZ = "Asia/Kolkata";
 

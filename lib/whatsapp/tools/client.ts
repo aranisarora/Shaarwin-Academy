@@ -11,6 +11,10 @@ import { fail, fmtIST, formatPricePence, ok, type ToolContext, type WaTool } fro
 
 const RPC_ERROR_COPY: Record<string, string> = {
   no_active_subscription: "No active membership — buy one on the website pricing page first.",
+  no_entitlement:
+    "No membership, free trial or drop-in class available. Offer the plans (list_membership_plans) or a one-off class (list_one_off_products).",
+  recurring_needs_membership:
+    "Weekly recurring bookings need a group membership — a trial or drop-in books a single session.",
   weekly_cap_reached: "The weekly group-session allowance is used up for that week.",
   session_not_bookable: "That session can't be booked any more (too close to start, or not scheduled).",
   player_double_booked: "That player already has a session at that time.",
@@ -113,7 +117,7 @@ const browseSessions: WaTool = {
 const bookGroup: WaTool = {
   name: "book_group_session",
   description:
-    "Book a group session (session_id from browse_group_sessions). Confirm the exact session with the user before calling. If the session is full the booking lands on the waitlist.",
+    "Book a group session (session_id from browse_group_sessions). Works with a group membership, an unused free trial (every child's first class is free — tell the user!), or a purchased drop-in class. Confirm the exact session with the user before calling. If the session is full the booking lands on the waitlist.",
   input_schema: {
     type: "object",
     properties: {
@@ -180,20 +184,40 @@ const rescheduleBooking: WaTool = {
 const membership: WaTool = {
   name: "membership_status",
   description:
-    "The user's membership: plan, renewal date, whether it's active, and remaining private-coaching minutes.",
+    "The user's memberships (group and/or private plan), renewal dates, remaining private-coaching minutes, unused free trials and drop-in classes.",
   input_schema: { type: "object", properties: {} },
   run: async (_input, ctx) => {
     const summary = await getSubscriptionSummary(ctx.supabase!, ctx.profile!.id);
+    const players = await householdPlayers(ctx.supabase!, ctx.profile!.id);
+    const trialNames = players
+      .filter((p) => summary.openTrialPlayerIds.includes(p.id))
+      .map((p) => p.full_name);
     return ok({
       active: summary.active,
-      status: summary.status,
-      plan: summary.planName,
-      renews: summary.periodEnd ? fmtIST(summary.periodEnd) : null,
-      cancels_at_period_end: summary.cancelAtPeriodEnd,
+      group_plan: summary.groupPlan
+        ? {
+            plan: summary.groupPlan.planName,
+            status: summary.groupPlan.status,
+            renews: summary.groupPlan.periodEnd ? fmtIST(summary.groupPlan.periodEnd) : null,
+            cancels_at_period_end: summary.groupPlan.cancelAtPeriodEnd,
+          }
+        : null,
+      private_plan: summary.privatePlan
+        ? {
+            plan: summary.privatePlan.planName,
+            status: summary.privatePlan.status,
+            renews: summary.privatePlan.periodEnd ? fmtIST(summary.privatePlan.periodEnd) : null,
+            cancels_at_period_end: summary.privatePlan.cancelAtPeriodEnd,
+          }
+        : null,
       private_minutes_left: summary.minutesBalance,
+      unused_free_trials: trialNames,
+      unused_dropin_classes: summary.dropinCredits,
       note: summary.active
         ? undefined
-        : "No active membership — plans are on the website pricing page (payments can't be taken in chat).",
+        : trialNames.length > 0
+          ? `The first group class is free for ${trialNames.join(" and ")} — no payment needed, just book it. Make sure the user knows this is a free trial.`
+          : "No active membership — offer the plans (monthly, cancel anytime) or a one-off class.",
     });
   },
 };
@@ -205,7 +229,7 @@ const privateSlots: WaTool = {
   input_schema: {
     type: "object",
     properties: {
-      duration_minutes: { type: "number", description: "e.g. 60" },
+      duration_minutes: { type: "number", description: "60 or 90 (sessions come in those two lengths)" },
       address: { type: "string", description: "Where the session happens" },
       days: { type: "number", description: "Days ahead to search (default 7, max 14)" },
       player_name: { type: "string" },
@@ -223,7 +247,7 @@ const privateSlots: WaTool = {
     const { data, error } = await ctx.supabase!.rpc("get_bookable_slots", {
       p_lat: geo.lat,
       p_lng: geo.lng,
-      p_duration: Math.max(30, Number(input.duration_minutes) || 60),
+      p_duration: Number(input.duration_minutes) === 90 ? 90 : 60,
       p_player: player.id,
       p_days: Math.min(Math.max(Number(input.days) || 7, 1), 14),
     });
@@ -250,7 +274,7 @@ const bookPrivate: WaTool = {
           "ISO timestamp of the chosen slot, or an array of ISO timestamps to book several slots at once",
         oneOf: [{ type: "string" }, { type: "array", items: { type: "string" } }],
       },
-      duration_minutes: { type: "number" },
+      duration_minutes: { type: "number", description: "60 or 90" },
       address: { type: "string" },
       player_name: { type: "string" },
       access_notes: { type: "string", description: "Entry instructions, if any" },
@@ -278,7 +302,7 @@ const bookPrivate: WaTool = {
       const { error } = await ctx.supabase!.rpc("request_private_class", {
         payload: {
           player_id: player.id,
-          duration_minutes: Number(input.duration_minutes),
+          duration_minutes: Number(input.duration_minutes) === 90 ? 90 : 60,
           starts_at: startsAt,
           address: String(input.address),
           postcode: "",
@@ -317,12 +341,12 @@ const bookPrivate: WaTool = {
 const listPlans: WaTool = {
   name: "list_membership_plans",
   description:
-    "The membership plans the user could buy, with plan_id, price, weekly group allowance and quarterly private minutes. Use before sending a checkout link.",
+    "The monthly membership plans the user could buy: group plans (1/2/3 classes a week) and private plans (a weekly home session, metered in minutes). Billed monthly, cancel anytime. Use before sending a checkout link. For sustained training beyond these plans (e.g. private more than twice a week), hand off to the founder on WhatsApp rather than refusing.",
   input_schema: { type: "object", properties: {} },
   run: async (_input, ctx) => {
     const { data } = await ctx.supabase!
       .from("plans")
-      .select("id,name,description,price_pence,group_sessions_per_week,private_minutes_per_quarter")
+      .select("id,name,description,price_pence,group_sessions_per_week,private_minutes_per_cycle")
       .eq("active", true)
       .order("price_pence");
     return ok(
@@ -330,11 +354,132 @@ const listPlans: WaTool = {
         plan_id: p.id,
         name: p.name,
         description: p.description,
-        price_per_quarter: formatPricePence(p.price_pence),
+        price_per_month: formatPricePence(p.price_pence),
+        kind:
+          p.group_sessions_per_week === 0
+            ? "private"
+            : "group",
         group_sessions_per_week: p.group_sessions_per_week,
-        private_minutes_per_quarter: p.private_minutes_per_quarter,
+        private_minutes_per_month: p.private_minutes_per_cycle,
       }))
     );
+  },
+};
+
+const listOneOffs: WaTool = {
+  name: "list_one_off_products",
+  description:
+    "One-off purchases that need no membership: a drop-in group class, single private sessions (60/90 min), and the discounted intro private session (a promotion, one per child — make sure the user knows it's a promo). Group members get member pricing on private sessions. Use before sending a payment link.",
+  input_schema: { type: "object", properties: {} },
+  run: async (_input, ctx) => {
+    const [{ data: products }, { data: isMember }] = await Promise.all([
+      ctx.supabase!
+        .from("products")
+        .select("id,name,description,kind,price_pence,member_price_pence")
+        .eq("active", true)
+        .order("price_pence"),
+      ctx.supabase!.rpc("has_group_subscription", { p_client: ctx.profile!.id }),
+    ]);
+    return ok(
+      (products ?? []).map((p) => {
+        const amount =
+          isMember && p.member_price_pence !== null && p.member_price_pence < p.price_pence
+            ? p.member_price_pence
+            : p.price_pence;
+        return {
+          product_id: p.id,
+          name: p.name,
+          description: p.description,
+          kind: p.kind,
+          price: formatPricePence(amount),
+          member_price_applied: amount < p.price_pence,
+          is_promo: p.kind === "private_intro",
+        };
+      })
+    );
+  },
+};
+
+const oneOffPaymentLink: WaTool = {
+  name: "send_one_off_payment_link",
+  description:
+    "Create a secure Razorpay payment link for a one-off purchase (product_id from list_one_off_products). The purchase is credited automatically once paid: a drop-in becomes a bookable class credit; private sessions become private minutes. The intro promo needs player_name (one per child). ALWAYS confirm the product and price with the user first.",
+  input_schema: {
+    type: "object",
+    properties: {
+      product_id: { type: "string" },
+      player_name: {
+        type: "string",
+        description: "Required for the intro promo; optional otherwise",
+      },
+    },
+    required: ["product_id"],
+  },
+  run: async (input, ctx) => {
+    const razorpay = getRazorpay();
+    if (!razorpay) return fail("Online payments aren't set up yet — please try the website.");
+
+    const { data: product } = await ctx.supabase!
+      .from("products")
+      .select("id,name,kind,price_pence,member_price_pence")
+      .eq("id", input.product_id)
+      .eq("active", true)
+      .maybeSingle();
+    if (!product) return fail("That product isn't available.");
+
+    let playerId: string | null = null;
+    if (product.kind === "private_intro" || input.player_name) {
+      const player = await resolvePlayer(ctx, input.player_name);
+      if ("error" in player) return fail(player.error);
+      playerId = player.id;
+    }
+
+    if (product.kind === "private_intro" && playerId) {
+      const { data: prior } = await ctx.supabase!
+        .from("orders")
+        .select("id, products!inner(kind)")
+        .eq("player_id", playerId)
+        .eq("status", "paid")
+        .eq("products.kind", "private_intro")
+        .limit(1);
+      if (prior && prior.length > 0) {
+        return fail("The intro offer has already been used for that child — offer the regular one-off sessions instead.");
+      }
+    }
+
+    const { data: isMember } = await ctx.supabase!.rpc("has_group_subscription", {
+      p_client: ctx.profile!.id,
+    });
+    const amount =
+      isMember && product.member_price_pence !== null && product.member_price_pence < product.price_pence
+        ? product.member_price_pence
+        : product.price_pence;
+
+    try {
+      // Payment link notes flow through to the payment entity; the webhook's
+      // payment.captured handler fulfils from them.
+      const link = await razorpay.post<{ short_url?: string }>("/payment_links", {
+        amount,
+        currency: "INR",
+        description: `Sharwin TTA — ${product.name}`,
+        customer: { name: ctx.profile!.full_name, email: ctx.profile!.email },
+        notes: {
+          supabase_user_id: ctx.profile!.id,
+          product_id: product.id,
+          player_id: playerId ?? "",
+        },
+      });
+      if (!link.short_url) return fail("Couldn't create the payment link — try the website.");
+      return ok({
+        product: product.name,
+        amount: formatPricePence(amount),
+        payment_url: link.short_url,
+        note: "Send them this link. The class credit / minutes appear on their account automatically once paid.",
+      });
+    } catch (err) {
+      console.error("wa one-off payment link failed", err);
+      return fail("Couldn't create the payment link just now — try again shortly.");
+    }
   },
 };
 
@@ -358,9 +503,10 @@ const checkoutLink: WaTool = {
       .maybeSingle();
     if (!plan?.razorpay_plan_id) return fail("That plan isn't available for checkout.");
     try {
+      // 100 monthly cycles ≈ "until cancelled" (Razorpay needs a finite count).
       const sub = await razorpay.post<{ id: string; short_url?: string }>("/subscriptions", {
         plan_id: plan.razorpay_plan_id,
-        total_count: 40,
+        total_count: 100,
         quantity: 1,
         customer_notify: 1,
         notes: {
@@ -472,7 +618,9 @@ export const clientTools: WaTool[] = [
   privateSlots,
   bookPrivate,
   listPlans,
+  listOneOffs,
   checkoutLink,
+  oneOffPaymentLink,
   updateProfile,
   addPlayer,
   renamePlayer,

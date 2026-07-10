@@ -23,7 +23,7 @@ export default async function AdminDashboardPage() {
         .from("invoices")
         .select("amount_pence")
         .eq("status", "paid")
-        .gte("paid_at", new Date(now.getTime() - 90 * 86400000).toISOString()),
+        .gte("paid_at", new Date(now.getTime() - 30 * 86400000).toISOString()),
       supabase
         .from("class_sessions")
         .select("id", { count: "exact", head: true })
@@ -70,7 +70,7 @@ export default async function AdminDashboardPage() {
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
           {[
             ["Active members", String(subs.count ?? 0)],
-            ["Revenue this quarter", `£${(revenue / 100).toLocaleString("en-GB")}`],
+            ["Revenue (30 days)", `₹${(revenue / 100).toLocaleString("en-IN")}`],
             ["Sessions this week", String(sessionsWeek.count ?? 0)],
             ["Exceptions", String(exceptions)],
           ].map(([labelText, value]) => (

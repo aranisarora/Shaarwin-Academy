@@ -1,37 +1,89 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 
+export type PlanSummary = {
+  planId: string;
+  planName: string;
+  status: string;
+  periodEnd: string | null;
+  cancelAtPeriodEnd: boolean;
+  /** > 0 weekly cap; null = legacy unlimited (comp). */
+  groupSessionsPerWeek: number | null;
+  privateMinutesPerCycle: number;
+  active: boolean;
+};
+
 export type SubscriptionSummary = {
+  /** Membership that includes group classes (cap > 0 or legacy null). */
+  groupPlan: PlanSummary | null;
+  /** Private home-coaching plan (monthly minutes grant). */
+  privatePlan: PlanSummary | null;
+  minutesBalance: number;
+  /** Players who still hold their free trial class. */
+  openTrialPlayerIds: string[];
+  /** Purchased drop-in group classes not yet used. */
+  dropinCredits: number;
+  /** Any alive subscription (either plan). */
+  active: boolean;
+
+  // Convenience fields for single-plan screens: the group plan wins, else the
+  // private plan.
   status: string | null;
   planName: string | null;
   planId: string | null;
   periodEnd: string | null;
   cancelAtPeriodEnd: boolean;
-  minutesBalance: number;
-  active: boolean;
 };
 
+type SubRow = {
+  status: string;
+  current_period_end: string | null;
+  cancel_at_period_end: boolean;
+  created_at: string;
+  plans: {
+    id: string;
+    name: string;
+    group_sessions_per_week: number | null;
+    private_minutes_per_cycle: number;
+  } | null;
+};
+
+function isAlive(status: string, periodEnd: string | null, graceDays: number): boolean {
+  if (["active", "trialing"].includes(status)) return true;
+  return (
+    status === "past_due" &&
+    periodEnd !== null &&
+    Date.now() <= new Date(periodEnd).getTime() + graceDays * 86400000
+  );
+}
+
 /**
- * Mirrors has_active_subscription() for reads. Bookings enforce the SQL
- * function server-side; this powers screens.
+ * Mirrors has_group_subscription() / the booking entitlement for reads.
+ * Bookings enforce the SQL functions server-side; this powers screens. A
+ * household can hold a group plan and a private plan at the same time.
  */
 export async function getSubscriptionSummary(
   supabase: SupabaseClient,
   clientId: string,
   graceDays = 7
 ): Promise<SubscriptionSummary> {
-  const [{ data: sub }, { data: ledger }] = await Promise.all([
+  const [{ data: subs }, { data: ledger }, { data: credits }] = await Promise.all([
     supabase
       .from("subscriptions")
-      .select("status,current_period_end,cancel_at_period_end,plans(id,name)")
+      .select(
+        "status,current_period_end,cancel_at_period_end,created_at,plans(id,name,group_sessions_per_week,private_minutes_per_cycle)"
+      )
       .eq("client_id", clientId)
       .in("status", ["active", "trialing", "past_due"])
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle(),
+      .order("created_at", { ascending: false }),
     supabase
       .from("private_credit_ledger")
       .select("delta_minutes")
       .eq("client_id", clientId),
+    supabase
+      .from("class_credits")
+      .select("type,player_id")
+      .eq("client_id", clientId)
+      .is("consumed_at", null),
   ]);
 
   const minutesBalance = (ledger ?? []).reduce(
@@ -39,33 +91,52 @@ export async function getSubscriptionSummary(
     0
   );
 
-  if (!sub) {
+  const toPlanSummary = (row: SubRow): PlanSummary | null => {
+    const plan = row.plans as unknown as SubRow["plans"];
+    if (!plan) return null;
     return {
-      status: null,
-      planName: null,
-      planId: null,
-      periodEnd: null,
-      cancelAtPeriodEnd: false,
-      minutesBalance,
-      active: false,
+      planId: plan.id,
+      planName: plan.name,
+      status: row.status,
+      periodEnd: row.current_period_end,
+      cancelAtPeriodEnd: row.cancel_at_period_end,
+      groupSessionsPerWeek: plan.group_sessions_per_week,
+      privateMinutesPerCycle: plan.private_minutes_per_cycle,
+      active: isAlive(row.status, row.current_period_end, graceDays),
     };
+  };
+
+  let groupPlan: PlanSummary | null = null;
+  let privatePlan: PlanSummary | null = null;
+  for (const row of (subs ?? []) as unknown as SubRow[]) {
+    const summary = toPlanSummary(row);
+    if (!summary) continue;
+    const isGroup =
+      summary.groupSessionsPerWeek === null || summary.groupSessionsPerWeek > 0;
+    if (isGroup && !groupPlan) groupPlan = summary;
+    if (!isGroup && !privatePlan) privatePlan = summary;
   }
 
-  const plan = sub.plans as unknown as { id: string; name: string } | null;
-  const inGrace =
-    sub.status === "past_due" &&
-    sub.current_period_end !== null &&
-    Date.now() <=
-      new Date(sub.current_period_end).getTime() + graceDays * 86400000;
+  const openTrialPlayerIds = (credits ?? [])
+    .filter((c) => c.type === "group_trial" && c.player_id)
+    .map((c) => c.player_id as string);
+  const dropinCredits = (credits ?? []).filter(
+    (c) => c.type === "group_dropin"
+  ).length;
 
+  const primary = groupPlan ?? privatePlan;
   return {
-    status: sub.status,
-    planName: plan?.name ?? null,
-    planId: plan?.id ?? null,
-    periodEnd: sub.current_period_end,
-    cancelAtPeriodEnd: sub.cancel_at_period_end,
+    groupPlan,
+    privatePlan,
     minutesBalance,
-    active: ["active", "trialing"].includes(sub.status) || inGrace,
+    openTrialPlayerIds,
+    dropinCredits,
+    active: Boolean(groupPlan?.active || privatePlan?.active),
+    status: primary?.status ?? null,
+    planName: primary?.planName ?? null,
+    planId: primary?.planId ?? null,
+    periodEnd: primary?.periodEnd ?? null,
+    cancelAtPeriodEnd: primary?.cancelAtPeriodEnd ?? false,
   };
 }
 

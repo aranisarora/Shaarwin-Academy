@@ -1,7 +1,8 @@
 /**
  * One-off: create a Razorpay Plan for each academy plan missing a
- * razorpay_plan_id, storing the id back on the plans table. Quarterly INR
- * (period=monthly, interval=3). price_pence holds paise.
+ * razorpay_plan_id, storing the id back on the plans table. Monthly INR —
+ * every plan stays under the ₹15,000 e-mandate AFA limit so renewals debit
+ * silently. price_pence holds paise.
  *
  * Requires RAZORPAY_KEY_ID + RAZORPAY_KEY_SECRET and (ideally)
  * SUPABASE_SERVICE_ROLE_KEY in .env.local.
@@ -50,7 +51,7 @@ for (const plan of plans) {
   }
   const created = await rzp("/plans", {
     period: "monthly",
-    interval: 3, // quarterly
+    interval: 1,
     item: {
       name: `Sharwin TTA — ${plan.name}`,
       description: plan.description ?? undefined,

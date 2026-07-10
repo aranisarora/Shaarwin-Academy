@@ -78,9 +78,13 @@ const V = {
   stJohnsWood: "00000000-0000-4000-8000-0000000001c5",
 };
 const P = {
-  group: "00000000-0000-4000-8000-0000000000d1",
-  groupPlus: "00000000-0000-4000-8000-0000000000d2",
-  privatePlan: "00000000-0000-4000-8000-0000000000d3",
+  group1: "00000000-0000-4000-8000-0000000000d4",
+  group2: "00000000-0000-4000-8000-0000000000d5",
+  group3: "00000000-0000-4000-8000-0000000000d6",
+  privateWeekly60: "00000000-0000-4000-8000-0000000000d7",
+  privateWeekly90: "00000000-0000-4000-8000-0000000000d8",
+  privateTwice60: "00000000-0000-4000-8000-0000000000d9",
+  privateTwice90: "00000000-0000-4000-8000-0000000000da",
 };
 const C = {
   lakefrontJuniors: "00000000-0000-4000-8000-0000000001f1",
@@ -139,10 +143,22 @@ await upsert("venues", [
 ]);
 
 await upsert("plans", [
-  // price_pence holds paise (minor unit of INR): ₹18,000 = 1,800,000.
-  { id: P.group, name: "Group", description: "Up to 2 group sessions a week.", price_pence: 1800000, currency: "inr", group_sessions_per_week: 2, private_minutes_per_quarter: 0 },
-  { id: P.groupPlus, name: "Group+", description: "Unlimited group sessions.", price_pence: 2600000, currency: "inr", group_sessions_per_week: null, private_minutes_per_quarter: 0 },
-  { id: P.privatePlan, name: "Private", description: "Unlimited group sessions plus 240 private minutes a quarter.", price_pence: 4200000, currency: "inr", group_sessions_per_week: null, private_minutes_per_quarter: 240 },
+  // Monthly billing. price_pence holds paise (minor unit of INR): ₹2,399 = 239,900.
+  // group_sessions_per_week > 0 = group plan; 0 = private plan (no group access).
+  { id: P.group1, name: "Group — 1×/week", description: "One group class a week.", price_pence: 129900, currency: "inr", billing_interval_months: 1, group_sessions_per_week: 1, private_minutes_per_cycle: 0 },
+  { id: P.group2, name: "Group — 2×/week", description: "Two group classes a week. Our most popular plan.", price_pence: 239900, currency: "inr", billing_interval_months: 1, group_sessions_per_week: 2, private_minutes_per_cycle: 0 },
+  { id: P.group3, name: "Group — 3×/week", description: "Three group classes a week.", price_pence: 329900, currency: "inr", billing_interval_months: 1, group_sessions_per_week: 3, private_minutes_per_cycle: 0 },
+  { id: P.privateWeekly60, name: "Private — Weekly, 60 min", description: "A weekly 60-minute home session (260 minutes a month).", price_pence: 419900, currency: "inr", billing_interval_months: 1, group_sessions_per_week: 0, private_minutes_per_cycle: 260 },
+  { id: P.privateWeekly90, name: "Private — Weekly, 90 min", description: "A weekly 90-minute home session (390 minutes a month).", price_pence: 599900, currency: "inr", billing_interval_months: 1, group_sessions_per_week: 0, private_minutes_per_cycle: 390 },
+  { id: P.privateTwice60, name: "Private — 2×/week, 60 min", description: "Two 60-minute home sessions a week (520 minutes a month).", price_pence: 799900, currency: "inr", billing_interval_months: 1, group_sessions_per_week: 0, private_minutes_per_cycle: 520 },
+  { id: P.privateTwice90, name: "Private — 2×/week, 90 min", description: "Two 90-minute home sessions a week (780 minutes a month).", price_pence: 1149900, currency: "inr", billing_interval_months: 1, group_sessions_per_week: 0, private_minutes_per_cycle: 780 },
+]);
+
+await upsert("products", [
+  { id: "group-dropin", name: "Group class — drop-in", description: "One group class, no membership needed.", kind: "group_dropin", price_pence: 34900, member_price_pence: 34900, grants_minutes: 0, duration_minutes: null },
+  { id: "private-60", name: "Private session — 60 min", description: "A one-hour session at your home or clubhouse. Coach comes to you.", kind: "private_oneoff", price_pence: 119900, member_price_pence: 109900, grants_minutes: 60, duration_minutes: 60 },
+  { id: "private-90", name: "Private session — 90 min", description: "A 90-minute session at your home or clubhouse. Coach comes to you.", kind: "private_oneoff", price_pence: 169900, member_price_pence: 159900, grants_minutes: 90, duration_minutes: 90 },
+  { id: "private-intro-60", name: "Intro offer — first private session (60 min)", description: "Promotional price for your first private session. One per child.", kind: "private_intro", price_pence: 59900, member_price_pence: 59900, grants_minutes: 60, duration_minutes: 60 },
 ]);
 
 await upsert(
@@ -247,12 +263,13 @@ if (demoId) {
     await upsert("players", [{ id: "00000000-0000-4000-8000-0000000000b1", client_id: demoId, full_name: "Alex Morgan", date_of_birth: "1992-04-12", skill_level: "intermediate" }]);
   }
   await upsert("subscriptions", [
-    { id: "00000000-0000-4000-8000-0000000000e1", client_id: demoId, plan_id: P.privatePlan, source: "comp", status: "active", current_period_start: new Date().toISOString(), current_period_end: new Date(Date.now() + 90 * 86400000).toISOString() },
+    { id: "00000000-0000-4000-8000-0000000000e1", client_id: demoId, plan_id: P.privateWeekly60, source: "comp", status: "active", current_period_start: new Date().toISOString(), current_period_end: new Date(Date.now() + 30 * 86400000).toISOString() },
+    { id: "00000000-0000-4000-8000-0000000000e4", client_id: demoId, plan_id: P.group2, source: "comp", status: "active", current_period_start: new Date().toISOString(), current_period_end: new Date(Date.now() + 30 * 86400000).toISOString() },
   ]);
   const ledger = await select("private_credit_ledger", `client_id=eq.${demoId}&select=id`);
   if (ledger.length === 0) {
     await upsert("private_credit_ledger", [
-      { id: "00000000-0000-4000-8000-0000000000e3", client_id: demoId, subscription_id: "00000000-0000-4000-8000-0000000000e1", delta_minutes: 240, reason: "grant" },
+      { id: "00000000-0000-4000-8000-0000000000e3", client_id: demoId, subscription_id: "00000000-0000-4000-8000-0000000000e1", delta_minutes: 260, reason: "grant" },
     ]);
   }
 }

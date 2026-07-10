@@ -14,7 +14,8 @@ export default async function AdminBillingPage() {
   const [{ data: plans }, { data: subs }, { data: graceDaysRow }] = await Promise.all([
     supabase
       .from("plans")
-      .select("id,name,price_pence,group_sessions_per_week,private_minutes_per_quarter,razorpay_plan_id,active")
+      .select("id,name,price_pence,group_sessions_per_week,private_minutes_per_cycle,razorpay_plan_id,active")
+      .eq("active", true)
       .order("price_pence"),
     supabase
       .from("subscriptions")
@@ -42,10 +43,12 @@ export default async function AdminBillingPage() {
                   <p className="font-display tnum text-2xl">{formatPrice(p.price_pence)}</p>
                   <p className="mt-1 text-xs text-fg-2">
                     {p.group_sessions_per_week === null
-                      ? "Unlimited group"
-                      : `${p.group_sessions_per_week}/week group`}
-                    {p.private_minutes_per_quarter > 0 &&
-                      ` · ${p.private_minutes_per_quarter} private min`}
+                      ? "Unlimited group (legacy)"
+                      : p.group_sessions_per_week > 0
+                        ? `${p.group_sessions_per_week}/week group`
+                        : "Private only"}
+                    {p.private_minutes_per_cycle > 0 &&
+                      ` · ${p.private_minutes_per_cycle} private min/mo`}
                   </p>
                   <Badge className="mt-2" tone={p.razorpay_plan_id ? "ok" : "err"}>
                     {p.razorpay_plan_id ? "Razorpay linked" : "No Razorpay plan"}

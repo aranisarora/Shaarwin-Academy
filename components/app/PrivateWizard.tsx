@@ -18,7 +18,9 @@ import {
 
 type Coach = { id: string; name: string; lat: number; lng: number; radiusKm: number };
 
-const DURATIONS = [45, 60, 90] as const;
+// 60/90 only: the coach travels to the client, so anything shorter spends
+// more time commuting than coaching.
+const DURATIONS = [60, 90] as const;
 
 function fmtSlot(iso: string) {
   return new Intl.DateTimeFormat("en-GB", {
@@ -169,6 +171,29 @@ export function PrivateWizard({
       })
     : [];
 
+  // Minutes are the entitlement — without enough for even one hour, the
+  // wizard can't finish, so point at the membership page up front.
+  if (minutesBalance < 60) {
+    return (
+      <div className="mx-auto max-w-xl">
+        <div className="rounded-[12px] border border-line bg-surface-2 p-5">
+          <h2 className="font-display text-2xl">Private coaching, at home</h2>
+          <p className="mt-2 text-fg-2">
+            A coach comes to you — your home, or your local clubhouse. To book,
+            you need private minutes: buy a single session, or a monthly plan
+            if it&apos;s becoming a routine.
+          </p>
+          <Link
+            href="/app/membership"
+            className="mt-4 inline-flex min-h-11 items-center justify-center rounded-[8px] bg-ember px-5 font-semibold text-ivory hover:bg-ember-2"
+          >
+            See private sessions &amp; plans
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="mx-auto max-w-xl">
       <div className="mb-6 flex items-center gap-2" aria-hidden>
@@ -289,7 +314,7 @@ export function PrivateWizard({
 
           <div>
             <p className="label mb-2">Duration</p>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 gap-2">
               {DURATIONS.map((d) => {
                 const disabled = minutesBalance < d;
                 return (
@@ -310,7 +335,13 @@ export function PrivateWizard({
               })}
             </div>
             <p className="tnum mt-2 text-xs text-fg-2">
-              {minutesBalance} private minutes available.
+              {minutesBalance} private minutes available.{" "}
+              <Link
+                href="/app/membership"
+                className="text-ember underline-offset-4 hover:underline"
+              >
+                Get more
+              </Link>
             </p>
           </div>
 

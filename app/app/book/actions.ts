@@ -22,6 +22,10 @@ export type BookSlotResult =
 
 const errorCopy: Record<string, string> = {
   no_active_subscription: "You need an active membership to book.",
+  no_entitlement:
+    "No membership, free trial or drop-in class available — see the membership page.",
+  recurring_needs_membership:
+    "Weekly bookings need a membership — book a one-off, or pick a plan first.",
   weekly_cap_reached: "You've used your group sessions for this week.",
   session_not_bookable: "This session can't be booked any more.",
   player_double_booked: "That player already has a session at this time.",

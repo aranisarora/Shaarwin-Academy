@@ -65,25 +65,46 @@ type Slot = {
   occurrences: number; // future occurrences visible in the browse window
 };
 
+/** How a client without a group plan can still book: trial or drop-in. */
+export type GroupEntitlement = {
+  hasGroupPlan: boolean;
+  trialPlayerIds: string[];
+  dropinCredits: number;
+};
+
 export function BookBrowser({
   sessions,
   venues,
   players,
-  hasSubscription,
+  entitlement,
 }: {
   sessions: BrowseSession[];
   venues: Venue[];
   players: { id: string; full_name: string }[];
-  hasSubscription: boolean;
+  entitlement: GroupEntitlement;
 }) {
   const [level, setLevel] = useState<string>("all");
   const [weekday, setWeekday] = useState<string>("all");
   const [selected, setSelected] = useState<Slot | null>(null);
-  const [recurring, setRecurring] = useState(true);
+  const [recurring, setRecurring] = useState(entitlement.hasGroupPlan);
   const [playerId, setPlayerId] = useState(players[0]?.id ?? "");
   const [result, setResult] = useState<BookSlotResult | null>(null);
   const [pushState, setPushState] = useState<PushState | null>(null);
   const [pending, startTransition] = useTransition();
+
+  const { hasGroupPlan } = entitlement;
+  // Without a plan, a single session can ride on the player's free trial or a
+  // purchased drop-in credit (the server consumes trial first).
+  const credit: "trial" | "dropin" | null = hasGroupPlan
+    ? null
+    : entitlement.trialPlayerIds.includes(playerId)
+      ? "trial"
+      : entitlement.dropinCredits > 0
+        ? "dropin"
+        : null;
+  const canBook = hasGroupPlan || credit !== null;
+  const playerName =
+    players.find((p) => p.id === playerId)?.full_name ?? "your player";
 
   // Collapse dated instances into recurring slots (class + weekday + time).
   // `sessions` arrives sorted by starts_at, so the first hit is the next one.
@@ -125,14 +146,14 @@ export function BookBrowser({
 
   function openSheet(slot: Slot) {
     setResult(null);
-    setRecurring(true);
+    setRecurring(hasGroupPlan);
     setSelected(slot);
   }
 
   function book() {
     if (!selected || !playerId) return;
     startTransition(async () => {
-      const r = await bookSlot(selected.next.id, playerId, recurring);
+      const r = await bookSlot(selected.next.id, playerId, recurring && hasGroupPlan);
       setResult(r);
       if (r.ok) {
         localStorage.setItem("sharwin_has_booked", "1");
@@ -146,11 +167,19 @@ export function BookBrowser({
   return (
     <div className="grid gap-6 lg:grid-cols-[420px_1fr]">
       <div className="order-2 lg:order-1">
-        <p className="mb-4 text-sm text-fg-2">
-          Pick a weekly slot — booking holds your place{" "}
-          <span className="text-fg">every week</span>. You can switch to a one-off
-          when you book.
-        </p>
+        {hasGroupPlan ? (
+          <p className="mb-4 text-sm text-fg-2">
+            Pick a weekly slot — booking holds your place{" "}
+            <span className="text-fg">every week</span>. You can switch to a
+            one-off when you book.
+          </p>
+        ) : (
+          <p className="mb-4 text-sm text-fg-2">
+            Pick a slot for a single class.{" "}
+            <span className="text-fg">Members hold their place every week</span>{" "}
+            — plans are on the membership page.
+          </p>
+        )}
 
         <div className="mb-4 grid grid-cols-2 gap-3">
           <Select label="Level" value={level} onChange={(e) => setLevel(e.target.value)}>
@@ -272,8 +301,8 @@ export function BookBrowser({
               </Select>
             )}
 
-            {/* Recurring vs one-off — recurring is the default. */}
-            {!result?.ok && hasSubscription && (
+            {/* Recurring vs one-off — recurring is the default for members. */}
+            {!result?.ok && hasGroupPlan && (
               <div className="grid grid-cols-2 gap-2">
                 <button
                   type="button"
@@ -336,20 +365,38 @@ export function BookBrowser({
                   </p>
                 )}
               </div>
-            ) : !hasSubscription ? (
+            ) : !canBook ? (
               <div className="space-y-3">
                 <p className="text-sm text-fg-2">
-                  You need an active membership to book this slot.
+                  {entitlement.trialPlayerIds.length > 0
+                    ? `${playerName} has already used the free trial. Get a membership to book weekly, or buy a drop-in class.`
+                    : "You need a membership or a drop-in class to book this slot."}
                 </p>
                 <Link
                   href="/app/membership"
                   className="inline-flex min-h-11 w-full items-center justify-center rounded-[8px] bg-ember px-5 font-semibold text-ivory hover:bg-ember-2"
                 >
-                  Choose a plan
+                  See plans &amp; drop-ins
                 </Link>
               </div>
             ) : (
               <>
+                {credit === "trial" && (
+                  <div className="rounded-[10px] border border-ok bg-surface-2 p-3 text-sm">
+                    <p className="font-semibold">
+                      {playerName}&apos;s first class is free — on us. 🎉
+                    </p>
+                    <p className="mt-0.5 text-fg-2">
+                      This booking uses the free trial. No payment needed.
+                    </p>
+                  </div>
+                )}
+                {credit === "dropin" && (
+                  <p className="text-sm text-fg-2">
+                    Uses 1 of your {entitlement.dropinCredits} drop-in{" "}
+                    {entitlement.dropinCredits === 1 ? "class" : "classes"}.
+                  </p>
+                )}
                 <Button onClick={book} disabled={pending || !playerId} className="w-full">
                   {pending ? (
                     <Spinner />

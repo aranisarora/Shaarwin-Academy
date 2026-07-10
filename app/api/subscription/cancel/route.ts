@@ -3,11 +3,14 @@ import { createClient } from "@/lib/supabase/server";
 import { getRazorpay } from "@/lib/razorpay";
 
 /**
- * Cancel the caller's active Razorpay subscription at the end of the paid
- * cycle (cancel_at_cycle_end=1). The webhook mirrors the resulting state; we
- * optimistically flag cancel_at_period_end so the UI updates immediately.
+ * Cancel one of the caller's active Razorpay subscriptions at the end of the
+ * paid cycle (cancel_at_cycle_end=1). A household can hold a group plan and a
+ * private plan at once, so the body may pass plan_id to pick one; without it
+ * the most recent subscription is cancelled. The webhook mirrors the
+ * resulting state; we optimistically flag cancel_at_period_end so the UI
+ * updates immediately.
  */
-export async function POST() {
+export async function POST(request: Request) {
   const razorpay = getRazorpay();
   if (!razorpay) {
     return NextResponse.json({ error: "billing_not_configured" }, { status: 503 });
@@ -19,12 +22,19 @@ export async function POST() {
   } = await supabase.auth.getUser();
   if (!user) return NextResponse.json({ error: "not_authenticated" }, { status: 401 });
 
-  const { data: sub } = await supabase
+  const { plan_id } = (await request.json().catch(() => ({}))) as {
+    plan_id?: string;
+  };
+
+  let query = supabase
     .from("subscriptions")
     .select("id,razorpay_subscription_id,source,status")
     .eq("client_id", user.id)
     .eq("source", "razorpay")
-    .in("status", ["active", "past_due", "trialing"])
+    .in("status", ["active", "past_due", "trialing"]);
+  if (plan_id) query = query.eq("plan_id", plan_id);
+
+  const { data: sub } = await query
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();

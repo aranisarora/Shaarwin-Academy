@@ -6,14 +6,17 @@ import { Spinner } from "@/components/ui/Spinner";
 
 /**
  * Razorpay has no hosted customer portal, so "managing billing" for a member
- * means cancelling at the end of the paid quarter. Two-step confirm to avoid
- * an accidental cancel.
+ * means cancelling at the end of the paid month. Two-step confirm to avoid an
+ * accidental cancel. `planId` picks which subscription when the household
+ * holds both a group and a private plan.
  */
 export function ManageBillingButton({
   label,
+  planId,
   className = "",
 }: {
   label: string;
+  planId?: string;
   className?: string;
 }) {
   const [busy, setBusy] = useState(false);
@@ -24,7 +27,11 @@ export function ManageBillingButton({
   async function cancel() {
     setBusy(true);
     setError(null);
-    const res = await fetch("/api/subscription/cancel", { method: "POST" });
+    const res = await fetch("/api/subscription/cancel", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ plan_id: planId }),
+    });
     setBusy(false);
     if (res.ok) {
       setDone(true);
@@ -37,7 +44,7 @@ export function ManageBillingButton({
   if (done) {
     return (
       <p className={`text-sm text-fg-2 ${className}`}>
-        Your membership will end when the current quarter finishes.
+        Your membership will end when the current month finishes.
       </p>
     );
   }

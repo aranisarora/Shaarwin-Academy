@@ -330,7 +330,7 @@ const listPlans: WaTool = {
   run: async (_input, ctx) => {
     const { data } = await ctx.supabase!
       .from("plans")
-      .select("id,name,price_pence,group_sessions_per_week,private_minutes_per_quarter,active")
+      .select("id,name,price_pence,group_sessions_per_week,private_minutes_per_cycle,active")
       .order("price_pence");
     return ok(
       (data ?? []).map((p) => ({
@@ -338,7 +338,7 @@ const listPlans: WaTool = {
         name: p.name,
         price_pence: p.price_pence,
         group_sessions_per_week: p.group_sessions_per_week,
-        private_minutes_per_quarter: p.private_minutes_per_quarter,
+        private_minutes_per_cycle: p.private_minutes_per_cycle,
         active: p.active,
       }))
     );
@@ -348,7 +348,7 @@ const listPlans: WaTool = {
 const grantComp: WaTool = {
   name: "grant_comp_subscription",
   description:
-    "Grant a client a free 90-day membership (plus the plan's private minutes). MONEY-ADJACENT — restate client and plan, get an explicit yes first.",
+    "Grant a client a free 30-day membership (plus the plan's private minutes). MONEY-ADJACENT — restate client and plan, get an explicit yes first.",
   input_schema: {
     type: "object",
     properties: { client_id: { type: "string" }, plan_id: { type: "string" } },

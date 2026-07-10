@@ -64,22 +64,40 @@ on conflict (id) do nothing;
 -- 00000000-0000-4000-8000-0000000001c* / ...01f*), including 4 weeks of
 -- generated sessions.
 
--- plans (P04 table). price_pence holds paise (minor unit of INR): ₹18,000 = 1,800,000.
-insert into plans (id, name, description, price_pence, currency, group_sessions_per_week, private_minutes_per_quarter) values
-  ('00000000-0000-4000-8000-0000000000d1', 'Group', 'Up to 2 group sessions a week.', 1800000, 'inr', 2, 0),
-  ('00000000-0000-4000-8000-0000000000d2', 'Group+', 'Unlimited group sessions.', 2600000, 'inr', null, 0),
-  ('00000000-0000-4000-8000-0000000000d3', 'Private', 'Unlimited group sessions plus 240 private minutes a quarter.', 4200000, 'inr', null, 240)
+-- plans (P04 table, monthly billing). price_pence holds paise (minor unit of
+-- INR): ₹2,399 = 239,900. group_sessions_per_week > 0 = group plan with a
+-- weekly cap; 0 = private plan (no group access).
+insert into plans (id, name, description, price_pence, currency, billing_interval_months, group_sessions_per_week, private_minutes_per_cycle) values
+  ('00000000-0000-4000-8000-0000000000d4', 'Group — 1×/week', 'One group class a week.', 129900, 'inr', 1, 1, 0),
+  ('00000000-0000-4000-8000-0000000000d5', 'Group — 2×/week', 'Two group classes a week. Our most popular plan.', 239900, 'inr', 1, 2, 0),
+  ('00000000-0000-4000-8000-0000000000d6', 'Group — 3×/week', 'Three group classes a week.', 329900, 'inr', 1, 3, 0),
+  ('00000000-0000-4000-8000-0000000000d7', 'Private — Weekly, 60 min', 'A weekly 60-minute home session (260 minutes a month).', 419900, 'inr', 1, 0, 260),
+  ('00000000-0000-4000-8000-0000000000d8', 'Private — Weekly, 90 min', 'A weekly 90-minute home session (390 minutes a month).', 599900, 'inr', 1, 0, 390),
+  ('00000000-0000-4000-8000-0000000000d9', 'Private — 2×/week, 60 min', 'Two 60-minute home sessions a week (520 minutes a month).', 799900, 'inr', 1, 0, 520),
+  ('00000000-0000-4000-8000-0000000000da', 'Private — 2×/week, 90 min', 'Two 90-minute home sessions a week (780 minutes a month).', 1149900, 'inr', 1, 0, 780)
 on conflict (id) do nothing;
 
--- comp subscriptions so booking works before online payments
+-- one-off products (0017): drop-in group class, à-la-carte private hours,
+-- and the once-per-child intro promo. member_price_pence applies when the
+-- buyer holds an active group plan.
+insert into products (id, name, description, kind, price_pence, member_price_pence, grants_minutes, duration_minutes) values
+  ('group-dropin', 'Group class — drop-in', 'One group class, no membership needed.', 'group_dropin', 34900, 34900, 0, null),
+  ('private-60', 'Private session — 60 min', 'A one-hour session at your home or clubhouse. Coach comes to you.', 'private_oneoff', 119900, 109900, 60, 60),
+  ('private-90', 'Private session — 90 min', 'A 90-minute session at your home or clubhouse. Coach comes to you.', 'private_oneoff', 169900, 159900, 90, 90),
+  ('private-intro-60', 'Intro offer — first private session (60 min)', 'Promotional price for your first private session. One per child.', 'private_intro', 59900, 59900, 60, 60)
+on conflict (id) do nothing;
+
+-- comp subscriptions so booking works before online payments. Alex holds both
+-- a group and a private plan (the model allows the pair); Priya group-only.
 insert into subscriptions (id, client_id, plan_id, source, status, current_period_start, current_period_end) values
-  ('00000000-0000-4000-8000-0000000000e1', '00000000-0000-4000-8000-000000000021', '00000000-0000-4000-8000-0000000000d3', 'comp', 'active', now(), now() + interval '90 days'),
-  ('00000000-0000-4000-8000-0000000000e2', '00000000-0000-4000-8000-000000000022', '00000000-0000-4000-8000-0000000000d1', 'comp', 'active', now(), now() + interval '90 days')
+  ('00000000-0000-4000-8000-0000000000e1', '00000000-0000-4000-8000-000000000021', '00000000-0000-4000-8000-0000000000d7', 'comp', 'active', now(), now() + interval '30 days'),
+  ('00000000-0000-4000-8000-0000000000e2', '00000000-0000-4000-8000-000000000022', '00000000-0000-4000-8000-0000000000d5', 'comp', 'active', now(), now() + interval '30 days'),
+  ('00000000-0000-4000-8000-0000000000e4', '00000000-0000-4000-8000-000000000021', '00000000-0000-4000-8000-0000000000d5', 'comp', 'active', now(), now() + interval '30 days')
 on conflict (id) do nothing;
 
 insert into private_credit_ledger (id, client_id, subscription_id, delta_minutes, reason)
 values ('00000000-0000-4000-8000-0000000000e3', '00000000-0000-4000-8000-000000000021',
-        '00000000-0000-4000-8000-0000000000e1', 240, 'grant')
+        '00000000-0000-4000-8000-0000000000e1', 260, 'grant')
 on conflict (id) do nothing;
 
 -- sessions were generated coachless at migration time (no coaches existed

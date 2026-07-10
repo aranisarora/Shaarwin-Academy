@@ -3,7 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getRazorpay } from "@/lib/razorpay";
 
 /**
- * Authenticated client + plan_id → Razorpay Subscription (quarterly). Returns
+ * Authenticated client + plan_id → Razorpay Subscription (monthly). Returns
  * the subscription id + public key; the browser opens Razorpay Checkout with
  * it. Activation is confirmed by the webhook, not this response.
  */
@@ -43,13 +43,14 @@ export async function POST(request: Request) {
     .single();
 
   try {
-    // total_count = billing cycles before the subscription completes. 40 quarters
-    // (~10 years) is effectively "until cancelled" for a membership.
+    // total_count = billing cycles before the subscription completes. Razorpay
+    // requires a finite count; 100 monthly cycles (~8 years) is effectively
+    // "until cancelled" for a membership.
     const subscription = await razorpay.post<{ id: string; status: string }>(
       "/subscriptions",
       {
         plan_id: plan.razorpay_plan_id,
-        total_count: 40,
+        total_count: 100,
         quantity: 1,
         customer_notify: 1,
         notes: {

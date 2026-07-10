@@ -185,7 +185,7 @@ export async function grantCompCore(
 ): Promise<OpResult> {
   const { data: plan } = await supabase
     .from("plans")
-    .select("private_minutes_per_quarter")
+    .select("private_minutes_per_cycle")
     .eq("id", planId)
     .maybeSingle();
   const { data: sub, error } = await supabase
@@ -196,16 +196,16 @@ export async function grantCompCore(
       source: "comp",
       status: "active",
       current_period_start: new Date().toISOString(),
-      current_period_end: new Date(Date.now() + 90 * 86400000).toISOString(),
+      current_period_end: new Date(Date.now() + 30 * 86400000).toISOString(),
     })
     .select("id")
     .single();
   if (error) return { ok: false, error: "Couldn't grant the subscription." };
-  if (plan && plan.private_minutes_per_quarter > 0) {
+  if (plan && plan.private_minutes_per_cycle > 0) {
     await supabase.from("private_credit_ledger").insert({
       client_id: clientId,
       subscription_id: sub.id,
-      delta_minutes: plan.private_minutes_per_quarter,
+      delta_minutes: plan.private_minutes_per_cycle,
       reason: "grant",
       note: "comp grant",
     });

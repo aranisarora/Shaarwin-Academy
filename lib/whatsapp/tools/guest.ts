@@ -16,7 +16,7 @@ export const academyInfo: WaTool = {
     const [{ data: plans }, { data: venues }, sessions] = await Promise.all([
       ctx.admin
         .from("plans")
-        .select("id,name,description,price_pence,group_sessions_per_week,private_minutes_per_quarter")
+        .select("id,name,description,price_pence,group_sessions_per_week,private_minutes_per_cycle")
         .eq("active", true)
         .order("price_pence"),
       ctx.admin
@@ -31,10 +31,12 @@ export const academyInfo: WaTool = {
         plan_id: p.id,
         name: p.name,
         description: p.description,
-        price_per_quarter: formatPricePence(p.price_pence),
+        price_per_month: formatPricePence(p.price_pence),
         group_sessions_per_week: p.group_sessions_per_week,
-        private_minutes_per_quarter: p.private_minutes_per_quarter,
+        private_minutes_per_month: p.private_minutes_per_cycle,
       })),
+      offers:
+        "Every child's first group class is FREE (one trial per player, no payment details needed — sign up and book). There's also a discounted intro price on the first private session, one per child. One-off classes can be bought without any membership; monthly plans just work out cheaper.",
       venues: venues ?? [],
       next_7_days_group_sessions: sessions.map((s) => ({
         session_id: s.id,

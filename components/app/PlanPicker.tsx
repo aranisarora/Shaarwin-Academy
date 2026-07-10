@@ -4,52 +4,19 @@ import { useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { Spinner } from "@/components/ui/Spinner";
 import { whatsappLink } from "@/lib/contact";
+import { loadRazorpay } from "@/lib/razorpay-checkout";
 
 type PlanOption = {
   id: string;
   name: string;
   description: string;
   price: string;
+  popular?: boolean;
 };
 
 type CheckoutError =
   | { kind: "offline"; plan: PlanOption } // Razorpay not configured — WhatsApp fallback
   | { kind: "generic" };
-
-// Minimal shape of the global Razorpay Checkout constructor.
-type RazorpayOptions = {
-  key: string;
-  subscription_id: string;
-  name: string;
-  description?: string;
-  prefill?: { name?: string; email?: string };
-  theme?: { color?: string };
-  handler: (r: {
-    razorpay_payment_id: string;
-    razorpay_subscription_id: string;
-    razorpay_signature: string;
-  }) => void;
-  modal?: { ondismiss?: () => void };
-};
-declare global {
-  interface Window {
-    Razorpay?: new (options: RazorpayOptions) => { open: () => void };
-  }
-}
-
-const CHECKOUT_SRC = "https://checkout.razorpay.com/v1/checkout.js";
-
-function loadRazorpay(): Promise<boolean> {
-  if (typeof window === "undefined") return Promise.resolve(false);
-  if (window.Razorpay) return Promise.resolve(true);
-  return new Promise((resolve) => {
-    const script = document.createElement("script");
-    script.src = CHECKOUT_SRC;
-    script.onload = () => resolve(true);
-    script.onerror = () => resolve(false);
-    document.body.appendChild(script);
-  });
-}
 
 export function PlanPicker({
   plans,
@@ -118,7 +85,7 @@ export function PlanPicker({
 
   const payMessage = (plan: PlanOption) =>
     `Hi Sharwin TT Academy! I'd like to pay for the ${plan.name} plan ` +
-    `(${plan.price}/quarter). My name is ${clientName} and my account email ` +
+    `(${plan.price}/month). My name is ${clientName} and my account email ` +
     `is ${clientEmail}. Please send me the payment details.`;
 
   return (
@@ -126,14 +93,19 @@ export function PlanPicker({
       {plans.map((plan) => (
         <div
           key={plan.id}
-          className="flex items-center justify-between gap-4 rounded-[12px] border border-line bg-surface-2 p-4"
+          className={`flex items-center justify-between gap-4 rounded-[12px] border bg-surface-2 p-4 ${plan.popular ? "border-ember" : "border-line"}`}
         >
           <div>
             <p className="font-display text-xl">
               {plan.name}
               <span className="tnum ml-2 text-base text-fg-2">
-                {plan.price} / quarter
+                {plan.price} / month
               </span>
+              {plan.popular && (
+                <span className="ml-2 rounded-full bg-ember px-2 py-0.5 align-middle text-xs font-semibold text-ivory">
+                  Most popular
+                </span>
+              )}
             </p>
             <p className="text-sm text-fg-2">{plan.description}</p>
           </div>

@@ -92,3 +92,27 @@ export async function verifyPaymentSignature(opts: {
   }
   return expected.length === given.length && timingSafeEqual(expected, given);
 }
+
+/**
+ * Same handshake for one-off Orders: HMAC-SHA256(order_id + "|" + payment_id,
+ * key_secret) hex == razorpay_signature. Note the reversed operand order vs
+ * subscriptions.
+ */
+export async function verifyOrderPaymentSignature(opts: {
+  orderId: string;
+  paymentId: string;
+  signature: string;
+  keySecret: string;
+}): Promise<boolean> {
+  const { createHmac, timingSafeEqual } = await import("crypto");
+  const expected = createHmac("sha256", opts.keySecret)
+    .update(`${opts.orderId}|${opts.paymentId}`)
+    .digest();
+  let given: Buffer;
+  try {
+    given = Buffer.from(opts.signature, "hex");
+  } catch {
+    return false;
+  }
+  return expected.length === given.length && timingSafeEqual(expected, given);
+}

@@ -115,7 +115,7 @@ export type PrivateSessionsResult =
   | { ok: true; booked: number; parked: number; ranOut: boolean }
   | { ok: false; error: string };
 
-const MAX_PRIVATE_SLOTS = 12; // cap a single multi-select booking (≈ one quarter)
+const MAX_PRIVATE_SLOTS = 12; // cap a single multi-select booking run
 
 /**
  * Book a set of explicitly chosen private slots in one go. Each session debits
@@ -140,7 +140,7 @@ export async function requestPrivateSessions(
   const summary = await getSubscriptionSummary(supabase, user.id);
   let remaining = summary.minutesBalance;
   if (remaining < req.duration) {
-    return { ok: false, error: "Not enough private minutes left this quarter." };
+    return { ok: false, error: "Not enough private minutes — top up from the membership page." };
   }
 
   let booked = 0;
@@ -192,88 +192,12 @@ export async function requestPrivateClass(req: PrivateRequest): Promise<PrivateR
   };
 
   const { data, error } = await supabase.rpc("request_private_class", { payload });
-  if (!error && data) {
-    revalidatePath("/app");
-    revalidatePath("/app/schedule");
-    return { ok: true, sessionId: data as string, parked: false };
-  }
-  if (error && !isFunctionMissing(error.code)) {
+  if (error) {
     if (error.message.includes("insufficient_minutes"))
-      return { ok: false, error: "Not enough private minutes left this quarter." };
-    if (error.message.includes("no_active_subscription"))
-      return { ok: false, error: "You need the Private plan to book home sessions." };
+      return { ok: false, error: "Not enough private minutes — top up from the membership page." };
     return { ok: false, error: "Request didn't go through. Try again." };
   }
-
-  // Fallback without the RPC — same steps in JS.
-  const summary = await getSubscriptionSummary(supabase, user.id);
-  if (!summary.active)
-    return { ok: false, error: "You need the Private plan to book home sessions." };
-  if (summary.minutesBalance < req.duration)
-    return { ok: false, error: "Not enough private minutes left this quarter." };
-
-  const { data: cls, error: clsError } = await supabase
-    .from("classes")
-    .insert({
-      class_type: "private",
-      title: "Private session",
-      capacity: 1,
-      duration_minutes: req.duration,
-      starts_on: req.startsAt.slice(0, 10),
-      created_by: user.id,
-    })
-    .select("id")
-    .single();
-  if (clsError || !cls) return { ok: false, error: "Request didn't go through. Try again." };
-
-  await supabase.from("private_class_details").insert({
-    class_id: cls.id,
-    client_id: user.id,
-    player_id: req.playerId,
-    address: req.address,
-    postcode: req.postcode,
-    lat: req.lat,
-    lng: req.lng,
-    has_table: req.hasTable,
-    access_notes: req.accessNotes,
-    address_details: req.details ?? null,
-  });
-
-  const ends = new Date(new Date(req.startsAt).getTime() + req.duration * 60000).toISOString();
-  const covering = await coachesCovering(req.lat, req.lng);
-  const coachId = req.preferredCoach && covering.some((c) => c.id === req.preferredCoach)
-    ? req.preferredCoach
-    : covering[0]?.id ?? null;
-
-  const { data: session } = await supabase
-    .from("class_sessions")
-    .insert({ class_id: cls.id, coach_id: coachId, starts_at: req.startsAt, ends_at: ends })
-    .select("id")
-    .single();
-  if (!session) return { ok: false, error: "Request didn't go through. Try again." };
-
-  await supabase.from("private_credit_ledger").insert({
-    client_id: user.id,
-    delta_minutes: -req.duration,
-    reason: "booking",
-  });
-  await supabase.from("bookings").insert({
-    session_id: session.id,
-    client_id: user.id,
-    player_id: req.playerId,
-    status: "confirmed",
-  });
-  await supabase.from("notifications").insert({
-    user_id: user.id,
-    type: "coach_assigned",
-    title: coachId ? "You're on." : "We're confirming your coach",
-    body: coachId
-      ? "Coach confirmed — details in your schedule."
-      : "You'll hear from us within 24 hours.",
-    data: { session_id: session.id, url: "/app/schedule" },
-  });
-
   revalidatePath("/app");
   revalidatePath("/app/schedule");
-  return { ok: true, sessionId: session.id, parked: !coachId };
+  return { ok: true, sessionId: data as string, parked: false };
 }

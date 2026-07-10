@@ -42,6 +42,8 @@ type RzpPayment = {
   id: string;
   amount: number;
   invoice_id: string | null;
+  order_id?: string | null;
+  notes?: Record<string, string> | null;
 };
 
 export async function POST(request: Request) {
@@ -91,6 +93,15 @@ export async function POST(request: Request) {
         if (sub) await mirrorSubscription(db, sub);
         if (sub && event.payload.payment) {
           await handleCharged(db, sub, event.payload.payment.entity);
+        }
+        break;
+      case "payment.captured":
+        // One-off purchases (drop-in, private hours, intro promo) — web
+        // checkout (orders table) and WhatsApp payment links (notes) both
+        // land here. Subscription charges also emit this event; they carry
+        // no matching order row or product note and fall through.
+        if (event.payload.payment) {
+          await handleOneOffPayment(db, event.payload.payment.entity);
         }
         break;
     }
@@ -180,17 +191,133 @@ async function handleCharged(db: any, sub: RzpSubscription, payment: RzpPayment)
   if (localSub?.plan_id) {
     const { data: plan } = await db
       .from("plans")
-      .select("private_minutes_per_quarter")
+      .select("private_minutes_per_cycle")
       .eq("id", localSub.plan_id)
       .maybeSingle();
-    if (plan && plan.private_minutes_per_quarter > 0) {
+    if (plan && plan.private_minutes_per_cycle > 0) {
       await db.from("private_credit_ledger").insert({
         client_id: clientId,
         subscription_id: localSub.id,
-        delta_minutes: plan.private_minutes_per_quarter,
+        delta_minutes: plan.private_minutes_per_cycle,
         reason: "grant",
         note: `razorpay payment ${payment.id}`,
       });
+
+      // Rollover cap: unused minutes carry over at most one extra cycle, so
+      // the balance never exceeds two months' worth. Excess expires here.
+      const cap = plan.private_minutes_per_cycle * 2;
+      const { data: balance } = await db.rpc("private_minutes_balance", {
+        p_client: clientId,
+      });
+      if (typeof balance === "number" && balance > cap) {
+        await db.from("private_credit_ledger").insert({
+          client_id: clientId,
+          subscription_id: localSub.id,
+          delta_minutes: cap - balance,
+          reason: "expiry",
+          note: "rollover cap (max one cycle carried over)",
+        });
+      }
     }
+  }
+}
+
+/**
+ * Fulfil a one-off purchase. The order is resolved from our orders table
+ * (web checkout) or from the payment's notes (WhatsApp payment links, which
+ * create their own Razorpay order we never see). Idempotent via the unique
+ * invoices.razorpay_payment_id insert.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function handleOneOffPayment(db: any, payment: RzpPayment) {
+  let clientId: string | null = null;
+  let productId: string | null = null;
+  let playerId: string | null = null;
+  let localOrderId: string | null = null;
+
+  if (payment.order_id) {
+    const { data: order } = await db
+      .from("orders")
+      .select("id,client_id,player_id,product_id")
+      .eq("razorpay_order_id", payment.order_id)
+      .maybeSingle();
+    if (order) {
+      clientId = order.client_id;
+      productId = order.product_id;
+      playerId = order.player_id;
+      localOrderId = order.id;
+    }
+  }
+  if (!clientId && payment.notes?.product_id && payment.notes?.supabase_user_id) {
+    clientId = payment.notes.supabase_user_id;
+    productId = payment.notes.product_id;
+    playerId = payment.notes.player_id || null;
+  }
+  if (!clientId || !productId) return; // not one of ours (e.g. a subscription charge)
+
+  // Idempotency: the unique partial index on invoices.razorpay_payment_id
+  // makes the second delivery a no-op.
+  const { error: dupe } = await db.from("invoices").insert({
+    client_id: clientId,
+    razorpay_payment_id: payment.id,
+    amount_pence: payment.amount,
+    currency: "inr",
+    status: "paid",
+    paid_at: new Date().toISOString(),
+  });
+  if (dupe) return;
+
+  if (localOrderId) {
+    await db
+      .from("orders")
+      .update({
+        status: "paid",
+        razorpay_payment_id: payment.id,
+        paid_at: new Date().toISOString(),
+      })
+      .eq("id", localOrderId);
+  } else if (payment.order_id) {
+    // Payment-link path: record the order so per-child promos stay traceable.
+    const { data: inserted } = await db
+      .from("orders")
+      .insert({
+        client_id: clientId,
+        player_id: playerId,
+        product_id: productId,
+        razorpay_order_id: payment.order_id,
+        razorpay_payment_id: payment.id,
+        amount_pence: payment.amount,
+        currency: "inr",
+        status: "paid",
+        paid_at: new Date().toISOString(),
+      })
+      .select("id")
+      .maybeSingle();
+    localOrderId = inserted?.id ?? null;
+  }
+
+  const { data: product } = await db
+    .from("products")
+    .select("id,kind,grants_minutes,name")
+    .eq("id", productId)
+    .maybeSingle();
+  if (!product) return;
+
+  if (product.kind === "group_dropin") {
+    await db.from("class_credits").insert({
+      client_id: clientId,
+      player_id: playerId,
+      type: "group_dropin",
+      source: "purchase",
+      order_id: localOrderId,
+      note: `razorpay payment ${payment.id}`,
+    });
+  } else if (product.grants_minutes > 0) {
+    await db.from("private_credit_ledger").insert({
+      client_id: clientId,
+      delta_minutes: product.grants_minutes,
+      reason: "grant",
+      note: `${product.name} — razorpay payment ${payment.id}`,
+    });
   }
 }
