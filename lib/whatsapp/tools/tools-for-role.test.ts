@@ -46,6 +46,7 @@ describe("toolsForRole", () => {
       "move_session",
       "set_session_capacity",
       "create_one_off_session",
+      "create_private_session",
       "promote_client_to_coach",
       "update_coach",
       "set_coach_active",

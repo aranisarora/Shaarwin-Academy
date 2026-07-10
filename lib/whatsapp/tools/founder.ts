@@ -186,7 +186,7 @@ const reassign: WaTool = {
 const createClass: WaTool = {
   name: "create_group_class",
   description:
-    "Create a weekly group class and generate 8 weeks of sessions. Collect and confirm ALL details first: title, skill level (beginner/intermediate/advanced), capacity, duration in minutes, venue (use list_venues for venue_id), weekday (MO..SU), start time HH:MM (IST). Coach optional — the engine assigns one otherwise.",
+    "Create a weekly group class — it repeats every week and the next 8 weeks of sessions go on the calendar. Collect and confirm ALL details first: title, skill level (beginner/intermediate/advanced), capacity, duration in minutes, venue (use list_venues for venue_id), weekday (MO..SU), start time HH:MM (IST). Coach optional — the engine assigns one otherwise.",
   input_schema: {
     type: "object",
     properties: {

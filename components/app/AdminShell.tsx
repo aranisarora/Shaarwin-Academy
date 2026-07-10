@@ -4,10 +4,9 @@ import { StudioShell } from "@/components/shells/StudioShell";
 const tabs = [
   { href: "/admin", label: "Inbox", icon: "●" },
   { href: "/admin/calendar", label: "Calendar", icon: "▦" },
-  { href: "/admin/classes", label: "Classes", icon: "◆" },
+  { href: "/admin/clients", label: "Clients", icon: "◉" },
   { href: "/admin/settings", label: "More", icon: "≡" },
   { href: "/admin/coaches", label: "Coaches", icon: "◎" },
-  { href: "/admin/clients", label: "Clients", icon: "◉" },
   { href: "/admin/venues", label: "Venues", icon: "▲" },
   { href: "/admin/billing", label: "Billing", icon: "£" },
 ];

@@ -171,6 +171,161 @@ export async function setSessionCapacityCore(
   return { ok: true };
 }
 
+export type PrivateSessionInput = {
+  clientId: string;
+  playerId?: string; // defaults to the client's first player
+  date: string; // YYYY-MM-DD academy wall clock
+  time: string; // HH:MM
+  durationMinutes: number; // 60 | 90
+  address: string;
+  postcode?: string;
+  lat: number;
+  lng: number;
+  hasTable?: boolean;
+  accessNotes?: string;
+  addressDetails?: Record<string, unknown> | null;
+  coachId?: string;
+};
+
+/**
+ * Founder books a private session on a client's behalf — same shape the
+ * client-side request_private_class RPC produces (private class + details +
+ * session + confirmed booking + minutes debit), but founder-initiated so the
+ * 24h lead time and balance check don't apply. The debit keeps the ledger
+ * symmetric with the cancel-refund path; the balance may go negative and the
+ * founder can top it up via adjustCreditsCore.
+ */
+export async function createPrivateSessionCore(
+  supabase: SupabaseClient,
+  founderId: string,
+  input: PrivateSessionInput
+): Promise<OpResult> {
+  let playerId = input.playerId;
+  if (playerId) {
+    const { data: p } = await supabase
+      .from("players")
+      .select("id")
+      .eq("id", playerId)
+      .eq("client_id", input.clientId)
+      .maybeSingle();
+    if (!p) return { ok: false, error: "That player doesn't belong to this client." };
+  } else {
+    const { data: p } = await supabase
+      .from("players")
+      .select("id")
+      .eq("client_id", input.clientId)
+      .order("created_at")
+      .limit(1)
+      .maybeSingle();
+    if (!p) return { ok: false, error: "That client has no player profile yet." };
+    playerId = p.id;
+  }
+
+  const duration = input.durationMinutes === 90 ? 90 : 60;
+  const start = academyWallToUtc(input.date, input.time);
+  if (!(start > new Date())) return { ok: false, error: "Pick a time in the future." };
+  const end = new Date(start.getTime() + duration * 60000);
+
+  const { data: cls, error: clsErr } = await supabase
+    .from("classes")
+    .insert({
+      class_type: "private",
+      title: "Private session",
+      skill_level: "beginner",
+      capacity: 1,
+      duration_minutes: duration,
+      starts_on: input.date,
+      created_by: founderId,
+    })
+    .select("id")
+    .single();
+  if (clsErr || !cls) return { ok: false, error: "Couldn't create the session." };
+
+  const { error: detErr } = await supabase.from("private_class_details").insert({
+    class_id: cls.id,
+    client_id: input.clientId,
+    player_id: playerId,
+    address: input.address,
+    postcode: input.postcode ?? "",
+    lat: input.lat,
+    lng: input.lng,
+    has_table: input.hasTable ?? true,
+    access_notes: input.accessNotes || null,
+    address_details: input.addressDetails ?? null,
+  });
+  if (detErr) {
+    await supabase.from("classes").delete().eq("id", cls.id);
+    return { ok: false, error: "Couldn't save the address." };
+  }
+
+  const { data: session, error: sessErr } = await supabase
+    .from("class_sessions")
+    .insert({
+      class_id: cls.id,
+      coach_id: input.coachId || null,
+      starts_at: start.toISOString(),
+      ends_at: end.toISOString(),
+    })
+    .select("id")
+    .single();
+  if (sessErr || !session) {
+    await supabase.from("classes").delete().eq("id", cls.id);
+    return {
+      ok: false,
+      error: sessErr?.message.includes("coach_no_overlap")
+        ? "That coach is already busy then — pick another coach or leave it on automatic."
+        : "Couldn't create the session.",
+    };
+  }
+
+  const { error: bookErr } = await supabase.from("bookings").insert({
+    session_id: session.id,
+    client_id: input.clientId,
+    player_id: playerId,
+    status: "confirmed",
+  });
+  if (bookErr) {
+    await supabase.from("classes").delete().eq("id", cls.id);
+    return { ok: false, error: "Couldn't book the client in." };
+  }
+
+  await supabase.from("private_credit_ledger").insert({
+    client_id: input.clientId,
+    delta_minutes: -duration,
+    reason: "booking",
+    note: "booked by academy",
+  });
+
+  if (!input.coachId) await supabase.rpc("assign_unassigned_sessions");
+
+  const when = whenIST(start);
+  await supabase.from("notifications").insert({
+    user_id: input.clientId,
+    type: "new_private_session",
+    title: "Private session booked",
+    body: `We've set up a private session for ${when} — it's on your schedule.`,
+    data: { session_id: session.id, url: "/app/schedule" },
+  });
+  if (input.coachId) {
+    await supabase.from("notifications").insert({
+      user_id: input.coachId,
+      type: "new_private_session",
+      title: "New private session",
+      body: `${when} — ${input.address}`,
+      data: { session_id: session.id, url: `/coach/session/${session.id}` },
+    });
+  }
+
+  await supabase.from("audit_log").insert({
+    actor_id: founderId,
+    action: "session.create_private",
+    entity: "class_sessions",
+    entity_id: session.id,
+    meta: { client_id: input.clientId, minutes: duration },
+  });
+  return { ok: true };
+}
+
 /** Add a single extra session to an existing class (e.g. a holiday special). */
 export async function createOneOffSessionCore(
   supabase: SupabaseClient,

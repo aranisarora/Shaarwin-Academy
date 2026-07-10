@@ -6,6 +6,7 @@
 import {
   addCoachCore,
   createOneOffSessionCore,
+  createPrivateSessionCore,
   deleteGroupClassCore,
   deleteVenueCore,
   endGroupClassCore,
@@ -43,7 +44,7 @@ const SETTING_KEYS = [
 const listClasses: WaTool = {
   name: "list_classes",
   description:
-    "All group classes with class_id values, their weekly slot, venue, capacity and whether they're active. Use to find the class_id for editing/ending/deleting a class or adding a one-off session.",
+    "All weekly group classes with class_id values, their weekly slot, venue, capacity and whether they're active. Each class repeats every week on the calendar. Use to find the class_id for editing/ending/deleting a class or adding a one-off session.",
   input_schema: { type: "object", properties: {} },
   run: async (_input, ctx) => {
     const { data } = await ctx.supabase!
@@ -99,7 +100,7 @@ async function classBaseline(ctx: ToolContext, classId: string) {
 const updateClass: WaTool = {
   name: "update_class",
   description:
-    "Edit a group class (class_id from list_classes). Only pass the fields you're changing — the rest stay as they are. Changing weekday/time/duration/venue moves all upcoming sessions and notifies booked members, so confirm first.",
+    "Edit a weekly class — the EVERY-WEEK scope: changes apply to all upcoming weeks of the class (like Google Calendar's 'all events'). For a one-week-only change use move_session or set_session_capacity instead. class_id from list_classes; only pass the fields you're changing. Changing weekday/time/duration/venue moves all upcoming sessions and notifies booked members, so confirm the scope ('just this session, or every week?') and the change first.",
   input_schema: {
     type: "object",
     properties: {
@@ -198,7 +199,7 @@ const topUpSessions: WaTool = {
 const moveSession: WaTool = {
   name: "move_session",
   description:
-    "Move one session to a new day/time (session_id from list_sessions). Notifies booked members and the coach. Date is YYYY-MM-DD, time HH:MM, both academy time (IST). Confirm first.",
+    "Move one session to a new day/time — the JUST-THIS-SESSION scope: other weeks of the class stay put (use update_class to move every week). session_id from list_sessions. Notifies booked members and the coach. Date is YYYY-MM-DD, time HH:MM, both academy time (IST). If it's ambiguous whether the founder means one week or every week, ask before calling. Confirm first.",
   input_schema: {
     type: "object",
     properties: {
@@ -223,7 +224,7 @@ const moveSession: WaTool = {
 const setSessionCapacity: WaTool = {
   name: "set_session_capacity",
   description:
-    "Override the spots for a single session (session_id from list_sessions). Pass capacity=0 or omit to clear the override and use the class default.",
+    "Override the spots for a single session — the JUST-THIS-SESSION scope (use update_class capacity to change every week). session_id from list_sessions. Pass capacity=0 or omit to clear the override and use the class default.",
   input_schema: {
     type: "object",
     properties: { session_id: { type: "string" }, capacity: { type: "number" } },
@@ -266,6 +267,68 @@ const createOneOff: WaTool = {
       input.coach_id ? String(input.coach_id) : ""
     );
     return result.ok ? ok({ created: true }) : fail(result.error ?? "Failed.");
+  },
+};
+
+const createPrivate: WaTool = {
+  name: "create_private_session",
+  description:
+    "Book a private one-to-one session FOR a client (client_id from list_clients). Creates the session at the given address, books the client in, notifies them, and debits the session's minutes from their private balance (which may go negative — top up via adjust_private_credits). MONEY-ADJACENT — restate client, date/time, duration and address, get an explicit yes first. Date YYYY-MM-DD, time HH:MM (IST). player_name optional (defaults to the client's first player); coach_id optional — the engine assigns one otherwise.",
+  input_schema: {
+    type: "object",
+    properties: {
+      client_id: { type: "string" },
+      player_name: { type: "string", description: "Which household player — omit for the default" },
+      date: { type: "string", description: "YYYY-MM-DD (IST)" },
+      time: { type: "string", description: "HH:MM (IST)" },
+      duration_minutes: { type: "number", description: "60 or 90" },
+      address: { type: "string" },
+      access_notes: { type: "string", description: "Entry instructions, if any" },
+      has_table: { type: "boolean", description: "Does the address have a table? Default true" },
+      coach_id: { type: "string" },
+    },
+    required: ["client_id", "date", "time", "duration_minutes", "address"],
+  },
+  run: async (input, ctx) => {
+    const geo = await geocode(String(input.address));
+    if (!geo) return fail("Couldn't locate that address — ask for a fuller address.");
+
+    let playerId: string | undefined;
+    if (input.player_name) {
+      const { data: players } = await ctx.supabase!
+        .from("players")
+        .select("id,full_name")
+        .eq("client_id", String(input.client_id));
+      const match = (players ?? []).find(
+        (p) => p.full_name.toLowerCase().includes(String(input.player_name).toLowerCase())
+      );
+      if (!match) return fail("No player by that name in the client's household.");
+      playerId = match.id;
+    }
+
+    const result = await createPrivateSessionCore(ctx.supabase!, ctx.profile!.id, {
+      clientId: String(input.client_id),
+      playerId,
+      date: String(input.date),
+      time: String(input.time),
+      durationMinutes: Number(input.duration_minutes) === 90 ? 90 : 60,
+      address: String(input.address),
+      lat: geo.lat,
+      lng: geo.lng,
+      hasTable: input.has_table != null ? Boolean(input.has_table) : true,
+      accessNotes: input.access_notes ? String(input.access_notes) : undefined,
+      addressDetails: {
+        formatted: geo.place ?? String(input.address),
+        lat: geo.lat,
+        lng: geo.lng,
+        accessNotes: input.access_notes ?? null,
+        label: "home",
+      },
+      coachId: input.coach_id ? String(input.coach_id) : undefined,
+    });
+    return result.ok
+      ? ok({ created: true, resolved_address: geo.place, note: "Client notified; minutes debited." })
+      : fail(result.error ?? "Failed.");
   },
 };
 
@@ -625,6 +688,7 @@ export const founderAdminTools: WaTool[] = [
   moveSession,
   setSessionCapacity,
   createOneOff,
+  createPrivate,
   promoteCoach,
   addCoach,
   updateCoach,
