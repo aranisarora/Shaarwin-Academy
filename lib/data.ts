@@ -131,8 +131,9 @@ export const ACADEMY_TZ = "Asia/Kolkata";
 export function formatSessionTime(iso: string): string {
   return new Intl.DateTimeFormat("en-GB", {
     weekday: "short",
-    hour: "2-digit",
+    hour: "numeric",
     minute: "2-digit",
+    hour12: true,
     timeZone: ACADEMY_TZ,
   }).format(new Date(iso));
 }
@@ -142,8 +143,9 @@ export function formatSessionDate(iso: string): string {
     weekday: "short",
     day: "numeric",
     month: "short",
-    hour: "2-digit",
+    hour: "numeric",
     minute: "2-digit",
+    hour12: true,
     timeZone: ACADEMY_TZ,
   }).format(new Date(iso));
 }

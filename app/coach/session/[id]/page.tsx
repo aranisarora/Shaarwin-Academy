@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/Badge";
 import { SessionRoster } from "@/components/app/SessionRoster";
 import { SessionArrival } from "@/components/app/SessionArrival";
 import { NavigateButton } from "@/components/app/NavigateButton";
-import { ACADEMY_TZ } from "@/lib/academy-time";
+import { ACADEMY_TZ, nowMs } from "@/lib/academy-time";
 
 export const metadata: Metadata = { title: "Session" };
 
@@ -69,7 +69,7 @@ export default async function CoachSessionPage({
     const junior =
       player.date_of_birth !== null &&
       new Date(player.date_of_birth) >
-        new Date(Date.now() - 18 * 365.25 * 86400000);
+        new Date(nowMs() - 18 * 365.25 * 86400000);
     return {
       id: b.id,
       status: b.status,

@@ -241,11 +241,15 @@ const privateSlots: WaTool = {
 const bookPrivate: WaTool = {
   name: "book_private_session",
   description:
-    "Book a private session. Debits the user's private-minutes balance immediately, so ALWAYS confirm start time, duration, and address with the user before calling. starts_at must be an ISO timestamp from private_session_availability.",
+    "Book one or more private sessions. Debits the user's private-minutes balance immediately (per session), so ALWAYS confirm the start time(s), duration, and address with the user before calling. starts_at takes an ISO timestamp from private_session_availability, or an array of them to book several slots at once.",
   input_schema: {
     type: "object",
     properties: {
-      starts_at: { type: "string", description: "ISO timestamp of the chosen slot" },
+      starts_at: {
+        description:
+          "ISO timestamp of the chosen slot, or an array of ISO timestamps to book several slots at once",
+        oneOf: [{ type: "string" }, { type: "array", items: { type: "string" } }],
+      },
       duration_minutes: { type: "number" },
       address: { type: "string" },
       player_name: { type: "string" },
@@ -260,24 +264,43 @@ const bookPrivate: WaTool = {
     const player = await resolvePlayer(ctx, input.player_name);
     if ("error" in player) return fail(player.error);
 
-    const { data, error } = await ctx.supabase!.rpc("request_private_class", {
-      payload: {
-        player_id: player.id,
-        duration_minutes: Number(input.duration_minutes),
-        starts_at: input.starts_at,
-        address: String(input.address),
-        postcode: "",
-        lat: geo.lat,
-        lng: geo.lng,
-        has_table: input.has_table ?? true,
-        access_notes: input.access_notes ?? null,
-      },
-    });
-    if (error) return fail(friendlyRpcError(error.message));
+    // One slot or several — each becomes its own session, booked earliest-first
+    // so a partial run (minutes running out) keeps the soonest slots.
+    const raw = input.starts_at;
+    const starts = [
+      ...new Set((Array.isArray(raw) ? raw : [raw]).map(String).filter((s) => s && s !== "undefined")),
+    ].sort();
+    if (starts.length === 0) return fail("Need at least one start time.");
+
+    const booked: string[] = [];
+    let stopped: string | undefined;
+    for (const startsAt of starts) {
+      const { error } = await ctx.supabase!.rpc("request_private_class", {
+        payload: {
+          player_id: player.id,
+          duration_minutes: Number(input.duration_minutes),
+          starts_at: startsAt,
+          address: String(input.address),
+          postcode: "",
+          lat: geo.lat,
+          lng: geo.lng,
+          has_table: input.has_table ?? true,
+          access_notes: input.access_notes ?? null,
+        },
+      });
+      if (error) {
+        // First slot failing hard = abort; later ones stop but keep successes.
+        if (booked.length === 0) return fail(friendlyRpcError(error.message));
+        stopped = friendlyRpcError(error.message);
+        break;
+      }
+      booked.push(startsAt);
+    }
     return ok({
-      booked: true,
-      booking_id: data,
-      note: "Minutes debited. A coach is assigned automatically; the user will be notified.",
+      booked_count: booked.length,
+      booked_slots: booked,
+      stopped_reason: stopped,
+      note: "Minutes debited per session. A coach is assigned automatically; the user will be notified.",
     });
   },
 };

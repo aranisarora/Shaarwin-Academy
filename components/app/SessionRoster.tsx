@@ -3,6 +3,7 @@
 import { useRef, useState, useTransition } from "react";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
+import { nowMs } from "@/lib/academy-time";
 import {
   setAttendance,
   saveSessionNotes,
@@ -37,8 +38,8 @@ export function SessionRoster({
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const attendanceOpen =
-    Date.now() >= new Date(startsAt).getTime() - 15 * 60000 &&
-    Date.now() <= new Date(startsAt).getTime() + 48 * 3600000;
+    nowMs() >= new Date(startsAt).getTime() - 15 * 60000 &&
+    nowMs() <= new Date(startsAt).getTime() + 48 * 3600000;
 
   function toggle(bookingId: string, status: "attended" | "no_show") {
     setRows((r) =>

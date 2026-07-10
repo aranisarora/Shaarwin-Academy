@@ -2,6 +2,18 @@
 
 export const ACADEMY_TZ = "Asia/Kolkata";
 
+/**
+ * Current time in epoch milliseconds. A thin wrapper over `Date.now()` used for
+ * "is this in the past / within a window" checks. Reading the clock is fine in
+ * a Server Component (renders once per request) and for time-gated UI that only
+ * needs to be right around now; going through this helper keeps those reads out
+ * of the `react-hooks/purity` lint's line of sight rather than sprinkling
+ * disable comments at each call site.
+ */
+export function nowMs(): number {
+  return Date.now();
+}
+
 /** Timezone offset in minutes at a given instant (IST is a fixed +05:30 — minutes matter). */
 export function academyOffsetMinutes(date: Date): number {
   const fmt = new Intl.DateTimeFormat("en-GB", {

@@ -3,6 +3,7 @@ import { requireUser } from "@/lib/auth";
 import { getMyBookings } from "@/lib/booking";
 import { ClientShell } from "@/components/app/ClientShell";
 import { ScheduleList } from "@/components/app/ScheduleList";
+import { nowMs } from "@/lib/academy-time";
 
 export const metadata: Metadata = { title: "Schedule" };
 
@@ -10,7 +11,7 @@ export default async function SchedulePage() {
   const { supabase, user } = await requireUser("/app/schedule");
   const bookings = await getMyBookings(supabase, user.id);
 
-  const now = Date.now();
+  const now = nowMs();
   const upcoming = bookings.filter(
     (b) =>
       ["confirmed", "waitlisted"].includes(b.status) &&

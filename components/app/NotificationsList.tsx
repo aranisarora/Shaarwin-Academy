@@ -52,8 +52,9 @@ export function NotificationsList({ rows }: { rows: Row[] }) {
                 {new Intl.DateTimeFormat("en-GB", {
                   day: "numeric",
                   month: "short",
-                  hour: "2-digit",
+                  hour: "numeric",
                   minute: "2-digit",
+                  hour12: true,
                   timeZone: "Asia/Kolkata",
                 }).format(new Date(row.created_at))}
               </span>
