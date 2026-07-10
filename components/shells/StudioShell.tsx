@@ -13,7 +13,7 @@ export function StudioShell({
   actions,
   children,
 }: {
-  title: string;
+  title: React.ReactNode;
   tabs: TabItem[];
   actions?: React.ReactNode;
   children: React.ReactNode;

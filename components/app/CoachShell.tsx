@@ -11,7 +11,7 @@ export function CoachShell({
   actions,
   children,
 }: {
-  title: string;
+  title: React.ReactNode;
   actions?: React.ReactNode;
   children: React.ReactNode;
 }) {

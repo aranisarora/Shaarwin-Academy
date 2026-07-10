@@ -15,6 +15,20 @@ export const getCurrentUser = cache(async () => {
   return user;
 });
 
+/**
+ * Display-only signed-in check for shell chrome (nav CTAs, footer links).
+ * Reads the auth cookie locally instead of round-tripping to the Supabase
+ * auth server, so marketing pages don't block their first byte on auth.
+ * Never use this for authorization — the token is not verified here.
+ */
+export const hasAuthSession = cache(async () => {
+  const supabase = await createClient();
+  const {
+    data: { session },
+  } = await supabase.auth.getSession();
+  return session !== null;
+});
+
 export type Profile = {
   id: string;
   role: "client" | "coach" | "founder";

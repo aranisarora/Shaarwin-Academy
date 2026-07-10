@@ -1,8 +1,10 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import { StageShell } from "@/components/shells/StageShell";
 import { VenueMap } from "@/components/marketing/VenueMap";
 import { Badge } from "@/components/ui/Badge";
 import { ButtonLink } from "@/components/ui/Button";
+import { Skeleton } from "@/components/ui/Skeleton";
 import {
   getVenues,
   getGroupClasses,
@@ -16,7 +18,9 @@ export const metadata: Metadata = {
     "Sharwin TTA venues across Bengaluru with weekly group schedules.",
 };
 
-export default async function LocationsPage() {
+// Waits on Supabase inside a <Suspense> boundary so the page header and CTAs
+// paint immediately while the venue list + map stream in.
+async function VenuesSection() {
   const [venues, classes, sessions] = await Promise.all([
     getVenues(),
     getGroupClasses(),
@@ -37,6 +41,77 @@ export default async function LocationsPage() {
   }
 
   return (
+    <div className="grid gap-8 lg:grid-cols-[420px_1fr]">
+      <div className="order-2 space-y-6 lg:order-1">
+        {venues.map((venue) => (
+          <div
+            key={venue.id}
+            className="rounded-[12px] border border-line bg-ink-2 p-5"
+          >
+            <h2 className="font-display text-xl">{venue.name}</h2>
+            <p className="mt-1 text-sm text-smoke">
+              {venue.address} · {venue.postcode}
+            </p>
+            <ul className="mt-4 space-y-3">
+              {(classesByVenue.get(venue.id) ?? []).map((c) => (
+                <li
+                  key={c.id}
+                  className="flex items-center justify-between gap-3 border-t border-line pt-3"
+                >
+                  <div>
+                    <p className="text-sm font-medium">{c.title}</p>
+                    <p className="tnum text-sm text-smoke">
+                      {nextSessionByClass.has(c.id)
+                        ? `Next: ${formatSessionTime(nextSessionByClass.get(c.id)!)}`
+                        : "Schedule coming soon"}
+                    </p>
+                  </div>
+                  <Badge>{c.skill_level}</Badge>
+                </li>
+              ))}
+              {(classesByVenue.get(venue.id) ?? []).length === 0 && (
+                <li className="border-t border-line pt-3 text-sm text-smoke">
+                  New classes announced soon.
+                </li>
+              )}
+            </ul>
+            {(classesByVenue.get(venue.id) ?? []).length > 0 && (
+              <ButtonLink
+                href="/signup?next=/app/book"
+                className="mt-5 w-full"
+              >
+                Book a class here
+              </ButtonLink>
+            )}
+          </div>
+        ))}
+        {venues.length === 0 && (
+          <p className="text-smoke">Venues are being finalised — check back shortly.</p>
+        )}
+      </div>
+      <div className="order-1 lg:order-2 lg:sticky lg:top-24 lg:self-start">
+        <VenueMap venues={venues} height="60vh" ctaHref="/signup?next=/app/book" ctaLabel="Book a class" autoLocate />
+      </div>
+    </div>
+  );
+}
+
+function VenuesSectionSkeleton() {
+  return (
+    <div className="grid gap-8 lg:grid-cols-[420px_1fr]">
+      <div className="order-2 space-y-6 lg:order-1">
+        <Skeleton className="h-56 w-full rounded-[12px]" />
+        <Skeleton className="h-56 w-full rounded-[12px]" />
+      </div>
+      <div className="order-1 lg:order-2">
+        <Skeleton className="h-[60vh] w-full rounded-[12px]" />
+      </div>
+    </div>
+  );
+}
+
+export default function LocationsPage() {
+  return (
     <StageShell>
       <div className="mx-auto max-w-6xl px-6 pb-24 pt-28">
         <p className="label mb-3">Locations</p>
@@ -48,58 +123,9 @@ export default async function LocationsPage() {
           membership covers every session.
         </p>
 
-        <div className="grid gap-8 lg:grid-cols-[420px_1fr]">
-          <div className="order-2 space-y-6 lg:order-1">
-            {venues.map((venue) => (
-              <div
-                key={venue.id}
-                className="rounded-[12px] border border-line bg-ink-2 p-5"
-              >
-                <h2 className="font-display text-xl">{venue.name}</h2>
-                <p className="mt-1 text-sm text-smoke">
-                  {venue.address} · {venue.postcode}
-                </p>
-                <ul className="mt-4 space-y-3">
-                  {(classesByVenue.get(venue.id) ?? []).map((c) => (
-                    <li
-                      key={c.id}
-                      className="flex items-center justify-between gap-3 border-t border-line pt-3"
-                    >
-                      <div>
-                        <p className="text-sm font-medium">{c.title}</p>
-                        <p className="tnum text-sm text-smoke">
-                          {nextSessionByClass.has(c.id)
-                            ? `Next: ${formatSessionTime(nextSessionByClass.get(c.id)!)}`
-                            : "Schedule coming soon"}
-                        </p>
-                      </div>
-                      <Badge>{c.skill_level}</Badge>
-                    </li>
-                  ))}
-                  {(classesByVenue.get(venue.id) ?? []).length === 0 && (
-                    <li className="border-t border-line pt-3 text-sm text-smoke">
-                      New classes announced soon.
-                    </li>
-                  )}
-                </ul>
-                {(classesByVenue.get(venue.id) ?? []).length > 0 && (
-                  <ButtonLink
-                    href="/signup?next=/app/book"
-                    className="mt-5 w-full"
-                  >
-                    Book a class here
-                  </ButtonLink>
-                )}
-              </div>
-            ))}
-            {venues.length === 0 && (
-              <p className="text-smoke">Venues are being finalised — check back shortly.</p>
-            )}
-          </div>
-          <div className="order-1 lg:order-2 lg:sticky lg:top-24 lg:self-start">
-            <VenueMap venues={venues} height="60vh" ctaHref="/signup?next=/app/book" ctaLabel="Book a class" autoLocate />
-          </div>
-        </div>
+        <Suspense fallback={<VenuesSectionSkeleton />}>
+          <VenuesSection />
+        </Suspense>
 
         {/* Closing CTA */}
         <div className="mt-16 rounded-[12px] border border-line bg-ink-2 p-8 text-center md:p-12">

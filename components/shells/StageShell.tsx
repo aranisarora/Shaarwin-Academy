@@ -1,7 +1,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { StageHeader } from "./StageHeader";
-import { getCurrentUser } from "@/lib/auth";
+import { hasAuthSession } from "@/lib/auth";
 import logo from "@/public/images/logo.png";
 
 const footerCols = [
@@ -32,7 +32,7 @@ const footerCols = [
 
 /** Ink marketing shell: transparent header gaining ink+hairline on scroll, footer. */
 export async function StageShell({ children }: { children: React.ReactNode }) {
-  const signedIn = Boolean(await getCurrentUser());
+  const signedIn = await hasAuthSession();
 
   return (
     <div data-mood="stage" className="flex min-h-dvh flex-col bg-surface text-fg">

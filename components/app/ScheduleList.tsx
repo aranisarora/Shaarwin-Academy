@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import dynamic from "next/dynamic";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/Tabs";
 import { Sheet } from "@/components/ui/Sheet";
 import { Badge } from "@/components/ui/Badge";
@@ -10,7 +11,11 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { ButtonLink } from "@/components/ui/Button";
 import { cancelBooking } from "@/app/app/book/actions";
 import { cancelSeries } from "@/app/app/schedule/actions";
-import { RescheduleSheet } from "@/components/app/RescheduleSheet";
+// Only needed once a user taps "Reschedule" — keep it out of the page bundle.
+const RescheduleSheet = dynamic(
+  () => import("@/components/app/RescheduleSheet").then((m) => m.RescheduleSheet),
+  { ssr: false }
+);
 import { AddressDisplay } from "@/components/app/AddressDisplay";
 import type { MyBooking } from "@/lib/booking";
 import { nowMs } from "@/lib/academy-time";
@@ -205,11 +210,13 @@ export function ScheduleList({
         )}
       </Sheet>
 
-      <RescheduleSheet
-        booking={rescheduling}
-        onClose={() => setRescheduling(null)}
-        onDone={() => setRescheduling(null)}
-      />
+      {rescheduling && (
+        <RescheduleSheet
+          booking={rescheduling}
+          onClose={() => setRescheduling(null)}
+          onDone={() => setRescheduling(null)}
+        />
+      )}
     </>
   );
 }

@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { StageShell } from "@/components/shells/StageShell";
@@ -13,8 +14,9 @@ import { Testimonials } from "@/components/marketing/Testimonials";
 import { SummerCamp } from "@/components/marketing/SummerCamp";
 import { JoinTeam } from "@/components/marketing/JoinTeam";
 import { ContactSection } from "@/components/marketing/ContactSection";
+import { Skeleton } from "@/components/ui/Skeleton";
 import { getVenues, getCoaches } from "@/lib/data";
-import { getCurrentUser } from "@/lib/auth";
+import { hasAuthSession } from "@/lib/auth";
 
 import heroServe from "@/public/images/hero-serve.jpg";
 import heroServeMobile from "@/public/images/hero-serve-mobile.jpg";
@@ -51,13 +53,61 @@ const communityPhotos: {
   { n: 6 },
 ];
 
-export default async function LandingPage() {
-  const [venues, coaches] = await Promise.all([getVenues(), getCoaches()]);
+// Async islands: each waits on its own Supabase query inside a <Suspense>
+// boundary so the hero and the rest of the static page paint immediately
+// while these sections stream in.
+async function VenueMapSection() {
+  const venues = await getVenues();
+  return <VenueMap venues={venues} />;
+}
 
+async function CoachesGrid() {
+  const coaches = await getCoaches();
+  return (
+    <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+      {coaches.slice(0, 5).map((coach, i) => (
+        <Reveal key={coach.slug} delay={i * 90}>
+          <div>
+            <div className="relative aspect-[4/5] overflow-hidden rounded-[12px] border border-line">
+              <Image
+                src={coach.image}
+                alt={`Portrait of coach ${coach.name}`}
+                fill
+                sizes="(min-width: 1024px) 20vw, 40vw"
+                className="object-cover"
+              />
+            </div>
+            <p className="mt-3 font-medium text-ivory">{coach.name}</p>
+            {coach.credentials && coach.credentials.length > 0 ? (
+              <p className="mt-1 text-xs text-smoke">
+                {coach.credentials.join(" · ")}
+              </p>
+            ) : null}
+          </div>
+        </Reveal>
+      ))}
+    </div>
+  );
+}
+
+function CoachesGridSkeleton() {
+  return (
+    <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
+      {Array.from({ length: 5 }, (_, i) => (
+        <div key={i}>
+          <Skeleton className="aspect-[4/5] w-full rounded-[12px]" />
+          <Skeleton className="mt-3 h-5 w-2/3" />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export default async function LandingPage() {
   // The WhatsApp companion needs a linked account to be useful, so it lives
   // inside the app. Signed-in visitors go straight there; everyone else is
   // pointed at sign-up first rather than a dead-end chat.
-  const signedIn = Boolean(await getCurrentUser());
+  const signedIn = await hasAuthSession();
 
   return (
     <StageShell>
@@ -220,7 +270,9 @@ export default async function LandingPage() {
           </h2>
         </Reveal>
         <Reveal>
-          <VenueMap venues={venues} />
+          <Suspense fallback={<Skeleton className="h-[480px] w-full rounded-[12px]" />}>
+            <VenueMapSection />
+          </Suspense>
         </Reveal>
         <Reveal>
           <ButtonLink href="/locations" variant="ghost" className="mt-10">
@@ -341,29 +393,9 @@ export default async function LandingPage() {
             One studio, one standard
           </h2>
         </Reveal>
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
-          {coaches.slice(0, 5).map((coach, i) => (
-            <Reveal key={coach.slug} delay={i * 90}>
-              <div>
-                <div className="relative aspect-[4/5] overflow-hidden rounded-[12px] border border-line">
-                  <Image
-                    src={coach.image}
-                    alt={`Portrait of coach ${coach.name}`}
-                    fill
-                    sizes="(min-width: 1024px) 20vw, 40vw"
-                    className="object-cover"
-                  />
-                </div>
-                <p className="mt-3 font-medium text-ivory">{coach.name}</p>
-                {coach.credentials && coach.credentials.length > 0 ? (
-                  <p className="mt-1 text-xs text-smoke">
-                    {coach.credentials.join(" · ")}
-                  </p>
-                ) : null}
-              </div>
-            </Reveal>
-          ))}
-        </div>
+        <Suspense fallback={<CoachesGridSkeleton />}>
+          <CoachesGrid />
+        </Suspense>
         <Reveal>
           <ButtonLink href="/coaches" variant="ghost" className="mt-10">
             Meet all the coaches

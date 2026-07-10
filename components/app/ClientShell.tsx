@@ -12,7 +12,7 @@ export function ClientShell({
   actions,
   children,
 }: {
-  title: string;
+  title: React.ReactNode;
   actions?: React.ReactNode;
   children: React.ReactNode;
 }) {
