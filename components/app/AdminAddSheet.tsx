@@ -13,7 +13,7 @@ import { createGroupClass } from "@/app/admin/actions";
 import { createOneOffSession, createPrivateSession } from "@/app/admin/calendar/actions";
 import { AddressForm, isAddressComplete } from "@/components/app/AddressForm";
 import { EMPTY_ADDRESS, type StructuredAddress } from "@/lib/address";
-import { ClassDetailFields, EMPTY_CLASS_FORM, type ClassFormState } from "./ClassFields";
+import { ClassDetailFields, EMPTY_CLASS_FORM, generateClassTitle, type ClassFormState } from "./ClassFields";
 import {
   WEEKDAYS,
   type ClientOption,
@@ -58,10 +58,14 @@ export function AdminAddSheet({
 }) {
   // Mounted fresh each time the sheet opens, so initializers read props.
   const [mode, setMode] = useState<Mode>("weekly");
-  const [form, setForm] = useState<ClassFormState>({
-    ...EMPTY_CLASS_FORM,
-    venueId: venues[0]?.id ?? "",
+  const [form, setForm] = useState<ClassFormState>(() => {
+    const base = { ...EMPTY_CLASS_FORM, venueId: venues[0]?.id ?? "" };
+    return { ...base, title: generateClassTitle(base.skillLevel, base.weekday, base.time) };
   });
+
+  function updateForm(next: ClassFormState) {
+    setForm({ ...next, title: generateClassTitle(next.skillLevel, next.weekday, next.time) });
+  }
   const [oneOff, setOneOff] = useState({
     classId: classes[0]?.id ?? "",
     date: "",
@@ -85,7 +89,10 @@ export function AdminAddSheet({
   function reset(next: Mode) {
     setMode(next);
     setMessage(null);
-    if (next === "weekly") setForm({ ...EMPTY_CLASS_FORM, venueId: venues[0]?.id ?? "" });
+    if (next === "weekly") {
+      const base = { ...EMPTY_CLASS_FORM, venueId: venues[0]?.id ?? "" };
+      setForm({ ...base, title: generateClassTitle(base.skillLevel, base.weekday, base.time) });
+    }
     if (next === "oneoff")
       setOneOff({ classId: classes[0]?.id ?? "", date: "", time: "18:30", coachId: "" });
     if (next === "private") {
@@ -133,7 +140,7 @@ export function AdminAddSheet({
 
   const canSubmit =
     mode === "weekly"
-      ? !!form.title && !!form.venueId
+      ? !!form.venueId
       : mode === "oneoff"
         ? !!oneOff.classId && !!oneOff.date && !!oneOff.time
         : !!priv.clientId && !!priv.date && !!priv.time && isAddressComplete(address);
@@ -162,12 +169,12 @@ export function AdminAddSheet({
 
         {mode === "weekly" && (
           <>
-            <ClassDetailFields form={form} onChange={setForm} venues={venues} />
+            <ClassDetailFields form={form} onChange={updateForm} venues={venues} />
             <div className="grid grid-cols-2 gap-3">
               <Select
                 label="Day"
                 value={form.weekday}
-                onChange={(e) => setForm({ ...form, weekday: e.target.value })}
+                onChange={(e) => updateForm({ ...form, weekday: e.target.value })}
               >
                 {WEEKDAYS.map(([code, name]) => (
                   <option key={code} value={code}>{name}</option>
@@ -177,7 +184,7 @@ export function AdminAddSheet({
                 label="Time"
                 type="time"
                 value={form.time}
-                onChange={(e) => setForm({ ...form, time: e.target.value })}
+                onChange={(e) => updateForm({ ...form, time: e.target.value })}
               />
             </div>
             <Select

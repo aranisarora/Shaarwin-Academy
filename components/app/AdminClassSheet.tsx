@@ -12,7 +12,7 @@ import { Select } from "@/components/ui/Select";
 import { Spinner } from "@/components/ui/Spinner";
 import { setClassActive } from "@/app/admin/actions";
 import { deleteGroupClass, endGroupClass, updateGroupClass } from "@/app/admin/calendar/actions";
-import { ClassDetailFields, type ClassFormState } from "./ClassFields";
+import { ClassDetailFields, generateClassTitle, type ClassFormState } from "./ClassFields";
 import { WEEKDAYS, type ClassRow, type Venue } from "./admin-calendar-types";
 
 export function AdminClassSheet({
@@ -29,7 +29,7 @@ export function AdminClassSheet({
   // Mounted fresh per class (parent keys on cls.id), so initializers read the
   // class directly — no prop-sync effects.
   const [form, setForm] = useState<ClassFormState>({
-    title: cls.title,
+    title: generateClassTitle(cls.level, cls.weekday, cls.time),
     description: cls.description,
     skillLevel: cls.level,
     capacity: cls.capacity,
@@ -39,18 +39,22 @@ export function AdminClassSheet({
     time: cls.time,
     coachId: "",
   });
+
+  function updateForm(next: ClassFormState) {
+    setForm({ ...next, title: generateClassTitle(next.skillLevel, next.weekday, next.time) });
+  }
   const [message, setMessage] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
   return (
     <Sheet open onClose={onClose} title="Edit class">
       <div className="space-y-4">
-        <ClassDetailFields form={form} onChange={setForm} venues={venues} />
+        <ClassDetailFields form={form} onChange={updateForm} venues={venues} />
         <div className="grid grid-cols-2 gap-3">
           <Select
             label="Day"
             value={form.weekday}
-            onChange={(e) => setForm({ ...form, weekday: e.target.value })}
+            onChange={(e) => updateForm({ ...form, weekday: e.target.value })}
           >
             {WEEKDAYS.map(([code, name]) => (
               <option key={code} value={code}>{name}</option>
@@ -60,7 +64,7 @@ export function AdminClassSheet({
             label="Time"
             type="time"
             value={form.time}
-            onChange={(e) => setForm({ ...form, time: e.target.value })}
+            onChange={(e) => updateForm({ ...form, time: e.target.value })}
           />
         </div>
 
@@ -71,7 +75,7 @@ export function AdminClassSheet({
 
         <Button
           className="w-full"
-          disabled={pending || !form.title || !form.venueId}
+          disabled={pending || !form.venueId}
           onClick={() =>
             startTransition(async () => {
               const r = await updateGroupClass({
