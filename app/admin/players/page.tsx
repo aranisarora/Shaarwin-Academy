@@ -11,8 +11,9 @@ export default async function AdminPlayersPage() {
   const { data: players } = await supabase
     .from("players")
     .select(
-      "id,full_name,skill_level,date_of_birth,notes,created_at,client_id,profiles!players_client_id_fkey(full_name,email,phone)"
+      "id,full_name,skill_level,date_of_birth,notes,created_at,client_id,profiles!players_client_id_fkey!inner(full_name,email,phone,role)"
     )
+    .eq("profiles.role", "client")
     .order("created_at", { ascending: false })
     .limit(500);
 
