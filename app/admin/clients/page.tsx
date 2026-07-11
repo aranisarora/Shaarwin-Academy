@@ -1,12 +1,18 @@
 import type { Metadata } from "next";
 import { requireUser } from "@/lib/auth";
 import { AdminShell } from "@/components/app/AdminShell";
-import { ClientManager, type PendingClientRow } from "@/components/app/ClientManager";
+import { type PendingClientRow } from "@/components/app/ClientManager";
+import { PeopleTabs } from "@/components/app/PeopleTabs";
 
 export const metadata: Metadata = { title: "Clients" };
 
-export default async function AdminClientsPage() {
+export default async function AdminClientsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ view?: string }>;
+}) {
   const { supabase } = await requireUser("/admin/clients");
+  const { view } = await searchParams;
   const { data: clients } = await supabase
     .from("profiles")
     .select("id,full_name,email,phone,disputed,deleted_at,created_at")
@@ -48,7 +54,7 @@ export default async function AdminClientsPage() {
       ids.length
         ? supabase
             .from("players")
-            .select("id,client_id,full_name,skill_level")
+            .select("id,client_id,full_name,skill_level,date_of_birth,notes,created_at")
             .in("client_id", ids)
             .order("created_at")
         : Promise.resolve({ data: [] }),
@@ -104,10 +110,42 @@ export default async function AdminClientsPage() {
     planId: i.plan_id ?? "",
   }));
 
+  // The Players view — every household player, joined with their account
+  // holder's contact details. Archived clients' players stay hidden, matching
+  // the default client list.
+  const clientById = new Map((clients ?? []).map((c) => [c.id, c]));
+  const playerRows = (players ?? [])
+    .filter((p) => {
+      const c = clientById.get(p.client_id);
+      return c && c.deleted_at === null;
+    })
+    .map((p) => {
+      const c = clientById.get(p.client_id)!;
+      return {
+        id: p.id,
+        name: p.full_name,
+        skillLevel: p.skill_level,
+        dateOfBirth: (p.date_of_birth as string | null) ?? null,
+        notes: (p.notes as string | null) ?? null,
+        createdAt: p.created_at as string,
+        clientId: p.client_id,
+        clientName: c.full_name ?? "",
+        clientEmail: c.email ?? "",
+        clientPhone: c.phone ?? null,
+      };
+    })
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+
   return (
     <AdminShell title="Clients">
       <div className="mx-auto max-w-3xl">
-        <ClientManager clients={rows} plans={plans ?? []} pending={pendingRows} />
+        <PeopleTabs
+          initialView={view === "players" ? "players" : "clients"}
+          clients={rows}
+          plans={plans ?? []}
+          pending={pendingRows}
+          players={playerRows}
+        />
       </div>
     </AdminShell>
   );
