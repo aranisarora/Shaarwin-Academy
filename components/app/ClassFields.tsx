@@ -6,6 +6,7 @@
 
 import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
+import { WEEKDAY_NAME } from "./admin-calendar-types";
 import type { Venue } from "./admin-calendar-types";
 
 export type ClassFormState = {
@@ -32,9 +33,16 @@ export const EMPTY_CLASS_FORM: ClassFormState = {
   coachId: "",
 };
 
-/** Title, description, level, venue, spots and length — everything about a
- * class except its weekly slot (day/time live with the caller, because the
- * session sheet uses a concrete date instead of a weekday). */
+/** Auto-generate a class title from its defining attributes. */
+export function generateClassTitle(skillLevel: string, weekday: string, time: string): string {
+  const level = skillLevel.charAt(0).toUpperCase() + skillLevel.slice(1);
+  const day = WEEKDAY_NAME[weekday] ?? weekday;
+  return `${level} — ${day} ${time}`;
+}
+
+/** Description, level, venue, spots and length — everything about a class
+ * except its weekly slot (day/time live with the caller). Title is derived
+ * automatically and not shown as an editable field. */
 export function ClassDetailFields({
   form,
   onChange,
@@ -46,12 +54,6 @@ export function ClassDetailFields({
 }) {
   return (
     <>
-      <Input
-        label="Title"
-        value={form.title}
-        onChange={(e) => onChange({ ...form, title: e.target.value })}
-        placeholder="Intermediate — Spin & Serve"
-      />
       <Input
         label="Description"
         value={form.description}

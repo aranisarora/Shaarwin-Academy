@@ -20,7 +20,7 @@ import {
 } from "@/app/admin/calendar/actions";
 import { cancelSession, getRankedCoaches } from "@/app/admin/actions";
 import { AddressDisplay } from "@/components/app/AddressDisplay";
-import { ClassDetailFields, type ClassFormState } from "./ClassFields";
+import { ClassDetailFields, generateClassTitle, type ClassFormState } from "./ClassFields";
 import {
   clockTime,
   fmtWhen,
@@ -48,7 +48,7 @@ export function AdminSessionSheet({
   // Mounted fresh per session (parent keys on session.id), so initializers
   // read the session directly — no prop-sync effects.
   const [form, setForm] = useState<ClassFormState>({
-    title: session.title,
+    title: generateClassTitle(session.classLevel, session.classWeekday, wallTime(session.starts_at)),
     description: session.classDescription,
     skillLevel: session.classLevel,
     capacity: session.capacity,
@@ -58,6 +58,10 @@ export function AdminSessionSheet({
     time: wallTime(session.starts_at),
     coachId: "",
   });
+
+  function updateForm(next: ClassFormState) {
+    setForm({ ...next, title: generateClassTitle(next.skillLevel, next.weekday, next.time) });
+  }
   const [date, setDate] = useState(wallDate(session.starts_at));
   const [step, setStep] = useState<"edit" | "scope">("edit");
   const [scope, setScope] = useState<Scope>("session");
@@ -85,7 +89,6 @@ export function AdminSessionSheet({
   const slotChanged = dateChanged || timeChanged;
   const spotsChanged = form.capacity !== session.capacity;
   const classChanged =
-    form.title !== session.title ||
     form.description !== session.classDescription ||
     form.skillLevel !== session.classLevel ||
     form.durationMinutes !== session.classDuration ||
@@ -303,21 +306,26 @@ export function AdminSessionSheet({
                 label="Day"
                 type="date"
                 value={date}
-                onChange={(e) => setDate(e.target.value)}
+                onChange={(e) => {
+                  const newDate = e.target.value;
+                  setDate(newDate);
+                  const newWeekday = weekdayOfDate(newDate);
+                  setForm(f => ({ ...f, weekday: newWeekday, title: generateClassTitle(f.skillLevel, newWeekday, f.time) }));
+                }}
               />
               <Input
                 label="Time"
                 type="time"
                 value={form.time}
-                onChange={(e) => setForm({ ...form, time: e.target.value })}
+                onChange={(e) => updateForm({ ...form, time: e.target.value })}
               />
             </div>
             {!session.isPrivate && (
-              <ClassDetailFields form={form} onChange={setForm} venues={venues} />
+              <ClassDetailFields form={form} onChange={updateForm} venues={venues} />
             )}
             <Button
               className="w-full"
-              disabled={pending || (session.isPrivate ? !slotChanged : !anyChanged) || !form.title}
+              disabled={pending || (session.isPrivate ? !slotChanged : !anyChanged)}
               onClick={() => {
                 setMessage(null);
                 if (session.isPrivate) {
