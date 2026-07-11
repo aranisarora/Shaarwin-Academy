@@ -176,7 +176,11 @@ export function PlayerManager({ players }: { players: PlayerRow[] }) {
             <div className="space-y-2 rounded-[12px] border border-line p-4">
               <p className="label">Account holder</p>
               <p className="font-medium">{selected.clientName}</p>
-              <p className="text-sm text-fg-2">{selected.clientEmail}</p>
+              {selected.clientEmail?.endsWith("@sharwin.local") ? (
+                <p className="text-sm text-fg-2">Registered via phone — no email on file</p>
+              ) : (
+                <p className="text-sm text-fg-2">{selected.clientEmail}</p>
+              )}
               {selected.clientPhone && (
                 <p className="text-sm text-fg-2">{selected.clientPhone}</p>
               )}
