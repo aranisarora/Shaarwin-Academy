@@ -13,13 +13,13 @@ export default async function CoachClientsPage() {
   // Players the coach actually coaches — via bookings on own sessions (RLS-safe).
   const { data: rows } = await supabase
     .from("bookings")
-    .select("player_id,players(full_name,skill_level),class_sessions!inner(coach_id)")
+    .select("player_id,status,players(full_name,skill_level),class_sessions!inner(coach_id)")
     .eq("class_sessions.coach_id", user.id)
     .in("status", ["confirmed", "attended", "no_show"]);
 
   const unique = new Map<
     string,
-    { id: string; name: string; level: string; sessions: number }
+    { id: string; name: string; level: string; sessions: number; attended: number; noShows: number }
   >();
   for (const row of rows ?? []) {
     const player = row.players as unknown as { full_name: string; skill_level: string } | null;
@@ -29,8 +29,12 @@ export default async function CoachClientsPage() {
       name: player.full_name,
       level: player.skill_level,
       sessions: 0,
+      attended: 0,
+      noShows: 0,
     };
     entry.sessions += 1;
+    if (row.status === "attended") entry.attended += 1;
+    if (row.status === "no_show") entry.noShows += 1;
     unique.set(row.player_id, entry);
   }
 
@@ -56,6 +60,8 @@ export default async function CoachClientsPage() {
                     <p className="font-medium group-hover:text-ember">{p.name}</p>
                     <p className="tnum text-xs text-fg-2">
                       {p.sessions} session{p.sessions === 1 ? "" : "s"} with you
+                      {p.attended > 0 && ` · ${p.attended} attended`}
+                      {p.noShows > 0 && ` · ${p.noShows} no-shows`}
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
