@@ -18,6 +18,7 @@ function fmtDateTime(iso: string) {
     month: "short",
     hour: "2-digit",
     minute: "2-digit",
+    hour12: true,
     timeZone: ACADEMY_TZ,
   }).format(new Date(iso));
 }
