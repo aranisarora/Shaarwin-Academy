@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { requireUser } from "@/lib/auth";
 import { AdminShell } from "@/components/app/AdminShell";
-import { ClientManager } from "@/components/app/ClientManager";
+import { ClientManager, type PendingClientRow } from "@/components/app/ClientManager";
 
 export const metadata: Metadata = { title: "Clients" };
 
@@ -13,6 +13,12 @@ export default async function AdminClientsPage() {
     .eq("role", "client")
     .order("created_at", { ascending: false })
     .limit(200);
+
+  const { data: invites } = await supabase
+    .from("client_invites")
+    .select("id,phone,full_name,notes")
+    .is("claimed_at", null)
+    .order("created_at", { ascending: false });
 
   const ids = (clients ?? []).map((c) => c.id);
   const [{ data: subs }, { data: invoices }, { data: bookings }, { data: plans }, { data: players }] =
@@ -90,10 +96,17 @@ export default async function AdminClientsPage() {
     students: studentsByClient.get(c.id) ?? [],
   }));
 
+  const pendingRows: PendingClientRow[] = (invites ?? []).map((i) => ({
+    id: i.id,
+    phone: i.phone,
+    name: i.full_name ?? "",
+    notes: i.notes ?? "",
+  }));
+
   return (
     <AdminShell title="Clients">
       <div className="mx-auto max-w-3xl">
-        <ClientManager clients={rows} plans={plans ?? []} />
+        <ClientManager clients={rows} plans={plans ?? []} pending={pendingRows} />
       </div>
     </AdminShell>
   );

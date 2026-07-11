@@ -4,6 +4,7 @@
 // the webapp uses (audit-logged), on the founder's own RLS-scoped session.
 
 import {
+  addClientInviteCore,
   addCoachCore,
   createOneOffSessionCore,
   createPrivateSessionCore,
@@ -456,6 +457,33 @@ const setCoachActive: WaTool = {
 
 // ── Clients ──────────────────────────────────────────────────────────────────
 
+const addClient: WaTool = {
+  name: "add_client",
+  description:
+    "Pre-register an existing (offline) client by phone number, before they've signed up. When they sign up on the website or message this WhatsApp assistant from that number, their account connects automatically and any name/notes apply. Confirm the number first.",
+  input_schema: {
+    type: "object",
+    properties: {
+      phone: { type: "string", description: "Their WhatsApp number, e.g. +91…" },
+      full_name: { type: "string" },
+      notes: { type: "string", description: "Saved onto their student record when they join" },
+    },
+    required: ["phone"],
+  },
+  run: async (input, ctx) => {
+    const result = await addClientInviteCore(ctx.supabase!, ctx.profile!.id, {
+      phone: String(input.phone ?? ""),
+      fullName: input.full_name != null ? String(input.full_name) : "",
+      notes: input.notes != null ? String(input.notes) : "",
+    });
+    if (!result.ok) return fail(result.error ?? "Failed.");
+    return ok({
+      added: true,
+      note: "Saved. Their account connects automatically when they sign up or message this assistant from that number.",
+    });
+  },
+};
+
 const updateClient: WaTool = {
   name: "update_client",
   description:
@@ -691,6 +719,7 @@ export const founderAdminTools: WaTool[] = [
   addCoach,
   updateCoach,
   setCoachActive,
+  addClient,
   updateClient,
   blockClient,
   archiveClient,
