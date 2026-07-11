@@ -38,12 +38,14 @@ Deno.serve(async () => {
 
   let sent = 0;
   let failed = 0;
-  // Anti-noise: one delivery per (user, type, session) per batch — later rows win.
+  // Anti-noise: one delivery per (user, type, booking-or-session) per batch —
+  // later rows win. booking_id first so per-player rows (attendance, ops feed)
+  // for the same session don't collapse into one.
   const seen = new Set<string>();
   const rows = [...(due ?? [])].reverse();
 
   for (const row of rows) {
-    const dedupeKey = `${row.user_id}:${row.type}:${row.data?.session_id ?? row.id}`;
+    const dedupeKey = `${row.user_id}:${row.type}:${row.data?.booking_id ?? row.data?.session_id ?? row.id}`;
     if (seen.has(dedupeKey)) {
       await supabase
         .from("notifications")
@@ -95,10 +97,93 @@ Deno.serve(async () => {
   // Sweep: expire unclaimed waitlist offers → offer to next in line (A3).
   await sweepWaitlistOffers();
 
+  // Sweep: nudge coaches to confirm upcoming sessions; escalate to the
+  // founder when a session is close and still unconfirmed.
+  await sweepCoachConfirmations();
+
   return new Response(JSON.stringify({ sent, failed }), {
     headers: { "Content-Type": "application/json" },
   });
 });
+
+/**
+ * Coach confirmations: 24h out, ask the coach to confirm they're taking the
+ * session ("I'm coming"). If it's under 3h away and still unconfirmed, alert
+ * the founder so they can chase or arrange cover. Each message fires once per
+ * (session, recipient) — existence of the earlier notification is the marker.
+ */
+async function sweepCoachConfirmations() {
+  const now = Date.now();
+  const { data: sessions } = await supabase
+    .from("class_sessions")
+    .select("id,starts_at,coach_id,classes!inner(title)")
+    .eq("status", "scheduled")
+    .not("coach_id", "is", null)
+    .is("coach_confirmed_at", null)
+    .gt("starts_at", new Date(now).toISOString())
+    .lt("starts_at", new Date(now + 24 * 3600000).toISOString())
+    .limit(50);
+
+  for (const s of sessions ?? []) {
+    const title = (s.classes as unknown as { title: string } | null)?.title ?? "your session";
+    const when = new Intl.DateTimeFormat("en-GB", {
+      weekday: "short",
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+      timeZone: "Asia/Kolkata",
+    }).format(new Date(s.starts_at));
+
+    const { data: nudged } = await supabase
+      .from("notifications")
+      .select("id")
+      .eq("type", "confirm_session_nudge")
+      .eq("user_id", s.coach_id)
+      .eq("data->>session_id", s.id)
+      .limit(1);
+    if (!nudged?.length) {
+      await supabase.from("notifications").insert({
+        user_id: s.coach_id,
+        type: "confirm_session_nudge",
+        title: "Confirm your session",
+        body: `Are you taking ${title} (${when})? Reply "confirm" here, or tap Confirm in the app.`,
+        data: { session_id: s.id, url: `/coach/session/${s.id}` },
+      });
+    }
+
+    // Escalate: session is soon and the coach still hasn't confirmed.
+    if (new Date(s.starts_at).getTime() - now < 3 * 3600000) {
+      const { data: escalated } = await supabase
+        .from("notifications")
+        .select("id")
+        .eq("type", "ops_coach_unconfirmed")
+        .eq("data->>session_id", s.id)
+        .limit(1);
+      if (!escalated?.length) {
+        const { data: coach } = await supabase
+          .from("profiles")
+          .select("full_name,phone")
+          .eq("id", s.coach_id)
+          .maybeSingle();
+        const { data: founders } = await supabase
+          .from("profiles")
+          .select("id")
+          .eq("role", "founder");
+        if (founders?.length) {
+          await supabase.from("notifications").insert(
+            founders.map((f) => ({
+              user_id: f.id,
+              type: "ops_coach_unconfirmed",
+              title: "Coach hasn't confirmed",
+              body: `${coach?.full_name ?? "The coach"} still hasn't confirmed ${title} (${when})${coach?.phone ? ` — chase them on ${coach.phone}` : ""}.`,
+              data: { session_id: s.id, url: "/admin/calendar" },
+            }))
+          );
+        }
+      }
+    }
+  }
+}
 
 async function sweepWaitlistOffers() {
   const { data: settings } = await supabase

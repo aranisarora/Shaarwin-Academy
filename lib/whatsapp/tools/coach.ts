@@ -10,7 +10,7 @@ const WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Satur
 const mySessions: WaTool = {
   name: "my_coach_sessions",
   description:
-    "The coach's assigned sessions with venue/address and headcount. Default window is the next 7 days (max 28).",
+    "The coach's assigned sessions with venue/address, headcount and whether they've confirmed they're taking each one. Default window is the next 7 days (max 28).",
   input_schema: {
     type: "object",
     properties: { days: { type: "number", description: "Days ahead (default 7)" } },
@@ -23,6 +23,20 @@ const mySessions: WaTool = {
       new Date(),
       new Date(Date.now() + days * 86400000)
     );
+    // Confirmation/arrival state lives on class_sessions; fetch it alongside.
+    const flags = new Map<string, { confirmed: boolean; arrived: boolean }>();
+    if (sessions.length) {
+      const { data } = await ctx.supabase!
+        .from("class_sessions")
+        .select("id,coach_confirmed_at,coach_arrived_at")
+        .in("id", sessions.map((s) => s.id));
+      for (const row of data ?? []) {
+        flags.set(row.id, {
+          confirmed: row.coach_confirmed_at != null,
+          arrived: row.coach_arrived_at != null,
+        });
+      }
+    }
     return ok(
       sessions.map((s) => ({
         session_id: s.id,
@@ -33,8 +47,71 @@ const mySessions: WaTool = {
         players: `${s.confirmed}/${s.capacity}`,
         where: s.isPrivate ? s.privateAddress : `${s.venueName ?? "?"} — ${s.venueAddress ?? ""}`,
         status: s.status,
+        confirmed_coming: flags.get(s.id)?.confirmed ?? false,
+        marked_arrived: flags.get(s.id)?.arrived ?? false,
       }))
     );
+  },
+};
+
+const confirmSession: WaTool = {
+  name: "confirm_session",
+  description:
+    "Confirm the coach IS taking an upcoming session ('yes, I'm coming') — session_id from my_coach_sessions. Tells the founder. Use when the coach says they'll take / confirm a session (e.g. replying 'confirm' to a reminder). If they CAN'T make it, use cant_make_session instead.",
+  input_schema: {
+    type: "object",
+    properties: { session_id: { type: "string" } },
+    required: ["session_id"],
+  },
+  run: async (input, ctx) => {
+    const { error } = await ctx.supabase!.rpc("coach_confirm_session", {
+      p_session: input.session_id,
+    });
+    if (error) {
+      if (error.message.includes("not_your_session")) {
+        return fail("That session isn't on this coach's schedule.");
+      }
+      if (error.message.includes("session_not_scheduled")) {
+        return fail("That session is no longer scheduled.");
+      }
+      return fail("Couldn't confirm that session.");
+    }
+    return ok({ confirmed: true, note: "The founder has been told you're taking it." });
+  },
+};
+
+const markArrival: WaTool = {
+  name: "mark_arrival",
+  description:
+    "Mark that the coach has ARRIVED at a session's venue, or is RUNNING LATE (session_id from my_coach_sessions). Parents of booked players and the founder are notified straight away. Only makes sense around the session's start time.",
+  input_schema: {
+    type: "object",
+    properties: {
+      session_id: { type: "string" },
+      running_late: {
+        type: "boolean",
+        description: "true = 'running a few minutes late' instead of 'arrived'",
+      },
+    },
+    required: ["session_id"],
+  },
+  run: async (input, ctx) => {
+    const { error } = await ctx.supabase!.rpc("coach_mark_arrival", {
+      p_session: input.session_id,
+      p_late: Boolean(input.running_late),
+    });
+    if (error) {
+      if (error.message.includes("not_your_session")) {
+        return fail("That session isn't on this coach's schedule.");
+      }
+      return fail("Couldn't send that.");
+    }
+    return ok({
+      sent: true,
+      note: input.running_late
+        ? "Parents and the founder know you're running late."
+        : "Parents and the founder know you've arrived.",
+    });
   },
 };
 
@@ -352,6 +429,8 @@ const cantMakeSession: WaTool = {
 export const coachTools: WaTool[] = [
   mySessions,
   roster,
+  confirmSession,
+  markArrival,
   myAvailability,
   addWindow,
   removeWindow,

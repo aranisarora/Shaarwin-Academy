@@ -22,7 +22,7 @@ export default async function CoachSessionPage({
   const { data: session } = await supabase
     .from("class_sessions")
     .select(
-      "id,starts_at,ends_at,coach_id,coach_notes,coach_arrived_at,classes!inner(title,skill_level,class_type,venues(name,address,postcode,lat,lng,address_details),private_class_details(address,postcode,lat,lng,access_notes,has_table,address_details))"
+      "id,starts_at,ends_at,coach_id,coach_notes,coach_arrived_at,coach_confirmed_at,classes!inner(title,skill_level,class_type,venues(name,address,postcode,lat,lng,address_details),private_class_details(address,postcode,lat,lng,access_notes,has_table,address_details))"
     )
     .eq("id", id)
     .maybeSingle();
@@ -146,6 +146,7 @@ export default async function CoachSessionPage({
           startsAt={session.starts_at}
           endsAt={session.ends_at}
           coachArrivedAt={session.coach_arrived_at}
+          coachConfirmedAt={session.coach_confirmed_at}
         />
 
         <SessionRoster

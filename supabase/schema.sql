@@ -102,7 +102,8 @@ create table public.class_sessions (
   coach_notes text,
   cancel_reason text,
   created_at timestamptz default now() not null,
-  coach_arrived_at timestamptz
+  coach_arrived_at timestamptz,
+  coach_confirmed_at timestamptz
 );
 
 create table public.classes (
@@ -2171,12 +2172,516 @@ begin
 end;
 $function$;
 
+CREATE OR REPLACE FUNCTION public.claim_coach_invite_on_signup()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare
+  v_invite public.coach_invites%rowtype;
+  v_name text := split_part(new.email, '@', 1);
+begin
+  select * into v_invite
+  from public.coach_invites
+  where lower(email) = lower(new.email)
+    and claimed_at is null
+  order by created_at
+  limit 1;
+
+  if found then
+    insert into profiles (id, role, full_name, email, phone)
+    values (
+      new.id,
+      'coach',
+      coalesce(nullif(v_invite.full_name, ''), v_name),
+      new.email,
+      v_invite.phone
+    )
+    on conflict (id) do nothing;
+
+    insert into coaches (
+      id, bio, base_lat, base_lng, base_address, travel_radius_km, tier, active
+    )
+    values (
+      new.id,
+      v_invite.bio,
+      coalesce(v_invite.base_lat, 12.9716),
+      coalesce(v_invite.base_lng, 77.5946),
+      v_invite.base_address,
+      v_invite.travel_radius_km,
+      v_invite.tier,
+      true
+    )
+    on conflict (id) do nothing;
+
+    update public.coach_invites
+    set claimed_at = now(), claimed_by = new.id
+    where id = v_invite.id;
+
+    return new;
+  end if;
+
+  insert into profiles (id, role, full_name, email)
+  values (new.id, 'client', v_name, new.email)
+  on conflict (id) do nothing;
+
+  insert into players (client_id, full_name)
+  select new.id, v_name
+  where not exists (select 1 from players where client_id = new.id);
+
+  return new;
+end;
+$function$;
+
+-- ── Founder ops feed (0018) — helpers, coach confirmation, event triggers ────
+
+CREATE OR REPLACE FUNCTION public.fmt_ist(ts timestamp with time zone)
+ RETURNS text
+ LANGUAGE sql
+ IMMUTABLE
+AS $function$
+  select to_char(ts at time zone 'Asia/Kolkata', 'Dy DD Mon, FMHH12:MI am');
+$function$;
+
+CREATE OR REPLACE FUNCTION public.fmt_inr(p_paise integer)
+ RETURNS text
+ LANGUAGE sql
+ IMMUTABLE
+AS $function$
+  select '₹' || to_char(round(p_paise / 100.0), 'FM9999999990');
+$function$;
+
+CREATE OR REPLACE FUNCTION public.notify_founders(p_type text, p_title text, p_body text, p_data jsonb DEFAULT '{}'::jsonb)
+ RETURNS void
+ LANGUAGE sql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+  insert into notifications (user_id, type, title, body, data)
+  select p.id, p_type, p_title, p_body, p_data
+  from profiles p
+  where p.role = 'founder' and p.deleted_at is null;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.coach_confirm_session(p_session uuid)
+ RETURNS timestamp with time zone
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare
+  v_session class_sessions%rowtype;
+  v_name    text;
+  v_title   text;
+  v_at      timestamptz;
+begin
+  select * into v_session from class_sessions where id = p_session;
+  if v_session.coach_id is null or v_session.coach_id <> auth.uid() then
+    raise exception 'not_your_session';
+  end if;
+  if v_session.status <> 'scheduled' then
+    raise exception 'session_not_scheduled';
+  end if;
+
+  update class_sessions
+     set coach_confirmed_at = coalesce(coach_confirmed_at, now())
+   where id = p_session
+   returning coach_confirmed_at into v_at;
+
+  select split_part(coalesce(nullif(trim(full_name), ''), 'Coach'), ' ', 1)
+    into v_name from profiles where id = v_session.coach_id;
+  select title into v_title from classes where id = v_session.class_id;
+
+  perform notify_founders('ops_coach_confirmed', 'Coach confirmed',
+    'Coach ' || v_name || ' confirmed they''re taking ' || coalesce(v_title, 'a session')
+    || ' — ' || fmt_ist(v_session.starts_at) || '.',
+    jsonb_build_object('session_id', p_session, 'url', '/admin/calendar'));
+
+  return v_at;
+end;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.reset_session_confirmation()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+begin
+  if new.coach_id is distinct from old.coach_id
+     or new.starts_at is distinct from old.starts_at then
+    new.coach_confirmed_at := null;
+    new.coach_arrived_at := null;
+  end if;
+  return new;
+end;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.ops_notify_new_profile()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+begin
+  if new.role = 'client' then
+    perform notify_founders('ops_new_client', 'New client signed up',
+      new.full_name || ' (' || new.email
+      || coalesce(', ' || nullif(new.phone, ''), '') || ') just created an account.',
+      jsonb_build_object('client_id', new.id, 'url', '/admin/clients'));
+  elsif new.role = 'coach' then
+    perform notify_founders('ops_new_coach', 'New coach joined',
+      new.full_name || ' (' || new.email
+      || coalesce(', ' || nullif(new.phone, ''), '') || ') is now on the coach roster.',
+      jsonb_build_object('coach_id', new.id, 'url', '/admin/coaches'));
+  end if;
+  return new;
+end;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.ops_notify_new_player()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare
+  v_client profiles%rowtype;
+begin
+  select * into v_client from profiles where id = new.client_id;
+  if not found then return new; end if;
+  -- Skip the default player auto-created at signup (same name, same moment) —
+  -- the ops_new_client message already covers it.
+  if new.full_name = v_client.full_name
+     and new.created_at < v_client.created_at + interval '2 minutes' then
+    return new;
+  end if;
+  perform notify_founders('ops_player_added', 'Player added',
+    v_client.full_name || ' added ' || new.full_name || ' to their household.',
+    jsonb_build_object('client_id', new.client_id, 'player_id', new.id, 'url', '/admin/clients'));
+  return new;
+end;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.ops_notify_wa_linked()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare
+  v_name text;
+begin
+  select full_name into v_name from profiles where id = new.user_id;
+  perform notify_founders('ops_wa_linked', 'WhatsApp linked',
+    coalesce(v_name, 'A user') || ' linked WhatsApp (' || new.phone || ').',
+    jsonb_build_object('client_id', new.user_id, 'url', '/admin/clients'));
+  return new;
+end;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.ops_notify_credit_used()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare
+  v_client text;
+  v_player text;
+begin
+  if old.consumed_at is not null or new.consumed_at is null then return new; end if;
+  select full_name into v_client from profiles where id = new.client_id;
+  select full_name into v_player from players where id = new.player_id;
+  perform notify_founders('ops_credit_used',
+    case new.type when 'group_trial' then 'Free trial used' else 'Drop-in used' end,
+    coalesce(v_client, 'A client')
+    || case when v_player is not null and v_player <> v_client then ' (' || v_player || ')' else '' end
+    || case new.type
+         when 'group_trial' then ' booked their FREE TRIAL class.'
+         else ' used a drop-in class credit.'
+       end,
+    jsonb_build_object('client_id', new.client_id, 'url', '/admin/clients'));
+  return new;
+end;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.ops_notify_booking_created()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare
+  v_session   class_sessions%rowtype;
+  v_class     classes%rowtype;
+  v_player    text;
+  v_client    text;
+  v_where     text;
+  v_cap       integer;
+  v_confirmed integer;
+  v_title     text;
+  v_verb      text;
+begin
+  select * into v_session from class_sessions where id = new.session_id;
+  if not found or v_session.status <> 'scheduled' then return new; end if;
+  select * into v_class from classes where id = v_session.class_id;
+  select full_name into v_player from players where id = new.player_id;
+  select full_name into v_client from profiles where id = new.client_id;
+
+  if v_class.class_type = 'private' then
+    select address into v_where from private_class_details where class_id = v_class.id;
+  else
+    select name into v_where from venues where id = v_class.venue_id;
+  end if;
+
+  v_cap := coalesce(v_session.capacity_override, v_class.capacity);
+  select count(*) into v_confirmed
+  from bookings where session_id = new.session_id and status = 'confirmed';
+
+  if new.status = 'waitlisted' then
+    v_title := 'Waitlist join'; v_verb := 'joined the waitlist for';
+  elsif new.rescheduled_from is not null then
+    v_title := 'Booking rescheduled'; v_verb := 'rescheduled into';
+  else
+    v_title := 'New booking'; v_verb := 'booked';
+  end if;
+
+  perform notify_founders('ops_booking', v_title,
+    coalesce(v_client, 'A client')
+    || case when v_player is not null and v_player <> v_client then ' (' || v_player || ')' else '' end
+    || ' ' || v_verb || ' '
+    || v_class.title || case v_class.class_type when 'private' then ' [private]' else '' end
+    || ' — ' || fmt_ist(v_session.starts_at)
+    || coalesce(' at ' || v_where, '')
+    || case when v_class.class_type = 'group'
+            then ' · now ' || v_confirmed || '/' || v_cap else '' end
+    || '.',
+    jsonb_build_object('booking_id', new.id, 'session_id', new.session_id,
+                       'client_id', new.client_id, 'url', '/admin/calendar'));
+  return new;
+end;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.ops_notify_booking_status()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare
+  v_session class_sessions%rowtype;
+  v_class   classes%rowtype;
+  v_player  text;
+  v_client  text;
+  v_who     text;
+begin
+  if old.status = new.status then return new; end if;
+  -- cancelled_by_academy is founder-initiated (already knows); rescheduled is
+  -- reported by the paired new booking's insert.
+  if new.status not in ('cancelled_by_client', 'attended', 'no_show', 'confirmed') then
+    return new;
+  end if;
+  -- attendance auto-marked by the sweep (no acting user) stays silent
+  if new.status in ('attended', 'no_show') and auth.uid() is null then return new; end if;
+  -- only waitlist→confirmed promotions are interesting among confirms
+  if new.status = 'confirmed' and old.status <> 'waitlisted' then return new; end if;
+
+  select * into v_session from class_sessions where id = new.session_id;
+  if not found then return new; end if;
+  select * into v_class from classes where id = v_session.class_id;
+  select full_name into v_player from players where id = new.player_id;
+  select full_name into v_client from profiles where id = new.client_id;
+  v_who := coalesce(v_client, 'A client')
+    || case when v_player is not null and v_player <> v_client then ' (' || v_player || ')' else '' end;
+
+  if new.status = 'cancelled_by_client' then
+    perform notify_founders('ops_cancellation', 'Booking cancelled',
+      v_who || ' cancelled ' || v_class.title
+      || ' — ' || fmt_ist(v_session.starts_at)
+      || coalesce('. Reason: ' || nullif(new.cancel_reason, ''), '') || '.',
+      jsonb_build_object('booking_id', new.id, 'session_id', new.session_id,
+                         'client_id', new.client_id, 'url', '/admin/calendar'));
+  elsif new.status = 'attended' then
+    perform notify_founders('ops_attendance', 'Attendance marked',
+      coalesce(v_player, 'A player') || ' attended ' || v_class.title
+      || ' (' || fmt_ist(v_session.starts_at) || ').',
+      jsonb_build_object('booking_id', new.id, 'session_id', new.session_id, 'url', '/admin/calendar'));
+  elsif new.status = 'no_show' then
+    perform notify_founders('ops_attendance', 'No-show',
+      coalesce(v_player, 'A player') || ' did NOT show for ' || v_class.title
+      || ' (' || fmt_ist(v_session.starts_at) || ').',
+      jsonb_build_object('booking_id', new.id, 'session_id', new.session_id, 'url', '/admin/calendar'));
+  else -- waitlisted → confirmed
+    perform notify_founders('ops_booking', 'Waitlist spot claimed',
+      v_who || ' claimed the freed spot in ' || v_class.title
+      || ' — ' || fmt_ist(v_session.starts_at) || '.',
+      jsonb_build_object('booking_id', new.id, 'session_id', new.session_id,
+                         'client_id', new.client_id, 'url', '/admin/calendar'));
+  end if;
+  return new;
+end;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.ops_notify_coach_change()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare
+  v_class    text;
+  v_old_name text;
+  v_new_name text;
+begin
+  if old.coach_id is not distinct from new.coach_id then return new; end if;
+  -- Only near-term sessions: keeps weekly top-up + engine churn out of the feed.
+  if new.status <> 'scheduled'
+     or new.starts_at <= now()
+     or new.starts_at > now() + interval '7 days' then
+    return new;
+  end if;
+
+  select title into v_class from classes where id = new.class_id;
+  select full_name into v_old_name from profiles where id = old.coach_id;
+  select full_name into v_new_name from profiles where id = new.coach_id;
+
+  perform notify_founders('ops_coach_change',
+    case when new.coach_id is null then 'Session needs cover' else 'Coach assigned' end,
+    coalesce(v_class, 'Session') || ' — ' || fmt_ist(new.starts_at) || ': '
+    || coalesce(v_old_name, 'unassigned') || ' → '
+    || coalesce(v_new_name, 'UNASSIGNED (needs cover)') || '.',
+    jsonb_build_object('session_id', new.id, 'url', '/admin/calendar'));
+  return new;
+end;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.ops_notify_subscription()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare
+  v_client text;
+  v_plan   plans%rowtype;
+  v_label  text;
+begin
+  select full_name into v_client from profiles where id = new.client_id;
+  select * into v_plan from plans where id = new.plan_id;
+  v_label := coalesce(v_plan.name, 'a plan') || ' (' || fmt_inr(coalesce(v_plan.price_pence, 0))
+    || '/mo' || case when new.source = 'comp' then ', comp' else '' end || ')';
+
+  if tg_op = 'INSERT' then
+    if new.status in ('active', 'trialing') then
+      perform notify_founders('ops_membership', 'New membership',
+        coalesce(v_client, 'A client') || ' started ' || v_label || '.',
+        jsonb_build_object('client_id', new.client_id, 'url', '/admin/billing'));
+    end if;
+    return new;
+  end if;
+
+  if old.status = new.status then return new; end if;
+
+  if new.status = 'active' and old.status = 'incomplete' then
+    perform notify_founders('ops_membership', 'New membership',
+      coalesce(v_client, 'A client') || ' started ' || v_label || '.',
+      jsonb_build_object('client_id', new.client_id, 'url', '/admin/billing'));
+  elsif new.status = 'active' and old.status in ('past_due', 'paused') then
+    perform notify_founders('ops_membership', 'Membership recovered',
+      coalesce(v_client, 'A client') || '''s ' || coalesce(v_plan.name, 'plan')
+      || ' is active again.',
+      jsonb_build_object('client_id', new.client_id, 'url', '/admin/billing'));
+  elsif new.status = 'past_due' then
+    perform notify_founders('ops_payment_issue', 'Payment past due',
+      coalesce(v_client, 'A client') || '''s ' || coalesce(v_plan.name, 'plan')
+      || ' payment failed — Razorpay is retrying; grace period applies.',
+      jsonb_build_object('client_id', new.client_id, 'url', '/admin/billing'));
+    insert into notifications (user_id, type, title, body, data)
+    values (new.client_id, 'payment_failed', 'Payment issue',
+      'Your ' || coalesce(v_plan.name, 'membership')
+      || ' payment didn''t go through. Please update your payment method to keep booking.',
+      jsonb_build_object('url', '/app/billing'));
+  elsif new.status = 'canceled' then
+    perform notify_founders('ops_membership', 'Membership cancelled',
+      coalesce(v_client, 'A client') || ' — ' || coalesce(v_plan.name, 'plan') || ' is cancelled.',
+      jsonb_build_object('client_id', new.client_id, 'url', '/admin/billing'));
+  elsif new.status = 'paused' then
+    perform notify_founders('ops_membership', 'Membership paused',
+      coalesce(v_client, 'A client') || ' — ' || coalesce(v_plan.name, 'plan') || ' is paused.',
+      jsonb_build_object('client_id', new.client_id, 'url', '/admin/billing'));
+  end if;
+  return new;
+end;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.ops_notify_invoice()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare
+  v_client text;
+  v_plan   text;
+begin
+  -- One-off purchases are reported via the orders trigger; this covers renewals.
+  if new.status <> 'paid' or new.subscription_id is null then return new; end if;
+  select full_name into v_client from profiles where id = new.client_id;
+  select p.name into v_plan
+  from subscriptions s join plans p on p.id = s.plan_id
+  where s.id = new.subscription_id;
+  perform notify_founders('ops_payment', 'Payment received',
+    fmt_inr(new.amount_pence) || ' from ' || coalesce(v_client, 'a client')
+    || ' — ' || coalesce(v_plan, 'membership') || ' renewal.',
+    jsonb_build_object('client_id', new.client_id, 'url', '/admin/billing'));
+  return new;
+end;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.ops_notify_order_paid()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare
+  v_client  text;
+  v_player  text;
+  v_product text;
+begin
+  if new.status <> 'paid' then return new; end if;
+  if tg_op = 'UPDATE' and old.status = 'paid' then return new; end if;
+  select full_name into v_client from profiles where id = new.client_id;
+  select full_name into v_player from players where id = new.player_id;
+  select name into v_product from products where id = new.product_id;
+  perform notify_founders('ops_payment', 'One-off purchase',
+    coalesce(v_client, 'A client') || ' bought ' || coalesce(v_product, new.product_id)
+    || ' (' || fmt_inr(new.amount_pence) || ')'
+    || coalesce(' for ' || v_player, '') || '.',
+    jsonb_build_object('client_id', new.client_id, 'url', '/admin/billing'));
+  return new;
+end;
+$function$;
+
 -- ── View ─────────────────────────────────────────────────────────────────────
 CREATE OR REPLACE VIEW public.coach_client_view AS
   SELECT id, full_name, avatar_url FROM profiles p;
 
 -- ── Triggers ─────────────────────────────────────────────────────────────────
 CREATE TRIGGER players_grant_trial AFTER INSERT ON public.players FOR EACH ROW EXECUTE FUNCTION grant_signup_trial();
+CREATE TRIGGER bookings_ops_feed_insert AFTER INSERT ON public.bookings FOR EACH ROW EXECUTE FUNCTION ops_notify_booking_created();
+CREATE TRIGGER bookings_ops_feed_status AFTER UPDATE OF status ON public.bookings FOR EACH ROW EXECUTE FUNCTION ops_notify_booking_status();
+CREATE TRIGGER class_credits_ops_feed AFTER UPDATE ON public.class_credits FOR EACH ROW EXECUTE FUNCTION ops_notify_credit_used();
+CREATE TRIGGER class_sessions_ops_feed AFTER UPDATE OF coach_id ON public.class_sessions FOR EACH ROW EXECUTE FUNCTION ops_notify_coach_change();
+CREATE TRIGGER class_sessions_reset_confirmation BEFORE UPDATE OF coach_id, starts_at ON public.class_sessions FOR EACH ROW EXECUTE FUNCTION reset_session_confirmation();
+CREATE TRIGGER invoices_ops_feed AFTER INSERT ON public.invoices FOR EACH ROW EXECUTE FUNCTION ops_notify_invoice();
+CREATE TRIGGER orders_ops_feed AFTER INSERT OR UPDATE OF status ON public.orders FOR EACH ROW EXECUTE FUNCTION ops_notify_order_paid();
+CREATE TRIGGER players_ops_feed AFTER INSERT ON public.players FOR EACH ROW EXECUTE FUNCTION ops_notify_new_player();
+CREATE TRIGGER profiles_ops_feed AFTER INSERT ON public.profiles FOR EACH ROW EXECUTE FUNCTION ops_notify_new_profile();
+CREATE TRIGGER subscriptions_ops_feed AFTER INSERT OR UPDATE OF status ON public.subscriptions FOR EACH ROW EXECUTE FUNCTION ops_notify_subscription();
+CREATE TRIGGER wa_links_ops_feed AFTER INSERT ON public.wa_links FOR EACH ROW EXECUTE FUNCTION ops_notify_wa_linked();
 
 -- ── Row Level Security ───────────────────────────────────────────────────────
 alter table public.area_interest enable row level security;

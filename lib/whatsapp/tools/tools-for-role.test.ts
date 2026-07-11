@@ -28,6 +28,8 @@ describe("toolsForRole", () => {
     for (const tool of [
       "my_coach_sessions",
       "session_roster",
+      "confirm_session",
+      "mark_arrival",
       "add_availability_window",
       "request_time_off",
       "mark_attendance",

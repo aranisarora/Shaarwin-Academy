@@ -70,6 +70,21 @@ export async function saveSessionNotes(sessionId: string, notes: string): Promis
   return error ? { ok: false, error: "Couldn't save notes." } : { ok: true };
 }
 
+export async function confirmComing(sessionId: string): Promise<Result> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Sign in first." };
+
+  const { error } = await supabase.rpc("coach_confirm_session", {
+    p_session: sessionId,
+  });
+  if (error) return { ok: false, error: "Couldn't confirm. Try again." };
+  revalidatePath(`/coach/session/${sessionId}`);
+  return { ok: true };
+}
+
 export async function markArrived(sessionId: string): Promise<Result> {
   const supabase = await createClient();
   const {
