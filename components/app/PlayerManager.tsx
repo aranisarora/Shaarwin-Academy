@@ -52,6 +52,23 @@ function initials(name: string): string {
     .join("");
 }
 
+function isPhoneOnly(email: string): boolean {
+  return email.endsWith("@sharwin.local") || email === "";
+}
+
+function clientSubline(row: PlayerRow): string {
+  if (isPhoneOnly(row.clientEmail)) {
+    const parts: string[] = [];
+    if (row.clientName) parts.push(row.clientName);
+    if (row.clientPhone) parts.push(`📱 ${row.clientPhone}`);
+    return parts.join(" · ");
+  }
+  const parts: string[] = [];
+  if (row.clientName) parts.push(row.clientName);
+  if (row.clientEmail) parts.push(row.clientEmail);
+  return parts.join(" · ");
+}
+
 export function PlayerManager({ players }: { players: PlayerRow[] }) {
   const [search, setSearch] = useState("");
   const [level, setLevel] = useState<string | null>(null);
@@ -65,7 +82,8 @@ export function PlayerManager({ players }: { players: PlayerRow[] }) {
         (q === "" ||
           p.name.toLowerCase().includes(q) ||
           p.clientName.toLowerCase().includes(q) ||
-          p.clientEmail.toLowerCase().includes(q))
+          p.clientEmail.toLowerCase().includes(q) ||
+          (p.clientPhone ?? "").toLowerCase().includes(q))
     );
   }, [players, search, level]);
 
@@ -117,7 +135,7 @@ export function PlayerManager({ players }: { players: PlayerRow[] }) {
               </span>
               <div className="min-w-0 flex-1">
                 <p className="truncate font-medium">{p.name}</p>
-                <p className="truncate text-sm text-fg-2">{p.clientName}</p>
+                <p className="truncate text-sm text-fg-2">{clientSubline(p)}</p>
               </div>
               <div className="flex flex-col items-end gap-1">
                 <Badge tone={LEVEL_TONE[p.skillLevel]}>{levelLabel(p.skillLevel)}</Badge>
@@ -175,14 +193,23 @@ export function PlayerManager({ players }: { players: PlayerRow[] }) {
 
             <div className="space-y-2 rounded-[12px] border border-line p-4">
               <p className="label">Account holder</p>
-              <p className="font-medium">{selected.clientName}</p>
-              {selected.clientEmail?.endsWith("@sharwin.local") ? (
-                <p className="text-sm text-fg-2">Registered via phone — no email on file</p>
-              ) : (
-                <p className="text-sm text-fg-2">{selected.clientEmail}</p>
+              {selected.clientName && (
+                <p className="font-medium">{selected.clientName}</p>
               )}
-              {selected.clientPhone && (
-                <p className="text-sm text-fg-2">{selected.clientPhone}</p>
+              {isPhoneOnly(selected.clientEmail) ? (
+                <>
+                  <p className="text-sm text-fg-2">Registered via phone</p>
+                  {selected.clientPhone && (
+                    <p className="text-sm text-fg-2">📱 {selected.clientPhone}</p>
+                  )}
+                </>
+              ) : (
+                <>
+                  <p className="text-sm text-fg-2">{selected.clientEmail}</p>
+                  {selected.clientPhone && (
+                    <p className="text-sm text-fg-2">📱 {selected.clientPhone}</p>
+                  )}
+                </>
               )}
             </div>
 
