@@ -9,7 +9,9 @@ import {
   materializeInviteCore,
   endGroupClassCore,
   moveSessionCore,
+  reassignClassCoachCore,
   reassignSessionCore,
+  restoreGroupClassCore,
   setSessionCapacityCore,
   topUpSessionsCore,
   updateGroupClassCore,
@@ -83,6 +85,36 @@ export async function endGroupClass(classId: string): Promise<Result> {
   if (!result.ok) return result;
   refresh();
   return { ok: true };
+}
+
+export async function restoreGroupClass(classId: string): Promise<Result> {
+  const { supabase, founder } = await requireFounder();
+  if (!founder) return { ok: false, error: "Founder only." };
+  const result = await restoreGroupClassCore(supabase, founder.id, classId);
+  if (!result.ok) return result;
+  refresh();
+  return { ok: true };
+}
+
+export async function reassignClassCoach(
+  classId: string,
+  coachId: string,
+  lock: boolean,
+  force = false
+): Promise<Result & { changed?: number; skipped?: number }> {
+  const { supabase, founder } = await requireFounder();
+  if (!founder) return { ok: false, error: "Founder only." };
+  const result = await reassignClassCoachCore(
+    supabase,
+    founder.id,
+    classId,
+    coachId,
+    lock,
+    force
+  );
+  if (!result.ok) return result;
+  refresh();
+  return { ok: true, changed: result.changed, skipped: result.skipped };
 }
 
 export async function deleteGroupClass(classId: string): Promise<Result> {

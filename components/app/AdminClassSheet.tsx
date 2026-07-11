@@ -10,18 +10,26 @@ import { Button } from "@/components/ui/Button";
 import { Select } from "@/components/ui/Select";
 import { Spinner } from "@/components/ui/Spinner";
 import { setClassActive } from "@/app/admin/actions";
-import { deleteGroupClass, endGroupClass, updateGroupClass } from "@/app/admin/calendar/actions";
+import {
+  deleteGroupClass,
+  endGroupClass,
+  reassignClassCoach,
+  restoreGroupClass,
+  updateGroupClass,
+} from "@/app/admin/calendar/actions";
 import { ClassDetailFields, generateClassTitle, type ClassFormState } from "./ClassFields";
 import { TimeSelect12h } from "./TimeSelect12h";
-import { WEEKDAYS, type ClassRow, type Venue } from "./admin-calendar-types";
+import { WEEKDAYS, type ClassRow, type Coach, type Venue } from "./admin-calendar-types";
 
 export function AdminClassSheet({
   cls,
+  coaches,
   venues,
   onClose,
   onDone,
 }: {
   cls: ClassRow;
+  coaches: Coach[];
   venues: Venue[];
   onClose: () => void;
   onDone: (message: string) => void;
@@ -43,12 +51,65 @@ export function AdminClassSheet({
   function updateForm(next: ClassFormState) {
     setForm({ ...next, title: generateClassTitle(next.skillLevel, next.weekday, next.time) });
   }
+  const [coachTarget, setCoachTarget] = useState("");
+  const [lock, setLock] = useState(true);
   const [message, setMessage] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+
+  const ended = !cls.active && !!cls.endsOn;
+
+  function applyCoach() {
+    if (!coachTarget) return;
+    startTransition(async () => {
+      let r = await reassignClassCoach(cls.id, coachTarget, lock);
+      if (!r.ok && r.code === "filter_failed") {
+        // The rules say no — but the founder can override. A hard time clash
+        // is still blocked by the database either way.
+        const goAhead = window.confirm(
+          `${r.error ?? "That coach doesn't fit the rules."}\n\nAssign them anyway?`
+        );
+        if (!goAhead) {
+          setMessage(r.error ?? "Failed.");
+          return;
+        }
+        r = await reassignClassCoach(cls.id, coachTarget, lock, true);
+      }
+      if (r.ok) {
+        onDone(
+          r.skipped
+            ? `Coach set on ${r.changed} upcoming sessions — ${r.skipped} couldn't take them (clashes) and kept their coach.`
+            : "Coach set for every upcoming week — everyone affected has been told."
+        );
+      } else setMessage(r.error ?? "Failed.");
+    });
+  }
 
   return (
     <Sheet open onClose={onClose} title="Edit class">
       <div className="space-y-4">
+        {ended && (
+          <div className="space-y-3 rounded-[12px] border border-line bg-surface-2 p-4">
+            <p className="text-sm text-fg-2">
+              This class has ended — its upcoming sessions were cancelled. Restore it and
+              they go back on the schedule (clients who were booked need to book again).
+            </p>
+            <Button
+              className="w-full"
+              disabled={pending}
+              onClick={() =>
+                startTransition(async () => {
+                  const r = await restoreGroupClass(cls.id);
+                  if (r.ok)
+                    onDone("Class restored — its upcoming sessions are back on the schedule.");
+                  else setMessage(r.error ?? "Couldn't restore the class.");
+                })
+              }
+            >
+              {pending ? <Spinner /> : "Restore class"}
+            </Button>
+          </div>
+        )}
+
         <ClassDetailFields form={form} onChange={updateForm} venues={venues} />
         <div className="grid grid-cols-2 gap-3">
           <Select
@@ -97,22 +158,57 @@ export function AdminClassSheet({
           {pending ? <Spinner /> : "Save changes"}
         </Button>
 
-        <button
-          disabled={pending}
-          onClick={() =>
-            startTransition(async () => {
-              const r = await setClassActive(cls.id, !cls.active);
-              if (r.ok)
-                onDone(cls.active ? "Booking paused for this class." : "Class reopened for booking.");
-              else setMessage(r.error ?? "Failed.");
-            })
-          }
-          className={`w-full text-center text-sm underline-offset-4 hover:underline ${
-            cls.active ? "text-ok" : "text-err"
-          }`}
-        >
-          {cls.active ? "Open for booking — pause it" : "Paused — reopen for booking"}
-        </button>
+        {!ended && (
+          <div className="space-y-3 rounded-[12px] border border-line p-4">
+            <p className="label">Coach — every week</p>
+            <Select
+              label="Coach"
+              hint="Puts this coach on every upcoming session of the class."
+              value={coachTarget}
+              onChange={(e) => setCoachTarget(e.target.value)}
+            >
+              <option value="">— pick a coach —</option>
+              {coaches.map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </Select>
+            <label className="flex items-center gap-3 text-sm">
+              <input
+                type="checkbox"
+                checked={lock}
+                onChange={(e) => setLock(e.target.checked)}
+                className="h-5 w-5 accent-[var(--ember)]"
+              />
+              Keep this coach — don&apos;t swap them automatically
+            </label>
+            <Button
+              onClick={applyCoach}
+              disabled={pending || !coachTarget}
+              className="w-full"
+            >
+              {pending ? <Spinner /> : "Set coach for every week"}
+            </Button>
+          </div>
+        )}
+
+        {!ended && (
+          <button
+            disabled={pending}
+            onClick={() =>
+              startTransition(async () => {
+                const r = await setClassActive(cls.id, !cls.active);
+                if (r.ok)
+                  onDone(cls.active ? "Booking paused for this class." : "Class reopened for booking.");
+                else setMessage(r.error ?? "Failed.");
+              })
+            }
+            className={`w-full text-center text-sm underline-offset-4 hover:underline ${
+              cls.active ? "text-ok" : "text-err"
+            }`}
+          >
+            {cls.active ? "Open for booking — pause it" : "Paused — reopen for booking"}
+          </button>
+        )}
 
         {cls.active && (
           <Button
@@ -122,13 +218,13 @@ export function AdminClassSheet({
             onClick={() => {
               if (
                 !window.confirm(
-                  "End this class? All upcoming sessions are cancelled and everyone booked gets a message. Past sessions stay in the history."
+                  "End this class? All upcoming sessions are cancelled and everyone booked gets a message. Past sessions stay in the history — and you can restore the class later from this list."
                 )
               )
                 return;
               startTransition(async () => {
                 const r = await endGroupClass(cls.id);
-                if (r.ok) onDone("Class ended — everyone affected has been told.");
+                if (r.ok) onDone("Class ended — everyone affected has been told. You can restore it from the weekly classes list.");
                 else setMessage(r.error ?? "Failed.");
               });
             }}
