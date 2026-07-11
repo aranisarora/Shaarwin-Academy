@@ -11,7 +11,7 @@ import type {
 } from "@/components/app/admin-calendar-types";
 import { fromDetails, type StructuredAddress } from "@/lib/address";
 
-export const metadata: Metadata = { title: "Calendar" };
+export const metadata: Metadata = { title: "Schedule" };
 
 export default async function AdminCalendarPage({
   searchParams,
@@ -191,7 +191,7 @@ export default async function AdminCalendarPage({
     "rounded-[8px] border border-line px-4 py-2 text-sm hover:border-ember hover:text-ember";
 
   return (
-    <AdminShell title="Calendar">
+    <AdminShell title="Schedule">
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <Link href={`/admin/calendar?week=${weekOffset - 1}`} className={navBtn}>

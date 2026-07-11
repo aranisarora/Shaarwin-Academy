@@ -3,7 +3,7 @@ import { StudioShell } from "@/components/shells/StudioShell";
 // Bottom tab bar shows the first 4; the desktop sidebar shows all of them.
 const tabs = [
   { href: "/admin", label: "Inbox", icon: "●" },
-  { href: "/admin/calendar", label: "Calendar", icon: "▦" },
+  { href: "/admin/calendar", label: "Schedule", icon: "▦" },
   { href: "/admin/clients", label: "Clients", icon: "◉" },
   { href: "/admin/settings", label: "More", icon: "≡" },
   { href: "/admin/players", label: "Players", icon: "♟" },
