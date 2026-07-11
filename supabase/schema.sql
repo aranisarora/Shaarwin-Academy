@@ -2893,7 +2893,6 @@ CREATE POLICY "founder writes private details" ON public.private_class_details A
 CREATE POLICY "private details visible to owner coach founder" ON public.private_class_details AS PERMISSIVE FOR SELECT TO public USING (((client_id = auth.uid()) OR is_founder() OR coach_teaches_class(class_id)));
 CREATE POLICY "founder writes ledger" ON public.private_credit_ledger AS PERMISSIVE FOR ALL TO public USING (is_founder());
 CREATE POLICY "own ledger" ON public.private_credit_ledger AS PERMISSIVE FOR SELECT TO public USING (((client_id = auth.uid()) OR is_founder()));
-CREATE POLICY "coach reads clients in own sessions" ON public.profiles AS PERMISSIVE FOR SELECT TO public USING ((is_coach() AND coach_has_client(id)));
 CREATE POLICY "founder all profiles" ON public.profiles AS PERMISSIVE FOR ALL TO public USING (is_founder());
 CREATE POLICY "own profile" ON public.profiles AS PERMISSIVE FOR ALL TO public USING ((id = auth.uid())) WITH CHECK ((id = auth.uid()));
 CREATE POLICY "own push subscriptions" ON public.push_subscriptions AS PERMISSIVE FOR ALL TO public USING ((user_id = auth.uid())) WITH CHECK ((user_id = auth.uid()));
