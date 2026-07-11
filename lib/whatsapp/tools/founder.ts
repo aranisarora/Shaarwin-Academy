@@ -281,7 +281,7 @@ const listCoaches: WaTool = {
     const supabase = ctx.supabase!;
     const { data: coaches } = await supabase
       .from("coaches")
-      .select("id,tier,max_teachable_level,travel_radius_km,dbs_checked,active");
+      .select("id,tier,travel_radius_km,base_address,active");
     const ids = (coaches ?? []).map((c) => c.id);
     const names = new Map<string, string>();
     if (ids.length) {
@@ -293,9 +293,8 @@ const listCoaches: WaTool = {
         coach_id: c.id,
         name: names.get(c.id) ?? "?",
         tier: c.tier,
-        max_level: c.max_teachable_level,
         radius_km: c.travel_radius_km,
-        dbs_checked: c.dbs_checked,
+        base_address: c.base_address,
         active: c.active,
       }))
     );

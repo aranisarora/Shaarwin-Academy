@@ -177,6 +177,9 @@ create table public.coach_invites (
   max_teachable_level skill_level default 'advanced'::skill_level not null,
   travel_radius_km numeric(5,1) default 10 not null,
   dbs_checked boolean default false not null,
+  base_address text,
+  base_lat float8,
+  base_lng float8,
   created_by uuid,
   created_at timestamptz default now() not null,
   claimed_at timestamptz,
@@ -1088,11 +1091,9 @@ declare
   v_coach coaches%rowtype;
   v_session class_sessions%rowtype;
   v_class classes%rowtype;
-  v_lat float8; v_lng float8;
   v_buffer int := get_setting_int('travel_buffer_minutes', 30);
   v_wd smallint;
   v_start time; v_end time;
-  v_has_junior boolean;
 begin
   select * into v_coach from coaches where id = p_coach and active;
   if not found then return 'inactive'; end if;
@@ -1100,7 +1101,7 @@ begin
   select * into v_session from class_sessions where id = p_session;
   select * into v_class from classes where id = v_session.class_id;
 
-  -- 1. time off
+  -- 1. approved time off overlaps session
   if exists (
     select 1 from coach_time_off t
     where t.coach_id = p_coach and t.status = 'approved'
@@ -1110,14 +1111,14 @@ begin
   -- 2. availability window (Asia/Kolkata wall clock, weekday 0=Mon)
   v_wd := ((extract(isodow from v_session.starts_at at time zone 'Asia/Kolkata'))::int - 1);
   v_start := (v_session.starts_at at time zone 'Asia/Kolkata')::time;
-  v_end := (v_session.ends_at at time zone 'Asia/Kolkata')::time;
+  v_end   := (v_session.ends_at   at time zone 'Asia/Kolkata')::time;
   if not exists (
     select 1 from coach_availability a
     where a.coach_id = p_coach and a.weekday = v_wd
       and a.start_time <= v_start and a.end_time >= v_end
   ) then return 'unavailable'; end if;
 
-  -- 3. overlap incl. travel buffer at different locations
+  -- 3. scheduling overlap (+ travel buffer between different venues)
   if exists (
     select 1 from class_sessions s2
     join classes c2 on c2.id = s2.class_id
@@ -1125,43 +1126,10 @@ begin
       and tstzrange(
             s2.starts_at - case when c2.venue_id is distinct from v_class.venue_id
                                 then make_interval(mins => v_buffer) else interval '0' end,
-            s2.ends_at + case when c2.venue_id is distinct from v_class.venue_id
-                              then make_interval(mins => v_buffer) else interval '0' end
+            s2.ends_at   + case when c2.venue_id is distinct from v_class.venue_id
+                                then make_interval(mins => v_buffer) else interval '0' end
           ) && tstzrange(v_session.starts_at, v_session.ends_at)
   ) then return 'overlap'; end if;
-
-  -- 4. radius for private sessions
-  if v_class.class_type = 'private' then
-    select d.lat, d.lng into v_lat, v_lng
-    from private_class_details d where d.class_id = v_class.id;
-    if haversine_km(v_lat, v_lng, v_coach.base_lat, v_coach.base_lng) > v_coach.travel_radius_km then
-      return 'out_of_radius';
-    end if;
-  end if;
-
-  -- 5. level ceiling
-  if v_class.skill_level > v_coach.max_teachable_level then
-    return 'level_too_high';
-  end if;
-
-  -- 6. safeguarding: junior in the room requires DBS
-  select exists (
-    select 1 from bookings b
-    join players pl on pl.id = b.player_id
-    where b.session_id = p_session
-      and b.status in ('confirmed', 'waitlisted')
-      and pl.date_of_birth is not null
-      and pl.date_of_birth > (current_date - interval '18 years')
-    union
-    select 1 from private_class_details d
-    join players pl on pl.id = d.player_id
-    where d.class_id = v_class.id
-      and pl.date_of_birth is not null
-      and pl.date_of_birth > (current_date - interval '18 years')
-  ) into v_has_junior;
-  if v_has_junior and not v_coach.dbs_checked then
-    return 'dbs_required';
-  end if;
 
   return null;
 end;
@@ -1497,12 +1465,15 @@ begin
     on conflict (id) do nothing;
 
     insert into coaches (
-      id, bio, base_lat, base_lng, travel_radius_km,
-      max_teachable_level, dbs_checked, tier, active
+      id, bio, base_lat, base_lng, base_address, travel_radius_km, tier, active
     )
     values (
-      new.id, v_invite.bio, 12.9716, 77.5946, v_invite.travel_radius_km,
-      v_invite.max_teachable_level, v_invite.dbs_checked, v_invite.tier, true
+      new.id, v_invite.bio,
+      coalesce(v_invite.base_lat, 12.9716),
+      coalesce(v_invite.base_lng, 77.5946),
+      v_invite.base_address,
+      v_invite.travel_radius_km,
+      v_invite.tier, true
     )
     on conflict (id) do nothing;
 
@@ -1547,12 +1518,15 @@ begin
   update profiles set role = 'coach' where id = p_user;
 
   insert into coaches (
-    id, bio, base_lat, base_lng, travel_radius_km,
-    max_teachable_level, dbs_checked, tier, active
+    id, bio, base_lat, base_lng, base_address, travel_radius_km, tier, active
   )
   values (
-    p_user, v_invite.bio, 12.9716, 77.5946, v_invite.travel_radius_km,
-    v_invite.max_teachable_level, v_invite.dbs_checked, v_invite.tier, true
+    p_user, v_invite.bio,
+    coalesce(v_invite.base_lat, 12.9716),
+    coalesce(v_invite.base_lng, 77.5946),
+    v_invite.base_address,
+    v_invite.travel_radius_km,
+    v_invite.tier, true
   )
   on conflict (id) do nothing;
 
