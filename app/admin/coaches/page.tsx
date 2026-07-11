@@ -16,7 +16,7 @@ export default async function AdminCoachesPage() {
     supabase
       .from("coaches")
       .select(
-        "id,bio,travel_radius_km,max_teachable_level,dbs_checked,tier,active,profiles!inner(full_name,email,phone)"
+        "id,bio,travel_radius_km,base_address,base_lat,base_lng,tier,active,profiles!inner(full_name,email,phone)"
       )
       .order("active", { ascending: false })
       .order("tier", { ascending: false }),
@@ -26,7 +26,7 @@ export default async function AdminCoachesPage() {
       .eq("status", "pending"),
     supabase
       .from("coach_invites")
-      .select("id,full_name,email,phone,bio,tier,max_teachable_level,travel_radius_km,dbs_checked")
+      .select("id,full_name,email,phone,bio,tier,travel_radius_km,base_address,base_lat,base_lng")
       .is("claimed_at", null)
       .order("created_at", { ascending: false }),
   ]);
@@ -44,9 +44,10 @@ export default async function AdminCoachesPage() {
       phone: profile.phone ?? "",
       bio: c.bio ?? "",
       travelRadiusKm: Number(c.travel_radius_km),
-      maxTeachableLevel: c.max_teachable_level,
+      baseAddress: c.base_address ?? "",
+      baseLat: Number(c.base_lat),
+      baseLng: Number(c.base_lng),
       tier: c.tier,
-      dbsChecked: c.dbs_checked,
       active: c.active,
     };
   });
@@ -58,9 +59,10 @@ export default async function AdminCoachesPage() {
     phone: i.phone ?? "",
     bio: i.bio ?? "",
     travelRadiusKm: Number(i.travel_radius_km),
-    maxTeachableLevel: i.max_teachable_level,
+    baseAddress: (i as unknown as { base_address: string | null }).base_address ?? "",
+    baseLat: Number((i as unknown as { base_lat: number | null }).base_lat) || 12.9716,
+    baseLng: Number((i as unknown as { base_lng: number | null }).base_lng) || 77.5946,
     tier: i.tier,
-    dbsChecked: i.dbs_checked,
   }));
 
   return (

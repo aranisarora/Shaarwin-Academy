@@ -16,9 +16,10 @@ export type CoachDetails = {
   phone: string;
   bio: string;
   tier: number;
-  maxTeachableLevel: string;
   travelRadiusKm: number;
-  dbsChecked: boolean;
+  baseAddress: string;
+  baseLat: number;
+  baseLng: number;
 };
 
 /** Turn an existing client account into a coach (they keep the same login). */
@@ -47,8 +48,6 @@ export async function promoteToCoachCore(
     base_lat: BENGALURU.lat,
     base_lng: BENGALURU.lng,
     travel_radius_km: 10,
-    max_teachable_level: "advanced",
-    dbs_checked: false,
     tier: 1,
     active: true,
   });
@@ -78,9 +77,10 @@ export type CoachInput = {
   id: string;
   bio: string;
   travelRadiusKm: number;
-  maxTeachableLevel: string;
+  baseAddress: string;
+  baseLat: number;
+  baseLng: number;
   tier: number;
-  dbsChecked: boolean;
   // Optional identity fields — when present, the coach's profile is updated too.
   fullName?: string;
   phone?: string;
@@ -102,9 +102,10 @@ export async function saveCoachCore(
     .update({
       bio: input.bio || null,
       travel_radius_km: input.travelRadiusKm,
-      max_teachable_level: input.maxTeachableLevel,
+      base_address: input.baseAddress || null,
+      base_lat: input.baseLat,
+      base_lng: input.baseLng,
       tier: input.tier,
-      dbs_checked: input.dbsChecked,
     })
     .eq("id", input.id);
   if (error) return { ok: false, error: "Couldn't save the coach." };
@@ -164,9 +165,10 @@ export async function addCoachCore(
       id: existing.id,
       bio: d.bio,
       travelRadiusKm: d.travelRadiusKm,
-      maxTeachableLevel: d.maxTeachableLevel,
+      baseAddress: d.baseAddress,
+      baseLat: d.baseLat,
+      baseLng: d.baseLng,
       tier: d.tier,
-      dbsChecked: d.dbsChecked,
       fullName: d.fullName,
       phone: d.phone,
     });
@@ -182,9 +184,10 @@ export async function addCoachCore(
       phone,
       bio: d.bio || null,
       tier: d.tier,
-      max_teachable_level: d.maxTeachableLevel,
       travel_radius_km: d.travelRadiusKm,
-      dbs_checked: d.dbsChecked,
+      base_address: d.baseAddress || null,
+      base_lat: d.baseLat || null,
+      base_lng: d.baseLng || null,
       created_by: founderId,
       claimed_at: null,
       claimed_by: null,
@@ -223,9 +226,10 @@ export async function savePendingCoachCore(
       phone,
       bio: d.bio || null,
       tier: d.tier,
-      max_teachable_level: d.maxTeachableLevel,
       travel_radius_km: d.travelRadiusKm,
-      dbs_checked: d.dbsChecked,
+      base_address: d.baseAddress || null,
+      base_lat: d.baseLat || null,
+      base_lng: d.baseLng || null,
     })
     .eq("id", id)
     .is("claimed_at", null);

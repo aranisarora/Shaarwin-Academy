@@ -5,4 +5,4 @@
 // import cycle that made Turbopack emit a runtime reference to erased types
 // (e.g. "ReferenceError: VenueInput is not defined").
 
-export type OpResult = { ok: boolean; error?: string };
+export type OpResult = { ok: boolean; error?: string; code?: string };

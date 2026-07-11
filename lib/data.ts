@@ -110,7 +110,7 @@ export async function getCoaches(): Promise<StaticCoach[]> {
   const supabase = await createClient();
   const { data } = await supabase
     .from("coaches")
-    .select("id,bio,max_teachable_level,active,profiles!inner(full_name,avatar_url)")
+    .select("id,bio,active,profiles!inner(full_name,avatar_url)")
     .eq("active", true);
 
   if (!data || data.length === 0) return STATIC_COACHES;
@@ -120,16 +120,13 @@ export async function getCoaches(): Promise<StaticCoach[]> {
     const profile = row.profiles as unknown as { full_name: string; avatar_url: string | null };
     const slug = profile.full_name.toLowerCase().split(" ")[0];
     const existing = bySlug.get(slug);
-    const level =
-      row.max_teachable_level.charAt(0).toUpperCase() + row.max_teachable_level.slice(1);
     if (existing) {
       existing.bio = row.bio ?? existing.bio;
-      existing.level = level;
     } else {
       bySlug.set(slug, {
         slug,
         name: profile.full_name,
-        level,
+        level: "",
         bio: row.bio ?? "",
         image: profile.avatar_url ?? "/images/empty-ink.jpg",
       });

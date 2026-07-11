@@ -7,7 +7,6 @@ import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
 import { Sheet } from "@/components/ui/Sheet";
 import { Spinner } from "@/components/ui/Spinner";
-import { InfoTip } from "@/components/ui/InfoTip";
 import {
   addCoach,
   deletePendingCoach,
@@ -23,9 +22,10 @@ export type CoachRow = {
   phone: string;
   bio: string;
   travelRadiusKm: number;
-  maxTeachableLevel: string;
+  baseAddress: string;
+  baseLat: number;
+  baseLng: number;
   tier: number;
-  dbsChecked: boolean;
   active: boolean;
 };
 
@@ -36,12 +36,11 @@ export type PendingCoachRow = {
   phone: string;
   bio: string;
   travelRadiusKm: number;
-  maxTeachableLevel: string;
+  baseAddress: string;
+  baseLat: number;
+  baseLng: number;
   tier: number;
-  dbsChecked: boolean;
 };
-
-const LEVELS = ["beginner", "intermediate", "advanced", "elite"] as const;
 
 type Form = {
   name: string;
@@ -49,9 +48,10 @@ type Form = {
   phone: string;
   bio: string;
   tier: number;
-  maxTeachableLevel: string;
   travelRadiusKm: number;
-  dbsChecked: boolean;
+  baseAddress: string;
+  baseLat: number;
+  baseLng: number;
 };
 
 const EMPTY_FORM: Form = {
@@ -60,9 +60,10 @@ const EMPTY_FORM: Form = {
   phone: "",
   bio: "",
   tier: 1,
-  maxTeachableLevel: "advanced",
   travelRadiusKm: 10,
-  dbsChecked: false,
+  baseAddress: "",
+  baseLat: 12.9716,
+  baseLng: 77.5946,
 };
 
 function toForm(c: CoachRow | PendingCoachRow): Form {
@@ -72,9 +73,10 @@ function toForm(c: CoachRow | PendingCoachRow): Form {
     phone: c.phone,
     bio: c.bio,
     tier: c.tier,
-    maxTeachableLevel: c.maxTeachableLevel,
     travelRadiusKm: c.travelRadiusKm,
-    dbsChecked: c.dbsChecked,
+    baseAddress: c.baseAddress,
+    baseLat: c.baseLat,
+    baseLng: c.baseLng,
   };
 }
 
@@ -144,9 +146,10 @@ export function CoachManager({
         phone: form.phone,
         bio: form.bio,
         tier: Number(form.tier),
-        maxTeachableLevel: form.maxTeachableLevel,
         travelRadiusKm: Number(form.travelRadiusKm),
-        dbsChecked: form.dbsChecked,
+        baseAddress: form.baseAddress,
+        baseLat: Number(form.baseLat),
+        baseLng: Number(form.baseLng),
       });
       if (r.ok) {
         setAddResult({ pending: Boolean(r.pending), name: form.name.trim() });
@@ -163,9 +166,10 @@ export function CoachManager({
         id: editId,
         bio: form.bio,
         travelRadiusKm: Number(form.travelRadiusKm),
-        maxTeachableLevel: form.maxTeachableLevel,
+        baseAddress: form.baseAddress,
+        baseLat: Number(form.baseLat),
+        baseLng: Number(form.baseLng),
         tier: Number(form.tier),
-        dbsChecked: form.dbsChecked,
         fullName: form.name,
         phone: form.phone,
       });
@@ -187,9 +191,10 @@ export function CoachManager({
         phone: form.phone,
         bio: form.bio,
         tier: Number(form.tier),
-        maxTeachableLevel: form.maxTeachableLevel,
         travelRadiusKm: Number(form.travelRadiusKm),
-        dbsChecked: form.dbsChecked,
+        baseAddress: form.baseAddress,
+        baseLat: Number(form.baseLat),
+        baseLng: Number(form.baseLng),
       });
       if (r.ok) {
         setMessage("Invite saved.");
@@ -234,9 +239,6 @@ export function CoachManager({
               </button>
               <div className="flex flex-col items-end gap-1.5">
                 <Badge tone={c.active ? "ok" : "err"}>{c.active ? "working" : "paused"}</Badge>
-                <Badge tone={c.dbsChecked ? "ok" : "err"}>
-                  {c.dbsChecked ? "Background check ✓" : "No background check"}
-                </Badge>
               </div>
             </div>
           </li>
@@ -404,25 +406,38 @@ function DetailFields({
         placeholder="A line or two shown to clients"
       />
       <Input
-        label="Travels up to (km)"
+        label="Base location (address)"
+        hint="Where they're based — used to prefer nearby coaches."
+        value={form.baseAddress}
+        onChange={(e) => onChange({ baseAddress: e.target.value })}
+        placeholder="e.g. Indiranagar, Bengaluru"
+      />
+      <div className="grid grid-cols-2 gap-3">
+        <Input
+          label="Latitude"
+          type="number"
+          step="any"
+          hint="Decimal degrees"
+          value={form.baseLat}
+          onChange={(e) => onChange({ baseLat: Number(e.target.value) })}
+        />
+        <Input
+          label="Longitude"
+          type="number"
+          step="any"
+          hint="Decimal degrees"
+          value={form.baseLng}
+          onChange={(e) => onChange({ baseLng: Number(e.target.value) })}
+        />
+      </div>
+      <Input
+        label="Travel radius (km)"
         type="number"
         min={1}
-        hint="How far they'll go for home sessions."
+        hint="Coaches further away score lower but are never blocked."
         value={form.travelRadiusKm}
         onChange={(e) => onChange({ travelRadiusKm: Number(e.target.value) })}
       />
-      <Select
-        label="Can teach up to"
-        hint="They won't be given classes above this level."
-        value={form.maxTeachableLevel}
-        onChange={(e) => onChange({ maxTeachableLevel: e.target.value })}
-      >
-        {LEVELS.map((l) => (
-          <option key={l} value={l}>
-            {l}
-          </option>
-        ))}
-      </Select>
       <Select
         label="Seniority"
         hint="When two coaches fit equally, the more senior one is picked."
@@ -433,16 +448,6 @@ function DetailFields({
         <option value={2}>Senior</option>
         <option value={3}>Head coach</option>
       </Select>
-      <label className="flex items-center gap-3 text-sm">
-        <input
-          type="checkbox"
-          checked={form.dbsChecked}
-          onChange={(e) => onChange({ dbsChecked: e.target.checked })}
-          className="h-5 w-5 accent-[var(--ember)]"
-        />
-        Background check verified
-        <InfoTip text="Needed before they can coach anyone under 18. Tick this once you've seen their certificate." />
-      </label>
     </>
   );
 }

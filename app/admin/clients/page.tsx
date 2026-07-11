@@ -15,7 +15,7 @@ export default async function AdminClientsPage() {
     .limit(200);
 
   const ids = (clients ?? []).map((c) => c.id);
-  const [{ data: subs }, { data: invoices }, { data: bookings }, { data: plans }] =
+  const [{ data: subs }, { data: invoices }, { data: bookings }, { data: plans }, { data: players }] =
     await Promise.all([
       ids.length
         ? supabase
@@ -35,10 +35,17 @@ export default async function AdminClientsPage() {
         ? supabase
             .from("bookings")
             .select("client_id,status")
-            .eq("status", "no_show")
+            .in("status", ["attended", "no_show"])
             .in("client_id", ids)
         : Promise.resolve({ data: [] }),
       supabase.from("plans").select("id,name").eq("active", true).order("price_pence"),
+      ids.length
+        ? supabase
+            .from("players")
+            .select("id,client_id,full_name,skill_level")
+            .in("client_id", ids)
+            .order("created_at")
+        : Promise.resolve({ data: [] }),
     ]);
 
   const subByClient = new Map(
@@ -52,8 +59,19 @@ export default async function AdminClientsPage() {
     ltv.set(inv.client_id, (ltv.get(inv.client_id) ?? 0) + inv.amount_pence);
   }
   const noShows = new Map<string, number>();
+  const attended = new Map<string, number>();
   for (const b of bookings ?? []) {
-    noShows.set(b.client_id, (noShows.get(b.client_id) ?? 0) + 1);
+    const bucket = b.status === "no_show" ? noShows : attended;
+    bucket.set(b.client_id, (bucket.get(b.client_id) ?? 0) + 1);
+  }
+  const studentsByClient = new Map<
+    string,
+    { id: string; name: string; level: string }[]
+  >();
+  for (const p of players ?? []) {
+    const list = studentsByClient.get(p.client_id) ?? [];
+    list.push({ id: p.id, name: p.full_name, level: p.skill_level });
+    studentsByClient.set(p.client_id, list);
   }
 
   const rows = (clients ?? []).map((c) => ({
@@ -63,10 +81,13 @@ export default async function AdminClientsPage() {
     phone: c.phone,
     disputed: c.disputed,
     archived: c.deleted_at !== null,
+    createdAt: c.created_at,
     subStatus: subByClient.get(c.id)?.status ?? null,
     planName: subByClient.get(c.id)?.plan ?? null,
     ltvPence: ltv.get(c.id) ?? 0,
     noShowCount: noShows.get(c.id) ?? 0,
+    attendedCount: attended.get(c.id) ?? 0,
+    students: studentsByClient.get(c.id) ?? [],
   }));
 
   return (

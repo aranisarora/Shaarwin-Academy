@@ -27,6 +27,7 @@ export async function addStudentNote(
   if (error) return { ok: false, error: "Couldn’t save the note." };
 
   revalidatePath(`/coach/clients/${playerId}`);
+  revalidatePath(`/admin/clients/${playerId}`);
   return { ok: true };
 }
 
@@ -45,5 +46,6 @@ export async function deleteStudentNote(
   if (error) return { ok: false, error: "Couldn’t delete the note." };
 
   revalidatePath(`/coach/clients/${playerId}`);
+  revalidatePath(`/admin/clients/${playerId}`);
   return { ok: true };
 }

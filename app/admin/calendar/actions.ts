@@ -16,7 +16,7 @@ import {
   type PrivateSessionInput,
 } from "@/lib/admin-ops";
 
-type Result = { ok: boolean; error?: string };
+type Result = { ok: boolean; error?: string; code?: string };
 
 function refresh() {
   revalidatePath("/admin/calendar");
@@ -28,11 +28,12 @@ function refresh() {
 export async function reassignSession(
   sessionId: string,
   coachId: string,
-  lock: boolean
+  lock: boolean,
+  force = false
 ): Promise<Result> {
   const { supabase, founder } = await requireFounder();
   if (!founder) return { ok: false, error: "Founder only." };
-  const result = await reassignSessionCore(supabase, founder.id, sessionId, coachId, lock);
+  const result = await reassignSessionCore(supabase, founder.id, sessionId, coachId, lock, force);
   if (!result.ok) return result;
   refresh();
   return { ok: true };
