@@ -23,12 +23,14 @@ export async function reassignSessionCore(
   founderId: string,
   sessionId: string,
   coachId: string,
-  lock: boolean
+  lock: boolean,
+  force = false
 ): Promise<OpResult> {
   const { error } = await supabase.rpc("founder_reassign", {
     p_session: sessionId,
     p_coach: coachId,
     p_lock: lock,
+    p_force: force,
   });
 
   if (error && (error.code === "PGRST202" || error.code === "42883")) {
@@ -58,10 +60,24 @@ export async function reassignSessionCore(
     });
   } else if (error) {
     if (error.message.includes("filter_failed")) {
+      const reason = error.message.split("filter_failed_")[1] ?? "hard filter";
+      const friendly: Record<string, string> = {
+        inactive: "they're paused",
+        time_off: "they're on approved time off",
+        unavailable: "the slot is outside their availability hours",
+        overlap: "they'd clash with another session (incl. travel buffer)",
+        out_of_radius: "the address is outside their travel radius",
+        level_too_high: "the class level is above what they teach",
+        dbs_required: "a junior is booked and they have no DBS check",
+      };
       return {
         ok: false,
-        error: `That coach doesn't fit: ${error.message.split("filter_failed_")[1] ?? "hard filter"}.`,
+        code: "filter_failed",
+        error: `That coach doesn't fit: ${friendly[reason] ?? reason}.`,
       };
+    }
+    if (error.message.includes("coach_no_overlap")) {
+      return { ok: false, error: "That coach already has an overlapping session." };
     }
     return { ok: false, error: "Reassign failed." };
   }
