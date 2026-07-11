@@ -29,6 +29,109 @@ export async function updateClientCore(
   return { ok: true };
 }
 
+/** What an admin enters when pre-registering an offline client by phone. */
+export type ClientInviteDetails = {
+  phone: string;
+  fullName: string;
+  notes: string;
+};
+
+/**
+ * Pre-register a client by phone number. When any account ends up with this
+ * phone (web signup + WhatsApp link, or messaging the bot cold), the
+ * profiles-phone trigger claims the invite and applies the name/notes.
+ */
+export async function addClientInviteCore(
+  supabase: SupabaseClient,
+  founderId: string,
+  d: ClientInviteDetails
+): Promise<OpResult> {
+  const phone = normalizePhone(d.phone);
+  if (!phone) return { ok: false, error: "That phone number doesn't look valid." };
+
+  // Already an account with this number? Nothing to pre-register.
+  const { data: existing } = await supabase
+    .from("profiles")
+    .select("id,full_name")
+    .eq("phone", phone)
+    .maybeSingle();
+  if (existing) {
+    return {
+      ok: false,
+      error: `${existing.full_name || "Someone"} already has an account with that number.`,
+    };
+  }
+
+  const { error } = await supabase.from("client_invites").upsert(
+    {
+      phone,
+      full_name: d.fullName.trim() || null,
+      notes: d.notes.trim() || null,
+      created_by: founderId,
+      claimed_at: null,
+      claimed_by: null,
+    },
+    { onConflict: "phone" }
+  );
+  if (error) return { ok: false, error: "Couldn't save the client." };
+  await supabase.from("audit_log").insert({
+    actor_id: founderId,
+    action: "client.invite",
+    entity: "client_invites",
+    meta: { phone, name: d.fullName.trim() },
+  });
+  return { ok: true };
+}
+
+/** Edit a not-yet-claimed client invite. */
+export async function savePendingClientCore(
+  supabase: SupabaseClient,
+  founderId: string,
+  id: string,
+  d: ClientInviteDetails
+): Promise<OpResult> {
+  const phone = normalizePhone(d.phone);
+  if (!phone) return { ok: false, error: "That phone number doesn't look valid." };
+  const { error } = await supabase
+    .from("client_invites")
+    .update({
+      phone,
+      full_name: d.fullName.trim() || null,
+      notes: d.notes.trim() || null,
+    })
+    .eq("id", id)
+    .is("claimed_at", null);
+  if (error) return { ok: false, error: "Couldn't save the client." };
+  await supabase.from("audit_log").insert({
+    actor_id: founderId,
+    action: "client.invite_update",
+    entity: "client_invites",
+    entity_id: id,
+  });
+  return { ok: true };
+}
+
+/** Remove a not-yet-claimed client invite. */
+export async function deletePendingClientCore(
+  supabase: SupabaseClient,
+  founderId: string,
+  id: string
+): Promise<OpResult> {
+  const { error } = await supabase
+    .from("client_invites")
+    .delete()
+    .eq("id", id)
+    .is("claimed_at", null);
+  if (error) return { ok: false, error: "Couldn't remove the client." };
+  await supabase.from("audit_log").insert({
+    actor_id: founderId,
+    action: "client.invite_revoke",
+    entity: "client_invites",
+    entity_id: id,
+  });
+  return { ok: true };
+}
+
 /** Payment-dispute freeze: a blocked client can sign in but can't book. */
 export async function setClientBlockedCore(
   supabase: SupabaseClient,

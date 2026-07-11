@@ -10,10 +10,20 @@ import { Sheet } from "@/components/ui/Sheet";
 import { Spinner } from "@/components/ui/Spinner";
 import { grantCompSubscription, adjustCredits } from "@/app/admin/actions";
 import {
+  addClientInvite,
+  deletePendingClient,
+  savePendingClient,
   updateClient,
   setClientBlocked,
   setClientArchived,
 } from "@/app/admin/clients/actions";
+
+export type PendingClientRow = {
+  id: string;
+  phone: string;
+  name: string;
+  notes: string;
+};
 
 type ClientRow = {
   id: string;
@@ -34,13 +44,23 @@ type ClientRow = {
 export function ClientManager({
   clients,
   plans,
+  pending: pendingInvites,
 }: {
   clients: ClientRow[];
   plans: { id: string; name: string }[];
+  pending: PendingClientRow[];
 }) {
   const [search, setSearch] = useState("");
   const [showArchived, setShowArchived] = useState(false);
   const [selected, setSelected] = useState<ClientRow | null>(null);
+  // Add / edit-pending invite sheets (pre-registered clients by phone).
+  const [inviteMode, setInviteMode] = useState<"add" | "edit" | null>(null);
+  const [inviteId, setInviteId] = useState<string | null>(null);
+  const [invitePhone, setInvitePhone] = useState("");
+  const [inviteName, setInviteName] = useState("");
+  const [inviteNotes, setInviteNotes] = useState("");
+  const [inviteMessage, setInviteMessage] = useState<string | null>(null);
+  const [inviteSaved, setInviteSaved] = useState(false);
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [planId, setPlanId] = useState(plans[0]?.id ?? "");
@@ -66,11 +86,61 @@ export function ClientManager({
     setNote("");
   }
 
+  function openAddInvite() {
+    setInviteMode("add");
+    setInviteId(null);
+    setInvitePhone("");
+    setInviteName("");
+    setInviteNotes("");
+    setInviteMessage(null);
+    setInviteSaved(false);
+  }
+
+  function openEditInvite(p: PendingClientRow) {
+    setInviteMode("edit");
+    setInviteId(p.id);
+    setInvitePhone(p.phone);
+    setInviteName(p.name);
+    setInviteNotes(p.notes);
+    setInviteMessage(null);
+    setInviteSaved(false);
+  }
+
+  function submitInvite() {
+    startTransition(async () => {
+      const details = { phone: invitePhone, fullName: inviteName, notes: inviteNotes };
+      const r =
+        inviteMode === "edit" && inviteId
+          ? await savePendingClient(inviteId, details)
+          : await addClientInvite(details);
+      if (r.ok) {
+        if (inviteMode === "edit") setInviteMode(null);
+        else setInviteSaved(true);
+      } else {
+        setInviteMessage(r.error ?? "Failed.");
+      }
+    });
+  }
+
+  function removeInvite() {
+    if (!inviteId) return;
+    if (!window.confirm("Remove this client? Their account won't connect when they sign up."))
+      return;
+    startTransition(async () => {
+      const r = await deletePendingClient(inviteId);
+      if (r.ok) setInviteMode(null);
+      else setInviteMessage(r.error ?? "Failed.");
+    });
+  }
+
   return (
     <div className="space-y-4">
-      <p className="text-sm text-fg-2">
-        Clients sign themselves up on the website — everyone appears here automatically.
-      </p>
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-sm text-fg-2">
+          Clients sign themselves up on the website — everyone appears here automatically.
+        </p>
+        <Button onClick={openAddInvite}>Add client</Button>
+      </div>
       <Input
         placeholder="Search clients…"
         value={search}
@@ -133,6 +203,87 @@ export function ClientManager({
           <li className="px-4 py-6 text-center text-sm text-fg-2">No matches.</li>
         )}
       </ul>
+
+      {/* ── Pre-registered clients waiting to sign up ── */}
+      {pendingInvites.length > 0 && (
+        <div className="space-y-2">
+          <p className="label">Added by you — waiting to sign up</p>
+          <ul className="divide-y divide-line rounded-[12px] border border-line bg-surface-2">
+            {pendingInvites.map((p) => (
+              <li key={p.id} className="px-4 py-3">
+                <div className="flex items-center justify-between gap-3">
+                  <button onClick={() => openEditInvite(p)} className="text-left hover:text-ember">
+                    <p className="font-medium">{p.name || p.phone}</p>
+                    <p className="text-sm text-fg-2">{p.phone}</p>
+                  </button>
+                  <Badge tone="ember">Awaiting signup</Badge>
+                </div>
+              </li>
+            ))}
+          </ul>
+          <p className="text-sm text-fg-2">
+            When they sign up (or message the WhatsApp assistant) from their number, their
+            account connects automatically.
+          </p>
+        </div>
+      )}
+
+      {/* ── Add / edit a pre-registered client ── */}
+      <Sheet
+        open={inviteMode !== null}
+        onClose={() => setInviteMode(null)}
+        title={inviteMode === "edit" ? "Edit client" : "Add a client"}
+      >
+        {inviteSaved ? (
+          <div className="space-y-4">
+            <p className="text-sm text-fg-2">
+              Saved. When {inviteName.trim() || "they"} sign up on the website or message the
+              WhatsApp assistant from {invitePhone || "that number"}, their account connects
+              automatically and appears in your client list.
+            </p>
+            <Button variant="ghost" onClick={() => setInviteMode(null)} className="w-full">
+              Done
+            </Button>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <p className="text-sm text-fg-2">
+              {inviteMode === "edit"
+                ? "They haven't signed up yet. These details apply automatically when they do."
+                : "Enter their phone number. When they sign up or message the WhatsApp assistant from it, their account connects automatically."}
+            </p>
+            <Input
+              label="Phone"
+              value={invitePhone}
+              onChange={(e) => setInvitePhone(e.target.value)}
+              placeholder="+91…"
+              hint="Their WhatsApp number — this is how we recognise them."
+            />
+            <Input
+              label="Full name"
+              value={inviteName}
+              onChange={(e) => setInviteName(e.target.value)}
+              placeholder="Optional"
+            />
+            <Input
+              label="Notes"
+              value={inviteNotes}
+              onChange={(e) => setInviteNotes(e.target.value)}
+              placeholder="Optional — e.g. trains Tuesdays, intermediate"
+              hint="Saved onto their student record when they join."
+            />
+            <Button onClick={submitInvite} disabled={pending || !invitePhone.trim()} className="w-full">
+              {pending ? <Spinner /> : inviteMode === "edit" ? "Save client" : "Add client"}
+            </Button>
+            {inviteMode === "edit" && (
+              <Button variant="destructive" disabled={pending} className="w-full" onClick={removeInvite}>
+                Remove client
+              </Button>
+            )}
+            {inviteMessage && <p className="text-sm text-err">{inviteMessage}</p>}
+          </div>
+        )}
+      </Sheet>
 
       <Sheet open={selected !== null} onClose={() => setSelected(null)} title={selected?.name}>
         {selected && (

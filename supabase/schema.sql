@@ -124,6 +124,17 @@ create table public.classes (
   created_at timestamptz default now() not null
 );
 
+create table public.client_invites (
+  id uuid default gen_random_uuid() not null,
+  phone text not null,
+  full_name text,
+  notes text,
+  created_by uuid,
+  created_at timestamptz default now() not null,
+  claimed_at timestamptz,
+  claimed_by uuid
+);
+
 create table public.coach_assignments (
   id uuid default gen_random_uuid() not null,
   session_id uuid not null,
@@ -432,6 +443,10 @@ ALTER TABLE public.classes ADD CONSTRAINT classes_venue_id_fkey FOREIGN KEY (ven
 ALTER TABLE public.classes ADD CONSTRAINT classes_capacity_check CHECK ((capacity >= 1));
 ALTER TABLE public.classes ADD CONSTRAINT classes_duration_minutes_check CHECK (((duration_minutes >= 30) AND (duration_minutes <= 240)));
 ALTER TABLE public.classes ADD CONSTRAINT group_needs_venue CHECK (((class_type <> 'group'::class_type) OR (venue_id IS NOT NULL)));
+ALTER TABLE public.client_invites ADD CONSTRAINT client_invites_pkey PRIMARY KEY (id);
+ALTER TABLE public.client_invites ADD CONSTRAINT client_invites_phone_key UNIQUE (phone);
+ALTER TABLE public.client_invites ADD CONSTRAINT client_invites_created_by_fkey FOREIGN KEY (created_by) REFERENCES profiles(id) ON DELETE SET NULL;
+ALTER TABLE public.client_invites ADD CONSTRAINT client_invites_claimed_by_fkey FOREIGN KEY (claimed_by) REFERENCES profiles(id) ON DELETE SET NULL;
 ALTER TABLE public.coach_assignments ADD CONSTRAINT coach_assignments_pkey PRIMARY KEY (id);
 ALTER TABLE public.coach_assignments ADD CONSTRAINT coach_assignments_assigned_by_fkey FOREIGN KEY (assigned_by) REFERENCES profiles(id) ON DELETE SET NULL;
 ALTER TABLE public.coach_assignments ADD CONSTRAINT coach_assignments_coach_id_fkey FOREIGN KEY (coach_id) REFERENCES coaches(id) ON DELETE CASCADE;
@@ -1493,6 +1508,65 @@ begin
   insert into players (client_id, full_name)
   select new.id, v_name
   where not exists (select 1 from players where client_id = new.id);
+
+  return new;
+end;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.claim_client_invite()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare
+  v_invite public.client_invites%rowtype;
+begin
+  if new.role <> 'client' then
+    return new;
+  end if;
+
+  select * into v_invite
+  from public.client_invites
+  where phone = new.phone
+    and claimed_at is null
+  order by created_at
+  limit 1;
+  if not found then
+    return new;
+  end if;
+
+  if coalesce(v_invite.full_name, '') <> '' then
+    -- Only fill placeholders; never overwrite a name the client chose.
+    update profiles
+    set full_name = v_invite.full_name
+    where id = new.id and coalesce(full_name, '') = '';
+
+    update players
+    set full_name = v_invite.full_name
+    where client_id = new.id and full_name in ('', 'there');
+  end if;
+
+  if coalesce(v_invite.notes, '') <> '' then
+    update players
+    set notes = v_invite.notes
+    where client_id = new.id
+      and notes is null
+      and id = (
+        select id from players
+        where client_id = new.id
+        order by created_at
+        limit 1
+      );
+  end if;
+
+  update public.client_invites
+  set claimed_at = now(), claimed_by = new.id
+  where id = v_invite.id;
+
+  insert into audit_log (actor_id, action, entity, entity_id, meta)
+  values (new.id, 'client.invite_claim', 'client_invites', v_invite.id,
+          jsonb_build_object('phone', new.phone));
 
   return new;
 end;
@@ -2707,6 +2781,7 @@ CREATE TRIGGER players_ops_feed AFTER INSERT ON public.players FOR EACH ROW EXEC
 CREATE TRIGGER profiles_ops_feed AFTER INSERT ON public.profiles FOR EACH ROW EXECUTE FUNCTION ops_notify_new_profile();
 CREATE TRIGGER subscriptions_ops_feed AFTER INSERT OR UPDATE OF status ON public.subscriptions FOR EACH ROW EXECUTE FUNCTION ops_notify_subscription();
 CREATE TRIGGER wa_links_ops_feed AFTER INSERT ON public.wa_links FOR EACH ROW EXECUTE FUNCTION ops_notify_wa_linked();
+CREATE TRIGGER profiles_claim_client_invite AFTER INSERT OR UPDATE OF phone ON public.profiles FOR EACH ROW WHEN ((new.phone IS NOT NULL)) EXECUTE FUNCTION claim_client_invite();
 
 -- ── Row Level Security ───────────────────────────────────────────────────────
 alter table public.area_interest enable row level security;
@@ -2716,6 +2791,7 @@ alter table public.bookings enable row level security;
 alter table public.class_credits enable row level security;
 alter table public.class_sessions enable row level security;
 alter table public.classes enable row level security;
+alter table public.client_invites enable row level security;
 alter table public.coach_assignments enable row level security;
 alter table public.coach_availability enable row level security;
 alter table public.coach_time_off enable row level security;
@@ -2759,6 +2835,7 @@ CREATE POLICY "founder writes sessions" ON public.class_sessions AS PERMISSIVE F
 CREATE POLICY "read scheduled sessions" ON public.class_sessions AS PERMISSIVE FOR SELECT TO public USING ((class_is_public_group(class_id) OR (coach_id = auth.uid()) OR is_founder() OR client_owns_private_class(class_id)));
 CREATE POLICY "founder writes classes" ON public.classes AS PERMISSIVE FOR ALL TO public USING (is_founder());
 CREATE POLICY "public reads active group classes" ON public.classes AS PERMISSIVE FOR SELECT TO public USING ((((active = true) AND (class_type = 'group'::class_type)) OR is_founder() OR (is_coach() AND coach_teaches_class(id)) OR client_owns_private_class(id)));
+CREATE POLICY "founder all client invites" ON public.client_invites AS PERMISSIVE FOR ALL TO public USING (is_founder());
 CREATE POLICY "assignments visible" ON public.coach_assignments AS PERMISSIVE FOR SELECT TO public USING (((coach_id = auth.uid()) OR is_founder()));
 CREATE POLICY "founder writes assignments" ON public.coach_assignments AS PERMISSIVE FOR ALL TO public USING (is_founder());
 CREATE POLICY "coach writes own availability" ON public.coach_availability AS PERMISSIVE FOR ALL TO public USING ((coach_id = auth.uid())) WITH CHECK ((coach_id = auth.uid()));
