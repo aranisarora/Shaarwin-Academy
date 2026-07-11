@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import Link from "next/link";
 import { Badge } from "@/components/ui/Badge";
 import { Input } from "@/components/ui/Input";
@@ -19,55 +19,112 @@ type PlayerRow = {
   clientPhone: string | null;
 };
 
+const LEVELS = ["beginner", "intermediate", "advanced", "elite"] as const;
+
 const LEVEL_LABELS: Record<string, string> = {
   beginner: "Beginner",
   intermediate: "Intermediate",
   advanced: "Advanced",
+  elite: "Elite",
 };
 
-function age(dob: string): string {
-  const d = new Date(dob);
-  const a = Math.floor((Date.now() - d.getTime()) / (365.25 * 86400000));
-  return `${a}y`;
+const LEVEL_TONE: Record<string, "neutral" | "ok" | "ember"> = {
+  beginner: "neutral",
+  intermediate: "ok",
+  advanced: "ember",
+  elite: "ember",
+};
+
+function levelLabel(level: string): string {
+  return LEVEL_LABELS[level] ?? level;
+}
+
+function ageYears(dob: string): number {
+  return Math.floor((Date.now() - new Date(dob).getTime()) / (365.25 * 86400000));
+}
+
+function initials(name: string): string {
+  return name
+    .trim()
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((w) => w[0]?.toUpperCase() ?? "")
+    .join("");
 }
 
 export function PlayerManager({ players }: { players: PlayerRow[] }) {
   const [search, setSearch] = useState("");
+  const [level, setLevel] = useState<string | null>(null);
   const [selected, setSelected] = useState<PlayerRow | null>(null);
 
-  const filtered = players.filter(
-    (p) =>
-      p.name.toLowerCase().includes(search.toLowerCase()) ||
-      p.clientName.toLowerCase().includes(search.toLowerCase()) ||
-      p.clientEmail.toLowerCase().includes(search.toLowerCase())
-  );
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return players.filter(
+      (p) =>
+        (level === null || p.skillLevel === level) &&
+        (q === "" ||
+          p.name.toLowerCase().includes(q) ||
+          p.clientName.toLowerCase().includes(q) ||
+          p.clientEmail.toLowerCase().includes(q))
+    );
+  }, [players, search, level]);
 
   return (
     <div className="space-y-4">
-      <p className="text-sm text-fg-2">
-        All household players across every client account.
-      </p>
+      <div className="flex items-baseline justify-between gap-3">
+        <p className="text-sm text-fg-2">
+          Every household player across all client accounts.
+        </p>
+        <span className="tnum shrink-0 text-sm text-fg-2">
+          {filtered.length} of {players.length}
+        </span>
+      </div>
+
       <Input
         placeholder="Search by player or client…"
         value={search}
         onChange={(e) => setSearch(e.target.value)}
       />
 
+      <div className="flex flex-wrap gap-2">
+        <FilterChip
+          label="All"
+          active={level === null}
+          onClick={() => setLevel(null)}
+        />
+        {LEVELS.map((l) => (
+          <FilterChip
+            key={l}
+            label={LEVEL_LABELS[l]}
+            active={level === l}
+            onClick={() => setLevel(level === l ? null : l)}
+          />
+        ))}
+      </div>
+
       <ul className="divide-y divide-line rounded-[12px] border border-line bg-surface-2">
         {filtered.map((p) => (
           <li key={p.id}>
             <button
               onClick={() => setSelected(p)}
-              className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left hover:bg-surface"
+              className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-surface"
             >
-              <div>
-                <p className="font-medium">{p.name}</p>
-                <p className="text-sm text-fg-2">{p.clientName}</p>
+              <span
+                aria-hidden
+                className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-surface text-sm font-medium text-fg-2"
+              >
+                {initials(p.name)}
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="truncate font-medium">{p.name}</p>
+                <p className="truncate text-sm text-fg-2">{p.clientName}</p>
               </div>
               <div className="flex flex-col items-end gap-1">
-                <Badge>{LEVEL_LABELS[p.skillLevel] ?? p.skillLevel}</Badge>
+                <Badge tone={LEVEL_TONE[p.skillLevel]}>{levelLabel(p.skillLevel)}</Badge>
                 {p.dateOfBirth && (
-                  <span className="text-xs text-fg-2">{age(p.dateOfBirth)}</span>
+                  <span className="tnum text-xs text-fg-2">
+                    {ageYears(p.dateOfBirth)}y
+                  </span>
                 )}
               </div>
             </button>
@@ -85,24 +142,29 @@ export function PlayerManager({ players }: { players: PlayerRow[] }) {
       >
         {selected && (
           <div className="space-y-6">
-            <div className="space-y-1">
-              <p className="label">Skill level</p>
-              <Badge>{LEVEL_LABELS[selected.skillLevel] ?? selected.skillLevel}</Badge>
-            </div>
-
-            {selected.dateOfBirth && (
-              <div className="space-y-1">
-                <p className="label">Date of birth</p>
-                <p className="tnum text-sm">
-                  {new Date(selected.dateOfBirth).toLocaleDateString("en-GB", {
-                    day: "numeric",
-                    month: "short",
-                    year: "numeric",
-                  })}{" "}
-                  <span className="text-fg-2">({age(selected.dateOfBirth)} old)</span>
-                </p>
+            <div className="flex items-center gap-3">
+              <span
+                aria-hidden
+                className="grid h-12 w-12 shrink-0 place-items-center rounded-full bg-surface-2 text-base font-medium text-fg-2"
+              >
+                {initials(selected.name)}
+              </span>
+              <div>
+                <Badge tone={LEVEL_TONE[selected.skillLevel]}>
+                  {levelLabel(selected.skillLevel)}
+                </Badge>
+                {selected.dateOfBirth && (
+                  <p className="tnum mt-1 text-sm text-fg-2">
+                    {new Date(selected.dateOfBirth).toLocaleDateString("en-GB", {
+                      day: "numeric",
+                      month: "short",
+                      year: "numeric",
+                    })}{" "}
+                    · {ageYears(selected.dateOfBirth)} yrs
+                  </p>
+                )}
               </div>
-            )}
+            </div>
 
             {selected.notes && (
               <div className="space-y-1">
@@ -130,5 +192,29 @@ export function PlayerManager({ players }: { players: PlayerRow[] }) {
         )}
       </Sheet>
     </div>
+  );
+}
+
+function FilterChip({
+  label,
+  active,
+  onClick,
+}: {
+  label: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      aria-pressed={active}
+      className={`rounded-full border px-3 py-1 text-sm font-medium transition-colors ${
+        active
+          ? "border-ember bg-ember/10 text-ember"
+          : "border-line text-fg-2 hover:bg-surface-2"
+      }`}
+    >
+      {label}
+    </button>
   );
 }
