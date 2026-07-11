@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import Link from "next/link";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
@@ -21,10 +22,13 @@ type ClientRow = {
   phone: string | null;
   disputed: boolean;
   archived: boolean;
+  createdAt: string;
   subStatus: string | null;
   planName: string | null;
   ltvPence: number;
   noShowCount: number;
+  attendedCount: number;
+  students: { id: string; name: string; level: string }[];
 };
 
 export function ClientManager({
@@ -113,8 +117,14 @@ export function ClientManager({
                 )}
                 <span className="tnum text-xs text-fg-2">
                   paid £{(c.ltvPence / 100).toFixed(0)}
+                  {c.attendedCount > 0 && ` · ${c.attendedCount} attended`}
                   {c.noShowCount > 0 && ` · ${c.noShowCount} no-shows`}
                 </span>
+                {c.students.length > 1 && (
+                  <span className="text-xs text-fg-2">
+                    {c.students.length} students
+                  </span>
+                )}
               </div>
             </button>
           </li>
@@ -128,9 +138,44 @@ export function ClientManager({
         {selected && (
           <div className="space-y-6">
             <p className="tnum text-sm text-fg-2">
-              Paid so far £{(selected.ltvPence / 100).toFixed(0)} · {selected.noShowCount}{" "}
-              no-shows
+              Client since{" "}
+              {new Date(selected.createdAt).toLocaleDateString("en-GB", {
+                day: "numeric",
+                month: "short",
+                year: "numeric",
+              })}{" "}
+              · paid £{(selected.ltvPence / 100).toFixed(0)} · {selected.attendedCount}{" "}
+              attended · {selected.noShowCount} no-shows
             </p>
+
+            <div className="space-y-3 rounded-[12px] border border-line p-4">
+              <p className="label">Students</p>
+              {selected.students.length === 0 ? (
+                <p className="text-sm text-fg-2">No students on this account yet.</p>
+              ) : (
+                <ul className="divide-y divide-line">
+                  {selected.students.map((s) => (
+                    <li key={s.id}>
+                      <Link
+                        href={`/admin/clients/${s.id}`}
+                        className="group flex items-center justify-between gap-3 py-2.5"
+                      >
+                        <div>
+                          <p className="font-medium group-hover:text-ember">{s.name}</p>
+                          <p className="text-xs text-fg-2">{s.level}</p>
+                        </div>
+                        <span className="text-fg-2" aria-hidden>
+                          ›
+                        </span>
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <p className="text-sm text-fg-2">
+                Tap a student for notes, attendance and stats.
+              </p>
+            </div>
 
             <div className="space-y-3 rounded-[12px] border border-line p-4">
               <p className="label">Contact details</p>
