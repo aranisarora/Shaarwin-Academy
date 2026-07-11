@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { requireUser } from "@/lib/auth";
 import { AdminShell } from "@/components/app/AdminShell";
 import { SettingsEditor } from "@/components/app/SettingsEditor";
+import { InstallAppCard } from "@/components/app/InstallAppCard";
 import { SignOutButton } from "@/components/app/SignOutButton";
 
 export const metadata: Metadata = { title: "Settings" };
@@ -30,6 +31,7 @@ export default async function AdminSettingsPage() {
     <AdminShell title="Settings" actions={<SignOutButton />}>
       <div className="mx-auto max-w-xl space-y-8">
         <SettingsEditor values={values} />
+        <InstallAppCard />
       </div>
     </AdminShell>
   );
