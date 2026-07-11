@@ -28,7 +28,13 @@ export function InstallAppCard() {
       // @ts-expect-error iOS Safari only
       window.navigator.standalone === true;
     setStandalone(isStandalone);
-    setIsIos(/iphone|ipad|ipod/i.test(navigator.userAgent));
+    // navigator.userAgent is unreliable on modern iOS (Apple masks it).
+    // maxTouchPoints > 1 on a Mac platform is the standard iOS-on-iPad fallback.
+    const ua = navigator.userAgent;
+    const iosViaUA = /iphone|ipad|ipod/i.test(ua);
+    const iosViaTouch =
+      /Mac/.test(navigator.platform ?? "") && navigator.maxTouchPoints > 1;
+    setIsIos(iosViaUA || iosViaTouch);
 
     const onPrompt = (e: Event) => {
       e.preventDefault();
