@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import type { Venue } from "@/lib/data";
 import { VenueMap } from "@/components/marketing/VenueMap";
 import { Badge } from "@/components/ui/Badge";
@@ -16,8 +17,10 @@ export type VenueClassInfo = {
 
 export type EnrichedVenue = Venue & { classes: VenueClassInfo[] };
 
-/** How many nearby venues a guest is allowed to see. */
+/** How many nearby venues a guest is shown. */
 const MAX_VISIBLE = 3;
+/** How many classes per venue a guest is shown before the teaser. */
+const MAX_CLASSES_VISIBLE = 1;
 
 function haversineKm(
   a: { lat: number; lng: number },
@@ -64,48 +67,80 @@ export function NearbyVenues({ venues }: { venues: EnrichedVenue[] }) {
   return (
     <div className="grid gap-8 lg:grid-cols-[420px_1fr]">
       <div className="order-2 space-y-6 lg:order-1">
-        {visible.map((venue) => (
-          <div
-            key={venue.id}
-            className="rounded-[12px] border border-line bg-ink-2 p-5"
-          >
-            <h2 className="font-display text-xl">{venue.name}</h2>
-            <p className="mt-1 text-sm text-smoke">
-              {venue.address} · {venue.postcode}
-            </p>
-            <ul className="mt-4 space-y-3">
-              {venue.classes.map((c) => (
-                <li
-                  key={c.id}
-                  className="flex items-center justify-between gap-3 border-t border-line pt-3"
-                >
-                  <div>
-                    <p className="text-sm font-medium">{c.title}</p>
-                    <p className="tnum text-sm text-smoke">
-                      {c.nextLabel ?? "Schedule coming soon"}
-                    </p>
-                  </div>
-                  <Badge>{c.skill_level}</Badge>
-                </li>
-              ))}
-              {venue.classes.length === 0 && (
-                <li className="border-t border-line pt-3 text-sm text-smoke">
-                  New classes announced soon.
-                </li>
+        {visible.map((venue) => {
+          const shownClasses = venue.classes.slice(0, MAX_CLASSES_VISIBLE);
+          const hiddenClassCount = venue.classes.length - shownClasses.length;
+          return (
+            <div
+              key={venue.id}
+              className="rounded-[12px] border border-line bg-ink-2 p-5"
+            >
+              <h2 className="font-display text-xl">{venue.name}</h2>
+              <p className="mt-1 text-sm text-smoke">
+                {venue.address} · {venue.postcode}
+              </p>
+              <ul className="mt-4 space-y-3">
+                {shownClasses.map((c) => (
+                  <li
+                    key={c.id}
+                    className="flex items-center justify-between gap-3 border-t border-line pt-3"
+                  >
+                    <div>
+                      <p className="text-sm font-medium">{c.title}</p>
+                      <p className="tnum text-sm text-smoke">
+                        {c.nextLabel ?? "Schedule coming soon"}
+                      </p>
+                    </div>
+                    <Badge>{c.skill_level}</Badge>
+                  </li>
+                ))}
+                {venue.classes.length === 0 && (
+                  <li className="border-t border-line pt-3 text-sm text-smoke">
+                    New classes announced soon.
+                  </li>
+                )}
+                {hiddenClassCount > 0 && (
+                  <li className="border-t border-line pt-3">
+                    <Link
+                      href="/signup"
+                      className="text-sm text-ember hover:underline"
+                    >
+                      +{hiddenClassCount} more{" "}
+                      {hiddenClassCount === 1 ? "class" : "classes"} — create a
+                      free account to see them
+                    </Link>
+                  </li>
+                )}
+              </ul>
+              {venue.classes.length > 0 && (
+                <ButtonLink href="/signup?next=/app/book" className="mt-5 w-full">
+                  Book a class here
+                </ButtonLink>
               )}
-            </ul>
-            {venue.classes.length > 0 && (
-              <ButtonLink href="/signup?next=/app/book" className="mt-5 w-full">
-                Book a class here
-              </ButtonLink>
-            )}
-          </div>
-        ))}
+            </div>
+          );
+        })}
         {visible.length === 0 && (
           <p className="text-smoke">
             Venues are being finalised — check back shortly.
           </p>
         )}
+
+        {/* Teaser: more locations exist behind an account */}
+        <div className="rounded-[12px] border border-dashed border-line bg-ink-2/60 p-5 text-center">
+          <p className="text-sm font-medium text-ivory">
+            We have more locations across Bengaluru
+          </p>
+          <p className="mt-1 text-sm text-smoke">
+            Create a free account to see every venue and its full schedule.
+          </p>
+          <Link
+            href="/signup"
+            className="mt-4 inline-flex min-h-10 items-center rounded-[8px] border border-ember px-4 text-sm font-semibold text-ember transition hover:bg-ember hover:text-ivory"
+          >
+            See all locations →
+          </Link>
+        </div>
       </div>
       <div className="order-1 lg:order-2 lg:sticky lg:top-24 lg:self-start">
         <VenueMap
