@@ -111,7 +111,7 @@ export function BookBrowser({
   const slots = useMemo(() => {
     const map = new Map<string, Slot>();
     for (const s of sessions) {
-      if (level !== "all" && s.level !== level) continue;
+      if (level !== "all" && s.level !== level && s.level !== "any") continue;
       const p = slotParts(s.starts_at);
       if (weekday !== "all" && p.weekdayShort !== weekday) continue;
       const key = `${s.classId}|${p.weekday}|${p.time}`;
@@ -228,7 +228,7 @@ export function BookBrowser({
                           </p>
                         </div>
                         <div className="flex flex-col items-end gap-1.5">
-                          <Badge>{s.level}</Badge>
+                          <Badge>{s.level === "any" ? "all levels" : s.level}</Badge>
                           <span
                             className={`tnum text-xs ${left <= 0 ? "text-err" : left <= 3 ? "text-ember" : "text-fg-2"}`}
                           >

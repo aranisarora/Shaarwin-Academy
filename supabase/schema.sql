@@ -25,7 +25,7 @@ create type public.notification_channel as enum ('push', 'email', 'in_app');
 create type public.notification_status as enum ('pending', 'sent', 'failed');
 create type public.product_kind as enum ('group_dropin', 'private_oneoff', 'private_intro');
 create type public.session_status as enum ('scheduled', 'completed', 'cancelled');
-create type public.skill_level as enum ('beginner', 'intermediate', 'advanced', 'elite');
+create type public.skill_level as enum ('beginner', 'intermediate', 'advanced', 'elite', 'any');
 create type public.subscription_source as enum ('stripe', 'comp', 'razorpay');
 create type public.subscription_status as enum ('incomplete', 'trialing', 'active', 'past_due', 'canceled', 'paused');
 create type public.time_off_status as enum ('pending', 'approved', 'rejected');
@@ -2235,6 +2235,23 @@ begin
 end;
 $function$;
 
+CREATE OR REPLACE FUNCTION public.seed_default_coach_availability()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+begin
+  insert into coach_availability (coach_id, weekday, start_time, end_time)
+  select new.id, d, '16:00', '22:00'
+  from generate_series(0, 6) as d
+  where not exists (
+    select 1 from coach_availability where coach_id = new.id
+  );
+  return new;
+end;
+$function$;
+
 -- ── Founder ops feed (0018) — helpers, coach confirmation, event triggers ────
 
 CREATE OR REPLACE FUNCTION public.fmt_ist(ts timestamp with time zone)
@@ -2672,6 +2689,7 @@ CREATE OR REPLACE VIEW public.coach_client_view AS
 
 -- ── Triggers ─────────────────────────────────────────────────────────────────
 CREATE TRIGGER players_grant_trial AFTER INSERT ON public.players FOR EACH ROW EXECUTE FUNCTION grant_signup_trial();
+CREATE TRIGGER seed_coach_availability AFTER INSERT ON public.coaches FOR EACH ROW EXECUTE FUNCTION seed_default_coach_availability();
 CREATE TRIGGER bookings_ops_feed_insert AFTER INSERT ON public.bookings FOR EACH ROW EXECUTE FUNCTION ops_notify_booking_created();
 CREATE TRIGGER bookings_ops_feed_status AFTER UPDATE OF status ON public.bookings FOR EACH ROW EXECUTE FUNCTION ops_notify_booking_status();
 CREATE TRIGGER class_credits_ops_feed AFTER UPDATE ON public.class_credits FOR EACH ROW EXECUTE FUNCTION ops_notify_credit_used();

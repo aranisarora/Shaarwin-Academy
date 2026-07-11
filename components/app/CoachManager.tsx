@@ -7,6 +7,8 @@ import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
 import { Sheet } from "@/components/ui/Sheet";
 import { Spinner } from "@/components/ui/Spinner";
+import { AddressSearch, type GeocodeHit } from "@/components/app/AddressSearch";
+import { LocationPinMap } from "@/components/app/LocationPinMap";
 import {
   addCoach,
   deletePendingCoach,
@@ -91,6 +93,10 @@ export function CoachManager({
 }) {
   const [mode, setMode] = useState<Mode>(null);
   const [form, setForm] = useState<Form>(EMPTY_FORM);
+  // Address typeahead state lives here so it resets correctly each time a
+  // sheet opens (the sheets stay mounted between opens).
+  const [addrQuery, setAddrQuery] = useState("");
+  const [addrSelected, setAddrSelected] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
   const [editActive, setEditActive] = useState(true);
   const [addResult, setAddResult] = useState<{ pending: boolean; name: string } | null>(null);
@@ -100,6 +106,22 @@ export function CoachManager({
 
   const patch = (p: Partial<Form>) => setForm((f) => ({ ...f, ...p }));
 
+  function changeAddrQuery(q: string) {
+    setAddrQuery(q);
+    setAddrSelected(false);
+    patch({ baseAddress: q });
+  }
+
+  function pickAddress(hit: GeocodeHit) {
+    setAddrQuery(hit.place_name);
+    setAddrSelected(true);
+    patch({
+      baseAddress: hit.place_name,
+      baseLat: hit.center[1],
+      baseLng: hit.center[0],
+    });
+  }
+
   function close() {
     setMode(null);
     setAddResult(null);
@@ -108,6 +130,8 @@ export function CoachManager({
 
   function openAdd() {
     setForm(EMPTY_FORM);
+    setAddrQuery("");
+    setAddrSelected(false);
     setAddResult(null);
     setSheetMessage(null);
     setMode("add");
@@ -115,6 +139,8 @@ export function CoachManager({
 
   function openEdit(c: CoachRow) {
     setForm(toForm(c));
+    setAddrQuery(c.baseAddress);
+    setAddrSelected(c.baseAddress.length > 0);
     setEditId(c.id);
     setEditActive(c.active);
     setSheetMessage(null);
@@ -123,6 +149,8 @@ export function CoachManager({
 
   function openPending(p: PendingCoachRow) {
     setForm(toForm(p));
+    setAddrQuery(p.baseAddress);
+    setAddrSelected(p.baseAddress.length > 0);
     setEditId(p.id);
     setSheetMessage(null);
     setMode("pending");
@@ -297,7 +325,7 @@ export function CoachManager({
               Enter their details. If they already have an account they become a coach right
               away; otherwise they become a coach the moment they sign up with this email.
             </p>
-            <DetailFields form={form} onChange={patch} emailMode="edit" />
+            <DetailFields form={form} onChange={patch} emailMode="edit" addrQuery={addrQuery} addrSelected={addrSelected} onAddrQueryChange={changeAddrQuery} onAddrSelect={pickAddress} />
             <Button onClick={submitAdd} disabled={isPending} className="w-full">
               {isPending ? <Spinner /> : "Add coach"}
             </Button>
@@ -309,7 +337,7 @@ export function CoachManager({
       {/* ── Edit coach ── */}
       <Sheet open={mode === "edit"} onClose={close} title={form.name}>
         <div className="space-y-4">
-          <DetailFields form={form} onChange={patch} emailMode="readonly" />
+          <DetailFields form={form} onChange={patch} emailMode="readonly" addrQuery={addrQuery} addrSelected={addrSelected} onAddrQueryChange={changeAddrQuery} onAddrSelect={pickAddress} />
           <Button onClick={submitEdit} disabled={isPending} className="w-full">
             {isPending ? <Spinner /> : "Save coach"}
           </Button>
@@ -346,7 +374,7 @@ export function CoachManager({
           <p className="text-sm text-fg-2">
             They haven’t signed up yet. These details apply automatically when they do.
           </p>
-          <DetailFields form={form} onChange={patch} emailMode="edit" />
+          <DetailFields form={form} onChange={patch} emailMode="edit" addrQuery={addrQuery} addrSelected={addrSelected} onAddrQueryChange={changeAddrQuery} onAddrSelect={pickAddress} />
           <Button onClick={submitPending} disabled={isPending} className="w-full">
             {isPending ? <Spinner /> : "Save invite"}
           </Button>
@@ -364,10 +392,18 @@ function DetailFields({
   form,
   onChange,
   emailMode,
+  addrQuery,
+  addrSelected,
+  onAddrQueryChange,
+  onAddrSelect,
 }: {
   form: Form;
   onChange: (patch: Partial<Form>) => void;
   emailMode: "edit" | "readonly";
+  addrQuery: string;
+  addrSelected: boolean;
+  onAddrQueryChange: (q: string) => void;
+  onAddrSelect: (hit: GeocodeHit) => void;
 }) {
   return (
     <>
@@ -405,31 +441,24 @@ function DetailFields({
         onChange={(e) => onChange({ bio: e.target.value })}
         placeholder="A line or two shown to clients"
       />
-      <Input
-        label="Base location (address)"
-        hint="Where they're based — used to prefer nearby coaches."
-        value={form.baseAddress}
-        onChange={(e) => onChange({ baseAddress: e.target.value })}
+      <AddressSearch
+        label="Base location"
         placeholder="e.g. Indiranagar, Bengaluru"
+        query={addrQuery}
+        selected={addrSelected}
+        onQueryChange={onAddrQueryChange}
+        onSelect={onAddrSelect}
       />
-      <div className="grid grid-cols-2 gap-3">
-        <Input
-          label="Latitude"
-          type="number"
-          step="any"
-          hint="Decimal degrees"
-          value={form.baseLat}
-          onChange={(e) => onChange({ baseLat: Number(e.target.value) })}
-        />
-        <Input
-          label="Longitude"
-          type="number"
-          step="any"
-          hint="Decimal degrees"
-          value={form.baseLng}
-          onChange={(e) => onChange({ baseLng: Number(e.target.value) })}
-        />
-      </div>
+      {addrSelected && (
+        <div>
+          <p className="label mb-2">Drag the pin to fine-tune their base</p>
+          <LocationPinMap
+            lat={form.baseLat}
+            lng={form.baseLng}
+            onMove={(lat, lng) => onChange({ baseLat: lat, baseLng: lng })}
+          />
+        </div>
+      )}
       <Input
         label="Travel radius (km)"
         type="number"

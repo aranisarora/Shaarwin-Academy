@@ -65,10 +65,10 @@ export function StageHeader({ signedIn }: { signedIn: boolean }) {
           ) : (
             <>
               <Link
-                href="/login"
+                href="/signup"
                 className="inline-flex min-h-11 items-center rounded-[8px] px-3 text-sm text-fg-2 transition-colors hover:text-fg"
               >
-                Log in
+                Sign up
               </Link>
               <Link
                 href="/signup"

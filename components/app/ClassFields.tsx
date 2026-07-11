@@ -24,7 +24,7 @@ export type ClassFormState = {
 export const EMPTY_CLASS_FORM: ClassFormState = {
   title: "",
   description: "",
-  skillLevel: "beginner",
+  skillLevel: "any",
   capacity: 10,
   durationMinutes: 60,
   venueId: "",
@@ -35,7 +35,10 @@ export const EMPTY_CLASS_FORM: ClassFormState = {
 
 /** Auto-generate a class title from its defining attributes. */
 export function generateClassTitle(skillLevel: string, weekday: string, time: string): string {
-  const level = skillLevel.charAt(0).toUpperCase() + skillLevel.slice(1);
+  const level =
+    skillLevel === "any"
+      ? "All levels"
+      : skillLevel.charAt(0).toUpperCase() + skillLevel.slice(1);
   const day = WEEKDAY_NAME[weekday] ?? weekday;
   return `${level} — ${day} ${time}`;
 }
@@ -66,8 +69,8 @@ export function ClassDetailFields({
           value={form.skillLevel}
           onChange={(e) => onChange({ ...form, skillLevel: e.target.value })}
         >
-          {["beginner", "intermediate", "advanced", "elite"].map((l) => (
-            <option key={l} value={l}>{l}</option>
+          {["any", "beginner", "intermediate", "advanced", "elite"].map((l) => (
+            <option key={l} value={l}>{l === "any" ? "any level" : l}</option>
           ))}
         </Select>
         <Select

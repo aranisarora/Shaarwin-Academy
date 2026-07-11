@@ -107,7 +107,7 @@ const updateClass: WaTool = {
       class_id: { type: "string" },
       title: { type: "string" },
       description: { type: "string" },
-      skill_level: { type: "string", description: "beginner | intermediate | advanced" },
+      skill_level: { type: "string", description: "any | beginner | intermediate | advanced | elite" },
       capacity: { type: "number" },
       duration_minutes: { type: "number" },
       venue_id: { type: "string" },
