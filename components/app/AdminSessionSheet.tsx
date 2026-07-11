@@ -391,7 +391,7 @@ export function AdminSessionSheet({
                 onClick={() => {
                   if (
                     !window.confirm(
-                      `End ${session.title} completely? All upcoming weeks are cancelled and everyone booked gets a message. Past sessions stay in the history.`
+                      `End ${session.title} completely? All upcoming weeks are cancelled and everyone booked gets a message. Past sessions stay in the history — and you can restore the class later from the weekly classes list.`
                     )
                   )
                     return;

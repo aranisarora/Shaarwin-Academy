@@ -3,6 +3,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { academyWallToUtc, utcToAcademyWall } from "@/lib/academy-time";
+import { reassignSessionCore } from "@/lib/admin-ops-calendar";
 import type { OpResult } from "@/lib/admin-ops-types";
 
 const WEEKDAY_NUM: Record<string, number> = { MO: 1, TU: 2, WE: 3, TH: 4, FR: 5, SA: 6, SU: 7 };
@@ -222,6 +223,123 @@ export async function endGroupClassCore(
     entity: "classes",
     entity_id: classId,
     meta: { cancelled_sessions: ids.length },
+  });
+  return { ok: true };
+}
+
+/**
+ * Put one coach on every upcoming session of a class. Each session goes
+ * through the normal reassignment rules (with the founder's force override);
+ * sessions the coach genuinely can't take (hard time clash) are skipped and
+ * counted rather than failing the whole change.
+ */
+export async function reassignClassCoachCore(
+  supabase: SupabaseClient,
+  founderId: string,
+  classId: string,
+  coachId: string,
+  lock: boolean,
+  force = false
+): Promise<OpResult & { changed?: number; skipped?: number }> {
+  const { data: sessions } = await supabase
+    .from("class_sessions")
+    .select("id,coach_id")
+    .eq("class_id", classId)
+    .eq("status", "scheduled")
+    .gt("starts_at", new Date().toISOString())
+    .order("starts_at");
+  if (!sessions?.length)
+    return { ok: false, error: "No upcoming sessions to assign the coach to." };
+
+  let changed = 0;
+  let skipped = 0;
+  let firstFilterError: string | undefined;
+  for (const s of sessions) {
+    if (s.coach_id === coachId) {
+      changed += 1;
+      continue;
+    }
+    const r = await reassignSessionCore(supabase, founderId, s.id, coachId, lock, force);
+    if (r.ok) changed += 1;
+    else {
+      skipped += 1;
+      if (r.code === "filter_failed" && !firstFilterError) firstFilterError = r.error;
+    }
+  }
+
+  // All blocked by the rules and no force yet — let the caller offer override.
+  if (changed === 0 && firstFilterError && !force)
+    return { ok: false, code: "filter_failed", error: firstFilterError };
+  if (changed === 0) return { ok: false, error: "Couldn't assign that coach to any session." };
+
+  await supabase.from("audit_log").insert({
+    actor_id: founderId,
+    action: "class.reassign_coach",
+    entity: "classes",
+    entity_id: classId,
+    meta: { coach_id: coachId, changed, skipped, locked: lock },
+  });
+  return { ok: true, changed, skipped };
+}
+
+/**
+ * Bring an ended class back: reactivate it, revive the future sessions that
+ * "end class" cancelled, and top up the 8-week horizon. Bookings cancelled by
+ * the ending are not resurrected — clients were already told to rebook.
+ */
+export async function restoreGroupClassCore(
+  supabase: SupabaseClient,
+  founderId: string,
+  classId: string
+): Promise<OpResult> {
+  const { data: cls } = await supabase
+    .from("classes")
+    .select("id,title,active,ends_on")
+    .eq("id", classId)
+    .eq("class_type", "group")
+    .maybeSingle();
+  if (!cls) return { ok: false, error: "Class not found." };
+  if (cls.active && !cls.ends_on) return { ok: false, error: "This class is already running." };
+
+  const { error: clsErr } = await supabase
+    .from("classes")
+    .update({ active: true, ends_on: null })
+    .eq("id", classId);
+  if (clsErr) return { ok: false, error: "Couldn't restore the class." };
+
+  // Future sessions cancelled by "end class" come back as scheduled — they
+  // would otherwise block generate_class_sessions from refilling those slots.
+  const { data: revived } = await supabase
+    .from("class_sessions")
+    .update({ status: "scheduled", cancel_reason: null })
+    .eq("class_id", classId)
+    .eq("status", "cancelled")
+    .eq("cancel_reason", "class ended")
+    .gt("starts_at", new Date().toISOString())
+    .select("id,coach_id");
+
+  // Fill any weeks still missing (and let the engine assign coaches).
+  await supabase.rpc("generate_class_sessions", { p_weeks: 8 });
+
+  const coachIds = new Set(
+    (revived ?? []).map((s) => s.coach_id).filter((c): c is string => !!c)
+  );
+  for (const coachId of coachIds) {
+    await supabase.from("notifications").insert({
+      user_id: coachId,
+      type: "session_booked",
+      title: "Class restored",
+      body: `${cls.title} is back on — its sessions are on your calendar again.`,
+      data: { url: "/coach" },
+    });
+  }
+
+  await supabase.from("audit_log").insert({
+    actor_id: founderId,
+    action: "class.restore",
+    entity: "classes",
+    entity_id: classId,
+    meta: { revived_sessions: (revived ?? []).length },
   });
   return { ok: true };
 }

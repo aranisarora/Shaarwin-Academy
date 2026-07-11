@@ -46,7 +46,7 @@ export default async function AdminCalendarPage({
       supabase
         .from("classes")
         .select(
-          "id,title,description,skill_level,capacity,duration_minutes,recurrence_rule,active,venue_id,venues(name)"
+          "id,title,description,skill_level,capacity,duration_minutes,recurrence_rule,active,ends_on,venue_id,venues(name)"
         )
         .eq("class_type", "group")
         .order("title"),
@@ -173,6 +173,7 @@ export default async function AdminCalendarPage({
       weekday: c.recurrence_rule?.match(/BYDAY=(..)/)?.[1] ?? "MO",
       time: next ? utcToAcademyWall(new Date(next)).time : "18:30",
       active: c.active,
+      endsOn: c.ends_on,
       venueId: c.venue_id,
       venueName: (c.venues as unknown as { name: string } | null)?.name ?? null,
     };

@@ -11,6 +11,7 @@ import { topUpSessions } from "@/app/admin/calendar/actions";
 import { AdminSessionSheet } from "./AdminSessionSheet";
 import { AdminClassSheet } from "./AdminClassSheet";
 import { AdminAddSheet } from "./AdminAddSheet";
+import { time12h } from "./ClassFields";
 import {
   WEEKDAY_NAME,
   clockTime,
@@ -165,13 +166,13 @@ export function AdminCalendar({
             <span>
               <span className="block font-medium">{c.title}</span>
               <span className="block text-sm text-fg-2">
-                {WEEKDAY_NAME[c.weekday] ?? "One-off"}s {c.time} · {c.venueName ?? "No venue"} ·{" "}
+                {WEEKDAY_NAME[c.weekday] ?? "One-off"}s {time12h(c.time)} · {c.venueName ?? "No venue"} ·{" "}
                 {c.duration} min · up to {c.capacity} players
               </span>
             </span>
             <span className="flex flex-col items-end gap-1.5">
               <Badge>{c.level}</Badge>
-              {!c.active && <Badge tone="err">paused</Badge>}
+              {!c.active && <Badge tone="err">{c.endsOn ? "ended — tap to restore" : "paused"}</Badge>}
             </span>
           </button>
         ))}
@@ -196,6 +197,7 @@ export function AdminCalendar({
         <AdminClassSheet
           key={editingClass.id}
           cls={editingClass}
+          coaches={coaches}
           venues={venues}
           onClose={() => setEditingClass(null)}
           onDone={(m) => {

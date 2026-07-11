@@ -37,6 +37,7 @@ export type ClassRow = {
   weekday: string; // MO..SU
   time: string; // HH:MM academy wall clock
   active: boolean;
+  endsOn: string | null; // set when the class was ended — restorable
   venueId: string | null;
   venueName: string | null;
 };
