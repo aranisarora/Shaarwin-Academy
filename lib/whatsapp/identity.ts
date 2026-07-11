@@ -118,6 +118,11 @@ export async function autoProvisionClient(
   const phone = normalizePhone(rawPhone);
   if (!phone) return null;
 
+  // Guard against races: if any account already owns this phone (via wa_links
+  // or profiles.phone), return it instead of creating a duplicate.
+  const existing = await resolveIdentity(admin, phone);
+  if (existing.profile) return existing.profile;
+
   const email = syntheticEmailFor(phone);
   const { data: created, error } = await admin.auth.admin.createUser({
     email,
@@ -131,12 +136,12 @@ export async function autoProvisionClient(
 
   const userId = created.user.id;
   // handle_new_user trigger usually provisions these; belt & braces.
-  const { data: existing } = await admin
+  const { data: provisioned } = await admin
     .from("profiles")
     .select("*")
     .eq("id", userId)
     .maybeSingle();
-  if (!existing) {
+  if (!provisioned) {
     await admin
       .from("profiles")
       .insert({ id: userId, role: "client", full_name: "", email });

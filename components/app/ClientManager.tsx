@@ -42,6 +42,29 @@ type ClientRow = {
   students: { id: string; name: string; level: string }[];
 };
 
+/** WhatsApp-provisioned accounts carry a synthetic @sharwin.local email that
+ *  should never surface in the UI — the phone number is the real identity. */
+function isPhoneOnly(email: string): boolean {
+  return email.endsWith("@sharwin.local") || email === "";
+}
+
+/** Auto-provisioned accounts carry placeholder names until the person fills
+ *  in their profile — treat those as "no name yet". */
+function isRealName(name: string): boolean {
+  const n = name.trim().toLowerCase();
+  return n !== "" && n !== "there" && n !== "player";
+}
+
+function displayName(c: { name: string; phone: string | null }): string {
+  if (isRealName(c.name)) return c.name;
+  return c.phone ?? "New client";
+}
+
+function contactLine(c: { email: string; phone: string | null }): string {
+  if (!isPhoneOnly(c.email)) return c.email;
+  return c.phone ? `${c.phone} · WhatsApp` : "Signed up by phone";
+}
+
 export function ClientManager({
   clients,
   plans,
@@ -76,7 +99,9 @@ export function ClientManager({
     (c) =>
       (showArchived || !c.archived) &&
       (c.name.toLowerCase().includes(search.toLowerCase()) ||
-        c.email.toLowerCase().includes(search.toLowerCase()))
+        (!isPhoneOnly(c.email) &&
+          c.email.toLowerCase().includes(search.toLowerCase())) ||
+        (c.phone ?? "").includes(search.trim()))
   );
 
   function open(c: ClientRow) {
@@ -176,7 +201,7 @@ export function ClientManager({
             >
               <div>
                 <p className="font-medium">
-                  {c.name}
+                  {displayName(c)}
                   {c.disputed && (
                     <Badge className="ml-2" tone="err">
                       Blocked
@@ -184,7 +209,7 @@ export function ClientManager({
                   )}
                   {c.archived && <Badge className="ml-2">Archived</Badge>}
                 </p>
-                <p className="text-sm text-fg-2">{c.email}</p>
+                <p className="text-sm text-fg-2">{contactLine(c)}</p>
               </div>
               <div className="flex flex-col items-end gap-1">
                 {c.subStatus ? (
@@ -311,7 +336,11 @@ export function ClientManager({
         )}
       </Sheet>
 
-      <Sheet open={selected !== null} onClose={() => setSelected(null)} title={selected?.name}>
+      <Sheet
+        open={selected !== null}
+        onClose={() => setSelected(null)}
+        title={selected ? displayName(selected) : undefined}
+      >
         {selected && (
           <div className="space-y-6">
             <p className="tnum text-sm text-fg-2">
@@ -363,7 +392,11 @@ export function ClientManager({
                 onChange={(e) => setPhone(e.target.value)}
                 placeholder="Optional"
               />
-              <p className="text-sm text-fg-2">{selected.email}</p>
+              <p className="text-sm text-fg-2">
+                {isPhoneOnly(selected.email)
+                  ? "No email — they use WhatsApp."
+                  : selected.email}
+              </p>
               <Button
                 variant="ghost"
                 disabled={pending || !name.trim()}
