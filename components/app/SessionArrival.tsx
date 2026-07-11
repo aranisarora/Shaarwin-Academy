@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/Button";
-import { markArrived, markRunningLate } from "@/app/coach/session/[id]/actions";
+import { confirmComing, markArrived, markRunningLate } from "@/app/coach/session/[id]/actions";
 import { ACADEMY_TZ, nowMs } from "@/lib/academy-time";
 
 function fmtClock(iso: string) {
@@ -19,13 +19,16 @@ export function SessionArrival({
   startsAt,
   endsAt,
   coachArrivedAt,
+  coachConfirmedAt = null,
 }: {
   sessionId: string;
   startsAt: string;
   endsAt: string;
   coachArrivedAt: string | null;
+  coachConfirmedAt?: string | null;
 }) {
   const [arrivedAt, setArrivedAt] = useState<string | null>(coachArrivedAt);
+  const [confirmedAt, setConfirmedAt] = useState<string | null>(coachConfirmedAt);
   const [message, setMessage] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -44,6 +47,19 @@ export function SessionArrival({
         </p>
       </div>
     );
+  }
+
+  function onConfirm() {
+    setMessage(null);
+    const optimistic = new Date().toISOString();
+    setConfirmedAt(optimistic);
+    startTransition(async () => {
+      const r = await confirmComing(sessionId);
+      if (!r.ok) {
+        setConfirmedAt(null);
+        setMessage(r.error ?? "Couldn’t confirm. Try again.");
+      }
+    });
   }
 
   function onArrived() {
@@ -73,6 +89,22 @@ export function SessionArrival({
 
   return (
     <div className="space-y-3">
+      {confirmedAt ? (
+        <div className="rounded-[12px] border border-ok bg-ok/10 px-4 py-3.5">
+          <p className="font-semibold text-ok">✓ You’ve confirmed you’re taking this session</p>
+          <p className="text-sm text-fg-2">The founder has been told.</p>
+        </div>
+      ) : (
+        <div className="space-y-2.5 rounded-[12px] border border-line bg-surface-2 px-4 py-3.5">
+          <p className="text-sm text-fg-2">
+            Confirm you’re taking this session — the founder is told, and you won’t be chased
+            before it starts.
+          </p>
+          <Button size="lg" disabled={pending} onClick={onConfirm} className="w-full sm:w-auto">
+            ✓ I’m coming
+          </Button>
+        </div>
+      )}
       <div className="flex flex-col gap-3 sm:flex-row">
         <Button
           size="lg"
