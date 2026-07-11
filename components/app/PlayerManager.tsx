@@ -56,17 +56,74 @@ function isPhoneOnly(email: string): boolean {
   return email.endsWith("@sharwin.local") || email === "";
 }
 
+/** Auto-provisioned accounts carry placeholder player names until the person
+ *  fills in their profile — treat those as "no name yet". */
+function isRealName(name: string): boolean {
+  const n = name.trim().toLowerCase();
+  return n !== "" && n !== "there" && n !== "player";
+}
+
+/** Best available label for the row title: player → client → phone. */
+function displayName(row: PlayerRow): string {
+  if (isRealName(row.name)) return row.name;
+  if (isRealName(row.clientName)) return row.clientName;
+  return row.clientPhone ?? "New member";
+}
+
 function clientSubline(row: PlayerRow): string {
-  if (isPhoneOnly(row.clientEmail)) {
-    const parts: string[] = [];
-    if (row.clientName) parts.push(row.clientName);
-    if (row.clientPhone) parts.push(`📱 ${row.clientPhone}`);
-    return parts.join(" · ");
-  }
   const parts: string[] = [];
-  if (row.clientName) parts.push(row.clientName);
-  if (row.clientEmail) parts.push(row.clientEmail);
+  if (isRealName(row.clientName) && row.clientName !== displayName(row))
+    parts.push(row.clientName);
+  if (isPhoneOnly(row.clientEmail)) {
+    if (row.clientPhone && row.clientPhone !== displayName(row)) parts.push(row.clientPhone);
+    if (parts.length === 0) return "Signed up by phone";
+  } else if (row.clientEmail) {
+    parts.push(row.clientEmail);
+  }
   return parts.join(" · ");
+}
+
+function PhoneGlyph({ className }: { className?: string }) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden
+    >
+      <rect x="7" y="2.5" width="10" height="19" rx="2.5" />
+      <path d="M10.5 18.5h3" />
+    </svg>
+  );
+}
+
+/** Initials avatar when we have a real name; ember-tinted phone glyph when the
+ *  account only has a number. */
+function Avatar({ row, size }: { row: PlayerRow; size: "sm" | "lg" }) {
+  const dims = size === "sm" ? "h-10 w-10 text-sm" : "h-12 w-12 text-base";
+  const label = displayName(row);
+  if (isRealName(row.name) || isRealName(row.clientName)) {
+    return (
+      <span
+        aria-hidden
+        className={`grid ${dims} shrink-0 place-items-center rounded-full bg-surface font-medium text-fg-2`}
+      >
+        {initials(label)}
+      </span>
+    );
+  }
+  return (
+    <span
+      aria-hidden
+      className={`grid ${dims} shrink-0 place-items-center rounded-full bg-ember/10 text-ember`}
+    >
+      <PhoneGlyph className={size === "sm" ? "h-5 w-5" : "h-6 w-6"} />
+    </span>
+  );
 }
 
 export function PlayerManager({ players }: { players: PlayerRow[] }) {
@@ -127,14 +184,9 @@ export function PlayerManager({ players }: { players: PlayerRow[] }) {
               onClick={() => setSelected(p)}
               className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-surface"
             >
-              <span
-                aria-hidden
-                className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-surface text-sm font-medium text-fg-2"
-              >
-                {initials(p.name)}
-              </span>
+              <Avatar row={p} size="sm" />
               <div className="min-w-0 flex-1">
-                <p className="truncate font-medium">{p.name}</p>
+                <p className="truncate font-medium">{displayName(p)}</p>
                 <p className="truncate text-sm text-fg-2">{clientSubline(p)}</p>
               </div>
               <div className="flex flex-col items-end gap-1">
@@ -156,17 +208,12 @@ export function PlayerManager({ players }: { players: PlayerRow[] }) {
       <Sheet
         open={selected !== null}
         onClose={() => setSelected(null)}
-        title={selected?.name}
+        title={selected ? displayName(selected) : undefined}
       >
         {selected && (
           <div className="space-y-6">
             <div className="flex items-center gap-3">
-              <span
-                aria-hidden
-                className="grid h-12 w-12 shrink-0 place-items-center rounded-full bg-surface-2 text-base font-medium text-fg-2"
-              >
-                {initials(selected.name)}
-              </span>
+              <Avatar row={selected} size="lg" />
               <div>
                 <Badge tone={LEVEL_TONE[selected.skillLevel]}>
                   {levelLabel(selected.skillLevel)}
@@ -193,21 +240,26 @@ export function PlayerManager({ players }: { players: PlayerRow[] }) {
 
             <div className="space-y-2 rounded-[12px] border border-line p-4">
               <p className="label">Account holder</p>
-              {selected.clientName && (
-                <p className="font-medium">{selected.clientName}</p>
-              )}
+              <p className="font-medium">
+                {isRealName(selected.clientName)
+                  ? selected.clientName
+                  : (selected.clientPhone ?? "No name yet")}
+              </p>
               {isPhoneOnly(selected.clientEmail) ? (
-                <>
-                  <p className="text-sm text-fg-2">Registered via phone</p>
-                  {selected.clientPhone && (
-                    <p className="text-sm text-fg-2">📱 {selected.clientPhone}</p>
-                  )}
-                </>
+                <div className="flex items-center gap-2 text-sm text-fg-2">
+                  <PhoneGlyph className="h-4 w-4 text-ember" />
+                  <span>
+                    Signed up by phone
+                    {selected.clientPhone && isRealName(selected.clientName)
+                      ? ` · ${selected.clientPhone}`
+                      : ""}
+                  </span>
+                </div>
               ) : (
                 <>
                   <p className="text-sm text-fg-2">{selected.clientEmail}</p>
                   {selected.clientPhone && (
-                    <p className="text-sm text-fg-2">📱 {selected.clientPhone}</p>
+                    <p className="text-sm text-fg-2">{selected.clientPhone}</p>
                   )}
                 </>
               )}
