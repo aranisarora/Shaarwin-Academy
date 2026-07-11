@@ -40,7 +40,17 @@ export function generateClassTitle(skillLevel: string, weekday: string, time: st
       ? "All levels"
       : skillLevel.charAt(0).toUpperCase() + skillLevel.slice(1);
   const day = WEEKDAY_NAME[weekday] ?? weekday;
-  return `${level} — ${day} ${time}`;
+  return `${level} — ${day} ${to12Hour(time)}`;
+}
+
+/** Convert a 24-hour "HH:MM" wall-time string to a 12-hour "h:MM AM/PM" label. */
+function to12Hour(time: string): string {
+  const match = /^(\d{1,2}):(\d{2})/.exec(time);
+  if (!match) return time;
+  const hour = Number(match[1]);
+  const suffix = hour < 12 ? "AM" : "PM";
+  const hour12 = hour % 12 === 0 ? 12 : hour % 12;
+  return `${hour12}:${match[2]} ${suffix}`;
 }
 
 /** Description, level, venue, spots and length — everything about a class
