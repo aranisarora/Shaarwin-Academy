@@ -63,10 +63,10 @@ export async function StageShell({ children }: { children: React.ReactNode }) {
               </li>
               <li>
                 <a
-                  href="mailto:sharwinttacademy@gmail.com"
+                  href="mailto:stalin@sharwinacademy.com"
                   className="transition-colors hover:text-fg"
                 >
-                  sharwinttacademy@gmail.com
+                  stalin@sharwinacademy.com
                 </a>
               </li>
             </ul>
