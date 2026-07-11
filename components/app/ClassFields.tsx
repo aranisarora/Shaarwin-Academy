@@ -33,6 +33,15 @@ export const EMPTY_CLASS_FORM: ClassFormState = {
   coachId: "",
 };
 
+/** "18:30" → "6:30 pm" — 12-hour rendering of a 24h wall-clock string. */
+export function time12h(time: string): string {
+  const [h, m] = time.split(":").map(Number);
+  if (!Number.isFinite(h)) return time;
+  const period = h >= 12 ? "pm" : "am";
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return `${h12}:${String(m ?? 0).padStart(2, "0")} ${period}`;
+}
+
 /** Auto-generate a class title from its defining attributes. */
 export function generateClassTitle(skillLevel: string, weekday: string, time: string): string {
   const level =
@@ -40,7 +49,7 @@ export function generateClassTitle(skillLevel: string, weekday: string, time: st
       ? "All levels"
       : skillLevel.charAt(0).toUpperCase() + skillLevel.slice(1);
   const day = WEEKDAY_NAME[weekday] ?? weekday;
-  return `${level} — ${day} ${time}`;
+  return `${level} — ${day} ${time12h(time)}`;
 }
 
 /** Description, level, venue, spots and length — everything about a class

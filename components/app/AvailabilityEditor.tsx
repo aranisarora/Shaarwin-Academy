@@ -11,6 +11,8 @@ import {
   removeWindow,
   requestTimeOff,
 } from "@/app/coach/more/actions";
+import { TimeSelect12h } from "./TimeSelect12h";
+import { time12h } from "./ClassFields";
 
 const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
@@ -44,7 +46,7 @@ export function AvailabilityEditor({
               <p className="text-sm">
                 <span className="font-medium">{DAYS[w.weekday]}</span>{" "}
                 <span className="tnum text-fg-2">
-                  {w.start_time.slice(0, 5)}–{w.end_time.slice(0, 5)}
+                  {time12h(w.start_time.slice(0, 5))}–{time12h(w.end_time.slice(0, 5))}
                 </span>
               </p>
               <button
@@ -61,7 +63,7 @@ export function AvailabilityEditor({
             </li>
           )}
         </ul>
-        <div className="mt-3 grid grid-cols-[1fr_auto_auto_auto] items-end gap-2">
+        <div className="mt-3 space-y-2">
           <Select label="Day" value={weekday} onChange={(e) => setWeekday(Number(e.target.value))}>
             {DAYS.map((d, i) => (
               <option key={d} value={i}>
@@ -69,10 +71,13 @@ export function AvailabilityEditor({
               </option>
             ))}
           </Select>
-          <Input label="From" type="time" value={start} onChange={(e) => setStart(e.target.value)} />
-          <Input label="To" type="time" value={end} onChange={(e) => setEnd(e.target.value)} />
+          <div className="grid gap-2 sm:grid-cols-2">
+            <TimeSelect12h label="From" value={start} onChange={setStart} />
+            <TimeSelect12h label="To" value={end} onChange={setEnd} />
+          </div>
           <Button
             disabled={pending}
+            className="w-full"
             onClick={() =>
               startTransition(async () => {
                 await addWindow(weekday, start, end);

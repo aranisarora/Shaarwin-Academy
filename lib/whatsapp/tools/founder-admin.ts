@@ -6,6 +6,7 @@
 import {
   addClientInviteCore,
   addCoachCore,
+  broadcastNotificationCore,
   createOneOffSessionCore,
   createPrivateSessionCore,
   deleteGroupClassCore,
@@ -460,13 +461,17 @@ const setCoachActive: WaTool = {
 const addClient: WaTool = {
   name: "add_client",
   description:
-    "Pre-register an existing (offline) client by phone number, before they've signed up. When they sign up on the website or message this WhatsApp assistant from that number, their account connects automatically and any name/notes apply. Confirm the number first.",
+    "Pre-register an existing (offline) client by phone number, before they've signed up. When they sign up on the website or message this WhatsApp assistant from that number, their account connects automatically and any name/notes apply. Optionally gift a free plan (plan_id from list_plans) — a 30-day comp subscription granted the moment they connect. Confirm the number first.",
   input_schema: {
     type: "object",
     properties: {
       phone: { type: "string", description: "Their WhatsApp number, e.g. +91…" },
       full_name: { type: "string" },
       notes: { type: "string", description: "Saved onto their student record when they join" },
+      plan_id: {
+        type: "string",
+        description: "Optional — free plan gifted on signup (from list_plans)",
+      },
     },
     required: ["phone"],
   },
@@ -475,12 +480,197 @@ const addClient: WaTool = {
       phone: String(input.phone ?? ""),
       fullName: input.full_name != null ? String(input.full_name) : "",
       notes: input.notes != null ? String(input.notes) : "",
+      planId: input.plan_id != null ? String(input.plan_id) : "",
     });
     if (!result.ok) return fail(result.error ?? "Failed.");
     return ok({
       added: true,
       note: "Saved. Their account connects automatically when they sign up or message this assistant from that number.",
     });
+  },
+};
+
+const clientAttendance: WaTool = {
+  name: "client_attendance",
+  description:
+    "Attendance record for a client's students (client_id from list_clients): attended / no-show / cancelled counts and the most recent sessions per student.",
+  input_schema: {
+    type: "object",
+    properties: { client_id: { type: "string" } },
+    required: ["client_id"],
+  },
+  run: async (input, ctx) => {
+    const supabase = ctx.supabase!;
+    const { data: players } = await supabase
+      .from("players")
+      .select("id,full_name,skill_level")
+      .eq("client_id", String(input.client_id));
+    if (!players?.length) return fail("No students found for that client.");
+
+    const { data: bookings } = await supabase
+      .from("bookings")
+      .select("player_id,status,class_sessions!inner(starts_at,classes(title))")
+      .in("player_id", players.map((p) => p.id));
+
+    const byPlayer = new Map<string, { status: string; when: string; title: string }[]>();
+    for (const b of bookings ?? []) {
+      const s = b.class_sessions as unknown as {
+        starts_at: string;
+        classes: { title: string } | null;
+      };
+      const list = byPlayer.get(b.player_id) ?? [];
+      list.push({ status: b.status, when: s.starts_at, title: s.classes?.title ?? "Session" });
+      byPlayer.set(b.player_id, list);
+    }
+
+    return ok(
+      players.map((p) => {
+        const rows = (byPlayer.get(p.id) ?? []).sort((a, b) => b.when.localeCompare(a.when));
+        const count = (status: string) => rows.filter((r) => r.status === status).length;
+        return {
+          player_id: p.id,
+          student: p.full_name,
+          level: p.skill_level,
+          attended: count("attended"),
+          no_shows: count("no_show"),
+          cancelled:
+            count("cancelled_by_client") + count("cancelled_by_academy"),
+          upcoming: rows.filter(
+            (r) =>
+              (r.status === "confirmed" || r.status === "waitlisted") &&
+              new Date(r.when).getTime() > Date.now()
+          ).length,
+          recent: rows
+            .filter((r) => r.status !== "rescheduled")
+            .slice(0, 10)
+            .map((r) => ({ when: fmtIST(r.when), class: r.title, status: r.status })),
+        };
+      })
+    );
+  },
+};
+
+const clientNotes: WaTool = {
+  name: "client_notes",
+  description:
+    "Coach notes for a client's students (client_id from list_clients), newest first, plus any admin note saved on the student record.",
+  input_schema: {
+    type: "object",
+    properties: { client_id: { type: "string" } },
+    required: ["client_id"],
+  },
+  run: async (input, ctx) => {
+    const supabase = ctx.supabase!;
+    const { data: players } = await supabase
+      .from("players")
+      .select("id,full_name,notes")
+      .eq("client_id", String(input.client_id));
+    if (!players?.length) return fail("No students found for that client.");
+
+    const result = [];
+    for (const p of players) {
+      const { data: notes } = await supabase.rpc("get_player_notes", { p_player: p.id });
+      result.push({
+        player_id: p.id,
+        student: p.full_name,
+        record_note: p.notes,
+        coach_notes: (
+          (notes as { body: string; created_at: string; author_name: string }[] | null) ?? []
+        ).map((n) => ({ when: fmtIST(n.created_at), author: n.author_name, note: n.body })),
+      });
+    }
+    return ok(result);
+  },
+};
+
+const clientPayments: WaTool = {
+  name: "client_payments",
+  description:
+    "Payment details for a client (client_id from list_clients): membership and status, total paid, recent invoices and one-off purchases, private-minutes balance.",
+  input_schema: {
+    type: "object",
+    properties: { client_id: { type: "string" } },
+    required: ["client_id"],
+  },
+  run: async (input, ctx) => {
+    const supabase = ctx.supabase!;
+    const clientId = String(input.client_id);
+    const [{ data: subs }, { data: invoices }, { data: orders }, { data: ledger }] =
+      await Promise.all([
+        supabase
+          .from("subscriptions")
+          .select("status,source,current_period_end,plans(name,price_pence)")
+          .eq("client_id", clientId)
+          .in("status", ["active", "trialing", "past_due", "paused"]),
+        supabase
+          .from("invoices")
+          .select("amount_pence,status,paid_at,created_at")
+          .eq("client_id", clientId)
+          .order("created_at", { ascending: false })
+          .limit(12),
+        supabase
+          .from("orders")
+          .select("status,amount_pence,created_at,products(name)")
+          .eq("client_id", clientId)
+          .order("created_at", { ascending: false })
+          .limit(12),
+        supabase
+          .from("private_credit_ledger")
+          .select("delta_minutes")
+          .eq("client_id", clientId),
+      ]);
+
+    const paidPence = (invoices ?? [])
+      .filter((i) => i.status === "paid")
+      .reduce((sum, i) => sum + i.amount_pence, 0);
+    return ok({
+      memberships: (subs ?? []).map((s) => ({
+        plan: (s.plans as unknown as { name: string } | null)?.name ?? "?",
+        status: s.status,
+        source: s.source,
+        renews: s.current_period_end ? fmtIST(s.current_period_end) : null,
+      })),
+      total_paid_inr: Math.round(paidPence / 100),
+      private_minutes_balance: (ledger ?? []).reduce((sum, l) => sum + l.delta_minutes, 0),
+      recent_invoices: (invoices ?? []).map((i) => ({
+        amount_inr: Math.round(i.amount_pence / 100),
+        status: i.status,
+        when: fmtIST(i.paid_at ?? i.created_at),
+      })),
+      recent_purchases: (orders ?? []).map((o) => ({
+        product: (o.products as unknown as { name: string } | null)?.name ?? "?",
+        amount_inr: Math.round(o.amount_pence / 100),
+        status: o.status,
+        when: fmtIST(o.created_at),
+      })),
+    });
+  },
+};
+
+const broadcastMessage: WaTool = {
+  name: "broadcast_message",
+  description:
+    "Send an announcement to EVERY active coach or EVERY active client (delivered by push/WhatsApp/email per each person's preferences). e.g. 'notify all coaches that Saturday sessions move indoors'. Restate the audience and exact message and get an explicit yes BEFORE calling — this cannot be unsent.",
+  input_schema: {
+    type: "object",
+    properties: {
+      audience: { type: "string", enum: ["coaches", "clients"] },
+      message: { type: "string", description: "The announcement text, sent verbatim" },
+      title: { type: "string", description: "Optional heading; defaults to 'Message from the academy'" },
+    },
+    required: ["audience", "message"],
+  },
+  run: async (input, ctx) => {
+    const audience = input.audience === "coaches" ? "coaches" : "clients";
+    const result = await broadcastNotificationCore(
+      ctx.supabase!,
+      ctx.profile!.id,
+      audience,
+      String(input.message ?? ""),
+      input.title != null ? String(input.title) : undefined
+    );
+    if (!result.ok) return fail(result.error ?? "Failed.");
+    return ok({ sent: true, audience, recipients: result.recipients });
   },
 };
 
@@ -723,6 +913,10 @@ export const founderAdminTools: WaTool[] = [
   updateClient,
   blockClient,
   archiveClient,
+  clientAttendance,
+  clientNotes,
+  clientPayments,
+  broadcastMessage,
   saveVenue,
   setVenueActive,
   deleteVenue,

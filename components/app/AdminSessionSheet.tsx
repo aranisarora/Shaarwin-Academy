@@ -21,6 +21,7 @@ import {
 import { cancelSession, getRankedCoaches } from "@/app/admin/actions";
 import { AddressDisplay } from "@/components/app/AddressDisplay";
 import { ClassDetailFields, generateClassTitle, type ClassFormState } from "./ClassFields";
+import { TimeSelect12h } from "./TimeSelect12h";
 import {
   clockTime,
   fmtWhen,
@@ -325,11 +326,10 @@ export function AdminSessionSheet({
                   setForm(f => ({ ...f, weekday: newWeekday, title: generateClassTitle(f.skillLevel, newWeekday, f.time) }));
                 }}
               />
-              <Input
+              <TimeSelect12h
                 label="Time"
-                type="time"
                 value={form.time}
-                onChange={(e) => updateForm({ ...form, time: e.target.value })}
+                onChange={(time) => updateForm({ ...form, time })}
               />
             </div>
             {!session.isPrivate && (
