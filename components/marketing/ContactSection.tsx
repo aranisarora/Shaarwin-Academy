@@ -9,8 +9,8 @@ const tiles = [
   },
   {
     label: "Email",
-    value: "sharwinttacademy@gmail.com",
-    href: "mailto:sharwinttacademy@gmail.com",
+    value: "stalin@sharwinacademy.com",
+    href: "mailto:stalin@sharwinacademy.com",
   },
   {
     label: "Location",

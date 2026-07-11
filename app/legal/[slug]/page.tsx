@@ -11,7 +11,7 @@ const pages: Record<string, { title: string; body: string[] }> = {
       "Group sessions may be cancelled or rescheduled by you up to 24 hours before the start without using your allowance. Inside 24 hours, the session counts as used.",
       "Private coaching minutes are granted each month with a Private plan; unused minutes roll over for one further month before expiring. Minutes bought as one-off sessions follow the same rules. Minutes are debited when a session is booked and refunded for cancellations made more than 24 hours ahead.",
       "We may cancel sessions for venue closures or coach illness. When we cancel, your session or minutes are always returned in full.",
-      "Sharwin Table Tennis Academy, No. 594, 4th Cross, 7th Ward, Gundappa Beedi, Dommasandra, Bengaluru, Karnataka 562125. Reg. No. 38/DOM/CE/0013/2026. Questions: sharwinttacademy@gmail.com or WhatsApp +91 84314 35758.",
+      "Sharwin Table Tennis Academy, No. 594, 4th Cross, 7th Ward, Gundappa Beedi, Dommasandra, Bengaluru, Karnataka 562125. Reg. No. 38/DOM/CE/0013/2026. Questions: stalin@sharwinacademy.com or WhatsApp +91 84314 35758.",
     ],
   },
   privacy: {
@@ -21,7 +21,7 @@ const pages: Record<string, { title: string; body: string[] }> = {
       "Payment details are held by Razorpay, our payment processor. We never see or store your card number.",
       "Coaches see only what they need to teach: player names, skill levels, age bands and emergency contacts. They never see payment or subscription data.",
       "We don't sell data, and we don't run third-party advertising trackers.",
-      "You can ask for a copy of your data, or for deletion, at any time: sharwinttacademy@gmail.com.",
+      "You can ask for a copy of your data, or for deletion, at any time: stalin@sharwinacademy.com.",
     ],
   },
   safeguarding: {
@@ -29,7 +29,7 @@ const pages: Record<string, { title: string; body: string[] }> = {
     body: [
       "Every coach who works with players under 18 holds a verified background check — this is enforced by our booking system, not just by policy.",
       "Junior sessions always have a parent or guardian contact on file, and emergency contacts are visible to the coach running the session.",
-      "Concerns are taken seriously and handled by the academy founder as designated safeguarding lead: sharwinttacademy@gmail.com.",
+      "Concerns are taken seriously and handled by the academy founder as designated safeguarding lead: stalin@sharwinacademy.com.",
     ],
   },
 };
