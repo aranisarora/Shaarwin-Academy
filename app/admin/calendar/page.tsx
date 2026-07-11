@@ -7,6 +7,7 @@ import { AdminCalendar } from "@/components/app/AdminCalendar";
 import type {
   ClassRow,
   ClientOption,
+  InviteOption,
   SessionRow,
 } from "@/components/app/admin-calendar-types";
 import { fromDetails, type StructuredAddress } from "@/lib/address";
@@ -56,6 +57,12 @@ export default async function AdminCalendarPage({
         .eq("role", "client")
         .order("full_name"),
     ]);
+
+  const { data: invites } = await supabase
+    .from("client_invites")
+    .select("id,phone,full_name")
+    .is("claimed_at", null)
+    .order("created_at", { ascending: false });
 
   // Each class's next scheduled session gives its canonical wall-clock slot —
   // the baseline for "every week" edits and the weekly-classes list.
@@ -171,16 +178,21 @@ export default async function AdminCalendarPage({
     };
   });
 
-  const clientRows: ClientOption[] = (clients ?? [])
-    .map((c) => ({
-      id: c.id,
-      name: c.full_name,
-      players: ((c.players as { id: string; full_name: string }[]) ?? []).map((p) => ({
-        id: p.id,
-        name: p.full_name,
-      })),
-    }))
-    .filter((c) => c.players.length > 0);
+  // No players yet is fine — booking a private session auto-creates one.
+  const clientRows: ClientOption[] = (clients ?? []).map((c) => ({
+    id: c.id,
+    name: c.full_name,
+    players: ((c.players as { id: string; full_name: string }[]) ?? []).map((p) => ({
+      id: p.id,
+      name: p.full_name,
+    })),
+  }));
+
+  const inviteRows: InviteOption[] = (invites ?? []).map((i) => ({
+    id: i.id,
+    name: (i.full_name ?? "").trim(),
+    phone: i.phone,
+  }));
 
   const rangeLabel = new Intl.DateTimeFormat("en-GB", {
     day: "numeric",
@@ -217,6 +229,7 @@ export default async function AdminCalendarPage({
         classes={classRows}
         venues={venues ?? []}
         clients={clientRows}
+        invites={inviteRows}
       />
     </AdminShell>
   );

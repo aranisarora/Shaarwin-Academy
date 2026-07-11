@@ -6,6 +6,7 @@ import {
   createOneOffSessionCore,
   createPrivateSessionCore,
   deleteGroupClassCore,
+  materializeInviteCore,
   endGroupClassCore,
   moveSessionCore,
   reassignSessionCore,
@@ -124,5 +125,29 @@ export async function createPrivateSession(input: PrivateSessionInput): Promise<
   const result = await createPrivateSessionCore(supabase, founder.id, input);
   if (!result.ok) return result;
   refresh();
+  return { ok: true };
+}
+
+/**
+ * Book a private session for a pre-registered client (a phone invite with no
+ * account yet). The invite is turned into a real client account first, then
+ * the session is booked exactly like createPrivateSession.
+ */
+export async function createPrivateSessionForInvite(
+  inviteId: string,
+  input: Omit<PrivateSessionInput, "clientId" | "playerId">
+): Promise<Result> {
+  const { supabase, founder } = await requireFounder();
+  if (!founder) return { ok: false, error: "Founder only." };
+  const materialized = await materializeInviteCore(supabase, founder.id, inviteId);
+  if (!materialized.ok || !materialized.clientId)
+    return { ok: false, error: materialized.error ?? "Couldn't create the account." };
+  const result = await createPrivateSessionCore(supabase, founder.id, {
+    ...input,
+    clientId: materialized.clientId,
+  });
+  if (!result.ok) return result;
+  refresh();
+  revalidatePath("/admin/clients");
   return { ok: true };
 }

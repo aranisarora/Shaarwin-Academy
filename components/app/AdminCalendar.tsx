@@ -18,6 +18,7 @@ import {
   type ClassRow,
   type ClientOption,
   type Coach,
+  type InviteOption,
   type SessionRow,
   type Venue,
 } from "./admin-calendar-types";
@@ -28,12 +29,14 @@ export function AdminCalendar({
   classes,
   venues,
   clients,
+  invites,
 }: {
   sessions: SessionRow[];
   coaches: Coach[];
   classes: ClassRow[];
   venues: Venue[];
   clients: ClientOption[];
+  invites: InviteOption[];
 }) {
   const [selected, setSelected] = useState<SessionRow | null>(null);
   const [editingClass, setEditingClass] = useState<ClassRow | null>(null);
@@ -213,6 +216,7 @@ export function AdminCalendar({
           coaches={coaches}
           venues={venues}
           clients={clients}
+          invites={invites}
         />
       )}
     </div>

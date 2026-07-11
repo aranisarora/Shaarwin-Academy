@@ -233,8 +233,28 @@ export async function createPrivateSessionCore(
       .order("created_at")
       .limit(1)
       .maybeSingle();
-    if (!p) return { ok: false, error: "That client has no player profile yet." };
-    playerId = p.id;
+    if (!p) {
+      // Founder-initiated booking for an account that never added a player —
+      // create one from the client's name so the session has someone on it.
+      const { data: prof } = await supabase
+        .from("profiles")
+        .select("full_name")
+        .eq("id", input.clientId)
+        .maybeSingle();
+      const { data: fresh, error: freshErr } = await supabase
+        .from("players")
+        .insert({
+          client_id: input.clientId,
+          full_name: prof?.full_name?.trim() || "Player",
+        })
+        .select("id")
+        .single();
+      if (freshErr || !fresh)
+        return { ok: false, error: "That client has no player profile yet." };
+      playerId = fresh.id;
+    } else {
+      playerId = p.id;
+    }
   }
 
   const duration = input.durationMinutes === 90 ? 90 : 60;

@@ -10,7 +10,11 @@ import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
 import { Spinner } from "@/components/ui/Spinner";
 import { createGroupClass } from "@/app/admin/actions";
-import { createOneOffSession, createPrivateSession } from "@/app/admin/calendar/actions";
+import {
+  createOneOffSession,
+  createPrivateSession,
+  createPrivateSessionForInvite,
+} from "@/app/admin/calendar/actions";
 import { AddressForm, isAddressComplete } from "@/components/app/AddressForm";
 import { EMPTY_ADDRESS, type StructuredAddress } from "@/lib/address";
 import { ClassDetailFields, EMPTY_CLASS_FORM, generateClassTitle, type ClassFormState } from "./ClassFields";
@@ -19,6 +23,7 @@ import {
   WEEKDAYS,
   type ClientOption,
   type Coach,
+  type InviteOption,
   type Venue,
 } from "./admin-calendar-types";
 
@@ -49,6 +54,7 @@ export function AdminAddSheet({
   coaches,
   venues,
   clients,
+  invites,
 }: {
   onClose: () => void;
   onDone: (message: string) => void;
@@ -56,6 +62,7 @@ export function AdminAddSheet({
   coaches: Coach[];
   venues: Venue[];
   clients: ClientOption[];
+  invites: InviteOption[];
 }) {
   // Mounted fresh each time the sheet opens, so initializers read props.
   const [mode, setMode] = useState<Mode>("weekly");
@@ -85,7 +92,10 @@ export function AdminAddSheet({
   const [message, setMessage] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
-  const client = clients.find((c) => c.id === priv.clientId) ?? null;
+  // Pre-registered clients (phone invites, no account yet) share the picker;
+  // their option values carry an "invite:" prefix.
+  const isInvite = priv.clientId.startsWith("invite:");
+  const client = isInvite ? null : (clients.find((c) => c.id === priv.clientId) ?? null);
 
   function reset(next: Mode) {
     setMode(next);
@@ -119,9 +129,7 @@ export function AdminAddSheet({
         if (r.ok) onDone("Session added to the schedule.");
         else setMessage(r.error ?? "Couldn't add the session.");
       } else {
-        const r = await createPrivateSession({
-          clientId: priv.clientId,
-          playerId: priv.playerId || undefined,
+        const details = {
           date: priv.date,
           time: priv.time,
           durationMinutes: priv.duration,
@@ -132,8 +140,20 @@ export function AdminAddSheet({
           accessNotes: address.accessNotes ?? undefined,
           addressDetails: address as unknown as Record<string, unknown>,
           coachId: priv.coachId || undefined,
-        });
-        if (r.ok) onDone("Private session booked — the client has been told.");
+        };
+        const r = isInvite
+          ? await createPrivateSessionForInvite(priv.clientId.slice("invite:".length), details)
+          : await createPrivateSession({
+              ...details,
+              clientId: priv.clientId,
+              playerId: priv.playerId || undefined,
+            });
+        if (r.ok)
+          onDone(
+            isInvite
+              ? "Account created and private session booked — it'll be waiting when they sign in."
+              : "Private session booked — the client has been told."
+          );
         else setMessage(r.error ?? "Couldn't book the session.");
       }
     });
@@ -247,10 +267,29 @@ export function AdminAddSheet({
               onChange={(e) => setPriv({ ...priv, clientId: e.target.value, playerId: "" })}
             >
               <option value="">— pick a client —</option>
-              {clients.map((c) => (
-                <option key={c.id} value={c.id}>{c.name}</option>
-              ))}
+              {clients.length > 0 && (
+                <optgroup label="Clients">
+                  {clients.map((c) => (
+                    <option key={c.id} value={c.id}>{c.name || "Unnamed client"}</option>
+                  ))}
+                </optgroup>
+              )}
+              {invites.length > 0 && (
+                <optgroup label="Pre-registered — no account yet">
+                  {invites.map((i) => (
+                    <option key={i.id} value={`invite:${i.id}`}>
+                      {i.name ? `${i.name} · ${i.phone}` : i.phone}
+                    </option>
+                  ))}
+                </optgroup>
+              )}
             </Select>
+            {isInvite && (
+              <p className="text-sm text-fg-2">
+                Booking this creates their account right away — when they sign in with
+                this phone number, the session is already on their schedule.
+              </p>
+            )}
             {client && client.players.length > 1 && (
               <Select
                 label="Player"

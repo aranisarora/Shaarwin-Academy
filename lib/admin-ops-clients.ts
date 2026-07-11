@@ -3,6 +3,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { normalizePhone } from "@/lib/whatsapp/phone";
+import { adminClient, autoProvisionClient } from "@/lib/whatsapp/identity";
 import type { OpResult } from "@/lib/admin-ops-types";
 
 export async function updateClientCore(
@@ -113,6 +114,54 @@ export async function savePendingClientCore(
     entity_id: id,
   });
   return { ok: true };
+}
+
+/**
+ * Turn a pending phone invite into a real client account right now, so the
+ * founder can book sessions before the person ever signs in. Reuses the
+ * WhatsApp phone-first provisioning (synthetic email, phone as identity);
+ * setting the phone fires the profiles-phone trigger which claims the invite
+ * and applies its name/notes/gifted plan. The auto-created placeholder player
+ * is renamed to the invite's name so it reads sensibly in rosters.
+ */
+export async function materializeInviteCore(
+  supabase: SupabaseClient,
+  founderId: string,
+  inviteId: string
+): Promise<OpResult & { clientId?: string }> {
+  const { data: invite } = await supabase
+    .from("client_invites")
+    .select("id,phone,full_name")
+    .eq("id", inviteId)
+    .is("claimed_at", null)
+    .maybeSingle();
+  if (!invite) return { ok: false, error: "That pre-registered client no longer exists." };
+
+  const admin = adminClient();
+  const profile = await autoProvisionClient(admin, invite.phone);
+  if (!profile) return { ok: false, error: "Couldn't create the account." };
+
+  const name = (invite.full_name ?? "").trim();
+  if (name) {
+    // Trigger applies the name to the profile; the placeholder player needs it too.
+    await admin
+      .from("players")
+      .update({ full_name: name })
+      .eq("client_id", profile.id)
+      .eq("full_name", "there");
+    if (!profile.full_name) {
+      await admin.from("profiles").update({ full_name: name }).eq("id", profile.id);
+    }
+  }
+
+  await supabase.from("audit_log").insert({
+    actor_id: founderId,
+    action: "client.invite_materialize",
+    entity: "profiles",
+    entity_id: profile.id,
+    meta: { invite_id: inviteId, phone: invite.phone },
+  });
+  return { ok: true, clientId: profile.id };
 }
 
 /** Remove a not-yet-claimed client invite. */

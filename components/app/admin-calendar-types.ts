@@ -49,6 +49,13 @@ export type ClientOption = {
   players: { id: string; name: string }[];
 };
 
+/** A pre-registered client (phone invite, no account yet). */
+export type InviteOption = {
+  id: string;
+  name: string;
+  phone: string;
+};
+
 export const WEEKDAYS = [
   ["MO", "Monday"], ["TU", "Tuesday"], ["WE", "Wednesday"],
   ["TH", "Thursday"], ["FR", "Friday"], ["SA", "Saturday"], ["SU", "Sunday"],
