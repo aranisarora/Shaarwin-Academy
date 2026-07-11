@@ -16,7 +16,7 @@ export default async function AdminClientsPage() {
 
   const { data: invites } = await supabase
     .from("client_invites")
-    .select("id,phone,full_name,notes")
+    .select("id,phone,full_name,notes,plan_id")
     .is("claimed_at", null)
     .order("created_at", { ascending: false });
 
@@ -101,6 +101,7 @@ export default async function AdminClientsPage() {
     phone: i.phone,
     name: i.full_name ?? "",
     notes: i.notes ?? "",
+    planId: i.plan_id ?? "",
   }));
 
   return (

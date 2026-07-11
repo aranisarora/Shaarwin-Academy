@@ -132,7 +132,8 @@ create table public.client_invites (
   created_by uuid,
   created_at timestamptz default now() not null,
   claimed_at timestamptz,
-  claimed_by uuid
+  claimed_by uuid,
+  plan_id uuid
 );
 
 create table public.coach_assignments (
@@ -447,6 +448,7 @@ ALTER TABLE public.client_invites ADD CONSTRAINT client_invites_pkey PRIMARY KEY
 ALTER TABLE public.client_invites ADD CONSTRAINT client_invites_phone_key UNIQUE (phone);
 ALTER TABLE public.client_invites ADD CONSTRAINT client_invites_created_by_fkey FOREIGN KEY (created_by) REFERENCES profiles(id) ON DELETE SET NULL;
 ALTER TABLE public.client_invites ADD CONSTRAINT client_invites_claimed_by_fkey FOREIGN KEY (claimed_by) REFERENCES profiles(id) ON DELETE SET NULL;
+ALTER TABLE public.client_invites ADD CONSTRAINT client_invites_plan_id_fkey FOREIGN KEY (plan_id) REFERENCES plans(id) ON DELETE SET NULL;
 ALTER TABLE public.coach_assignments ADD CONSTRAINT coach_assignments_pkey PRIMARY KEY (id);
 ALTER TABLE public.coach_assignments ADD CONSTRAINT coach_assignments_assigned_by_fkey FOREIGN KEY (assigned_by) REFERENCES profiles(id) ON DELETE SET NULL;
 ALTER TABLE public.coach_assignments ADD CONSTRAINT coach_assignments_coach_id_fkey FOREIGN KEY (coach_id) REFERENCES coaches(id) ON DELETE CASCADE;
@@ -1521,6 +1523,8 @@ CREATE OR REPLACE FUNCTION public.claim_client_invite()
 AS $function$
 declare
   v_invite public.client_invites%rowtype;
+  v_sub uuid;
+  v_minutes integer;
 begin
   if new.role <> 'client' then
     return new;
@@ -1560,13 +1564,38 @@ begin
       );
   end if;
 
+  -- Gifted plan: grant a comp subscription (30 days, like the admin comp grant)
+  -- plus the plan's private minutes, if any.
+  if v_invite.plan_id is not null
+     and not exists (
+       select 1 from subscriptions
+       where client_id = new.id
+         and status in ('active', 'trialing', 'past_due')
+     )
+  then
+    insert into subscriptions (
+      client_id, plan_id, source, status, current_period_start, current_period_end
+    )
+    values (new.id, v_invite.plan_id, 'comp', 'active', now(), now() + interval '30 days')
+    returning id into v_sub;
+
+    select private_minutes_per_cycle into v_minutes
+    from plans where id = v_invite.plan_id;
+    if coalesce(v_minutes, 0) > 0 then
+      insert into private_credit_ledger (
+        client_id, subscription_id, delta_minutes, reason, note
+      )
+      values (new.id, v_sub, v_minutes, 'grant', 'comp grant (pre-registered)');
+    end if;
+  end if;
+
   update public.client_invites
   set claimed_at = now(), claimed_by = new.id
   where id = v_invite.id;
 
   insert into audit_log (actor_id, action, entity, entity_id, meta)
   values (new.id, 'client.invite_claim', 'client_invites', v_invite.id,
-          jsonb_build_object('phone', new.phone));
+          jsonb_build_object('phone', new.phone, 'plan_id', v_invite.plan_id));
 
   return new;
 end;
@@ -2842,6 +2871,7 @@ CREATE POLICY "founder all coaches" ON public.coaches AS PERMISSIVE FOR ALL TO p
 CREATE POLICY "founder all coach invites" ON public.coach_invites AS PERMISSIVE FOR ALL TO public USING (is_founder());
 CREATE POLICY "public reads active coaches" ON public.coaches AS PERMISSIVE FOR SELECT TO public USING (((active = true) OR (id = auth.uid()) OR is_founder()));
 CREATE POLICY "own invoices" ON public.invoices AS PERMISSIVE FOR SELECT TO public USING (((client_id = auth.uid()) OR is_founder()));
+CREATE POLICY "founder writes notifications" ON public.notifications AS PERMISSIVE FOR INSERT TO public WITH CHECK (is_founder());
 CREATE POLICY "mark own notifications read" ON public.notifications AS PERMISSIVE FOR UPDATE TO public USING ((user_id = auth.uid()));
 CREATE POLICY "own notifications" ON public.notifications AS PERMISSIVE FOR SELECT TO public USING ((user_id = auth.uid()));
 CREATE POLICY "own orders" ON public.orders AS PERMISSIVE FOR SELECT TO public USING (((client_id = auth.uid()) OR is_founder()));

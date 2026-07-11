@@ -85,7 +85,7 @@ export function AdminCalendar({
             setMessage(null);
           }}
         >
-          Add to calendar
+          Add to schedule
         </Button>
       </div>
 
@@ -174,7 +174,7 @@ export function AdminCalendar({
         ))}
         {classes.length === 0 && (
           <p className="rounded-[12px] border border-line bg-surface-2 p-4 text-sm text-fg-2">
-            No weekly classes yet — tap “Add to calendar”.
+            No weekly classes yet — tap “Add to schedule”.
           </p>
         )}
       </div>

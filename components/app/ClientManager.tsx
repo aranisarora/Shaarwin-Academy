@@ -23,6 +23,7 @@ export type PendingClientRow = {
   phone: string;
   name: string;
   notes: string;
+  planId: string;
 };
 
 type ClientRow = {
@@ -59,6 +60,7 @@ export function ClientManager({
   const [invitePhone, setInvitePhone] = useState("");
   const [inviteName, setInviteName] = useState("");
   const [inviteNotes, setInviteNotes] = useState("");
+  const [invitePlanId, setInvitePlanId] = useState("");
   const [inviteMessage, setInviteMessage] = useState<string | null>(null);
   const [inviteSaved, setInviteSaved] = useState(false);
   const [name, setName] = useState("");
@@ -92,6 +94,7 @@ export function ClientManager({
     setInvitePhone("");
     setInviteName("");
     setInviteNotes("");
+    setInvitePlanId("");
     setInviteMessage(null);
     setInviteSaved(false);
   }
@@ -102,13 +105,19 @@ export function ClientManager({
     setInvitePhone(p.phone);
     setInviteName(p.name);
     setInviteNotes(p.notes);
+    setInvitePlanId(p.planId);
     setInviteMessage(null);
     setInviteSaved(false);
   }
 
   function submitInvite() {
     startTransition(async () => {
-      const details = { phone: invitePhone, fullName: inviteName, notes: inviteNotes };
+      const details = {
+        phone: invitePhone,
+        fullName: inviteName,
+        notes: inviteNotes,
+        planId: invitePlanId,
+      };
       const r =
         inviteMode === "edit" && inviteId
           ? await savePendingClient(inviteId, details)
@@ -214,7 +223,11 @@ export function ClientManager({
                 <div className="flex items-center justify-between gap-3">
                   <button onClick={() => openEditInvite(p)} className="text-left hover:text-ember">
                     <p className="font-medium">{p.name || p.phone}</p>
-                    <p className="text-sm text-fg-2">{p.phone}</p>
+                    <p className="text-sm text-fg-2">
+                      {p.phone}
+                      {p.planId &&
+                        ` · free ${plans.find((pl) => pl.id === p.planId)?.name ?? "plan"} on signup`}
+                    </p>
                   </button>
                   <Badge tone="ember">Awaiting signup</Badge>
                 </div>
@@ -272,6 +285,19 @@ export function ClientManager({
               placeholder="Optional — e.g. trains Tuesdays, intermediate"
               hint="Saved onto their student record when they join."
             />
+            <Select
+              label="Free plan"
+              value={invitePlanId}
+              onChange={(e) => setInvitePlanId(e.target.value)}
+              hint="Optional — they get this plan free (30 days, no card) the moment their account connects."
+            >
+              <option value="">No free plan</option>
+              {plans.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
+            </Select>
             <Button onClick={submitInvite} disabled={pending || !invitePhone.trim()} className="w-full">
               {pending ? <Spinner /> : inviteMode === "edit" ? "Save client" : "Add client"}
             </Button>

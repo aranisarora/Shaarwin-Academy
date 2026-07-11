@@ -34,6 +34,8 @@ export type ClientInviteDetails = {
   phone: string;
   fullName: string;
   notes: string;
+  /** Plan gifted on signup (comp subscription, like "Give a free plan"). "" = none. */
+  planId: string;
 };
 
 /**
@@ -67,6 +69,7 @@ export async function addClientInviteCore(
       phone,
       full_name: d.fullName.trim() || null,
       notes: d.notes.trim() || null,
+      plan_id: d.planId || null,
       created_by: founderId,
       claimed_at: null,
       claimed_by: null,
@@ -78,7 +81,7 @@ export async function addClientInviteCore(
     actor_id: founderId,
     action: "client.invite",
     entity: "client_invites",
-    meta: { phone, name: d.fullName.trim() },
+    meta: { phone, name: d.fullName.trim(), plan_id: d.planId || null },
   });
   return { ok: true };
 }
@@ -98,6 +101,7 @@ export async function savePendingClientCore(
       phone,
       full_name: d.fullName.trim() || null,
       notes: d.notes.trim() || null,
+      plan_id: d.planId || null,
     })
     .eq("id", id)
     .is("claimed_at", null);
@@ -130,6 +134,49 @@ export async function deletePendingClientCore(
     entity_id: id,
   });
   return { ok: true };
+}
+
+/**
+ * Send an announcement to every active coach or every active client. Rows land
+ * in `notifications`; the delivery worker fans them out over push / WhatsApp /
+ * email per each user's preferences.
+ */
+export async function broadcastNotificationCore(
+  supabase: SupabaseClient,
+  founderId: string,
+  audience: "coaches" | "clients",
+  message: string,
+  title?: string
+): Promise<OpResult & { recipients?: number }> {
+  const body = message.trim();
+  if (!body) return { ok: false, error: "The message can't be empty." };
+
+  const { data: targets, error: targetErr } = await supabase
+    .from("profiles")
+    .select("id")
+    .eq("role", audience === "coaches" ? "coach" : "client")
+    .is("deleted_at", null);
+  if (targetErr) return { ok: false, error: "Couldn't load the recipients." };
+  if (!targets?.length) return { ok: false, error: "No recipients found." };
+
+  const heading = title?.trim() || "Message from the academy";
+  const { error } = await supabase.from("notifications").insert(
+    targets.map((t) => ({
+      user_id: t.id,
+      type: "announcement",
+      title: heading,
+      body,
+    }))
+  );
+  if (error) return { ok: false, error: "Couldn't queue the messages." };
+
+  await supabase.from("audit_log").insert({
+    actor_id: founderId,
+    action: "notify.broadcast",
+    entity: "notifications",
+    meta: { audience, title: heading, body, recipients: targets.length },
+  });
+  return { ok: true, recipients: targets.length };
 }
 
 /** Payment-dispute freeze: a blocked client can sign in but can't book. */

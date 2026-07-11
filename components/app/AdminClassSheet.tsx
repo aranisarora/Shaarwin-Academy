@@ -7,12 +7,12 @@
 import { useState, useTransition } from "react";
 import { Sheet } from "@/components/ui/Sheet";
 import { Button } from "@/components/ui/Button";
-import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
 import { Spinner } from "@/components/ui/Spinner";
 import { setClassActive } from "@/app/admin/actions";
 import { deleteGroupClass, endGroupClass, updateGroupClass } from "@/app/admin/calendar/actions";
 import { ClassDetailFields, generateClassTitle, type ClassFormState } from "./ClassFields";
+import { TimeSelect12h } from "./TimeSelect12h";
 import { WEEKDAYS, type ClassRow, type Venue } from "./admin-calendar-types";
 
 export function AdminClassSheet({
@@ -60,11 +60,10 @@ export function AdminClassSheet({
               <option key={code} value={code}>{name}</option>
             ))}
           </Select>
-          <Input
+          <TimeSelect12h
             label="Time"
-            type="time"
             value={form.time}
-            onChange={(e) => updateForm({ ...form, time: e.target.value })}
+            onChange={(time) => updateForm({ ...form, time })}
           />
         </div>
 

@@ -1,6 +1,6 @@
 "use client";
 
-// "Add to calendar" sheet: a new weekly class, an extra one-off session of an
+// "Add to schedule" sheet: a new weekly class, an extra one-off session of an
 // existing class, or a private session booked for a client.
 
 import { useState, useTransition } from "react";
@@ -14,6 +14,7 @@ import { createOneOffSession, createPrivateSession } from "@/app/admin/calendar/
 import { AddressForm, isAddressComplete } from "@/components/app/AddressForm";
 import { EMPTY_ADDRESS, type StructuredAddress } from "@/lib/address";
 import { ClassDetailFields, EMPTY_CLASS_FORM, generateClassTitle, type ClassFormState } from "./ClassFields";
+import { TimeSelect12h } from "./TimeSelect12h";
 import {
   WEEKDAYS,
   type ClientOption,
@@ -27,7 +28,7 @@ const MODES: { value: Mode; label: string; blurb: string }[] = [
   {
     value: "weekly",
     label: "Weekly class",
-    blurb: "A new group class that repeats every week — the next 8 weeks go on the calendar.",
+    blurb: "A new group class that repeats every week — the next 8 weeks go on the schedule.",
   },
   {
     value: "oneoff",
@@ -106,7 +107,7 @@ export function AdminAddSheet({
     startTransition(async () => {
       if (mode === "weekly") {
         const r = await createGroupClass(form);
-        if (r.ok) onDone("Class is live — the next 8 weeks of sessions are on the calendar.");
+        if (r.ok) onDone("Class is live — the next 8 weeks of sessions are on the schedule.");
         else setMessage(r.error ?? "Couldn't create the class.");
       } else if (mode === "oneoff") {
         const r = await createOneOffSession(
@@ -115,7 +116,7 @@ export function AdminAddSheet({
           oneOff.time,
           oneOff.coachId
         );
-        if (r.ok) onDone("Session added to the calendar.");
+        if (r.ok) onDone("Session added to the schedule.");
         else setMessage(r.error ?? "Couldn't add the session.");
       } else {
         const r = await createPrivateSession({
@@ -146,7 +147,7 @@ export function AdminAddSheet({
         : !!priv.clientId && !!priv.date && !!priv.time && isAddressComplete(address);
 
   return (
-    <Sheet open onClose={onClose} title="Add to calendar">
+    <Sheet open onClose={onClose} title="Add to schedule">
       <div className="space-y-4">
         <div className="grid grid-cols-3 gap-2">
           {MODES.map((m) => (
@@ -180,11 +181,10 @@ export function AdminAddSheet({
                   <option key={code} value={code}>{name}</option>
                 ))}
               </Select>
-              <Input
+              <TimeSelect12h
                 label="Time"
-                type="time"
                 value={form.time}
-                onChange={(e) => updateForm({ ...form, time: e.target.value })}
+                onChange={(time) => updateForm({ ...form, time })}
               />
             </div>
             <Select
@@ -219,11 +219,10 @@ export function AdminAddSheet({
                 value={oneOff.date}
                 onChange={(e) => setOneOff({ ...oneOff, date: e.target.value })}
               />
-              <Input
+              <TimeSelect12h
                 label="Time"
-                type="time"
                 value={oneOff.time}
-                onChange={(e) => setOneOff({ ...oneOff, time: e.target.value })}
+                onChange={(time) => setOneOff({ ...oneOff, time })}
               />
             </div>
             <Select
@@ -271,11 +270,10 @@ export function AdminAddSheet({
                 value={priv.date}
                 onChange={(e) => setPriv({ ...priv, date: e.target.value })}
               />
-              <Input
+              <TimeSelect12h
                 label="Time"
-                type="time"
                 value={priv.time}
-                onChange={(e) => setPriv({ ...priv, time: e.target.value })}
+                onChange={(time) => setPriv({ ...priv, time })}
               />
             </div>
             <Select
