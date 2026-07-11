@@ -79,7 +79,9 @@ export function ClassDetailFields({
           onChange={(e) => onChange({ ...form, venueId: e.target.value })}
         >
           {venues.map((v) => (
-            <option key={v.id} value={v.id}>{v.name}</option>
+            <option key={v.id} value={v.id}>
+              {v.active ? v.name : `${v.name} (hidden)`}
+            </option>
           ))}
         </Select>
         <Input

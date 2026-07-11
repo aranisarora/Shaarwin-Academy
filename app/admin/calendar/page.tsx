@@ -49,7 +49,7 @@ export default async function AdminCalendarPage({
         )
         .eq("class_type", "group")
         .order("title"),
-      supabase.from("venues").select("id,name").eq("active", true).order("name"),
+      supabase.from("venues").select("id,name,active").order("name"),
       supabase
         .from("profiles")
         .select("id,full_name,players(id,full_name)")

@@ -42,7 +42,7 @@ export type ClassRow = {
 };
 
 export type Coach = { id: string; name: string };
-export type Venue = { id: string; name: string };
+export type Venue = { id: string; name: string; active: boolean };
 export type ClientOption = {
   id: string;
   name: string;
