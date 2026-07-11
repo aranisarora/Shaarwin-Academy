@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { requireUser } from "@/lib/auth";
 import { ClientShell } from "@/components/app/ClientShell";
 import { ProfileEditor } from "@/components/app/ProfileEditor";
+import { InstallAppCard } from "@/components/app/InstallAppCard";
 
 export const metadata: Metadata = { title: "Profile" };
 
@@ -33,6 +34,7 @@ export default async function ProfilePage() {
           }}
           players={players ?? []}
         />
+        <InstallAppCard />
       </div>
     </ClientShell>
   );

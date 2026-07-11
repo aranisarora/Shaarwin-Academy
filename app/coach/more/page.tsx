@@ -4,6 +4,7 @@ import { CoachShell } from "@/components/app/CoachShell";
 import { CoachProfileEditor } from "@/components/app/CoachProfileEditor";
 import { AvailabilityEditor } from "@/components/app/AvailabilityEditor";
 import { WhatsAppConnect } from "@/components/app/WhatsAppConnect";
+import { InstallAppCard } from "@/components/app/InstallAppCard";
 import { SignOutButton } from "@/components/app/SignOutButton";
 
 export const metadata: Metadata = { title: "More" };
@@ -44,6 +45,7 @@ export default async function CoachMorePage() {
         />
         <AvailabilityEditor windows={windows ?? []} timeOff={timeOff ?? []} />
         <WhatsAppConnect />
+        <InstallAppCard />
       </div>
     </CoachShell>
   );
