@@ -1197,7 +1197,7 @@ begin
 end;
 $function$;
 
-CREATE OR REPLACE FUNCTION public.founder_reassign(p_session uuid, p_coach uuid, p_lock boolean DEFAULT false)
+CREATE OR REPLACE FUNCTION public.founder_reassign(p_session uuid, p_coach uuid, p_lock boolean DEFAULT false, p_force boolean DEFAULT false)
  RETURNS void
  LANGUAGE plpgsql
  SECURITY DEFINER
@@ -1210,7 +1210,7 @@ begin
   if not is_founder() then raise exception 'founder_only'; end if;
 
   v_fail := coach_filter_failure(p_coach, p_session);
-  if v_fail is not null then
+  if v_fail is not null and not p_force then
     raise exception 'filter_failed_%', v_fail;
   end if;
 
@@ -1226,7 +1226,8 @@ begin
 
   insert into audit_log (actor_id, action, entity, entity_id, meta)
   values (auth.uid(), 'session.reassign', 'class_sessions', p_session,
-          jsonb_build_object('from', v_old, 'to', p_coach, 'locked', p_lock));
+          jsonb_build_object('from', v_old, 'to', p_coach, 'locked', p_lock,
+                             'forced', p_force, 'overridden_rule', v_fail));
 
   -- notify old coach, new coach, booked clients
   if v_old is not null and v_old <> p_coach then

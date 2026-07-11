@@ -162,13 +162,14 @@ const rankCoaches: WaTool = {
 const reassign: WaTool = {
   name: "reassign_coach",
   description:
-    "Assign or reassign a coach to a session (coach_id from rank_coaches_for_session or list_coaches). lock=true stops the engine from moving them later. Confirm with the founder first.",
+    "Assign or reassign a coach to a session (coach_id from rank_coaches_for_session or list_coaches). lock=true stops the engine from moving them later. If it fails with filter_failed_*, tell the founder why and ask before retrying with force=true, which overrides the rule (a hard time clash is still blocked). Confirm with the founder first.",
   input_schema: {
     type: "object",
     properties: {
       session_id: { type: "string" },
       coach_id: { type: "string" },
       lock: { type: "boolean" },
+      force: { type: "boolean" },
     },
     required: ["session_id", "coach_id"],
   },
@@ -177,6 +178,7 @@ const reassign: WaTool = {
       p_session: input.session_id,
       p_coach: input.coach_id,
       p_lock: Boolean(input.lock),
+      p_force: Boolean(input.force),
     });
     if (error) return fail(error.message);
     return ok({ reassigned: true });

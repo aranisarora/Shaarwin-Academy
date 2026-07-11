@@ -95,7 +95,19 @@ export function AdminSessionSheet({
   function applyCoach() {
     if (!session || !target) return;
     startTransition(async () => {
-      const r = await reassignSession(session.id, target, lock);
+      let r = await reassignSession(session.id, target, lock);
+      if (!r.ok && r.code === "filter_failed") {
+        // The rules say no — but the founder can override. A hard time clash
+        // is still blocked by the database either way.
+        const goAhead = window.confirm(
+          `${r.error ?? "That coach doesn't fit the rules."}\n\nAssign them anyway?`
+        );
+        if (!goAhead) {
+          setMessage(r.error ?? "Failed.");
+          return;
+        }
+        r = await reassignSession(session.id, target, lock, true);
+      }
       setMessage(
         r.ok ? "Coach changed — everyone affected has been told." : (r.error ?? "Failed.")
       );
