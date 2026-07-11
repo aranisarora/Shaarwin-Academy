@@ -2159,7 +2159,13 @@ CREATE OR REPLACE FUNCTION public.get_player_notes(p_player uuid)
  SET search_path TO 'public'
 AS $function$
 begin
-  if not (is_coach() or is_founder()) then
+  if not (
+    is_coach() or is_founder()
+    or exists (
+      select 1 from players pl
+       where pl.id = p_player and pl.client_id = auth.uid()
+    )
+  ) then
     raise exception 'not_authorised';
   end if;
 

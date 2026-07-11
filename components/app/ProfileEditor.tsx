@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import Link from "next/link";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
@@ -140,13 +141,14 @@ export function ProfileEditor({
         <ul className="mb-3 divide-y divide-line rounded-[12px] border border-line bg-surface-2">
           {players.map((p) => (
             <li key={p.id} className="flex items-center justify-between gap-3 px-4 py-3">
-              <div>
+              <Link href={`/app/players/${p.id}`} className="min-w-0 flex-1">
                 <p className="font-medium">{p.full_name}</p>
                 <p className="text-xs text-fg-2">
                   {p.skill_level}
                   {p.date_of_birth ? ` · born ${new Date(p.date_of_birth).getFullYear()}` : ""}
+                  {" · attendance & notes →"}
                 </p>
-              </div>
+              </Link>
               <button
                 disabled={pending}
                 onClick={() =>
