@@ -262,6 +262,8 @@ create table public.plans (
   -- > 0: group plan with weekly cap; 0: private plan (no group access);
   -- null: legacy "unlimited" (comp), treated as group.
   group_sessions_per_week integer,
+  private_sessions_per_week integer,
+  private_session_minutes integer,
   private_minutes_per_cycle integer default 0 not null,
   active boolean default true not null,
   created_at timestamptz default now() not null,
@@ -332,7 +334,21 @@ create table public.profiles (
   deleted_at timestamptz,
   created_at timestamptz default now() not null,
   razorpay_customer_id text,
-  onboarded_at timestamptz
+  onboarded_at timestamptz,
+  onboarding_step integer default 1 not null
+);
+
+create table public.private_booking_series (
+  id uuid default gen_random_uuid() not null,
+  client_id uuid not null,
+  player_id uuid not null,
+  coach_id uuid,
+  weekday integer not null,
+  start_time time not null,
+  address text,
+  active boolean default true not null,
+  created_at timestamptz default now() not null,
+  cancelled_at timestamptz
 );
 
 create table public.push_subscriptions (
@@ -429,6 +445,11 @@ ALTER TABLE public.bookings ADD CONSTRAINT bookings_rescheduled_from_fkey FOREIG
 ALTER TABLE public.bookings ADD CONSTRAINT bookings_series_id_fkey FOREIGN KEY (series_id) REFERENCES booking_series(id) ON DELETE SET NULL;
 ALTER TABLE public.bookings ADD CONSTRAINT bookings_session_id_fkey FOREIGN KEY (session_id) REFERENCES class_sessions(id) ON DELETE CASCADE;
 ALTER TABLE public.class_credits ADD CONSTRAINT class_credits_pkey PRIMARY KEY (id);
+ALTER TABLE public.private_booking_series ADD CONSTRAINT private_booking_series_pkey PRIMARY KEY (id);
+ALTER TABLE public.private_booking_series ADD CONSTRAINT private_booking_series_client_id_fkey FOREIGN KEY (client_id) REFERENCES profiles(id) ON DELETE CASCADE;
+ALTER TABLE public.private_booking_series ADD CONSTRAINT private_booking_series_player_id_fkey FOREIGN KEY (player_id) REFERENCES players(id) ON DELETE CASCADE;
+ALTER TABLE public.private_booking_series ADD CONSTRAINT private_booking_series_coach_id_fkey FOREIGN KEY (coach_id) REFERENCES coaches(id) ON DELETE SET NULL;
+ALTER TABLE public.private_booking_series ADD CONSTRAINT private_booking_series_weekday_check CHECK (((weekday >= 1) AND (weekday <= 7)));
 ALTER TABLE public.class_credits ADD CONSTRAINT class_credits_client_id_fkey FOREIGN KEY (client_id) REFERENCES profiles(id) ON DELETE CASCADE;
 ALTER TABLE public.class_credits ADD CONSTRAINT class_credits_player_id_fkey FOREIGN KEY (player_id) REFERENCES players(id) ON DELETE CASCADE;
 ALTER TABLE public.class_credits ADD CONSTRAINT class_credits_order_id_fkey FOREIGN KEY (order_id) REFERENCES orders(id) ON DELETE SET NULL;
@@ -1858,16 +1879,45 @@ declare
   v_duration int := (payload->>'duration_minutes')::int;
   v_start timestamptz := (payload->>'starts_at')::timestamptz;
   v_preferred uuid := nullif(payload->>'preferred_coach', '')::uuid;
+  v_series uuid := nullif(payload->>'series_id', '')::uuid;
   v_class_id uuid;
   v_session_id uuid;
   v_booking bookings%rowtype;
   v_coach uuid;
   v_balance int;
+  v_sessions_per_week int;
+  v_session_minutes int;
+  v_used int;
 begin
   if v_client is null then raise exception 'not_authenticated'; end if;
 
-  -- Minutes are the entitlement: they arrive from a private plan's monthly
-  -- grant or a one-off purchase. No subscription requirement.
+  -- 1. Check current plan limits
+  select p.private_sessions_per_week, p.private_session_minutes
+    into v_sessions_per_week, v_session_minutes
+  from subscriptions s join plans p on p.id = s.plan_id
+  where s.client_id = v_client and s.status in ('active','trialing','past_due')
+  order by s.created_at desc limit 1;
+
+  if v_session_minutes is not null and v_duration <> v_session_minutes then
+    raise exception 'duration_mismatch';
+  end if;
+
+  if v_sessions_per_week is not null then
+    select count(*) into v_used
+    from bookings b
+    join class_sessions cs on cs.id = b.session_id
+    join classes c on c.id = cs.class_id
+    where b.client_id = v_client and b.status = 'confirmed'
+      and c.class_type = 'private'
+      and date_trunc('week', cs.starts_at at time zone 'Asia/Kolkata')
+        = date_trunc('week', v_start at time zone 'Asia/Kolkata');
+        
+    if v_used >= v_sessions_per_week then
+      raise exception 'skip_cap';
+    end if;
+  end if;
+
+  -- 2. Ledger balance check
   v_balance := private_minutes_balance(v_client);
   if v_balance < v_duration then raise exception 'insufficient_minutes'; end if;
 
@@ -1899,12 +1949,11 @@ begin
 
   v_coach := assign_coach(v_session_id, v_preferred);
 
-  -- Debit stands even if parked (refund only if founder cancels).
   insert into private_credit_ledger (client_id, delta_minutes, reason)
   values (v_client, -v_duration, 'booking');
 
-  insert into bookings (session_id, client_id, player_id, status)
-  values (v_session_id, v_client, v_player, 'confirmed')
+  insert into bookings (session_id, client_id, player_id, status, series_id)
+  values (v_session_id, v_client, v_player, 'confirmed', v_series)
   returning * into v_booking;
 
   if v_coach is not null then
@@ -1929,6 +1978,97 @@ begin
   end if;
 
   return v_session_id;
+end;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.generate_private_class_sessions(p_weeks integer DEFAULT 4)
+ RETURNS integer
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare
+  s record;
+  d date;
+  v_start timestamptz;
+  v_count int := 0;
+  v_class_id uuid;
+  v_session_id uuid;
+  v_duration int;
+  v_balance int;
+  v_coach uuid;
+begin
+  for s in
+    select bs.*, p.private_session_minutes
+    from private_booking_series bs
+    join subscriptions sub on sub.client_id = bs.client_id
+    join plans p on p.id = sub.plan_id
+    where bs.active and sub.status in ('active','trialing','past_due')
+  loop
+    v_duration := coalesce(s.private_session_minutes, 60);
+
+    for d in select generate_series(current_date, current_date + p_weeks * 7, interval '1 day')::date loop
+      if extract(isodow from d)::int = s.weekday then
+        v_start := (d::text || ' ' || s.start_time::text)::timestamp at time zone 'Asia/Kolkata';
+        
+        -- Check if a booking already exists for this series at this time
+        if v_start > now() + interval '24 hours' and not exists (
+          select 1 from bookings b
+          join class_sessions cs on cs.id = b.session_id
+          where b.series_id = s.id and cs.starts_at = v_start
+        ) then
+          -- Attempt to book if they have enough minutes
+          v_balance := private_minutes_balance(s.client_id);
+          if v_balance >= v_duration then
+             
+            insert into classes (class_type, title, skill_level, capacity, duration_minutes, starts_on, created_by)
+            values ('private', 'Private session', 'beginner', 1, v_duration, (v_start at time zone 'Asia/Kolkata')::date, s.client_id)
+            returning id into v_class_id;
+          
+            insert into private_class_details (class_id, client_id, player_id, address, postcode, lat, lng, has_table)
+            values (v_class_id, s.client_id, s.player_id, s.address, '', 0.0, 0.0, true);
+          
+            insert into class_sessions (class_id, starts_at, ends_at)
+            values (v_class_id, v_start, v_start + make_interval(mins => v_duration))
+            returning id into v_session_id;
+          
+            v_coach := assign_coach(v_session_id, s.coach_id);
+          
+            insert into private_credit_ledger (client_id, delta_minutes, reason)
+            values (s.client_id, -v_duration, 'booking');
+          
+            insert into bookings (session_id, client_id, player_id, status, series_id)
+            values (v_session_id, s.client_id, s.player_id, 'confirmed', s.id);
+            
+            v_count := v_count + 1;
+            
+            if v_coach is not null then
+              insert into notifications (user_id, type, title, body, data) values
+                (s.client_id, 'coach_assigned', 'You''re on.',
+                 'Coach confirmed for ' || to_char(v_start at time zone 'Asia/Kolkata', 'Dy DD Mon FMHH12:MI am') || '.',
+                 jsonb_build_object('session_id', v_session_id, 'coach_id', v_coach, 'url', '/app/schedule')),
+                (v_coach, 'new_private_session', 'New private session',
+                 to_char(v_start at time zone 'Asia/Kolkata', 'Dy DD Mon FMHH12:MI am') || ' — ' || s.address,
+                 jsonb_build_object('session_id', v_session_id, 'url', '/coach/session/' || v_session_id));
+            else
+              insert into notifications (user_id, type, title, body, data)
+              select p.id, 'private_request_parked', 'Private request parked',
+                     'A private request has no available coach — resolve manually.',
+                     jsonb_build_object('session_id', v_session_id, 'url', '/admin/calendar')
+              from profiles p where p.role = 'founder';
+          
+              insert into notifications (user_id, type, title, body, data)
+              values (s.client_id, 'coach_assigned', 'We''re confirming your coach',
+                      'You''ll hear from us within 24 hours.',
+                      jsonb_build_object('session_id', v_session_id, 'url', '/app/schedule'));
+            end if;
+            
+          end if;
+        end if;
+      end if;
+    end loop;
+  end loop;
+  return v_count;
 end;
 $function$;
 

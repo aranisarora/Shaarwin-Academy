@@ -20,15 +20,22 @@ export default async function OnboardingPage() {
     .eq("client_id", user.id)
     .order("created_at");
 
+  const { data: waLink } = await supabase
+    .from("wa_links")
+    .select("phone")
+    .eq("user_id", user.id)
+    .maybeSingle();
+
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-md flex-col justify-center px-6 py-16">
-      <h1 className="font-display mb-2 text-4xl">Who&apos;s playing?</h1>
-      <p className="mb-8 text-fg-2">
-        Your first group class is free — tell us who&apos;ll be at the table
-        and you&apos;re ready to book. You can add or change players any time
-        from your profile.
-      </p>
-      <OnboardingFlow profileName={profile.full_name} existing={players ?? []} />
+
+      <OnboardingFlow 
+        profileName={profile.full_name} 
+        existing={players ?? []} 
+        initialStep={profile.onboarding_step ?? 1}
+        hasWaLink={!!waLink}
+        notificationPrefs={profile.notification_prefs}
+      />
     </main>
   );
 }

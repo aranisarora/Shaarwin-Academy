@@ -195,9 +195,54 @@ export async function requestPrivateClass(req: PrivateRequest): Promise<PrivateR
   if (error) {
     if (error.message.includes("insufficient_minutes"))
       return { ok: false, error: "Not enough private minutes — top up from the membership page." };
+    if (error.message.includes("skip_cap"))
+      return { ok: false, error: "You've reached your weekly limit for private sessions." };
+    if (error.message.includes("duration_mismatch"))
+      return { ok: false, error: "Session duration does not match your plan's private session duration." };
     return { ok: false, error: "Request didn't go through. Try again." };
   }
   revalidatePath("/app");
   revalidatePath("/app/schedule");
   return { ok: true, sessionId: data as string, parked: false };
+}
+
+export async function requestPrivateSeries(req: PrivateRequest): Promise<{ ok: true; booked: number } | { ok: false; error: string }> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Sign in first." };
+
+  const summary = await getSubscriptionSummary(supabase, user.id);
+  const plan = summary.privatePlan;
+  if (!plan || !plan.privateSessionsPerWeek) {
+    return { ok: false, error: "Your plan doesn't support weekly recurring sessions." };
+  }
+
+  const d = new Date(req.startsAt);
+  const isoDow = d.getDay() === 0 ? 7 : d.getDay(); // 1-7 for Mon-Sun
+  const timeStr = d.toTimeString().substring(0, 5); // HH:MM
+
+  const { error: seriesErr } = await supabase
+    .from("private_booking_series")
+    .insert({
+      client_id: user.id,
+      player_id: req.playerId,
+      coach_id: req.preferredCoach || null,
+      weekday: isoDow,
+      start_time: timeStr,
+      address: req.address,
+    });
+
+  if (seriesErr) return { ok: false, error: "Couldn't set up the weekly series." };
+
+  const { data: count, error: genErr } = await supabase.rpc("generate_private_class_sessions");
+  if (genErr) {
+    // If generation fails, we still created the series, but tell the user it didn't book yet.
+    return { ok: false, error: "Series created but initial booking failed." };
+  }
+
+  revalidatePath("/app");
+  revalidatePath("/app/schedule");
+  return { ok: true, booked: count as number };
 }

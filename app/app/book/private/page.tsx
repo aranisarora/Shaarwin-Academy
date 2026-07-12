@@ -31,6 +31,7 @@ export default async function PrivateBookingPage() {
         players={playersRes.data ?? []}
         coaches={coaches}
         minutesBalance={summary.minutesBalance}
+        privateSessionsPerWeek={summary.privatePlan?.privateSessionsPerWeek ?? null}
         defaultAddress={profile.default_address}
       />
     </ClientShell>
