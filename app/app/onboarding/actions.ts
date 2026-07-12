@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
-import { getWhatsAppLinkedPhone } from "@/lib/whatsapp/link-action";
+import { adminClient } from "@/lib/whatsapp/identity";
 import { normalizePhone } from "@/lib/whatsapp/phone";
 
 type Result = { ok: boolean; error?: string };
@@ -99,27 +99,21 @@ export async function savePlayers(input: {
   return { ok: true };
 }
 
-/**
- * Step 2 poll — is the WhatsApp bot linked yet? Advances the step server-side
- * the moment a link lands, so a refresh mid-flow resumes correctly.
- */
-export async function checkWhatsAppLinked(): Promise<{ phone: string | null }> {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return { phone: null };
-
-  const phone = await getWhatsAppLinkedPhone();
-  if (phone) await bumpStep(supabase, user.id, 2);
-  return { phone };
-}
+export type ConfirmPhoneResult = Result & {
+  /** An admin pre-registered this number — invite claimed on save. */
+  preRegistered?: boolean;
+  /** Name of the gifted plan activated by the claim, if the invite carried one. */
+  planName?: string | null;
+};
 
 /**
- * Step 2 fallback — no WhatsApp on this device: confirm a phone number so the
- * bot's profiles.phone matching still works, and complete the step.
+ * Step 2 — confirm a phone number. Updating profiles.phone fires the
+ * profiles_claim_client_invite trigger, which claims any pre-registration
+ * invite for this number and grants its gifted plan — so pre-registered
+ * clients can book immediately, no WhatsApp link required. The bot also
+ * auto-links this number the first time it messages in.
  */
-export async function confirmPhone(rawPhone: string): Promise<Result> {
+export async function confirmPhone(rawPhone: string): Promise<ConfirmPhoneResult> {
   const supabase = await createClient();
   const {
     data: { user },
@@ -138,37 +132,30 @@ export async function confirmPhone(rawPhone: string): Promise<Result> {
   if (error) return { ok: false, error: "Couldn't save the number. Try again." };
 
   await bumpStep(supabase, user.id, 2);
-  return { ok: true };
-}
 
-/** Step 3 — save notification toggles and advance to choose-path. */
-export async function saveNotificationPrefs(
-  prefs: Record<string, boolean>
-): Promise<Result> {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return { ok: false, error: "Sign in first." };
-
-  const clean: Record<string, boolean> = {};
-  for (const [key, value] of Object.entries(prefs)) {
-    if (typeof value === "boolean") clean[key] = value;
+  // client_invites is founder-only under RLS, so check the claim (which the
+  // trigger just performed synchronously) with the service role.
+  const { data: invite } = await adminClient()
+    .from("client_invites")
+    .select("id, plans(name)")
+    .eq("claimed_by", user.id)
+    .order("claimed_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (invite) {
+    const plan = invite.plans as { name: string } | { name: string }[] | null;
+    const planName = Array.isArray(plan) ? plan[0]?.name : plan?.name;
+    return { ok: true, preRegistered: true, planName: planName ?? null };
   }
 
-  const { error } = await supabase
-    .from("profiles")
-    .update({ notification_prefs: clean })
-    .eq("id", user.id);
-  if (error) return { ok: false, error: "Couldn't save your preferences." };
-
-  await bumpStep(supabase, user.id, 3);
   return { ok: true };
 }
 
 /**
- * Step 4 — the setup steps are done; stamp onboarded_at so requireUser stops
+ * Step 3 — the setup steps are done; stamp onboarded_at so requireUser stops
  * routing here, then the client heads into the real booking flow.
+ * (Notification prefs are all-on by default and editable in profile settings —
+ * they're not an onboarding step.)
  */
 export async function finishOnboardingSetup(): Promise<Result> {
   const supabase = await createClient();
@@ -183,7 +170,7 @@ export async function finishOnboardingSetup(): Promise<Result> {
     .eq("id", user.id)
     .maybeSingle();
   if (!profile) return { ok: false, error: "Couldn't finish setup." };
-  if (!profile.onboarded_at && (profile.onboarding_step ?? 0) < 3) {
+  if (!profile.onboarded_at && (profile.onboarding_step ?? 0) < 2) {
     return { ok: false, error: "Finish the setup steps first." };
   }
 

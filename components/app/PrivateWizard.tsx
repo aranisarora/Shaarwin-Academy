@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
 import { Spinner } from "@/components/ui/Spinner";
 import { AddressForm, isAddressComplete } from "@/components/app/AddressForm";
+import { WhatsAppSayHi } from "@/components/app/WhatsAppSayHi";
 import { EMPTY_ADDRESS, type StructuredAddress } from "@/lib/address";
 import {
   checkCoverage,
@@ -583,9 +584,12 @@ export function PrivateWizard({
                   ? "You'll hear from us within 24 hours."
                   : "Coach confirmed — details are in your schedule."}
           </p>
+          <div className="mx-auto mt-6 max-w-xs">
+            <WhatsAppSayHi label="Want a reminder?" />
+          </div>
           <Link
             href={onboarding ? "/app/onboarding/done" : "/app/schedule"}
-            className="mt-6 inline-flex min-h-11 items-center rounded-[8px] bg-ember px-6 font-semibold text-ivory hover:bg-ember-2"
+            className="mt-4 inline-flex min-h-11 items-center rounded-[8px] bg-ember px-6 font-semibold text-ivory hover:bg-ember-2"
           >
             {onboarding ? "Continue" : "View schedule"}
           </Link>

@@ -14,6 +14,7 @@ export type SessionRow = {
   capacity: number; // effective for this session (override ?? class default)
   isPrivate: boolean;
   venueName: string | null;
+  playerName: string | null;
   address: StructuredAddress | null;
   // Class scope — what "every week" edits apply to. Present on group sessions.
   classId: string;

@@ -104,7 +104,7 @@ export default async function CoachSchedulePage() {
                               <p className="text-sm text-fg-2">{addressLine}</p>
                             )}
                             <p className="mt-0.5 text-sm text-fg-2">
-                              {s.classTitle}
+                              {s.isPrivate && s.playerName ? s.playerName : s.classTitle}
                             </p>
                           </Link>
                           <div className="flex shrink-0 flex-col items-end gap-1.5">

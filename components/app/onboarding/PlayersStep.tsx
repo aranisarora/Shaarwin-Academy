@@ -27,19 +27,27 @@ export type ExistingPlayer = {
 type Row = {
   id?: string;
   fullName: string;
-  dateOfBirth: string;
+  /** 4-digit year; stored as Jan 1 of that year in players.date_of_birth. */
+  yearOfBirth: string;
   skillLevel: string;
 };
 
-const blankRow = (): Row => ({ fullName: "", dateOfBirth: "", skillLevel: "beginner" });
+const blankRow = (): Row => ({ fullName: "", yearOfBirth: "", skillLevel: "beginner" });
 
 function toRow(p: ExistingPlayer): Row {
   return {
     id: p.id,
     fullName: p.full_name,
-    dateOfBirth: p.date_of_birth ?? "",
+    yearOfBirth: p.date_of_birth ? p.date_of_birth.slice(0, 4) : "",
     skillLevel: p.skill_level,
   };
+}
+
+/** Year → ISO date for the players.date_of_birth column; "" when unusable. */
+function yearToDate(year: string): string {
+  const y = Number(year.trim());
+  const now = new Date().getFullYear();
+  return Number.isInteger(y) && y >= now - 100 && y <= now ? `${y}-01-01` : "";
 }
 
 /**
@@ -69,7 +77,7 @@ export function PlayersStep({
   const [self, setSelf] = useState<Row>(
     selfExisting
       ? toRow(selfExisting)
-      : { fullName: profileName, dateOfBirth: "", skillLevel: "beginner" }
+      : { fullName: profileName, yearOfBirth: "", skillLevel: "beginner" }
   );
   const [others, setOthers] = useState<Row[]>(existingOthers);
   const [error, setError] = useState<string | null>(null);
@@ -92,7 +100,10 @@ export function PlayersStep({
   function finish() {
     startTransition(async () => {
       const r = await savePlayers({
-        players: roster,
+        players: roster.map(({ yearOfBirth, ...p }) => ({
+          ...p,
+          dateOfBirth: yearToDate(yearOfBirth),
+        })),
         // "My kids" retires the player row auto-created for the account
         // holder at signup; blank kid rows are filtered out server-side.
         removeIds: !selfPlays && self.id ? [self.id] : [],
@@ -132,10 +143,12 @@ export function PlayersStep({
             onChange={(e) => setSelf({ ...self, fullName: e.target.value })}
           />
           <Input
-            label="Date of birth (optional)"
-            type="date"
-            value={self.dateOfBirth}
-            onChange={(e) => setSelf({ ...self, dateOfBirth: e.target.value })}
+            label="Year of birth (optional)"
+            type="number"
+            inputMode="numeric"
+            placeholder="e.g. 1990"
+            value={self.yearOfBirth}
+            onChange={(e) => setSelf({ ...self, yearOfBirth: e.target.value })}
           />
           <Select
             label="Skill level"
@@ -173,11 +186,13 @@ export function PlayersStep({
               onChange={(e) => updateOther(i, { fullName: e.target.value })}
             />
             <Input
-              label="Date of birth"
+              label="Year of birth"
               hint="Helps us place them in the right group."
-              type="date"
-              value={row.dateOfBirth}
-              onChange={(e) => updateOther(i, { dateOfBirth: e.target.value })}
+              type="number"
+              inputMode="numeric"
+              placeholder="e.g. 2014"
+              value={row.yearOfBirth}
+              onChange={(e) => updateOther(i, { yearOfBirth: e.target.value })}
             />
             <Select
               label="Skill level"
