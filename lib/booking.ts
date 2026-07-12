@@ -11,7 +11,7 @@ export type BrowseSession = {
   durationMinutes: number;
   capacity: number;
   confirmed: number;
-  venue: { id: string; name: string; postcode: string; lat: number; lng: number } | null;
+  venue: { id: string; name: string; postcode: string; lat: number; lng: number };
   coachName: string | null;
 };
 
@@ -24,7 +24,7 @@ export async function getBrowseSessions(
   const { data: sessions } = await supabase
     .from("class_sessions")
     .select(
-      "id,starts_at,ends_at,capacity_override,coach_id,classes!inner(id,title,skill_level,capacity,duration_minutes,class_type,venues(id,name,postcode,lat,lng))"
+      "id,starts_at,ends_at,capacity_override,coach_id,classes!inner(id,title,skill_level,capacity,duration_minutes,class_type,venues!inner(id,name,postcode,lat,lng))"
     )
     .eq("status", "scheduled")
     .eq("classes.class_type", "group")
@@ -59,7 +59,7 @@ export async function getBrowseSessions(
       skill_level: string;
       capacity: number;
       duration_minutes: number;
-      venues: { id: string; name: string; postcode: string; lat: number; lng: number } | null;
+      venues: { id: string; name: string; postcode: string; lat: number; lng: number };
     };
     return {
       id: s.id,
