@@ -91,9 +91,12 @@ export default async function MembershipPage() {
     popular: p.group_sessions_per_week === 2,
   });
 
-  const trialNames = players
-    .filter((p) => summary.openTrialPlayerIds.includes(p.id))
-    .map((p) => p.full_name);
+  // Account-level trial is usable by any household player.
+  const trialNames = summary.hasAccountTrial
+    ? players.map((p) => p.full_name)
+    : players
+        .filter((p) => summary.openTrialPlayerIds.includes(p.id))
+        .map((p) => p.full_name);
 
   return (
     <ClientShell title="Membership">

@@ -40,6 +40,7 @@ export type Profile = {
   stripe_customer_id: string | null;
   razorpay_customer_id: string | null;
   notification_prefs: Record<string, boolean>;
+  onboarded_at: string | null;
 };
 
 /**
@@ -82,5 +83,17 @@ export async function requireUser(nextPath: string) {
       .maybeSingle());
   }
 
-  return { supabase, user, profile: profile as Profile };
+  // Clients who haven't completed household onboarding (including accounts
+  // created before the flow existed) are routed there before any /app page.
+  const p = profile as Profile;
+  if (
+    p.role === "client" &&
+    !p.onboarded_at &&
+    nextPath.startsWith("/app") &&
+    nextPath !== "/app/onboarding"
+  ) {
+    redirect("/app/onboarding");
+  }
+
+  return { supabase, user, profile: p };
 }

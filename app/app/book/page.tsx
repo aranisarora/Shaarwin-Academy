@@ -31,7 +31,10 @@ export default async function BookPage() {
         players={players}
         entitlement={{
           hasGroupPlan: Boolean(summary.groupPlan?.active),
-          trialPlayerIds: summary.openTrialPlayerIds,
+          // The account-level trial can go to any household player.
+          trialPlayerIds: summary.hasAccountTrial
+            ? players.map((p) => p.id)
+            : summary.openTrialPlayerIds,
           dropinCredits: summary.dropinCredits,
         }}
       />

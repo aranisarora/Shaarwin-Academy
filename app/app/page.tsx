@@ -83,7 +83,7 @@ export default async function AppHomePage() {
             ? `${summary.planName} — renews ${formatRenewalDate(summary.periodEnd)}${
                 summary.minutesBalance > 0 ? ` · ${summary.minutesBalance} private min left` : ""
               }`
-            : summary.openTrialPlayerIds.length > 0
+            : summary.hasAccountTrial || summary.openTrialPlayerIds.length > 0
               ? "Your first group class is free — book the trial, no payment needed."
               : "No active membership — see plans, or book a one-off class."}
         </p>

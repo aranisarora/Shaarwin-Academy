@@ -331,7 +331,8 @@ create table public.profiles (
   disputed boolean default false not null,
   deleted_at timestamptz,
   created_at timestamptz default now() not null,
-  razorpay_customer_id text
+  razorpay_customer_id text,
+  onboarded_at timestamptz
 );
 
 create table public.push_subscriptions (
@@ -533,6 +534,7 @@ CREATE UNIQUE INDEX bookings_one_live_per_player ON public.bookings USING btree 
 CREATE INDEX bookings_series_id ON public.bookings USING btree (series_id) WHERE (series_id IS NOT NULL);
 CREATE INDEX bookings_session_id_idx ON public.bookings USING btree (session_id) WHERE (status = 'waitlisted'::booking_status);
 CREATE INDEX class_credits_client_open_idx ON public.class_credits USING btree (client_id) WHERE (consumed_at IS NULL);
+CREATE UNIQUE INDEX class_credits_one_trial_per_client ON public.class_credits USING btree (client_id) WHERE ((type = 'group_trial'::class_credit_type) AND (player_id IS NULL));
 CREATE UNIQUE INDEX class_credits_one_trial_per_player ON public.class_credits USING btree (player_id) WHERE (type = 'group_trial'::class_credit_type);
 CREATE INDEX class_sessions_class_id_starts_at_idx ON public.class_sessions USING btree (class_id, starts_at);
 CREATE INDEX class_sessions_coach_id_starts_at_idx ON public.class_sessions USING btree (coach_id, starts_at) WHERE (status = 'scheduled'::session_status);
@@ -654,13 +656,14 @@ AS $function$
 declare
   v_id uuid;
 begin
-  -- Consume one open class credit for a group booking: the player's free trial
-  -- first, then any drop-in. Raises no_entitlement when nothing is available.
+  -- Consume one open class credit for a group booking: the free trial first
+  -- (account-level or legacy per-player), then any drop-in. Raises
+  -- no_entitlement when nothing is available.
   select id into v_id
   from class_credits
   where client_id = p_client and consumed_at is null
     and (
-      (type = 'group_trial' and player_id = p_player)
+      (type = 'group_trial' and (player_id = p_player or player_id is null))
       or (type = 'group_dropin' and (player_id is null or player_id = p_player))
     )
   order by case when type = 'group_trial' then 0 else 1 end, created_at
@@ -1650,11 +1653,13 @@ CREATE OR REPLACE FUNCTION public.grant_signup_trial()
  SET search_path TO 'public'
 AS $function$
 begin
-  -- Free trial: every new player gets one group-class credit, once, forever.
-  -- Fired by the players_grant_trial trigger (see Triggers below).
-  insert into class_credits (client_id, player_id, type, source, note)
-  values (new.client_id, new.id, 'group_trial', 'signup', 'Free trial class')
-  on conflict (player_id) where (type = 'group_trial') do nothing;
+  -- Free trial: every new client account gets one group-class credit, once,
+  -- forever. player_id stays null — the account holder assigns it to a
+  -- household player at booking time. Fired by profiles_grant_trial.
+  insert into class_credits (client_id, type, source, note)
+  values (new.id, 'group_trial', 'signup', 'Free trial class')
+  on conflict (client_id) where (type = 'group_trial'::class_credit_type and player_id is null)
+  do nothing;
   return new;
 end;
 $function$;
@@ -2797,7 +2802,7 @@ CREATE OR REPLACE VIEW public.coach_client_view AS
   SELECT id, full_name, avatar_url FROM profiles p;
 
 -- ── Triggers ─────────────────────────────────────────────────────────────────
-CREATE TRIGGER players_grant_trial AFTER INSERT ON public.players FOR EACH ROW EXECUTE FUNCTION grant_signup_trial();
+CREATE TRIGGER profiles_grant_trial AFTER INSERT ON public.profiles FOR EACH ROW WHEN ((new.role = 'client'::user_role)) EXECUTE FUNCTION grant_signup_trial();
 CREATE TRIGGER seed_coach_availability AFTER INSERT ON public.coaches FOR EACH ROW EXECUTE FUNCTION seed_default_coach_availability();
 CREATE TRIGGER bookings_ops_feed_insert AFTER INSERT ON public.bookings FOR EACH ROW EXECUTE FUNCTION ops_notify_booking_created();
 CREATE TRIGGER bookings_ops_feed_status AFTER UPDATE OF status ON public.bookings FOR EACH ROW EXECUTE FUNCTION ops_notify_booking_status();

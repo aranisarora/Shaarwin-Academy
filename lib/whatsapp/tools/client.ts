@@ -189,9 +189,12 @@ const membership: WaTool = {
   run: async (_input, ctx) => {
     const summary = await getSubscriptionSummary(ctx.supabase!, ctx.profile!.id);
     const players = await householdPlayers(ctx.supabase!, ctx.profile!.id);
-    const trialNames = players
-      .filter((p) => summary.openTrialPlayerIds.includes(p.id))
-      .map((p) => p.full_name);
+    // Account-level trial is usable by any household player.
+    const trialNames = summary.hasAccountTrial
+      ? players.map((p) => p.full_name)
+      : players
+          .filter((p) => summary.openTrialPlayerIds.includes(p.id))
+          .map((p) => p.full_name);
     return ok({
       active: summary.active,
       group_plan: summary.groupPlan

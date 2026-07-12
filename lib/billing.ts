@@ -18,8 +18,10 @@ export type SubscriptionSummary = {
   /** Private home-coaching plan (monthly minutes grant). */
   privatePlan: PlanSummary | null;
   minutesBalance: number;
-  /** Players who still hold their free trial class. */
+  /** Players who still hold a legacy per-player free trial class. */
   openTrialPlayerIds: string[];
+  /** Unused account-level free trial — usable by any household player. */
+  hasAccountTrial: boolean;
   /** Purchased drop-in group classes not yet used. */
   dropinCredits: number;
   /** Any alive subscription (either plan). */
@@ -120,6 +122,9 @@ export async function getSubscriptionSummary(
   const openTrialPlayerIds = (credits ?? [])
     .filter((c) => c.type === "group_trial" && c.player_id)
     .map((c) => c.player_id as string);
+  const hasAccountTrial = (credits ?? []).some(
+    (c) => c.type === "group_trial" && !c.player_id
+  );
   const dropinCredits = (credits ?? []).filter(
     (c) => c.type === "group_dropin"
   ).length;
@@ -130,6 +135,7 @@ export async function getSubscriptionSummary(
     privatePlan,
     minutesBalance,
     openTrialPlayerIds,
+    hasAccountTrial,
     dropinCredits,
     active: Boolean(groupPlan?.active || privatePlan?.active),
     status: primary?.status ?? null,
