@@ -93,6 +93,8 @@ export type MyBooking = {
   status: string;
   waitlist_position: number | null;
   seriesId: string | null;
+  /** Standing weekly private slot this booking belongs to, if any. */
+  privateSeriesId: string | null;
   playerId: string | null;
   playerName: string;
   session: {
@@ -114,7 +116,7 @@ export async function getMyBookings(
   const { data } = await supabase
     .from("bookings")
     .select(
-      "id,status,waitlist_position,series_id,players(id,full_name),class_sessions!inner(id,starts_at,ends_at,coach_id,classes!inner(title,class_type,venues(name,address,postcode,lat,lng,address_details),private_class_details(address,postcode,lat,lng,address_details)))"
+      "id,status,waitlist_position,series_id,private_series_id,players(id,full_name),class_sessions!inner(id,starts_at,ends_at,coach_id,classes!inner(title,class_type,venues(name,address,postcode,lat,lng,address_details),private_class_details(address,postcode,lat,lng,address_details)))"
     )
     .eq("client_id", clientId)
     .in("status", ["confirmed", "waitlisted", "attended", "no_show"])
@@ -177,6 +179,8 @@ export async function getMyBookings(
       status: b.status,
       waitlist_position: b.waitlist_position,
       seriesId: (b as unknown as { series_id: string | null }).series_id ?? null,
+      privateSeriesId:
+        (b as unknown as { private_series_id: string | null }).private_series_id ?? null,
       playerId:
         (b.players as unknown as { id: string } | null)?.id ?? null,
       playerName:

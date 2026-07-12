@@ -75,7 +75,8 @@ create table public.bookings (
   booked_at timestamptz default now() not null,
   cancelled_at timestamptz,
   cancel_reason text,
-  series_id uuid
+  series_id uuid,
+  private_series_id uuid
 );
 
 create table public.class_credits (
@@ -263,6 +264,10 @@ create table public.plans (
   -- null: legacy "unlimited" (comp), treated as group.
   group_sessions_per_week integer,
   private_minutes_per_cycle integer default 0 not null,
+  -- null = legacy minutes-only (no weekly cap on privates)
+  private_sessions_per_week integer,
+  -- null = free 60/90 choice; set = every private session must be this length
+  private_session_minutes integer,
   active boolean default true not null,
   created_at timestamptz default now() not null,
   razorpay_plan_id text
@@ -289,6 +294,26 @@ create table public.products (
   duration_minutes integer,                      -- display only
   active boolean default true not null,
   created_at timestamptz default now() not null
+);
+
+create table public.private_booking_series (
+  id uuid default gen_random_uuid() not null,
+  client_id uuid not null,
+  player_id uuid not null,
+  preferred_coach uuid,
+  weekday integer not null,          -- ISO 1..7, Asia/Kolkata wall clock
+  start_time time not null,          -- IST wall clock
+  duration_minutes integer not null,
+  address text not null,
+  postcode text default '' not null,
+  lat float8 not null,
+  lng float8 not null,
+  has_table boolean default true not null,
+  access_notes text,
+  address_details jsonb,
+  active boolean default true not null,
+  created_at timestamptz default now() not null,
+  cancelled_at timestamptz
 );
 
 create table public.private_class_details (
@@ -332,7 +357,10 @@ create table public.profiles (
   deleted_at timestamptz,
   created_at timestamptz default now() not null,
   razorpay_customer_id text,
-  onboarded_at timestamptz
+  onboarded_at timestamptz,
+  -- multi-step onboarding progress: 0 players pending, 1 players saved,
+  -- 2 WhatsApp connected/phone confirmed, 3 notification prefs saved
+  onboarding_step smallint default 0 not null
 );
 
 create table public.push_subscriptions (
@@ -427,6 +455,7 @@ ALTER TABLE public.bookings ADD CONSTRAINT bookings_client_id_fkey FOREIGN KEY (
 ALTER TABLE public.bookings ADD CONSTRAINT bookings_player_id_fkey FOREIGN KEY (player_id) REFERENCES players(id) ON DELETE CASCADE;
 ALTER TABLE public.bookings ADD CONSTRAINT bookings_rescheduled_from_fkey FOREIGN KEY (rescheduled_from) REFERENCES bookings(id) ON DELETE SET NULL;
 ALTER TABLE public.bookings ADD CONSTRAINT bookings_series_id_fkey FOREIGN KEY (series_id) REFERENCES booking_series(id) ON DELETE SET NULL;
+ALTER TABLE public.bookings ADD CONSTRAINT bookings_private_series_id_fkey FOREIGN KEY (private_series_id) REFERENCES private_booking_series(id) ON DELETE SET NULL;
 ALTER TABLE public.bookings ADD CONSTRAINT bookings_session_id_fkey FOREIGN KEY (session_id) REFERENCES class_sessions(id) ON DELETE CASCADE;
 ALTER TABLE public.class_credits ADD CONSTRAINT class_credits_pkey PRIMARY KEY (id);
 ALTER TABLE public.class_credits ADD CONSTRAINT class_credits_client_id_fkey FOREIGN KEY (client_id) REFERENCES profiles(id) ON DELETE CASCADE;
@@ -491,6 +520,11 @@ ALTER TABLE public.players ADD CONSTRAINT players_client_id_fkey FOREIGN KEY (cl
 ALTER TABLE public.products ADD CONSTRAINT products_pkey PRIMARY KEY (id);
 ALTER TABLE public.products ADD CONSTRAINT products_price_pence_check CHECK ((price_pence >= 0));
 ALTER TABLE public.products ADD CONSTRAINT products_member_price_pence_check CHECK ((member_price_pence >= 0));
+ALTER TABLE public.private_booking_series ADD CONSTRAINT private_booking_series_pkey PRIMARY KEY (id);
+ALTER TABLE public.private_booking_series ADD CONSTRAINT private_booking_series_client_id_fkey FOREIGN KEY (client_id) REFERENCES profiles(id) ON DELETE CASCADE;
+ALTER TABLE public.private_booking_series ADD CONSTRAINT private_booking_series_player_id_fkey FOREIGN KEY (player_id) REFERENCES players(id) ON DELETE CASCADE;
+ALTER TABLE public.private_booking_series ADD CONSTRAINT private_booking_series_preferred_coach_fkey FOREIGN KEY (preferred_coach) REFERENCES coaches(id) ON DELETE SET NULL;
+ALTER TABLE public.private_booking_series ADD CONSTRAINT private_booking_series_weekday_check CHECK (((weekday >= 1) AND (weekday <= 7)));
 ALTER TABLE public.private_class_details ADD CONSTRAINT private_class_details_pkey PRIMARY KEY (class_id);
 ALTER TABLE public.private_class_details ADD CONSTRAINT private_class_details_class_id_fkey FOREIGN KEY (class_id) REFERENCES classes(id) ON DELETE CASCADE;
 ALTER TABLE public.private_class_details ADD CONSTRAINT private_class_details_client_id_fkey FOREIGN KEY (client_id) REFERENCES profiles(id) ON DELETE CASCADE;
@@ -531,6 +565,7 @@ CREATE INDEX booking_series_active_class ON public.booking_series USING btree (c
 CREATE UNIQUE INDEX booking_series_one_active ON public.booking_series USING btree (player_id, class_id, weekday, start_time) WHERE active;
 CREATE INDEX bookings_client_id_status_idx ON public.bookings USING btree (client_id, status);
 CREATE UNIQUE INDEX bookings_one_live_per_player ON public.bookings USING btree (session_id, player_id) WHERE (status = ANY (ARRAY['confirmed'::booking_status, 'waitlisted'::booking_status, 'attended'::booking_status, 'no_show'::booking_status]));
+CREATE INDEX bookings_private_series_id ON public.bookings USING btree (private_series_id) WHERE (private_series_id IS NOT NULL);
 CREATE INDEX bookings_series_id ON public.bookings USING btree (series_id) WHERE (series_id IS NOT NULL);
 CREATE INDEX bookings_session_id_idx ON public.bookings USING btree (session_id) WHERE (status = 'waitlisted'::booking_status);
 CREATE INDEX class_credits_client_open_idx ON public.class_credits USING btree (client_id) WHERE (consumed_at IS NULL);
@@ -549,12 +584,46 @@ CREATE UNIQUE INDEX invoices_razorpay_payment_id_key ON public.invoices USING bt
 CREATE INDEX notifications_status_scheduled_for_idx ON public.notifications USING btree (status, scheduled_for);
 CREATE INDEX student_notes_player_created_idx ON public.student_notes USING btree (player_id, created_at DESC);
 CREATE INDEX players_client_id_idx ON public.players USING btree (client_id);
+CREATE INDEX private_booking_series_client_active ON public.private_booking_series USING btree (client_id) WHERE active;
+CREATE UNIQUE INDEX private_booking_series_one_active ON public.private_booking_series USING btree (player_id, weekday, start_time) WHERE active;
 CREATE INDEX private_credit_ledger_client_id_idx ON public.private_credit_ledger USING btree (client_id);
 CREATE INDEX subscriptions_client_id_status_idx ON public.subscriptions USING btree (client_id, status);
 CREATE INDEX wa_link_codes_user_idx ON public.wa_link_codes USING btree (user_id);
 CREATE INDEX wa_messages_phone_idx ON public.wa_messages USING btree (phone, created_at DESC);
 
 -- ── Functions ────────────────────────────────────────────────────────────────
+
+CREATE OR REPLACE FUNCTION public._assert_private_plan_allows(p_client uuid, p_start timestamp with time zone, p_duration integer)
+ RETURNS void
+ LANGUAGE plpgsql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare
+  v_spw int; v_mins int; v_used int;
+begin
+  select sessions_per_week, session_minutes into v_spw, v_mins
+  from private_plan_limits(p_client);
+
+  if v_mins is not null and p_duration <> v_mins then
+    raise exception 'plan_duration_mismatch';
+  end if;
+
+  if v_spw is not null then
+    select count(*) into v_used
+    from bookings b
+    join class_sessions cs on cs.id = b.session_id
+    join classes c on c.id = cs.class_id
+    where b.client_id = p_client and b.status = 'confirmed'
+      and c.class_type = 'private'
+      and date_trunc('week', cs.starts_at at time zone 'Asia/Kolkata')
+        = date_trunc('week', p_start at time zone 'Asia/Kolkata');
+    if v_used >= v_spw then
+      raise exception 'private_weekly_cap';
+    end if;
+  end if;
+end;
+$function$;
 
 CREATE OR REPLACE FUNCTION public._book_one(p_session uuid, p_client uuid, p_player uuid, p_series uuid DEFAULT NULL::uuid, p_notify boolean DEFAULT true)
  RETURNS text
@@ -676,6 +745,78 @@ begin
 
   update class_credits set consumed_at = now() where id = v_id;
   return v_id;
+end;
+$function$;
+
+CREATE OR REPLACE FUNCTION public._create_private_occurrence(p_client uuid, p_player uuid, p_start timestamp with time zone, p_duration integer, p_address text, p_postcode text, p_lat double precision, p_lng double precision, p_has_table boolean, p_access_notes text, p_address_details jsonb, p_preferred uuid DEFAULT NULL::uuid, p_series uuid DEFAULT NULL::uuid, p_notify boolean DEFAULT true)
+ RETURNS uuid
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare
+  v_class_id uuid;
+  v_session_id uuid;
+  v_booking bookings%rowtype;
+  v_coach uuid;
+begin
+  -- Minutes are the entitlement: they arrive from a private plan's monthly
+  -- grant or a one-off purchase. No subscription requirement.
+  if private_minutes_balance(p_client) < p_duration then
+    raise exception 'insufficient_minutes';
+  end if;
+
+  perform _assert_private_plan_allows(p_client, p_start, p_duration);
+
+  insert into classes (class_type, title, skill_level, capacity, duration_minutes, starts_on, created_by)
+  values ('private', 'Private session', 'beginner', 1, p_duration, (p_start at time zone 'Asia/Kolkata')::date, p_client)
+  returning id into v_class_id;
+
+  insert into private_class_details (class_id, client_id, player_id, address, postcode, lat, lng, has_table, access_notes, address_details)
+  values (v_class_id, p_client, p_player, p_address, coalesce(p_postcode, ''), p_lat, p_lng,
+          coalesce(p_has_table, true), p_access_notes, p_address_details);
+
+  insert into class_sessions (class_id, starts_at, ends_at)
+  values (v_class_id, p_start, p_start + make_interval(mins => p_duration))
+  returning id into v_session_id;
+
+  v_coach := assign_coach(v_session_id, p_preferred);
+
+  -- Debit stands even if parked (refund only if founder cancels).
+  insert into private_credit_ledger (client_id, delta_minutes, reason)
+  values (p_client, -p_duration, 'booking');
+
+  insert into bookings (session_id, client_id, player_id, status, private_series_id)
+  values (v_session_id, p_client, p_player, 'confirmed', p_series)
+  returning * into v_booking;
+
+  if v_coach is not null then
+    if p_notify then
+      insert into notifications (user_id, type, title, body, data)
+      values (p_client, 'coach_assigned', 'You''re on.',
+        'Coach confirmed for ' || to_char(p_start at time zone 'Asia/Kolkata', 'Dy DD Mon FMHH12:MI am') || '.',
+        jsonb_build_object('session_id', v_session_id, 'coach_id', v_coach, 'url', '/app/schedule'));
+    end if;
+    insert into notifications (user_id, type, title, body, data)
+    values (v_coach, 'new_private_session', 'New private session',
+      to_char(p_start at time zone 'Asia/Kolkata', 'Dy DD Mon FMHH12:MI am') || ' — ' || p_address,
+      jsonb_build_object('session_id', v_session_id, 'url', '/coach/session/' || v_session_id));
+  else
+    insert into notifications (user_id, type, title, body, data)
+    select p.id, 'private_request_parked', 'Private request parked',
+           'A private request has no available coach — resolve manually.',
+           jsonb_build_object('session_id', v_session_id, 'url', '/admin/calendar')
+    from profiles p where p.role = 'founder';
+
+    if p_notify then
+      insert into notifications (user_id, type, title, body, data)
+      values (p_client, 'coach_assigned', 'We''re confirming your coach',
+              'You''ll hear from us within 24 hours.',
+              jsonb_build_object('session_id', v_session_id, 'url', '/app/schedule'));
+    end if;
+  end if;
+
+  return v_session_id;
 end;
 $function$;
 
@@ -997,6 +1138,21 @@ begin
     values (v_booking.client_id, p_booking, v_duration, 'cancellation_refund');
   end if;
 
+  -- Private sessions have exactly one booking: cancel the session itself so it
+  -- doesn't linger on the coach calendar, and tell the coach.
+  if v_is_private then
+    update class_sessions
+    set status = 'cancelled', cancel_reason = 'client_cancelled'
+    where id = v_session.id and status = 'scheduled';
+    if v_session.coach_id is not null then
+      insert into notifications (user_id, type, title, body, data)
+      values (v_session.coach_id, 'session_cancelled', 'Private session cancelled',
+        'The ' || to_char(v_session.starts_at at time zone 'Asia/Kolkata', 'Dy DD Mon FMHH12:MI am')
+        || ' private session was cancelled by the client.',
+        jsonb_build_object('session_id', v_session.id, 'url', '/coach/calendar'));
+    end if;
+  end if;
+
   -- Group credit (trial / drop-in): hand it back when cancelled in-window.
   if v_free then
     update class_credits
@@ -1005,7 +1161,7 @@ begin
   end if;
 
   -- Offer-based waitlist promotion (A3): notify position 1, don't auto-confirm.
-  if v_booking.status = 'confirmed' then
+  if not v_is_private and v_booking.status = 'confirmed' then
     select * into v_next
     from bookings
     where session_id = v_booking.session_id and status = 'waitlisted'
@@ -1027,6 +1183,40 @@ begin
   where status = 'pending'
     and (data->>'booking_id')::uuid = p_booking
     and type in ('reminder_24h', 'reminder_2h');
+end;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.cancel_private_series(p_series uuid)
+ RETURNS integer
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare
+  v_client uuid := auth.uid();
+  v_series private_booking_series%rowtype;
+  r record;
+  v_count int := 0;
+begin
+  select * into v_series from private_booking_series where id = p_series;
+  if not found or (v_series.client_id <> v_client and not is_founder()) then
+    raise exception 'series_not_found';
+  end if;
+
+  for r in
+    select b.id from bookings b
+    join class_sessions cs on cs.id = b.session_id
+    where b.private_series_id = p_series
+      and b.status in ('confirmed', 'waitlisted')
+      and cs.starts_at > now()
+  loop
+    perform cancel_booking(r.id);  -- handles in-window refund + session teardown
+    v_count := v_count + 1;
+  end loop;
+
+  update private_booking_series set active = false, cancelled_at = now()
+  where id = p_series;
+  return v_count;
 end;
 $function$;
 
@@ -1194,6 +1384,103 @@ AS $function$
   );
 $function$;
 
+CREATE OR REPLACE FUNCTION public.create_private_series(payload jsonb)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare
+  v_client uuid := auth.uid();
+  v_player uuid := (payload->>'player_id')::uuid;
+  v_duration int := (payload->>'duration_minutes')::int;
+  v_preferred uuid := nullif(payload->>'preferred_coach', '')::uuid;
+  v_weeks int := least(coalesce((payload->>'weeks')::int, 4), 8);
+  v_spw int; v_mins int;
+  v_active_series int;
+  v_slots timestamptz[];
+  v_first timestamptz;
+  v_series uuid;
+  v_series_ids uuid[] := '{}';
+  v_booked int := 0;
+  v_skipped int := 0;
+  i int;
+begin
+  if v_client is null then raise exception 'not_authenticated'; end if;
+
+  if not exists (select 1 from players where id = v_player and client_id = v_client) then
+    raise exception 'player_not_in_household';
+  end if;
+
+  -- A standing series needs a private plan with a weekly frequency; legacy
+  -- minutes-only clients keep one-off booking (mirrors
+  -- recurring_needs_membership on the group side).
+  select sessions_per_week, session_minutes into v_spw, v_mins
+  from private_plan_limits(v_client);
+  if v_spw is null then raise exception 'recurring_needs_private_plan'; end if;
+  if v_mins is not null and v_duration <> v_mins then
+    raise exception 'plan_duration_mismatch';
+  end if;
+
+  select array_agg(value::timestamptz) into v_slots
+  from jsonb_array_elements_text(payload->'starts_at_list');
+  if v_slots is null or array_length(v_slots, 1) = 0 then
+    raise exception 'no_slots';
+  end if;
+
+  select count(*) into v_active_series
+  from private_booking_series where client_id = v_client and active;
+  if v_active_series + array_length(v_slots, 1) > v_spw then
+    raise exception 'private_weekly_cap';
+  end if;
+
+  foreach v_first in array v_slots loop
+    if v_first < now() + interval '24 hours' then
+      raise exception 'lead_time_24h';
+    end if;
+
+    insert into private_booking_series (
+      client_id, player_id, preferred_coach, weekday, start_time, duration_minutes,
+      address, postcode, lat, lng, has_table, access_notes, address_details)
+    values (
+      v_client, v_player, v_preferred,
+      extract(isodow from (v_first at time zone 'Asia/Kolkata'))::int,
+      (v_first at time zone 'Asia/Kolkata')::time,
+      v_duration,
+      payload->>'address', coalesce(payload->>'postcode', ''),
+      (payload->>'lat')::float8, (payload->>'lng')::float8,
+      coalesce((payload->>'has_table')::boolean, true),
+      payload->>'access_notes', payload->'address_details')
+    returning id into v_series;
+    v_series_ids := v_series_ids || v_series;
+
+    -- IST has no DST, so +7 days keeps the wall-clock time stable.
+    for i in 0..(v_weeks - 1) loop
+      begin
+        perform _create_private_occurrence(
+          v_client, v_player, v_first + make_interval(days => 7 * i), v_duration,
+          payload->>'address', coalesce(payload->>'postcode', ''),
+          (payload->>'lat')::float8, (payload->>'lng')::float8,
+          coalesce((payload->>'has_table')::boolean, true),
+          payload->>'access_notes', payload->'address_details',
+          v_preferred, v_series, i = 0);
+        v_booked := v_booked + 1;
+      exception when others then
+        -- The first week must book (that's the promise the client tapped);
+        -- later weeks may run out of minutes — the nightly generator picks
+        -- them up after the renewal grant.
+        if i = 0 then raise; end if;
+        v_skipped := v_skipped + 1;
+      end;
+    end loop;
+  end loop;
+
+  return jsonb_build_object(
+    'series_ids', to_jsonb(v_series_ids),
+    'booked', v_booked, 'skipped', v_skipped);
+end;
+$function$;
+
 CREATE OR REPLACE FUNCTION public.expire_credits()
  RETURNS void
  LANGUAGE plpgsql
@@ -1324,6 +1611,74 @@ begin
     end loop;
   end loop;
   perform assign_unassigned_sessions();
+  return v_count;
+end;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.generate_private_sessions(p_weeks integer DEFAULT 4)
+ RETURNS integer
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare
+  r record;
+  d date;
+  v_start timestamptz;
+  v_count int := 0;
+begin
+  for r in select * from private_booking_series where active loop
+    -- Plan lapsed → retire the series (auto-renew is implicit: it keeps
+    -- generating for as long as the subscription stays alive).
+    if (select sessions_per_week from private_plan_limits(r.client_id)) is null then
+      update private_booking_series set active = false, cancelled_at = now() where id = r.id;
+      insert into notifications (user_id, type, title, body, data)
+      values (r.client_id, 'private_series_ended', 'Weekly sessions ended',
+        'Your weekly private slot ended with your plan. Renew to keep the slot.',
+        jsonb_build_object('series_id', r.id, 'url', '/app/billing'));
+      continue;
+    end if;
+
+    for d in select generate_series(current_date, current_date + p_weeks * 7, interval '1 day')::date loop
+      if extract(isodow from d)::int = r.weekday then
+        v_start := (d::text || ' ' || r.start_time::text)::timestamp at time zone 'Asia/Kolkata';
+        -- A booking of ANY status blocks regeneration: a cancelled week must
+        -- not resurrect.
+        if v_start > now() + interval '24 hours' and not exists (
+          select 1 from bookings b
+          join class_sessions cs on cs.id = b.session_id
+          where b.private_series_id = r.id and cs.starts_at = v_start
+        ) then
+          begin
+            perform _create_private_occurrence(
+              r.client_id, r.player_id, v_start, r.duration_minutes,
+              r.address, r.postcode, r.lat, r.lng, r.has_table,
+              r.access_notes, r.address_details,
+              r.preferred_coach, r.id, false);
+            v_count := v_count + 1;
+          exception when others then
+            if sqlerrm = 'insufficient_minutes'
+               and v_start < now() + interval '8 days'
+               and not exists (
+                 select 1 from notifications
+                 where user_id = r.client_id and type = 'private_minutes_low'
+                   and data->>'series_id' = r.id::text
+                   and created_at > now() - interval '3 days'
+               ) then
+              insert into notifications (user_id, type, title, body, data)
+              values (r.client_id, 'private_minutes_low', 'Weekly session paused',
+                'Not enough private minutes to book your next weekly session — it resumes when your plan renews.',
+                jsonb_build_object('series_id', r.id, 'url', '/app/billing'));
+              perform notify_founders('ops_private_series_paused', 'Private series paused',
+                'A weekly private slot could not be booked (insufficient minutes).',
+                jsonb_build_object('series_id', r.id, 'client_id', r.client_id, 'url', '/admin/billing'));
+            end if;
+            -- other skips (weekly cap from a one-off booking, etc.) stay silent
+          end;
+        end if;
+      end if;
+    end loop;
+  end loop;
   return v_count;
 end;
 $function$;
@@ -1754,6 +2109,32 @@ AS $function$
   where client_id = p_client;
 $function$;
 
+CREATE OR REPLACE FUNCTION public.private_plan_limits(p_client uuid)
+ RETURNS TABLE(sessions_per_week integer, session_minutes integer)
+ LANGUAGE sql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+  select p.private_sessions_per_week, p.private_session_minutes
+  from subscriptions s
+  join plans p on p.id = s.plan_id
+  where s.client_id = p_client
+    and (coalesce(p.private_minutes_per_cycle, 0) > 0
+         or p.private_sessions_per_week is not null
+         or p.private_session_minutes is not null)
+    and (
+      s.status in ('active', 'trialing')
+      or (
+        s.status = 'past_due'
+        and s.current_period_end is not null
+        and now() <= s.current_period_end
+            + make_interval(days => get_setting_int('dunning_grace_days', 7))
+      )
+    )
+  order by s.created_at desc
+  limit 1;
+$function$;
+
 CREATE OR REPLACE FUNCTION public.rank_coaches(p_session uuid, p_preferred uuid DEFAULT NULL::uuid)
  RETURNS TABLE(coach_id uuid, score numeric)
  LANGUAGE plpgsql
@@ -1858,18 +2239,8 @@ declare
   v_duration int := (payload->>'duration_minutes')::int;
   v_start timestamptz := (payload->>'starts_at')::timestamptz;
   v_preferred uuid := nullif(payload->>'preferred_coach', '')::uuid;
-  v_class_id uuid;
-  v_session_id uuid;
-  v_booking bookings%rowtype;
-  v_coach uuid;
-  v_balance int;
 begin
   if v_client is null then raise exception 'not_authenticated'; end if;
-
-  -- Minutes are the entitlement: they arrive from a private plan's monthly
-  -- grant or a one-off purchase. No subscription requirement.
-  v_balance := private_minutes_balance(v_client);
-  if v_balance < v_duration then raise exception 'insufficient_minutes'; end if;
 
   if not exists (select 1 from players where id = v_player and client_id = v_client) then
     raise exception 'player_not_in_household';
@@ -1879,56 +2250,13 @@ begin
     raise exception 'lead_time_24h';
   end if;
 
-  insert into classes (class_type, title, skill_level, capacity, duration_minutes, starts_on, created_by)
-  values ('private', 'Private session', 'beginner', 1, v_duration, (v_start at time zone 'Asia/Kolkata')::date, v_client)
-  returning id into v_class_id;
-
-  insert into private_class_details (class_id, client_id, player_id, address, postcode, lat, lng, has_table, access_notes, address_details)
-  values (
-    v_class_id, v_client, v_player,
+  return _create_private_occurrence(
+    v_client, v_player, v_start, v_duration,
     payload->>'address', coalesce(payload->>'postcode', ''),
     (payload->>'lat')::float8, (payload->>'lng')::float8,
     coalesce((payload->>'has_table')::boolean, true),
-    payload->>'access_notes',
-    payload->'address_details'
-  );
-
-  insert into class_sessions (class_id, starts_at, ends_at)
-  values (v_class_id, v_start, v_start + make_interval(mins => v_duration))
-  returning id into v_session_id;
-
-  v_coach := assign_coach(v_session_id, v_preferred);
-
-  -- Debit stands even if parked (refund only if founder cancels).
-  insert into private_credit_ledger (client_id, delta_minutes, reason)
-  values (v_client, -v_duration, 'booking');
-
-  insert into bookings (session_id, client_id, player_id, status)
-  values (v_session_id, v_client, v_player, 'confirmed')
-  returning * into v_booking;
-
-  if v_coach is not null then
-    insert into notifications (user_id, type, title, body, data) values
-      (v_client, 'coach_assigned', 'You''re on.',
-       'Coach confirmed for ' || to_char(v_start at time zone 'Asia/Kolkata', 'Dy DD Mon FMHH12:MI am') || '.',
-       jsonb_build_object('session_id', v_session_id, 'coach_id', v_coach, 'url', '/app/schedule')),
-      (v_coach, 'new_private_session', 'New private session',
-       to_char(v_start at time zone 'Asia/Kolkata', 'Dy DD Mon FMHH12:MI am') || ' — ' || (payload->>'address'),
-       jsonb_build_object('session_id', v_session_id, 'url', '/coach/session/' || v_session_id));
-  else
-    insert into notifications (user_id, type, title, body, data)
-    select p.id, 'private_request_parked', 'Private request parked',
-           'A private request has no available coach — resolve manually.',
-           jsonb_build_object('session_id', v_session_id, 'url', '/admin/calendar')
-    from profiles p where p.role = 'founder';
-
-    insert into notifications (user_id, type, title, body, data)
-    values (v_client, 'coach_assigned', 'We''re confirming your coach',
-            'You''ll hear from us within 24 hours.',
-            jsonb_build_object('session_id', v_session_id, 'url', '/app/schedule'));
-  end if;
-
-  return v_session_id;
+    payload->>'access_notes', payload->'address_details',
+    v_preferred, nullif(payload->>'series_id', '')::uuid, true);
 end;
 $function$;
 
@@ -2837,6 +3165,7 @@ alter table public.orders enable row level security;
 alter table public.plans enable row level security;
 alter table public.players enable row level security;
 alter table public.products enable row level security;
+alter table public.private_booking_series enable row level security;
 alter table public.private_class_details enable row level security;
 alter table public.private_credit_ledger enable row level security;
 alter table public.profiles enable row level security;
@@ -2894,6 +3223,8 @@ CREATE POLICY "founder writes products" ON public.products AS PERMISSIVE FOR ALL
 CREATE POLICY "coach reads own rosters players" ON public.players AS PERMISSIVE FOR SELECT TO public USING ((is_coach() AND coach_has_player(id)));
 CREATE POLICY "founder all players" ON public.players AS PERMISSIVE FOR ALL TO public USING (is_founder());
 CREATE POLICY "own household" ON public.players AS PERMISSIVE FOR ALL TO public USING ((client_id = auth.uid())) WITH CHECK ((client_id = auth.uid()));
+CREATE POLICY "clients read own private series" ON public.private_booking_series AS PERMISSIVE FOR SELECT TO public USING ((client_id = auth.uid()));
+CREATE POLICY "founder all private series" ON public.private_booking_series AS PERMISSIVE FOR ALL TO public USING (is_founder());
 CREATE POLICY "founder writes private details" ON public.private_class_details AS PERMISSIVE FOR ALL TO public USING (is_founder());
 CREATE POLICY "private details visible to owner coach founder" ON public.private_class_details AS PERMISSIVE FOR SELECT TO public USING (((client_id = auth.uid()) OR is_founder() OR coach_teaches_class(class_id)));
 CREATE POLICY "founder writes ledger" ON public.private_credit_ledger AS PERMISSIVE FOR ALL TO public USING (is_founder());

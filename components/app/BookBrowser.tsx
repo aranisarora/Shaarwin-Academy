@@ -77,11 +77,14 @@ export function BookBrowser({
   venues,
   players,
   entitlement,
+  onboarding = false,
 }: {
   sessions: BrowseSession[];
   venues: Venue[];
   players: { id: string; full_name: string }[];
   entitlement: GroupEntitlement;
+  /** Reached from the onboarding flow — success routes to the install screen. */
+  onboarding?: boolean;
 }) {
   const [level, setLevel] = useState<string>("all");
   const [weekday, setWeekday] = useState<string>("all");
@@ -363,6 +366,14 @@ export function BookBrowser({
                       ? "Reminders on — we'll nudge you before each session."
                       : "We'll email your reminders instead."}
                   </p>
+                )}
+                {onboarding && (
+                  <Link
+                    href="/app/onboarding/done"
+                    className="mt-4 inline-flex min-h-11 w-full items-center justify-center rounded-[8px] bg-ember px-5 font-semibold text-ivory hover:bg-ember-2"
+                  >
+                    Continue — finish setup
+                  </Link>
                 )}
               </div>
             ) : !canBook ? (

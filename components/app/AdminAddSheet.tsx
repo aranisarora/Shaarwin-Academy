@@ -87,6 +87,7 @@ export function AdminAddSheet({
     time: "17:00",
     duration: 60,
     coachId: "",
+    overrideLimits: false,
   });
   const [address, setAddress] = useState<StructuredAddress>(EMPTY_ADDRESS);
   const [message, setMessage] = useState<string | null>(null);
@@ -107,7 +108,15 @@ export function AdminAddSheet({
     if (next === "oneoff")
       setOneOff({ classId: classes[0]?.id ?? "", date: "", time: "18:30", coachId: "" });
     if (next === "private") {
-      setPriv({ clientId: "", playerId: "", date: "", time: "17:00", duration: 60, coachId: "" });
+      setPriv({
+        clientId: "",
+        playerId: "",
+        date: "",
+        time: "17:00",
+        duration: 60,
+        coachId: "",
+        overrideLimits: false,
+      });
       setAddress(EMPTY_ADDRESS);
     }
   }
@@ -140,6 +149,7 @@ export function AdminAddSheet({
           accessNotes: address.accessNotes ?? undefined,
           addressDetails: address as unknown as Record<string, unknown>,
           coachId: priv.coachId || undefined,
+          overridePlanLimits: priv.overrideLimits,
         };
         const r = isInvite
           ? await createPrivateSessionForInvite(priv.clientId.slice("invite:".length), details)
@@ -340,6 +350,17 @@ export function AdminAddSheet({
                 <option key={c.id} value={c.id}>{c.name}</option>
               ))}
             </Select>
+            <label className="flex min-h-11 cursor-pointer items-center gap-3 rounded-[12px] border border-line bg-surface-2 px-4 py-3">
+              <input
+                type="checkbox"
+                checked={priv.overrideLimits}
+                onChange={(e) => setPriv({ ...priv, overrideLimits: e.target.checked })}
+                className="h-4 w-4 accent-[var(--ember,#c2410c)]"
+              />
+              <span className="text-sm">
+                Ignore plan limits — book beyond their weekly frequency or session length.
+              </span>
+            </label>
             <p className="text-sm text-fg-2">
               This takes the session&apos;s minutes from the client&apos;s private balance —
               top it up from the Clients tab if needed.

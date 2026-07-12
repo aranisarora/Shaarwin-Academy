@@ -10,7 +10,7 @@ import { Spinner } from "@/components/ui/Spinner";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ButtonLink } from "@/components/ui/Button";
 import { cancelBooking } from "@/app/app/book/actions";
-import { cancelSeries } from "@/app/app/schedule/actions";
+import { cancelPrivateSeries, cancelSeries } from "@/app/app/schedule/actions";
 // Only needed once a user taps "Reschedule" — keep it out of the page bundle.
 const RescheduleSheet = dynamic(
   () => import("@/components/app/RescheduleSheet").then((m) => m.RescheduleSheet),
@@ -56,7 +56,7 @@ function BookingCard({
       </div>
       <div className="flex flex-col items-end gap-1.5">
         {booking.session.isPrivate && <Badge>Private</Badge>}
-        {booking.seriesId && <Badge tone="ember">Weekly</Badge>}
+        {(booking.seriesId || booking.privateSeriesId) && <Badge tone="ember">Weekly</Badge>}
         {booking.status === "waitlisted" && (
           <Badge tone="ember">Waitlist #{booking.waitlist_position}</Badge>
         )}
@@ -93,9 +93,11 @@ export function ScheduleList({
   }
 
   function doCancelSeries() {
-    if (!selected?.seriesId) return;
+    if (!selected?.seriesId && !selected?.privateSeriesId) return;
     startTransition(async () => {
-      const r = await cancelSeries(selected.seriesId!);
+      const r = selected.privateSeriesId
+        ? await cancelPrivateSeries(selected.privateSeriesId)
+        : await cancelSeries(selected.seriesId!);
       if (r.ok) setSelected(null);
       else setError(r.error ?? "Couldn't stop the recurring booking.");
     });
@@ -182,7 +184,7 @@ export function ScheduleList({
             >
               {pending ? (
                 <Spinner />
-              ) : selected.seriesId ? (
+              ) : selected.seriesId || selected.privateSeriesId ? (
                 cancelIsFree ? "Cancel just this week (free)" : "Cancel just this week (uses your session)"
               ) : cancelIsFree ? (
                 "Cancel (free)"
@@ -190,14 +192,16 @@ export function ScheduleList({
                 "Cancel (uses your session)"
               )}
             </Button>
-            {selected.seriesId && (
+            {(selected.seriesId || selected.privateSeriesId) && (
               <Button
                 variant="ghost"
                 onClick={doCancelSeries}
                 disabled={pending}
                 className="w-full"
               >
-                Stop recurring booking (all future weeks)
+                {selected.privateSeriesId
+                  ? "End weekly sessions (all future weeks)"
+                  : "Stop recurring booking (all future weeks)"}
               </Button>
             )}
             {!cancelIsFree && (

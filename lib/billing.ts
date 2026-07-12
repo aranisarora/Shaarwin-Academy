@@ -9,6 +9,10 @@ export type PlanSummary = {
   /** > 0 weekly cap; null = legacy unlimited (comp). */
   groupSessionsPerWeek: number | null;
   privateMinutesPerCycle: number;
+  /** Weekly private-session cap; null = legacy minutes-only. */
+  privateSessionsPerWeek: number | null;
+  /** Fixed private session length; null = free 60/90 choice. */
+  privateSessionMinutes: number | null;
   active: boolean;
 };
 
@@ -46,6 +50,8 @@ type SubRow = {
     name: string;
     group_sessions_per_week: number | null;
     private_minutes_per_cycle: number;
+    private_sessions_per_week: number | null;
+    private_session_minutes: number | null;
   } | null;
 };
 
@@ -72,7 +78,7 @@ export async function getSubscriptionSummary(
     supabase
       .from("subscriptions")
       .select(
-        "status,current_period_end,cancel_at_period_end,created_at,plans(id,name,group_sessions_per_week,private_minutes_per_cycle)"
+        "status,current_period_end,cancel_at_period_end,created_at,plans(id,name,group_sessions_per_week,private_minutes_per_cycle,private_sessions_per_week,private_session_minutes)"
       )
       .eq("client_id", clientId)
       .in("status", ["active", "trialing", "past_due"])
@@ -104,6 +110,8 @@ export async function getSubscriptionSummary(
       cancelAtPeriodEnd: row.cancel_at_period_end,
       groupSessionsPerWeek: plan.group_sessions_per_week,
       privateMinutesPerCycle: plan.private_minutes_per_cycle,
+      privateSessionsPerWeek: plan.private_sessions_per_week,
+      privateSessionMinutes: plan.private_session_minutes,
       active: isAlive(row.status, row.current_period_end, graceDays),
     };
   };

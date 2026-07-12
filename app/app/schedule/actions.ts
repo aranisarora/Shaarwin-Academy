@@ -206,6 +206,20 @@ export async function cancelSeries(
   return { ok: true, cancelled: (data as number) ?? 0 };
 }
 
+/** End a standing weekly private slot: cancels all future weeks (with refunds). */
+export async function cancelPrivateSeries(
+  seriesId: string
+): Promise<{ ok: boolean; cancelled?: number; error?: string }> {
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc("cancel_private_series", {
+    p_series: seriesId,
+  });
+  if (error) return { ok: false, error: "Couldn't end the weekly sessions. Try again." };
+  revalidatePath("/app/schedule");
+  revalidatePath("/app");
+  return { ok: true, cancelled: (data as number) ?? 0 };
+}
+
 export type PrivatePreview = {
   ok: boolean;
   proposedCoach?: string | null;

@@ -13,10 +13,18 @@ import {
   recordAreaInterest,
   getSlots,
   requestPrivateSessions,
+  requestPrivateSeries,
   type Slot,
 } from "@/app/app/book/private/actions";
 
 type Coach = { id: string; name: string; lat: number; lng: number; radiusKm: number };
+
+export type PrivatePlanLimits = {
+  /** Weekly cap; null = legacy minutes-only (one-off booking). */
+  sessionsPerWeek: number | null;
+  /** Fixed session length; null = free 60/90 choice. */
+  sessionMinutes: number | null;
+};
 
 // 60/90 only: the coach travels to the client, so anything shorter spends
 // more time commuting than coaching.
@@ -34,18 +42,49 @@ function fmtSlot(iso: string) {
   }).format(new Date(iso));
 }
 
+/** "Every Tue, 5:00 pm" — the weekly identity of a slot. */
+function fmtWeekly(iso: string) {
+  return new Intl.DateTimeFormat("en-GB", {
+    weekday: "long",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+    timeZone: "Asia/Kolkata",
+  }).format(new Date(iso));
+}
+
+/** IST weekday+time key so two dates of the same weekly slot collide. */
+function weeklyKey(iso: string) {
+  return new Intl.DateTimeFormat("en-GB", {
+    weekday: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+    timeZone: "Asia/Kolkata",
+  }).format(new Date(iso));
+}
+
 export function PrivateWizard({
   players,
   coaches,
   minutesBalance,
   defaultAddress,
+  privatePlan = null,
+  onboarding = false,
 }: {
   players: { id: string; full_name: string }[];
   coaches: Coach[];
   minutesBalance: number;
   defaultAddress: string | null;
+  privatePlan?: PrivatePlanLimits | null;
+  onboarding?: boolean;
 }) {
   const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
+
+  // A plan with a weekly frequency books standing weekly slots; legacy
+  // minutes-only clients keep the one-off multi-slot flow.
+  const weeklyMode = privatePlan?.sessionsPerWeek != null;
+  const planMinutes = privatePlan?.sessionMinutes ?? null;
 
   // Step 1 — where. A single structured address drives the whole step; the pin
   // lives in addr.lat/lng.
@@ -62,8 +101,9 @@ export function PrivateWizard({
     ? { lat: addr.lat, lng: addr.lng }
     : null;
 
-  // Step 2 — when. Multiple slots can be picked; each becomes its own session.
-  const [duration, setDuration] = useState<number>(60);
+  // Step 2 — when. Multiple slots can be picked; each becomes its own session
+  // (or, in weekly mode, its own standing weekly slot).
+  const [duration, setDuration] = useState<number>(planMinutes ?? 60);
   const [slots, setSlots] = useState<Slot[] | null>(null);
   const [selected, setSelected] = useState<string[]>([]);
   const [preferredCoach, setPreferredCoach] = useState("");
@@ -118,17 +158,22 @@ export function PrivateWizard({
     });
   }
 
-  // How many sessions of this duration the balance can still cover.
-  const maxSlots = Math.floor(minutesBalance / duration);
+  // How many slots can be picked: the plan's weekly frequency in weekly mode,
+  // else however many sessions of this duration the balance still covers.
+  const maxSlots = weeklyMode
+    ? (privatePlan?.sessionsPerWeek ?? 1)
+    : Math.floor(minutesBalance / duration);
 
   function toggleSlot(startsAt: string) {
-    setSelected((prev) =>
-      prev.includes(startsAt)
-        ? prev.filter((s) => s !== startsAt)
-        : prev.length < maxSlots
-          ? [...prev, startsAt]
-          : prev
-    );
+    setSelected((prev) => {
+      if (prev.includes(startsAt)) return prev.filter((s) => s !== startsAt);
+      if (prev.length >= maxSlots) return prev;
+      // Weekly mode: two dates of the same weekday+time are the same slot.
+      if (weeklyMode && prev.some((s) => weeklyKey(s) === weeklyKey(startsAt))) {
+        return prev;
+      }
+      return [...prev, startsAt];
+    });
   }
 
   const sortedSelected = [...selected].sort();
@@ -136,22 +181,31 @@ export function PrivateWizard({
   function confirm() {
     if (!pin || selected.length === 0 || !addr.formatted) return;
     setError(null);
+    const req = {
+      playerId,
+      duration,
+      address: addr.formatted,
+      postcode: addr.postcode ?? "",
+      lat: pin.lat,
+      lng: pin.lng,
+      hasTable,
+      accessNotes: addr.accessNotes ?? "",
+      details: addr,
+      preferredCoach: preferredCoach || undefined,
+    };
     startTransition(async () => {
-      const result = await requestPrivateSessions(
-        {
-          playerId,
-          duration,
-          address: addr.formatted,
-          postcode: addr.postcode ?? "",
-          lat: pin.lat,
-          lng: pin.lng,
-          hasTable,
-          accessNotes: addr.accessNotes ?? "",
-          details: addr,
-          preferredCoach: preferredCoach || undefined,
-        },
-        sortedSelected
-      );
+      if (weeklyMode) {
+        const result = await requestPrivateSeries(req, sortedSelected);
+        if (result.ok) {
+          setBooked(result.booked);
+          setRanOut(result.skipped > 0);
+          setStep(4);
+        } else {
+          setError(result.error);
+        }
+        return;
+      }
+      const result = await requestPrivateSessions(req, sortedSelected);
       if (result.ok) {
         setParked(result.parked > 0);
         setBooked(result.booked);
@@ -171,9 +225,9 @@ export function PrivateWizard({
       })
     : [];
 
-  // Minutes are the entitlement — without enough for even one hour, the
+  // Minutes are the entitlement — without enough for even one session, the
   // wizard can't finish, so point at the membership page up front.
-  if (minutesBalance < 60) {
+  if (minutesBalance < (planMinutes ?? 60)) {
     return (
       <div className="mx-auto max-w-xl">
         <div className="rounded-[12px] border border-line bg-surface-2 p-5">
@@ -312,6 +366,16 @@ export function PrivateWizard({
         <div className="space-y-5">
           <h2 className="font-display text-2xl">When works?</h2>
 
+          {planMinutes !== null ? (
+            <div className="rounded-[12px] border border-line bg-surface-2 p-4">
+              <p className="font-medium">{planMinutes}-minute sessions</p>
+              <p className="mt-1 text-sm text-fg-2">
+                Your plan includes {privatePlan?.sessionsPerWeek}{" "}
+                {planMinutes}-minute session
+                {(privatePlan?.sessionsPerWeek ?? 1) > 1 ? "s" : ""} a week.
+              </p>
+            </div>
+          ) : (
           <div>
             <p className="label mb-2">Duration</p>
             <div className="grid grid-cols-2 gap-2">
@@ -344,6 +408,7 @@ export function PrivateWizard({
               </Link>
             </p>
           </div>
+          )}
 
           {coveringCoaches.length > 1 && (
             <Select
@@ -362,13 +427,23 @@ export function PrivateWizard({
 
           <div>
             <div className="mb-2 flex items-baseline justify-between">
-              <p className="label">Pick one or more slots</p>
+              <p className="label">
+                {weeklyMode ? "Pick your weekly slot(s)" : "Pick one or more slots"}
+              </p>
               {selected.length > 0 && (
                 <p className="tnum text-xs text-fg-2">
-                  {selected.length} selected · {selected.length * duration} min
+                  {weeklyMode
+                    ? `${selected.length} of ${maxSlots} weekly slot${maxSlots > 1 ? "s" : ""}`
+                    : `${selected.length} selected · ${selected.length * duration} min`}
                 </p>
               )}
             </div>
+            {weeklyMode && (
+              <p className="mb-2 text-xs text-fg-2">
+                The time you pick repeats every week while your plan is active —
+                the first session is on the date shown.
+              </p>
+            )}
             {slots === null ? (
               <div className="flex justify-center py-8">
                 <Spinner />
@@ -381,14 +456,26 @@ export function PrivateWizard({
               <div className="grid max-h-72 grid-cols-2 gap-2 overflow-y-auto pr-1">
                 {slots.slice(0, 60).map((s) => {
                   const isSelected = selected.includes(s.starts_at);
-                  const atCap = !isSelected && selected.length >= maxSlots;
+                  const dupWeekly =
+                    weeklyMode &&
+                    !isSelected &&
+                    selected.some((sel) => weeklyKey(sel) === weeklyKey(s.starts_at));
+                  const atCap = (!isSelected && selected.length >= maxSlots) || dupWeekly;
                   return (
                     <button
                       key={s.starts_at}
                       onClick={() => toggleSlot(s.starts_at)}
                       disabled={atCap}
                       aria-pressed={isSelected}
-                      title={atCap ? "Not enough minutes for another session" : undefined}
+                      title={
+                        dupWeekly
+                          ? "You've already picked this weekly slot"
+                          : atCap
+                            ? weeklyMode
+                              ? "Your plan covers that many weekly slots"
+                              : "Not enough minutes for another session"
+                            : undefined
+                      }
                       className={`tnum min-h-11 rounded-[8px] border px-2 text-sm disabled:opacity-40 ${
                         isSelected
                           ? "border-ember bg-ember text-ivory"
@@ -403,7 +490,9 @@ export function PrivateWizard({
             )}
             {maxSlots > 1 && (
               <p className="mt-2 text-xs text-fg-2">
-                Pick up to {maxSlots} — each uses {duration} of your {minutesBalance} minutes.
+                {weeklyMode
+                  ? `Pick up to ${maxSlots} weekly slots — that's your plan's frequency.`
+                  : `Pick up to ${maxSlots} — each uses ${duration} of your ${minutesBalance} minutes.`}
               </p>
             )}
           </div>
@@ -428,22 +517,31 @@ export function PrivateWizard({
           <h2 className="font-display text-2xl">Confirm</h2>
           <div className="space-y-3 rounded-[12px] border border-line bg-surface-2 p-5">
             <p className="font-display text-2xl">
-              {selected.length} session{selected.length > 1 ? "s" : ""}
+              {weeklyMode
+                ? `${selected.length} weekly slot${selected.length > 1 ? "s" : ""}`
+                : `${selected.length} session${selected.length > 1 ? "s" : ""}`}
             </p>
             <ul className="tnum space-y-1 text-sm">
               {sortedSelected.map((s) => (
                 <li key={s} className="flex items-center gap-2">
                   <span aria-hidden className="h-1.5 w-1.5 shrink-0 rounded-full bg-ember" />
-                  {fmtSlot(s)}
+                  {weeklyMode ? `Every ${fmtWeekly(s)} — starting ${fmtSlot(s)}` : fmtSlot(s)}
                 </li>
               ))}
             </ul>
             <p className="text-fg-2">{addr.formatted}</p>
             <p className="text-fg-2">{duration} minutes each</p>
-            <p className="tnum text-sm">
-              Uses {selected.length * duration} of your {minutesBalance} min —{" "}
-              {minutesBalance - selected.length * duration} left after.
-            </p>
+            {weeklyMode ? (
+              <p className="text-sm text-fg-2">
+                Repeats every week while your plan is active — cancel any single
+                week or end the slot from your schedule.
+              </p>
+            ) : (
+              <p className="tnum text-sm">
+                Uses {selected.length * duration} of your {minutesBalance} min —{" "}
+                {minutesBalance - selected.length * duration} left after.
+              </p>
+            )}
             <p className="text-sm text-fg-2">
               Coach: assigned automatically — we&apos;ll introduce them right away.
             </p>
@@ -454,9 +552,13 @@ export function PrivateWizard({
               Back
             </Button>
             <Button onClick={confirm} disabled={pending} className="flex-1">
-              {pending
-                ? <Spinner />
-                : `Request ${selected.length} session${selected.length > 1 ? "s" : ""}`}
+              {pending ? (
+                <Spinner />
+              ) : weeklyMode ? (
+                `Set ${selected.length} weekly slot${selected.length > 1 ? "s" : ""}`
+              ) : (
+                `Request ${selected.length} session${selected.length > 1 ? "s" : ""}`
+              )}
             </Button>
           </div>
         </div>
@@ -466,20 +568,26 @@ export function PrivateWizard({
         <div className="py-10 text-center">
           <span aria-hidden className="ball-drop mx-auto mb-4 block h-5 w-5 rounded-full bg-ember" />
           <h2 className="font-display text-2xl">
-            {parked ? "We're confirming your coach" : "You're on."}
+            {weeklyMode
+              ? "Your weekly slot is set."
+              : parked
+                ? "We're confirming your coach"
+                : "You're on."}
           </h2>
           <p className="mt-2 text-fg-2">
-            {booked > 1
-              ? `${booked} sessions booked${ranOut ? " — as far as your minutes stretched" : ""}.`
-              : parked
-                ? "You'll hear from us within 24 hours."
-                : "Coach confirmed — details are in your schedule."}
+            {weeklyMode
+              ? `${booked} session${booked > 1 ? "s" : ""} booked over the coming weeks — the slot repeats automatically while your plan is active.`
+              : booked > 1
+                ? `${booked} sessions booked${ranOut ? " — as far as your minutes stretched" : ""}.`
+                : parked
+                  ? "You'll hear from us within 24 hours."
+                  : "Coach confirmed — details are in your schedule."}
           </p>
           <Link
-            href="/app/schedule"
+            href={onboarding ? "/app/onboarding/done" : "/app/schedule"}
             className="mt-6 inline-flex min-h-11 items-center rounded-[8px] bg-ember px-6 font-semibold text-ivory hover:bg-ember-2"
           >
-            View schedule
+            {onboarding ? "Continue" : "View schedule"}
           </Link>
         </div>
       )}
