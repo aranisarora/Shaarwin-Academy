@@ -25,7 +25,7 @@ export function WhatsAppSayHi({
       rel="noopener noreferrer"
       className="inline-flex min-h-11 w-full items-center justify-center rounded-[8px] border border-line px-5 font-semibold hover:border-ember"
     >
-      Say hi on WhatsApp — get updates in chat
+      Notify me on WhatsApp
     </a>
   );
 }
