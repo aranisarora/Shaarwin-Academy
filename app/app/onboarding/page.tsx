@@ -24,8 +24,9 @@ export default async function OnboardingPage() {
     <main className="mx-auto flex min-h-dvh w-full max-w-md flex-col justify-center px-6 py-16">
       <h1 className="font-display mb-2 text-4xl">Who&apos;s playing?</h1>
       <p className="mb-8 text-fg-2">
-        Set up the players on your account — you can book classes for each of
-        them. Change this any time from your profile.
+        Your first group class is free — tell us who&apos;ll be at the table
+        and you&apos;re ready to book. You can add or change players any time
+        from your profile.
       </p>
       <OnboardingFlow profileName={profile.full_name} existing={players ?? []} />
     </main>

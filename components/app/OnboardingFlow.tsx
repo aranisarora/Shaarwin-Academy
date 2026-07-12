@@ -10,6 +10,14 @@ import { completeOnboarding } from "@/app/app/onboarding/actions";
 
 const SKILL_LEVELS = ["beginner", "intermediate", "advanced", "elite"];
 
+type Mode = "me" | "kids" | "both";
+
+const MODES: [Mode, string][] = [
+  ["me", "Just me"],
+  ["kids", "My kids"],
+  ["both", "Me and my kids"],
+];
+
 type ExistingPlayer = {
   id: string;
   full_name: string;
@@ -24,6 +32,8 @@ type Row = {
   skillLevel: string;
 };
 
+const blankRow = (): Row => ({ fullName: "", dateOfBirth: "", skillLevel: "beginner" });
+
 function toRow(p: ExistingPlayer): Row {
   return {
     id: p.id,
@@ -34,10 +44,9 @@ function toRow(p: ExistingPlayer): Row {
 }
 
 /**
- * Household setup. The first player defaults to the account holder (the row
- * auto-created at signup); toggling "just managing" removes that row and asks
- * for at least one other player instead. Existing accounts arriving here see
- * their current roster prefilled.
+ * One-time household setup. "Who's playing?" splits into just me / my kids /
+ * both; the self row is the player auto-created at signup, so a single adult
+ * finishes in two taps. Existing accounts arrive with their roster prefilled.
  */
 export function OnboardingFlow({
   profileName,
@@ -48,25 +57,34 @@ export function OnboardingFlow({
 }) {
   const router = useRouter();
 
-  // The auto-created self-player shares the profile's name; fall back to the
-  // first player so older accounts that renamed it still get a sensible split.
+  // The auto-created self-player shares the profile's name; fall back to
+  // "not found" for older accounts that renamed it.
   const selfIndex = existing.findIndex((p) => p.full_name === profileName);
   const selfExisting = selfIndex >= 0 ? existing[selfIndex] : null;
+  const existingOthers = existing.filter((_, i) => i !== selfIndex).map(toRow);
 
-  const [selfIsPlayer, setSelfIsPlayer] = useState(true);
+  // Existing rosters pick their own starting answer; new accounts choose.
+  const [mode, setMode] = useState<Mode | null>(
+    existingOthers.length === 0 ? null : selfExisting ? "both" : "kids"
+  );
   const [self, setSelf] = useState<Row>(
     selfExisting
       ? toRow(selfExisting)
       : { fullName: profileName, dateOfBirth: "", skillLevel: "beginner" }
   );
-  const [others, setOthers] = useState<Row[]>(
-    existing.filter((_, i) => i !== selfIndex).map(toRow)
-  );
+  const [others, setOthers] = useState<Row[]>(existingOthers);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
-  const roster = [...(selfIsPlayer ? [self] : []), ...others];
-  const canFinish = roster.some((r) => r.fullName.trim());
+  const selfPlays = mode === "me" || mode === "both";
+  const roster = [...(selfPlays ? [self] : []), ...others];
+  const canFinish = mode !== null && roster.some((r) => r.fullName.trim());
+
+  function choose(next: Mode) {
+    setMode(next);
+    // A kids answer needs somewhere to write the first name.
+    if (next !== "me" && others.length === 0) setOthers([blankRow()]);
+  }
 
   function updateOther(index: number, patch: Partial<Row>) {
     setOthers(others.map((r, i) => (i === index ? { ...r, ...patch } : r)));
@@ -76,63 +94,29 @@ export function OnboardingFlow({
     startTransition(async () => {
       const r = await completeOnboarding({
         players: roster,
-        // Dropping the self row only removes it when it already exists in the
-        // DB; blank added rows are just filtered out server-side.
-        removeIds:
-          !selfIsPlayer && self.id ? [self.id] : [],
+        // "My kids" retires the player row auto-created for the account
+        // holder at signup; blank kid rows are filtered out server-side.
+        removeIds: !selfPlays && self.id ? [self.id] : [],
       });
-      if (!r.ok) return setError(r.error ?? "Something went wrong.");
+      if (!r.ok) return setError(r.error ?? "Something went wrong. Try again.");
       router.push("/app");
       router.refresh();
     });
   }
 
-  const fields = (row: Row, onChange: (patch: Partial<Row>) => void, nameLocked = false) => (
-    <div className="space-y-2">
-      <Input
-        label="Name"
-        value={row.fullName}
-        disabled={nameLocked}
-        onChange={(e) => onChange({ fullName: e.target.value })}
-      />
-      <Input
-        label="Date of birth"
-        type="date"
-        value={row.dateOfBirth}
-        onChange={(e) => onChange({ dateOfBirth: e.target.value })}
-      />
-      <Select
-        label="Skill level"
-        value={row.skillLevel}
-        onChange={(e) => onChange({ skillLevel: e.target.value })}
-      >
-        {SKILL_LEVELS.map((l) => (
-          <option key={l} value={l}>
-            {l}
-          </option>
-        ))}
-      </Select>
-    </div>
-  );
-
   return (
     <div className="space-y-6">
-      <div className="flex gap-2" role="radiogroup" aria-label="Are you playing?">
-        {(
-          [
-            [true, "I'm playing"],
-            [false, "I'm just managing players"],
-          ] as const
-        ).map(([value, labelText]) => (
+      <div className="grid gap-2" role="radiogroup" aria-label="Who's playing?">
+        {MODES.map(([value, labelText]) => (
           <button
-            key={labelText}
+            key={value}
             role="radio"
-            aria-checked={selfIsPlayer === value}
-            onClick={() => setSelfIsPlayer(value)}
-            className={`flex-1 rounded-[12px] border px-4 py-3 text-sm transition-colors ${
-              selfIsPlayer === value
+            aria-checked={mode === value}
+            onClick={() => choose(value)}
+            className={`min-h-13 rounded-[12px] border px-5 text-left text-base font-semibold transition-colors ${
+              mode === value
                 ? "border-ember bg-surface-2 text-fg"
-                : "border-line text-fg-2 hover:text-fg"
+                : "border-line text-fg-2 hover:border-ember hover:text-fg"
             }`}
           >
             {labelText}
@@ -140,47 +124,91 @@ export function OnboardingFlow({
         ))}
       </div>
 
-      {selfIsPlayer && (
-        <div className="rounded-[12px] border border-line bg-surface-2 p-4">
-          <p className="label mb-3">You</p>
-          {fields(self, (patch) => setSelf({ ...self, ...patch }))}
+      {selfPlays && (
+        <div className="space-y-3 rounded-[12px] border border-line bg-surface-2 p-4">
+          <p className="label">You</p>
+          <Input
+            label="Name"
+            autoComplete="name"
+            value={self.fullName}
+            onChange={(e) => setSelf({ ...self, fullName: e.target.value })}
+          />
+          <Input
+            label="Date of birth (optional)"
+            type="date"
+            value={self.dateOfBirth}
+            onChange={(e) => setSelf({ ...self, dateOfBirth: e.target.value })}
+          />
+          <Select
+            label="Skill level"
+            hint="Best guess is fine — coaches adjust."
+            value={self.skillLevel}
+            onChange={(e) => setSelf({ ...self, skillLevel: e.target.value })}
+          >
+            {SKILL_LEVELS.map((l) => (
+              <option key={l} value={l}>{l}</option>
+            ))}
+          </Select>
         </div>
       )}
 
-      {others.map((row, i) => (
-        <div key={row.id ?? `new-${i}`} className="rounded-[12px] border border-line p-4">
-          <div className="mb-3 flex items-center justify-between">
-            <p className="label">Player {selfIsPlayer ? i + 2 : i + 1}</p>
-            {!row.id && (
-              <button
-                onClick={() => setOthers(others.filter((_, j) => j !== i))}
-                className="text-xs text-fg-2 hover:text-err"
-              >
-                Remove
-              </button>
-            )}
+      {mode !== null &&
+        others.map((row, i) => (
+          <div
+            key={row.id ?? `new-${i}`}
+            className="space-y-3 rounded-[12px] border border-line bg-surface-2 p-4"
+          >
+            <div className="flex items-center justify-between">
+              <p className="label">{row.fullName.trim() || "Player"}</p>
+              {!row.id && others.length > (mode === "kids" ? 1 : 0) && (
+                <button
+                  onClick={() => setOthers(others.filter((_, j) => j !== i))}
+                  className="text-xs text-fg-2 hover:text-err"
+                >
+                  Remove
+                </button>
+              )}
+            </div>
+            <Input
+              label="Name"
+              value={row.fullName}
+              onChange={(e) => updateOther(i, { fullName: e.target.value })}
+            />
+            <Input
+              label="Date of birth"
+              hint="Helps us place them in the right group."
+              type="date"
+              value={row.dateOfBirth}
+              onChange={(e) => updateOther(i, { dateOfBirth: e.target.value })}
+            />
+            <Select
+              label="Skill level"
+              hint="Best guess is fine — coaches adjust."
+              value={row.skillLevel}
+              onChange={(e) => updateOther(i, { skillLevel: e.target.value })}
+            >
+              {SKILL_LEVELS.map((l) => (
+                <option key={l} value={l}>{l}</option>
+              ))}
+            </Select>
           </div>
-          {fields(row, (patch) => updateOther(i, patch))}
-        </div>
-      ))}
+        ))}
 
-      <Button
-        variant="ghost"
-        onClick={() =>
-          setOthers([...others, { fullName: "", dateOfBirth: "", skillLevel: "beginner" }])
-        }
-        className="w-full"
-      >
-        Add another player
-      </Button>
+      {mode !== null && (
+        <>
+          <Button
+            variant="ghost"
+            onClick={() => setOthers([...others, blankRow()])}
+            className="w-full"
+          >
+            Add another player
+          </Button>
 
-      {!selfIsPlayer && !canFinish && (
-        <p className="text-sm text-fg-2">Add at least one player to continue.</p>
+          <Button disabled={pending || !canFinish} onClick={finish} className="w-full" size="lg">
+            {pending ? <Spinner /> : "That's everyone"}
+          </Button>
+        </>
       )}
-
-      <Button disabled={pending || !canFinish} onClick={finish} className="w-full">
-        {pending ? <Spinner /> : "Finish setup"}
-      </Button>
       {error && <p className="text-sm text-err">{error}</p>}
     </div>
   );
