@@ -585,7 +585,7 @@ export function PrivateWizard({
                   : "Coach confirmed — details are in your schedule."}
           </p>
           <div className="mx-auto mt-6 max-w-xs">
-            <WhatsAppSayHi />
+            <WhatsAppSayHi label="Want a reminder?" />
           </div>
           <Link
             href={onboarding ? "/app/onboarding/done" : "/app/schedule"}

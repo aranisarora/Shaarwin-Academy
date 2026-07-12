@@ -10,8 +10,10 @@
  */
 export function WhatsAppSayHi({
   message = "Hi! I'd like to get my class updates on WhatsApp.",
+  label = "Notify me on WhatsApp",
 }: {
   message?: string;
+  label?: string;
 }) {
   const number = process.env.NEXT_PUBLIC_WHATSAPP_NUMBER;
   if (!number) return null;
@@ -25,7 +27,7 @@ export function WhatsAppSayHi({
       rel="noopener noreferrer"
       className="inline-flex min-h-11 w-full items-center justify-center rounded-[8px] border border-line px-5 font-semibold hover:border-ember"
     >
-      Notify me on WhatsApp
+      {label}
     </a>
   );
 }

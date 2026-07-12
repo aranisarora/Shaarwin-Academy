@@ -11,7 +11,6 @@ import { Spinner } from "@/components/ui/Spinner";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { bookSlot, type BookSlotResult } from "@/app/app/book/actions";
 import { WhatsAppSayHi } from "@/components/app/WhatsAppSayHi";
-import { enablePush, type PushState } from "@/lib/push";
 import type { BrowseSession } from "@/lib/booking";
 import type { Venue } from "@/lib/data";
 
@@ -93,7 +92,6 @@ export function BookBrowser({
   const [recurring, setRecurring] = useState(entitlement.hasGroupPlan);
   const [playerId, setPlayerId] = useState(players[0]?.id ?? "");
   const [result, setResult] = useState<BookSlotResult | null>(null);
-  const [pushState, setPushState] = useState<PushState | null>(null);
   const [pending, startTransition] = useTransition();
 
   const { hasGroupPlan } = entitlement;
@@ -354,22 +352,8 @@ export function BookBrowser({
                     weeks are booked automatically — manage it from your schedule.
                   </p>
                 )}
-                {pushState === null ? (
-                  <button
-                    onClick={async () => setPushState(await enablePush())}
-                    className="mt-3 text-sm text-fg-2 underline-offset-4 hover:underline"
-                  >
-                    Want a reminder before your sessions?
-                  </button>
-                ) : (
-                  <p className="mt-3 text-xs text-fg-2">
-                    {pushState === "subscribed"
-                      ? "Reminders on — we'll nudge you before each session."
-                      : "We'll email your reminders instead."}
-                  </p>
-                )}
                 <div className="mt-4">
-                  <WhatsAppSayHi />
+                  <WhatsAppSayHi label="Want a reminder?" />
                 </div>
                 {onboarding && (
                   <Link
