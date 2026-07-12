@@ -1,7 +1,6 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { requireUser } from "@/lib/auth";
-import { getWhatsAppLinkedPhone } from "@/lib/whatsapp/link-action";
 import { OnboardingFlow } from "@/components/app/OnboardingFlow";
 
 export const metadata: Metadata = { title: "Who's playing?" };
@@ -21,18 +20,15 @@ export default async function OnboardingPage() {
     .eq("client_id", user.id)
     .order("created_at");
 
-  const waLinkPhone = await getWhatsAppLinkedPhone();
-
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-md flex-col justify-center px-6 py-16">
-
-      <OnboardingFlow 
-        profileName={profile.full_name} 
-        existing={players ?? []} 
-        initialStep={profile.onboarding_step ?? 1}
-        hasWaLink={!!waLinkPhone}
-        notificationPrefs={profile.notification_prefs}
-      />
+      <h1 className="font-display mb-2 text-4xl">Who&apos;s playing?</h1>
+      <p className="mb-8 text-fg-2">
+        Your first group class is free — tell us who&apos;ll be at the table
+        and you&apos;re ready to book. You can add or change players any time
+        from your profile.
+      </p>
+      <OnboardingFlow profileName={profile.full_name} existing={players ?? []} />
     </main>
   );
 }

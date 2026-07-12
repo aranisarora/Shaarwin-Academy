@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { Spinner } from "@/components/ui/Spinner";
@@ -22,7 +21,6 @@ export function WhatsAppConnectCard({
   const [result, setResult] = useState<LinkCodeResult | null>(null);
   const [unlinkError, setUnlinkError] = useState(false);
   const [pending, startTransition] = useTransition();
-  const router = useRouter();
 
   return (
     <Card>
@@ -77,36 +75,21 @@ export function WhatsAppConnectCard({
             {result && !result.ok && (
               <p className="text-sm text-err">{result.error}</p>
             )}
-            <div className="flex gap-2">
-              <Button
-                variant="primary"
-                disabled={pending}
-                onClick={() =>
-                  startTransition(async () => {
-                    const res = await generateWhatsAppLinkCode();
-                    setResult(res);
-                    if (res.ok && res.waLink) {
-                      window.open(res.waLink, "_blank");
-                    }
-                  })
-                }
-              >
-                {pending ? <Spinner /> : "Connect WhatsApp"}
-              </Button>
-              {result?.ok && (
-                <Button
-                  variant="ghost"
-                  disabled={pending}
-                  onClick={() => {
-                    startTransition(() => {
-                      router.refresh();
-                    });
-                  }}
-                >
-                  {pending ? <Spinner /> : "Check status"}
-                </Button>
-              )}
-            </div>
+            <Button
+              variant="primary"
+              disabled={pending}
+              onClick={() =>
+                startTransition(async () => {
+                  const res = await generateWhatsAppLinkCode();
+                  setResult(res);
+                  if (res.ok && res.waLink) {
+                    window.open(res.waLink, "_blank");
+                  }
+                })
+              }
+            >
+              {pending ? <Spinner /> : "Connect WhatsApp"}
+            </Button>
           </>
         )}
       </Card.Content>

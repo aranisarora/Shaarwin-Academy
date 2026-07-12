@@ -41,7 +41,6 @@ export type Profile = {
   razorpay_customer_id: string | null;
   notification_prefs: Record<string, boolean>;
   onboarded_at: string | null;
-  onboarding_step: number | null;
 };
 
 /**

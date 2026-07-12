@@ -20,7 +20,7 @@ const SKILL_LEVELS = ["beginner", "intermediate", "advanced", "elite"];
  * self-player when the account holder isn't playing, stamp onboarded_at.
  * RLS ("own household" / "own profile") scopes every write to the caller.
  */
-export async function submitPlayersStep(input: {
+export async function completeOnboarding(input: {
   players: PlayerInput[];
   removeIds: string[];
 }): Promise<Result> {
@@ -77,63 +77,6 @@ export async function submitPlayersStep(input: {
       .eq("client_id", user.id);
     if (error) return { ok: false, error: "Couldn't remove a player." };
   }
-
-  const { error } = await supabase
-    .from("profiles")
-    .update({ onboarding_step: 2 })
-    .eq("id", user.id);
-  if (error) return { ok: false, error: "Couldn't advance setup." };
-
-  revalidatePath("/app");
-  revalidatePath("/app/profile");
-  return { ok: true };
-}
-
-export async function advanceOnboardingStep(step: number): Promise<Result> {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return { ok: false, error: "Sign in first." };
-
-  const { error } = await supabase
-    .from("profiles")
-    .update({ onboarding_step: step })
-    .eq("id", user.id);
-  
-  if (error) return { ok: false, error: "Couldn't advance setup." };
-  
-  revalidatePath("/app/onboarding");
-  return { ok: true };
-}
-
-export async function refreshOnboarding() {
-  revalidatePath("/app/onboarding");
-}
-
-export async function submitPhoneFallback(phone: string): Promise<Result> {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return { ok: false, error: "Sign in first." };
-
-  const { error } = await supabase
-    .from("profiles")
-    .update({ phone })
-    .eq("id", user.id);
-  
-  if (error) return { ok: false, error: "Couldn't save phone number." };
-  
-  return advanceOnboardingStep(3);
-}
-
-export async function finishOnboarding(): Promise<Result> {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return { ok: false, error: "Sign in first." };
 
   const { error } = await supabase
     .from("profiles")

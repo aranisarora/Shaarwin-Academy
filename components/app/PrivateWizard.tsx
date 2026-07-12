@@ -13,12 +13,13 @@ import {
   recordAreaInterest,
   getSlots,
   requestPrivateSessions,
-  requestPrivateSeries,
   type Slot,
 } from "@/app/app/book/private/actions";
 
 type Coach = { id: string; name: string; lat: number; lng: number; radiusKm: number };
 
+// 60/90 only: the coach travels to the client, so anything shorter spends
+// more time commuting than coaching.
 const DURATIONS = [60, 90] as const;
 
 function fmtSlot(iso: string) {
@@ -37,17 +38,17 @@ export function PrivateWizard({
   players,
   coaches,
   minutesBalance,
-  privateSessionsPerWeek,
   defaultAddress,
 }: {
   players: { id: string; full_name: string }[];
   coaches: Coach[];
   minutesBalance: number;
-  privateSessionsPerWeek: number | null;
   defaultAddress: string | null;
 }) {
   const [step, setStep] = useState<1 | 2 | 3 | 4>(1);
 
+  // Step 1 — where. A single structured address drives the whole step; the pin
+  // lives in addr.lat/lng.
   const [addr, setAddr] = useState<StructuredAddress>(() =>
     defaultAddress ? { ...EMPTY_ADDRESS, formatted: defaultAddress } : EMPTY_ADDRESS
   );
@@ -61,11 +62,11 @@ export function PrivateWizard({
     ? { lat: addr.lat, lng: addr.lng }
     : null;
 
+  // Step 2 — when. Multiple slots can be picked; each becomes its own session.
   const [duration, setDuration] = useState<number>(60);
   const [slots, setSlots] = useState<Slot[] | null>(null);
   const [selected, setSelected] = useState<string[]>([]);
   const [preferredCoach, setPreferredCoach] = useState("");
-  const [recurring, setRecurring] = useState(false);
 
   const [error, setError] = useState<string | null>(null);
   const [parked, setParked] = useState(false);
@@ -73,6 +74,9 @@ export function PrivateWizard({
   const [ranOut, setRanOut] = useState(false);
   const [pending, startTransition] = useTransition();
 
+  // Re-check coverage whenever the pin moves (fresh geocode or drag). State is
+  // only set inside the async callback; the cleared-address case is handled in
+  // updateAddr so we never setState synchronously in the effect body.
   useEffect(() => {
     if (addr.lat === null || addr.lng === null) return;
     const lat = addr.lat;
@@ -87,6 +91,7 @@ export function PrivateWizard({
     };
   }, [addr.lat, addr.lng]);
 
+  // Wrap the address setter so clearing the pin also clears stale coverage.
   function updateAddr(next: StructuredAddress) {
     setAddr(next);
     if (next.lat === null || next.lng === null) setCovered(null);
@@ -104,7 +109,7 @@ export function PrivateWizard({
 
   function changeDuration(d: number) {
     setDuration(d);
-    setSelected([]);
+    setSelected([]); // minutes-per-slot changed — start the pick over
     if (!pin) return;
     setSlots(null);
     startTransition(async () => {
@@ -113,27 +118,18 @@ export function PrivateWizard({
     });
   }
 
+  // How many sessions of this duration the balance can still cover.
   const maxSlots = Math.floor(minutesBalance / duration);
 
   function toggleSlot(startsAt: string) {
-    setSelected((prev) => {
-      if (recurring) {
-        return prev.includes(startsAt) ? [] : [startsAt];
-      }
-      return prev.includes(startsAt)
+    setSelected((prev) =>
+      prev.includes(startsAt)
         ? prev.filter((s) => s !== startsAt)
         : prev.length < maxSlots
           ? [...prev, startsAt]
-          : prev;
-    });
+          : prev
+    );
   }
-
-  // When toggling recurring mode, clear selection if it's invalid
-  useEffect(() => {
-    if (recurring && selected.length > 1) {
-      setSelected([selected[0]]);
-    }
-  }, [recurring]);
 
   const sortedSelected = [...selected].sort();
 
@@ -141,39 +137,28 @@ export function PrivateWizard({
     if (!pin || selected.length === 0 || !addr.formatted) return;
     setError(null);
     startTransition(async () => {
-      const req = {
-        playerId,
-        duration,
-        address: addr.formatted,
-        postcode: addr.postcode ?? "",
-        lat: pin.lat,
-        lng: pin.lng,
-        hasTable,
-        accessNotes: addr.accessNotes ?? "",
-        details: addr,
-        preferredCoach: preferredCoach || undefined,
-      };
-
-      if (recurring) {
-        const result = await requestPrivateSeries({ ...req, startsAt: sortedSelected[0] });
-        if (result.ok) {
-          setParked(false);
-          setBooked(result.booked);
-          setRanOut(false);
-          setStep(4);
-        } else {
-          setError(result.error);
-        }
+      const result = await requestPrivateSessions(
+        {
+          playerId,
+          duration,
+          address: addr.formatted,
+          postcode: addr.postcode ?? "",
+          lat: pin.lat,
+          lng: pin.lng,
+          hasTable,
+          accessNotes: addr.accessNotes ?? "",
+          details: addr,
+          preferredCoach: preferredCoach || undefined,
+        },
+        sortedSelected
+      );
+      if (result.ok) {
+        setParked(result.parked > 0);
+        setBooked(result.booked);
+        setRanOut(result.ranOut);
+        setStep(4);
       } else {
-        const result = await requestPrivateSessions(req, sortedSelected);
-        if (result.ok) {
-          setParked(result.parked > 0);
-          setBooked(result.booked);
-          setRanOut(result.ranOut);
-          setStep(4);
-        } else {
-          setError(result.error);
-        }
+        setError(result.error);
       }
     });
   }
@@ -186,6 +171,8 @@ export function PrivateWizard({
       })
     : [];
 
+  // Minutes are the entitlement — without enough for even one hour, the
+  // wizard can't finish, so point at the membership page up front.
   if (minutesBalance < 60) {
     return (
       <div className="mx-auto max-w-xl">
@@ -219,7 +206,7 @@ export function PrivateWizard({
       </div>
 
       {step === 1 && (
-        <div className="space-y-5 animate-in fade-in slide-in-from-bottom-4">
+        <div className="space-y-5">
           <h2 className="font-display text-2xl">Where&apos;s the table?</h2>
           <AddressForm
             value={addr}
@@ -322,7 +309,7 @@ export function PrivateWizard({
       )}
 
       {step === 2 && (
-        <div className="space-y-5 animate-in fade-in slide-in-from-bottom-4">
+        <div className="space-y-5">
           <h2 className="font-display text-2xl">When works?</h2>
 
           <div>
@@ -357,33 +344,6 @@ export function PrivateWizard({
               </Link>
             </p>
           </div>
-          
-          {privateSessionsPerWeek && privateSessionsPerWeek > 0 && (
-            <div className="rounded-[12px] border border-line bg-surface-2 p-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="font-medium">Book weekly</p>
-                  <p className="mt-1 text-sm text-fg-2">
-                    Your plan covers {privateSessionsPerWeek} recurring session{privateSessionsPerWeek > 1 ? "s" : ""} a week.
-                  </p>
-                </div>
-                <button
-                  role="switch"
-                  aria-checked={recurring}
-                  onClick={() => setRecurring(!recurring)}
-                  className={`relative h-7 w-12 shrink-0 rounded-full transition-colors ${
-                    recurring ? "bg-ember" : "bg-line"
-                  }`}
-                >
-                  <span
-                    className={`absolute top-1 h-5 w-5 rounded-full bg-ivory transition-all ${
-                      recurring ? "left-6" : "left-1"
-                    }`}
-                  />
-                </button>
-              </div>
-            </div>
-          )}
 
           {coveringCoaches.length > 1 && (
             <Select
@@ -402,8 +362,8 @@ export function PrivateWizard({
 
           <div>
             <div className="mb-2 flex items-baseline justify-between">
-              <p className="label">{recurring ? "Pick a weekly slot" : "Pick one or more slots"}</p>
-              {selected.length > 0 && !recurring && (
+              <p className="label">Pick one or more slots</p>
+              {selected.length > 0 && (
                 <p className="tnum text-xs text-fg-2">
                   {selected.length} selected · {selected.length * duration} min
                 </p>
@@ -421,7 +381,7 @@ export function PrivateWizard({
               <div className="grid max-h-72 grid-cols-2 gap-2 overflow-y-auto pr-1">
                 {slots.slice(0, 60).map((s) => {
                   const isSelected = selected.includes(s.starts_at);
-                  const atCap = !isSelected && !recurring && selected.length >= maxSlots;
+                  const atCap = !isSelected && selected.length >= maxSlots;
                   return (
                     <button
                       key={s.starts_at}
@@ -441,7 +401,7 @@ export function PrivateWizard({
                 })}
               </div>
             )}
-            {!recurring && maxSlots > 1 && (
+            {maxSlots > 1 && (
               <p className="mt-2 text-xs text-fg-2">
                 Pick up to {maxSlots} — each uses {duration} of your {minutesBalance} minutes.
               </p>
@@ -464,33 +424,26 @@ export function PrivateWizard({
       )}
 
       {step === 3 && selected.length > 0 && (
-        <div className="space-y-5 animate-in fade-in slide-in-from-bottom-4">
+        <div className="space-y-5">
           <h2 className="font-display text-2xl">Confirm</h2>
           <div className="space-y-3 rounded-[12px] border border-line bg-surface-2 p-5">
             <p className="font-display text-2xl">
-              {recurring ? "Weekly session" : `${selected.length} session${selected.length > 1 ? "s" : ""}`}
+              {selected.length} session{selected.length > 1 ? "s" : ""}
             </p>
             <ul className="tnum space-y-1 text-sm">
               {sortedSelected.map((s) => (
                 <li key={s} className="flex items-center gap-2">
                   <span aria-hidden className="h-1.5 w-1.5 shrink-0 rounded-full bg-ember" />
-                  {fmtSlot(s)} {recurring && "and every week"}
+                  {fmtSlot(s)}
                 </li>
               ))}
             </ul>
             <p className="text-fg-2">{addr.formatted}</p>
             <p className="text-fg-2">{duration} minutes each</p>
-            {!recurring && (
-              <p className="tnum text-sm">
-                Uses {selected.length * duration} of your {minutesBalance} min —{" "}
-                {minutesBalance - selected.length * duration} left after.
-              </p>
-            )}
-            {recurring && (
-              <p className="tnum text-sm">
-                This will automatically book sessions into the future.
-              </p>
-            )}
+            <p className="tnum text-sm">
+              Uses {selected.length * duration} of your {minutesBalance} min —{" "}
+              {minutesBalance - selected.length * duration} left after.
+            </p>
             <p className="text-sm text-fg-2">
               Coach: assigned automatically — we&apos;ll introduce them right away.
             </p>
@@ -503,26 +456,24 @@ export function PrivateWizard({
             <Button onClick={confirm} disabled={pending} className="flex-1">
               {pending
                 ? <Spinner />
-                : recurring ? "Set up weekly series" : `Request ${selected.length} session${selected.length > 1 ? "s" : ""}`}
+                : `Request ${selected.length} session${selected.length > 1 ? "s" : ""}`}
             </Button>
           </div>
         </div>
       )}
 
       {step === 4 && (
-        <div className="py-10 text-center animate-in zoom-in-95">
+        <div className="py-10 text-center">
           <span aria-hidden className="ball-drop mx-auto mb-4 block h-5 w-5 rounded-full bg-ember" />
           <h2 className="font-display text-2xl">
             {parked ? "We're confirming your coach" : "You're on."}
           </h2>
           <p className="mt-2 text-fg-2">
-            {recurring 
-              ? `${booked} sessions generated so far. We'll keep booking them weekly.`
-              : booked > 1
-                ? `${booked} sessions booked${ranOut ? " — as far as your minutes stretched" : ""}.`
-                : parked
-                  ? "You'll hear from us within 24 hours."
-                  : "Coach confirmed — details are in your schedule."}
+            {booked > 1
+              ? `${booked} sessions booked${ranOut ? " — as far as your minutes stretched" : ""}.`
+              : parked
+                ? "You'll hear from us within 24 hours."
+                : "Coach confirmed — details are in your schedule."}
           </p>
           <Link
             href="/app/schedule"
