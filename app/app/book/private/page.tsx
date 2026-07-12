@@ -2,11 +2,17 @@ import type { Metadata } from "next";
 import { requireUser } from "@/lib/auth";
 import { getSubscriptionSummary } from "@/lib/billing";
 import { ClientShell } from "@/components/app/ClientShell";
+import { OnboardingBanner } from "@/components/app/onboarding/OnboardingBanner";
 import { PrivateWizard } from "@/components/app/PrivateWizard";
 
 export const metadata: Metadata = { title: "Private session" };
 
-export default async function PrivateBookingPage() {
+export default async function PrivateBookingPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ onboarding?: string }>;
+}) {
+  const { onboarding } = await searchParams;
   const { supabase, user, profile } = await requireUser("/app/book/private");
   const [summary, playersRes, coachesRes] = await Promise.all([
     getSubscriptionSummary(supabase, user.id),
@@ -25,13 +31,23 @@ export default async function PrivateBookingPage() {
     radiusKm: Number(c.travel_radius_km),
   }));
 
+  const privatePlan = summary.privatePlan?.active
+    ? {
+        sessionsPerWeek: summary.privatePlan.privateSessionsPerWeek,
+        sessionMinutes: summary.privatePlan.privateSessionMinutes,
+      }
+    : null;
+
   return (
     <ClientShell title="Private">
+      {onboarding === "1" && <OnboardingBanner />}
       <PrivateWizard
         players={playersRes.data ?? []}
         coaches={coaches}
         minutesBalance={summary.minutesBalance}
         defaultAddress={profile.default_address}
+        privatePlan={privatePlan}
+        onboarding={onboarding === "1"}
       />
     </ClientShell>
   );

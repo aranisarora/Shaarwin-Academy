@@ -201,7 +201,19 @@ export type PrivateSessionInput = {
   accessNotes?: string;
   addressDetails?: Record<string, unknown> | null;
   coachId?: string;
+  /** Founder comp: skip the client's plan duration/weekly-frequency checks. */
+  overridePlanLimits?: boolean;
 };
+
+/** Start of the ISO week containing `d`, at midnight Asia/Kolkata, as UTC. */
+function istWeekWindow(d: Date): { from: Date; to: Date } {
+  const IST_MS = 5.5 * 3600000;
+  const ist = new Date(d.getTime() + IST_MS);
+  const dow = (ist.getUTCDay() + 6) % 7; // 0 = Monday
+  const monday = Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth(), ist.getUTCDate() - dow);
+  const from = new Date(monday - IST_MS);
+  return { from, to: new Date(from.getTime() + 7 * 86400000) };
+}
 
 /**
  * Founder books a private session on a client's behalf — same shape the
@@ -261,6 +273,43 @@ export async function createPrivateSessionCore(
   const start = academyWallToUtc(input.date, input.time);
   if (!(start > new Date())) return { ok: false, error: "Pick a time in the future." };
   const end = new Date(start.getTime() + duration * 60000);
+
+  // Mirror the client-side plan enforcement (duration + weekly frequency)
+  // unless the founder explicitly overrides to comp a session.
+  if (!input.overridePlanLimits) {
+    const { data: limitRows } = await supabase.rpc("private_plan_limits", {
+      p_client: input.clientId,
+    });
+    const limits = (Array.isArray(limitRows) ? limitRows[0] : limitRows) as
+      | { sessions_per_week: number | null; session_minutes: number | null }
+      | undefined;
+    if (limits?.session_minutes != null && duration !== limits.session_minutes) {
+      return {
+        ok: false,
+        error: `Their plan covers ${limits.session_minutes}-minute sessions — tick "ignore plan limits" to book a different length.`,
+      };
+    }
+    if (limits?.sessions_per_week != null) {
+      const { from, to } = istWeekWindow(start);
+      const { count } = await supabase
+        .from("bookings")
+        .select("id,class_sessions!inner(starts_at,classes!inner(class_type))", {
+          count: "exact",
+          head: true,
+        })
+        .eq("client_id", input.clientId)
+        .eq("status", "confirmed")
+        .eq("class_sessions.classes.class_type", "private")
+        .gte("class_sessions.starts_at", from.toISOString())
+        .lt("class_sessions.starts_at", to.toISOString());
+      if ((count ?? 0) >= limits.sessions_per_week) {
+        return {
+          ok: false,
+          error: `They've already got their plan's ${limits.sessions_per_week} private session${limits.sessions_per_week > 1 ? "s" : ""} that week — tick "ignore plan limits" to add another.`,
+        };
+      }
+    }
+  }
 
   const { data: cls, error: clsErr } = await supabase
     .from("classes")

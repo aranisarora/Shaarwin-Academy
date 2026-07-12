@@ -14,17 +14,7 @@ import {
   type StructuredAddress,
 } from "@/lib/address";
 import { saveProfile, addPlayer, removePlayer } from "@/app/app/profile/actions";
-
-// Per-type toggles; transactional types (payment_failed, session_cancelled)
-// always deliver and aren't listed.
-const PREF_TYPES: [string, string][] = [
-  ["reminder_24h", "Session reminders (day before)"],
-  ["reminder_2h", "Session reminders (2 hours)"],
-  ["waitlist_spot", "Waitlist openings"],
-  ["coach_changed", "Coach changes"],
-  ["booking_rescheduled", "Reschedule confirmations"],
-  ["renewal_upcoming", "Renewal notices"],
-];
+import { PREF_TYPES } from "@/lib/notification-prefs";
 
 type Player = {
   id: string;

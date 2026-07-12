@@ -193,11 +193,69 @@ export async function requestPrivateClass(req: PrivateRequest): Promise<PrivateR
 
   const { data, error } = await supabase.rpc("request_private_class", { payload });
   if (error) {
-    if (error.message.includes("insufficient_minutes"))
-      return { ok: false, error: "Not enough private minutes — top up from the membership page." };
-    return { ok: false, error: "Request didn't go through. Try again." };
+    return { ok: false, error: mapPrivateBookingError(error.message) };
   }
   revalidatePath("/app");
   revalidatePath("/app/schedule");
   return { ok: true, sessionId: data as string, parked: false };
+}
+
+function mapPrivateBookingError(message: string): string {
+  if (message.includes("insufficient_minutes"))
+    return "Not enough private minutes — top up from the membership page.";
+  if (message.includes("plan_duration_mismatch"))
+    return "Your plan covers a different session length — pick the duration included in your plan.";
+  if (message.includes("private_weekly_cap"))
+    return "You've reached your plan's weekly private sessions — pick a slot in another week.";
+  if (message.includes("recurring_needs_private_plan"))
+    return "Weekly slots need a private coaching plan — you can still book one-off sessions.";
+  if (message.includes("lead_time_24h"))
+    return "Private sessions need at least 24 hours' notice.";
+  return "Request didn't go through. Try again.";
+}
+
+export type PrivateSeriesResult =
+  | { ok: true; booked: number; skipped: number }
+  | { ok: false; error: string };
+
+/**
+ * Stand up weekly private slot(s): each entry in weeklySlots is the FIRST
+ * occurrence of that slot; the RPC books ~4 weeks ahead and the nightly
+ * generator keeps rolling the horizon while the plan stays active.
+ */
+export async function requestPrivateSeries(
+  req: Omit<PrivateRequest, "startsAt">,
+  weeklySlots: string[]
+): Promise<PrivateSeriesResult> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Sign in first." };
+
+  const slots = [...new Set(weeklySlots)].sort();
+  if (slots.length === 0) return { ok: false, error: "Pick at least one weekly slot." };
+
+  const payload = {
+    player_id: req.playerId,
+    duration_minutes: req.duration,
+    address: req.address,
+    postcode: req.postcode,
+    lat: req.lat,
+    lng: req.lng,
+    has_table: req.hasTable,
+    access_notes: req.accessNotes,
+    preferred_coach: req.preferredCoach ?? "",
+    address_details: req.details ?? null,
+    starts_at_list: slots,
+  };
+
+  const { data, error } = await supabase.rpc("create_private_series", { payload });
+  if (error) {
+    return { ok: false, error: mapPrivateBookingError(error.message) };
+  }
+  revalidatePath("/app");
+  revalidatePath("/app/schedule");
+  const result = data as { booked: number; skipped: number };
+  return { ok: true, booked: result.booked ?? 0, skipped: result.skipped ?? 0 };
 }

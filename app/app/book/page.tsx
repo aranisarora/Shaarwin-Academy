@@ -5,11 +5,17 @@ import { getBrowseSessions } from "@/lib/booking";
 import { getVenues } from "@/lib/data";
 import { ClientShell } from "@/components/app/ClientShell";
 import { BookBrowser } from "@/components/app/BookBrowser";
+import { OnboardingBanner } from "@/components/app/onboarding/OnboardingBanner";
 import { RealtimeRefresh } from "@/components/app/RealtimeRefresh";
 
 export const metadata: Metadata = { title: "Book" };
 
-export default async function BookPage() {
+export default async function BookPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ onboarding?: string }>;
+}) {
+  const { onboarding } = await searchParams;
   const { supabase, user } = await requireUser("/app/book");
   const [sessions, venues, summary, players] = await Promise.all([
     getBrowseSessions(supabase),
@@ -25,10 +31,12 @@ export default async function BookPage() {
   return (
     <ClientShell title="Join group">
       <RealtimeRefresh tables={["bookings", "class_sessions"]} />
+      {onboarding === "1" && <OnboardingBanner />}
       <BookBrowser
         sessions={sessions}
         venues={venues}
         players={players}
+        onboarding={onboarding === "1"}
         entitlement={{
           hasGroupPlan: Boolean(summary.groupPlan?.active),
           // The account-level trial can go to any household player.

@@ -1,215 +1,79 @@
 "use client";
 
-import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
-import { Button } from "@/components/ui/Button";
-import { Input } from "@/components/ui/Input";
-import { Select } from "@/components/ui/Select";
-import { Spinner } from "@/components/ui/Spinner";
-import { completeOnboarding } from "@/app/app/onboarding/actions";
+import { useState } from "react";
+import { PlayersStep, type ExistingPlayer } from "@/components/app/onboarding/PlayersStep";
+import { WhatsAppStep } from "@/components/app/onboarding/WhatsAppStep";
+import { NotificationsStep } from "@/components/app/onboarding/NotificationsStep";
+import { ChoosePathStep } from "@/components/app/onboarding/ChoosePathStep";
 
-const SKILL_LEVELS = ["beginner", "intermediate", "advanced", "elite"];
-
-type Mode = "me" | "kids" | "both";
-
-const MODES: [Mode, string][] = [
-  ["me", "Just me"],
-  ["kids", "My kids"],
-  ["both", "Me and my kids"],
-];
-
-type ExistingPlayer = {
-  id: string;
-  full_name: string;
-  date_of_birth: string | null;
-  skill_level: string;
-};
-
-type Row = {
-  id?: string;
-  fullName: string;
-  dateOfBirth: string;
-  skillLevel: string;
-};
-
-const blankRow = (): Row => ({ fullName: "", dateOfBirth: "", skillLevel: "beginner" });
-
-function toRow(p: ExistingPlayer): Row {
-  return {
-    id: p.id,
-    fullName: p.full_name,
-    dateOfBirth: p.date_of_birth ?? "",
-    skillLevel: p.skill_level,
-  };
-}
+const STEPS = [
+  {
+    title: "Who's playing?",
+    blurb:
+      "Tell us who'll be at the table — you can add or change players any time from your profile.",
+  },
+  {
+    title: "Your WhatsApp assistant",
+    blurb: "Link WhatsApp once and manage everything from a chat.",
+  },
+  {
+    title: "Stay in the loop",
+    blurb: "Choose which nudges you want — reminders, coach changes, openings.",
+  },
+  {
+    title: "Book your first class",
+    blurb: "Private at home, or a group class near you — your call.",
+  },
+] as const;
 
 /**
- * One-time household setup. "Who's playing?" splits into just me / my kids /
- * both; the self row is the player auto-created at signup, so a single adult
- * finishes in two taps. Existing accounts arrive with their roster prefilled.
+ * Guided first-run setup. Server-side onboarding_step (0–3) decides where a
+ * returning user resumes; each step's server action bumps it, so a refresh
+ * mid-flow lands on the right screen. The final choice routes into the real
+ * booking flow and stamps onboarded_at.
  */
 export function OnboardingFlow({
   profileName,
   existing,
+  initialStep,
+  linkedPhone,
+  initialPrefs,
 }: {
   profileName: string;
   existing: ExistingPlayer[];
+  initialStep: number;
+  linkedPhone: string | null;
+  initialPrefs: Record<string, boolean>;
 }) {
-  const router = useRouter();
-
-  // The auto-created self-player shares the profile's name; fall back to
-  // "not found" for older accounts that renamed it.
-  const selfIndex = existing.findIndex((p) => p.full_name === profileName);
-  const selfExisting = selfIndex >= 0 ? existing[selfIndex] : null;
-  const existingOthers = existing.filter((_, i) => i !== selfIndex).map(toRow);
-
-  // Existing rosters pick their own starting answer; new accounts choose.
-  const [mode, setMode] = useState<Mode | null>(
-    existingOthers.length === 0 ? null : selfExisting ? "both" : "kids"
-  );
-  const [self, setSelf] = useState<Row>(
-    selfExisting
-      ? toRow(selfExisting)
-      : { fullName: profileName, dateOfBirth: "", skillLevel: "beginner" }
-  );
-  const [others, setOthers] = useState<Row[]>(existingOthers);
-  const [error, setError] = useState<string | null>(null);
-  const [pending, startTransition] = useTransition();
-
-  const selfPlays = mode === "me" || mode === "both";
-  const roster = [...(selfPlays ? [self] : []), ...others];
-  const canFinish = mode !== null && roster.some((r) => r.fullName.trim());
-
-  function choose(next: Mode) {
-    setMode(next);
-    // A kids answer needs somewhere to write the first name.
-    if (next !== "me" && others.length === 0) setOthers([blankRow()]);
-  }
-
-  function updateOther(index: number, patch: Partial<Row>) {
-    setOthers(others.map((r, i) => (i === index ? { ...r, ...patch } : r)));
-  }
-
-  function finish() {
-    startTransition(async () => {
-      const r = await completeOnboarding({
-        players: roster,
-        // "My kids" retires the player row auto-created for the account
-        // holder at signup; blank kid rows are filtered out server-side.
-        removeIds: !selfPlays && self.id ? [self.id] : [],
-      });
-      if (!r.ok) return setError(r.error ?? "Something went wrong. Try again.");
-      router.push("/app");
-      router.refresh();
-    });
-  }
+  const [step, setStep] = useState(Math.min(Math.max(initialStep, 0), 3));
+  const current = STEPS[step];
 
   return (
-    <div className="space-y-6">
-      <div className="grid gap-2" role="radiogroup" aria-label="Who's playing?">
-        {MODES.map(([value, labelText]) => (
-          <button
-            key={value}
-            role="radio"
-            aria-checked={mode === value}
-            onClick={() => choose(value)}
-            className={`min-h-13 rounded-[12px] border px-5 text-left text-base font-semibold transition-colors ${
-              mode === value
-                ? "border-ember bg-surface-2 text-fg"
-                : "border-line text-fg-2 hover:border-ember hover:text-fg"
-            }`}
-          >
-            {labelText}
-          </button>
+    <div>
+      <div className="mb-6 flex items-center gap-2" aria-hidden>
+        {STEPS.map((_, n) => (
+          <span
+            key={n}
+            className={`h-1.5 flex-1 rounded-full ${step >= n ? "bg-ember" : "bg-line"}`}
+          />
         ))}
       </div>
 
-      {selfPlays && (
-        <div className="space-y-3 rounded-[12px] border border-line bg-surface-2 p-4">
-          <p className="label">You</p>
-          <Input
-            label="Name"
-            autoComplete="name"
-            value={self.fullName}
-            onChange={(e) => setSelf({ ...self, fullName: e.target.value })}
-          />
-          <Input
-            label="Date of birth (optional)"
-            type="date"
-            value={self.dateOfBirth}
-            onChange={(e) => setSelf({ ...self, dateOfBirth: e.target.value })}
-          />
-          <Select
-            label="Skill level"
-            hint="Best guess is fine — coaches adjust."
-            value={self.skillLevel}
-            onChange={(e) => setSelf({ ...self, skillLevel: e.target.value })}
-          >
-            {SKILL_LEVELS.map((l) => (
-              <option key={l} value={l}>{l}</option>
-            ))}
-          </Select>
-        </div>
+      <h1 className="font-display mb-2 text-4xl">{current.title}</h1>
+      <p className="mb-8 text-fg-2">{current.blurb}</p>
+
+      {step === 0 && (
+        <PlayersStep
+          profileName={profileName}
+          existing={existing}
+          onDone={() => setStep(1)}
+        />
       )}
-
-      {mode !== null &&
-        others.map((row, i) => (
-          <div
-            key={row.id ?? `new-${i}`}
-            className="space-y-3 rounded-[12px] border border-line bg-surface-2 p-4"
-          >
-            <div className="flex items-center justify-between">
-              <p className="label">{row.fullName.trim() || "Player"}</p>
-              {!row.id && others.length > (mode === "kids" ? 1 : 0) && (
-                <button
-                  onClick={() => setOthers(others.filter((_, j) => j !== i))}
-                  className="text-xs text-fg-2 hover:text-err"
-                >
-                  Remove
-                </button>
-              )}
-            </div>
-            <Input
-              label="Name"
-              value={row.fullName}
-              onChange={(e) => updateOther(i, { fullName: e.target.value })}
-            />
-            <Input
-              label="Date of birth"
-              hint="Helps us place them in the right group."
-              type="date"
-              value={row.dateOfBirth}
-              onChange={(e) => updateOther(i, { dateOfBirth: e.target.value })}
-            />
-            <Select
-              label="Skill level"
-              hint="Best guess is fine — coaches adjust."
-              value={row.skillLevel}
-              onChange={(e) => updateOther(i, { skillLevel: e.target.value })}
-            >
-              {SKILL_LEVELS.map((l) => (
-                <option key={l} value={l}>{l}</option>
-              ))}
-            </Select>
-          </div>
-        ))}
-
-      {mode !== null && (
-        <>
-          <Button
-            variant="ghost"
-            onClick={() => setOthers([...others, blankRow()])}
-            className="w-full"
-          >
-            Add another player
-          </Button>
-
-          <Button disabled={pending || !canFinish} onClick={finish} className="w-full" size="lg">
-            {pending ? <Spinner /> : "That's everyone"}
-          </Button>
-        </>
+      {step === 1 && <WhatsAppStep linkedPhone={linkedPhone} onDone={() => setStep(2)} />}
+      {step === 2 && (
+        <NotificationsStep initialPrefs={initialPrefs} onDone={() => setStep(3)} />
       )}
-      {error && <p className="text-sm text-err">{error}</p>}
+      {step === 3 && <ChoosePathStep />}
     </div>
   );
 }
