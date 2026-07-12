@@ -9,6 +9,7 @@ import { runAgent } from "@/lib/whatsapp/agent";
 import {
   adminClient,
   autoProvisionClient,
+  consumeLinkCode,
   resolveIdentity,
   userClientFor,
 } from "@/lib/whatsapp/identity";
@@ -96,6 +97,36 @@ async function handleMessage(phone: string, body: string, hasMedia: boolean) {
     .gte("created_at", new Date(Date.now() - 60000).toISOString());
   if ((count ?? 0) >= RATE_LIMIT_PER_MINUTE) {
     await sendWhatsApp(phone, "You're messaging faster than I can think — give me a minute 🙂");
+    return;
+  }
+
+  // Intercept account linking for instant response (bypass LLM)
+  const linkMatch = body.match(/^link\s+my\s+account:\s*(TT-[A-Z0-9]+)/i);
+  if (linkMatch) {
+    const code = linkMatch[1];
+    const linkResult = await consumeLinkCode(admin, code, phone);
+    if (!linkResult.ok) {
+      const copy: Record<string, string> = {
+        code_not_found: "That code wasn't recognised. Codes look like TT-XXXXXX.",
+        code_already_used: "That code was already used. Generate a fresh one in the webapp.",
+        code_expired: "That code has expired (they last 15 minutes). Generate a fresh one in the webapp.",
+      };
+      await sendWhatsApp(phone, copy[linkResult.error] ?? "Linking failed.");
+      return;
+    }
+    
+    // Check role for tailored success message
+    const { data: profile } = await admin
+      .from("profiles")
+      .select("role")
+      .eq("id", linkResult.userId)
+      .maybeSingle();
+      
+    if (profile?.role === "client") {
+      await sendWhatsApp(phone, "Account successfully linked! You can head back to the app to complete onboarding.");
+    } else {
+      await sendWhatsApp(phone, "Account successfully linked!");
+    }
     return;
   }
 

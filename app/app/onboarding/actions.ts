@@ -107,6 +107,10 @@ export async function advanceOnboardingStep(step: number): Promise<Result> {
   return { ok: true };
 }
 
+export async function refreshOnboarding() {
+  revalidatePath("/app/onboarding");
+}
+
 export async function submitPhoneFallback(phone: string): Promise<Result> {
   const supabase = await createClient();
   const {
