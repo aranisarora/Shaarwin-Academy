@@ -10,6 +10,7 @@ import { Select } from "@/components/ui/Select";
 import { Spinner } from "@/components/ui/Spinner";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { bookSlot, type BookSlotResult } from "@/app/app/book/actions";
+import { WhatsAppSayHi } from "@/components/app/WhatsAppSayHi";
 import { enablePush, type PushState } from "@/lib/push";
 import type { BrowseSession } from "@/lib/booking";
 import type { Venue } from "@/lib/data";
@@ -367,6 +368,9 @@ export function BookBrowser({
                       : "We'll email your reminders instead."}
                   </p>
                 )}
+                <div className="mt-4">
+                  <WhatsAppSayHi />
+                </div>
                 {onboarding && (
                   <Link
                     href="/app/onboarding/done"

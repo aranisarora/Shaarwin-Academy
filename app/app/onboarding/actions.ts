@@ -151,34 +151,11 @@ export async function confirmPhone(rawPhone: string): Promise<ConfirmPhoneResult
   return { ok: true };
 }
 
-/** Step 3 — save notification toggles and advance to choose-path. */
-export async function saveNotificationPrefs(
-  prefs: Record<string, boolean>
-): Promise<Result> {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return { ok: false, error: "Sign in first." };
-
-  const clean: Record<string, boolean> = {};
-  for (const [key, value] of Object.entries(prefs)) {
-    if (typeof value === "boolean") clean[key] = value;
-  }
-
-  const { error } = await supabase
-    .from("profiles")
-    .update({ notification_prefs: clean })
-    .eq("id", user.id);
-  if (error) return { ok: false, error: "Couldn't save your preferences." };
-
-  await bumpStep(supabase, user.id, 3);
-  return { ok: true };
-}
-
 /**
- * Step 4 — the setup steps are done; stamp onboarded_at so requireUser stops
+ * Step 3 — the setup steps are done; stamp onboarded_at so requireUser stops
  * routing here, then the client heads into the real booking flow.
+ * (Notification prefs are all-on by default and editable in profile settings —
+ * they're not an onboarding step.)
  */
 export async function finishOnboardingSetup(): Promise<Result> {
   const supabase = await createClient();
@@ -193,7 +170,7 @@ export async function finishOnboardingSetup(): Promise<Result> {
     .eq("id", user.id)
     .maybeSingle();
   if (!profile) return { ok: false, error: "Couldn't finish setup." };
-  if (!profile.onboarded_at && (profile.onboarding_step ?? 0) < 3) {
+  if (!profile.onboarded_at && (profile.onboarding_step ?? 0) < 2) {
     return { ok: false, error: "Finish the setup steps first." };
   }
 

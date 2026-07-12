@@ -6,12 +6,13 @@ import { OnboardingFlow } from "@/components/app/OnboardingFlow";
 export const metadata: Metadata = { title: "Set up your account" };
 
 /**
- * Guided first-run setup: players → phone number → notifications →
- * choose private/group and book. WhatsApp linking waits until after the first
- * booking (/app/onboarding/done) so nothing pulls the user out of the app
- * mid-flow. requireUser routes every not-yet-onboarded client here (including
- * accounts created before this flow existed); profiles.onboarding_step
- * decides where a returning user resumes.
+ * Guided first-run setup: players → phone number → choose private/group and
+ * book. WhatsApp linking waits until after the first booking
+ * (/app/onboarding/done) so nothing pulls the user out of the app mid-flow;
+ * notification prefs default to all-on and live in profile settings.
+ * requireUser routes every not-yet-onboarded client here (including accounts
+ * created before this flow existed); profiles.onboarding_step decides where a
+ * returning user resumes.
  */
 export default async function OnboardingPage() {
   const { supabase, user, profile } = await requireUser("/app/onboarding");
@@ -25,7 +26,7 @@ export default async function OnboardingPage() {
       .order("created_at"),
     supabase
       .from("profiles")
-      .select("onboarding_step,notification_prefs,phone")
+      .select("onboarding_step,phone")
       .eq("id", user.id)
       .maybeSingle(),
   ]);
@@ -37,7 +38,6 @@ export default async function OnboardingPage() {
         existing={players ?? []}
         initialStep={stepRow?.onboarding_step ?? 0}
         linkedPhone={stepRow?.phone ?? null}
-        initialPrefs={stepRow?.notification_prefs ?? {}}
       />
     </main>
   );

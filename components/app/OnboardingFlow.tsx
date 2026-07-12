@@ -3,7 +3,6 @@
 import { useState } from "react";
 import { PlayersStep, type ExistingPlayer } from "@/components/app/onboarding/PlayersStep";
 import { PhoneStep } from "@/components/app/onboarding/PhoneStep";
-import { NotificationsStep } from "@/components/app/onboarding/NotificationsStep";
 import { ChoosePathStep } from "@/components/app/onboarding/ChoosePathStep";
 
 const STEPS = [
@@ -18,36 +17,31 @@ const STEPS = [
       "For class updates — and if the academy pre-registered you, it unlocks your plan.",
   },
   {
-    title: "Stay in the loop",
-    blurb: "Choose which nudges you want — reminders, coach changes, openings.",
-  },
-  {
     title: "Book your first class",
     blurb: "Private at home, or a group class near you — your call.",
   },
 ] as const;
 
 /**
- * Guided first-run setup. Server-side onboarding_step (0–3) decides where a
+ * Guided first-run setup. Server-side onboarding_step (0–2) decides where a
  * returning user resumes; each step's server action bumps it, so a refresh
  * mid-flow lands on the right screen. The final choice routes into the real
- * booking flow and stamps onboarded_at.
+ * booking flow and stamps onboarded_at. Notification prefs aren't a step —
+ * everything is on by default and lives in the profile settings.
  */
 export function OnboardingFlow({
   profileName,
   existing,
   initialStep,
   linkedPhone,
-  initialPrefs,
 }: {
   profileName: string;
   existing: ExistingPlayer[];
   initialStep: number;
   /** profiles.phone if already set (e.g. WhatsApp-provisioned accounts). */
   linkedPhone: string | null;
-  initialPrefs: Record<string, boolean>;
 }) {
-  const [step, setStep] = useState(Math.min(Math.max(initialStep, 0), 3));
+  const [step, setStep] = useState(Math.min(Math.max(initialStep, 0), 2));
   const current = STEPS[step];
 
   return (
@@ -72,10 +66,7 @@ export function OnboardingFlow({
         />
       )}
       {step === 1 && <PhoneStep initialPhone={linkedPhone} onDone={() => setStep(2)} />}
-      {step === 2 && (
-        <NotificationsStep initialPrefs={initialPrefs} onDone={() => setStep(3)} />
-      )}
-      {step === 3 && <ChoosePathStep />}
+      {step === 2 && <ChoosePathStep />}
     </div>
   );
 }
