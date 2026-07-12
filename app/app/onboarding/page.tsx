@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
 import { requireUser } from "@/lib/auth";
+import { getWhatsAppLinkedPhone } from "@/lib/whatsapp/link-action";
 import { OnboardingFlow } from "@/components/app/OnboardingFlow";
 
 export const metadata: Metadata = { title: "Who's playing?" };
@@ -20,11 +21,7 @@ export default async function OnboardingPage() {
     .eq("client_id", user.id)
     .order("created_at");
 
-  const { data: waLink } = await supabase
-    .from("wa_links")
-    .select("phone")
-    .eq("user_id", user.id)
-    .maybeSingle();
+  const waLinkPhone = await getWhatsAppLinkedPhone();
 
   return (
     <main className="mx-auto flex min-h-dvh w-full max-w-md flex-col justify-center px-6 py-16">
@@ -33,7 +30,7 @@ export default async function OnboardingPage() {
         profileName={profile.full_name} 
         existing={players ?? []} 
         initialStep={profile.onboarding_step ?? 1}
-        hasWaLink={!!waLink}
+        hasWaLink={!!waLinkPhone}
         notificationPrefs={profile.notification_prefs}
       />
     </main>
