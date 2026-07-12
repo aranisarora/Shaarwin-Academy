@@ -151,12 +151,18 @@ export function ProfileEditor({
               </Link>
               <button
                 disabled={pending}
-                onClick={() =>
+                onClick={() => {
+                  if (
+                    !window.confirm(
+                      `Remove ${p.full_name} from your household? Their attendance history and coach notes will no longer be visible.`
+                    )
+                  )
+                    return;
                   startTransition(async () => {
                     const r = await removePlayer(p.id);
                     if (!r.ok) setMessage(r.error ?? null);
-                  })
-                }
+                  });
+                }}
                 className="text-xs text-fg-2 hover:text-err"
               >
                 Remove

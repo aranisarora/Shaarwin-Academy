@@ -9,7 +9,7 @@ export type TabItem = {
   icon: React.ReactNode;
 };
 
-/** Fixed bottom tab bar — max 4 items, 44px+ targets, safe-area inset. */
+/** Fixed bottom tab bar — max 5 items, 44px+ targets, safe-area inset. */
 export function BottomTabBar({ items }: { items: TabItem[] }) {
   const pathname = usePathname();
   return (
@@ -18,7 +18,7 @@ export function BottomTabBar({ items }: { items: TabItem[] }) {
       className="pb-safe fixed inset-x-0 bottom-0 z-40 border-t border-line bg-surface-2 lg:hidden"
     >
       <div className="grid auto-cols-fr grid-flow-col">
-        {items.slice(0, 4).map((item) => {
+        {items.slice(0, 5).map((item) => {
           const active =
             pathname === item.href ||
             (item.href !== "/app" &&
