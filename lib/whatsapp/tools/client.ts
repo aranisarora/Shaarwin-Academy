@@ -97,7 +97,7 @@ const browseSessions: WaTool = {
   },
   run: async (input, ctx) => {
     const days = Math.min(Math.max(Number(input.days) || 7, 1), 28);
-    const sessions = await getBrowseSessions(ctx.supabase!, days);
+    const sessions = await getBrowseSessions(ctx.supabase!, ctx.profile?.id ?? "", days);
     return ok(
       sessions.map((s) => ({
         session_id: s.id,

@@ -23,7 +23,7 @@ export const academyInfo: WaTool = {
         .from("venues")
         .select("id,name,address,postcode")
         .eq("active", true),
-      getBrowseSessions(ctx.admin, 7),
+      getBrowseSessions(ctx.admin, "", 7),
     ]);
 
     return ok({
