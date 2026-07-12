@@ -32,7 +32,7 @@ export async function getCoachSessions(
   const { data: sessions } = await supabase
     .from("class_sessions")
     .select(
-      "id,starts_at,ends_at,status,capacity_override,classes!inner(id,title,skill_level,capacity,class_type,venues(name,address,postcode,lat,lng,address_details),private_class_details(address,postcode,lat,lng,access_notes,address_details,players(full_name)))"
+      "id,starts_at,ends_at,status,capacity_override,classes!inner(id,title,skill_level,capacity,class_type,venues(name,address,postcode,lat,lng,address_details),private_class_details(address,postcode,lat,lng,access_notes,address_details,profiles!client_id(full_name)))"
     )
     .eq("coach_id", coachId)
     .gte("starts_at", from.toISOString())
@@ -74,7 +74,7 @@ export async function getCoachSessions(
             lng: number;
             access_notes: string | null;
             address_details: Partial<StructuredAddress> | null;
-            players: { full_name: string } | null;
+            profiles: { full_name: string } | null;
           }[]
         | null;
     };
@@ -105,7 +105,7 @@ export async function getCoachSessions(
       level: cls.skill_level,
       capacity: s.capacity_override ?? cls.capacity,
       confirmed: counts.get(s.id) ?? 0,
-      playerName: priv?.players?.full_name ?? null,
+      playerName: priv?.profiles?.full_name ?? null,
       venueName: cls.venues?.name ?? null,
       venueAddress: cls.venues?.address ?? null,
       venuePostcode: cls.venues?.postcode ?? null,
