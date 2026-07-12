@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
-import { getWhatsAppLinkedPhone } from "@/lib/whatsapp/link-action";
+import { adminClient } from "@/lib/whatsapp/identity";
 import { normalizePhone } from "@/lib/whatsapp/phone";
 
 type Result = { ok: boolean; error?: string };
@@ -99,27 +99,21 @@ export async function savePlayers(input: {
   return { ok: true };
 }
 
-/**
- * Step 2 poll — is the WhatsApp bot linked yet? Advances the step server-side
- * the moment a link lands, so a refresh mid-flow resumes correctly.
- */
-export async function checkWhatsAppLinked(): Promise<{ phone: string | null }> {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return { phone: null };
-
-  const phone = await getWhatsAppLinkedPhone();
-  if (phone) await bumpStep(supabase, user.id, 2);
-  return { phone };
-}
+export type ConfirmPhoneResult = Result & {
+  /** An admin pre-registered this number — invite claimed on save. */
+  preRegistered?: boolean;
+  /** Name of the gifted plan activated by the claim, if the invite carried one. */
+  planName?: string | null;
+};
 
 /**
- * Step 2 fallback — no WhatsApp on this device: confirm a phone number so the
- * bot's profiles.phone matching still works, and complete the step.
+ * Step 2 — confirm a phone number. Updating profiles.phone fires the
+ * profiles_claim_client_invite trigger, which claims any pre-registration
+ * invite for this number and grants its gifted plan — so pre-registered
+ * clients can book immediately, no WhatsApp link required. The bot also
+ * auto-links this number the first time it messages in.
  */
-export async function confirmPhone(rawPhone: string): Promise<Result> {
+export async function confirmPhone(rawPhone: string): Promise<ConfirmPhoneResult> {
   const supabase = await createClient();
   const {
     data: { user },
@@ -138,6 +132,22 @@ export async function confirmPhone(rawPhone: string): Promise<Result> {
   if (error) return { ok: false, error: "Couldn't save the number. Try again." };
 
   await bumpStep(supabase, user.id, 2);
+
+  // client_invites is founder-only under RLS, so check the claim (which the
+  // trigger just performed synchronously) with the service role.
+  const { data: invite } = await adminClient()
+    .from("client_invites")
+    .select("id, plans(name)")
+    .eq("claimed_by", user.id)
+    .order("claimed_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (invite) {
+    const plan = invite.plans as { name: string } | { name: string }[] | null;
+    const planName = Array.isArray(plan) ? plan[0]?.name : plan?.name;
+    return { ok: true, preRegistered: true, planName: planName ?? null };
+  }
+
   return { ok: true };
 }
 

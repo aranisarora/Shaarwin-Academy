@@ -10,11 +10,14 @@ type BeforeInstallPromptEvent = Event & {
 };
 
 /**
- * "Get the app" finale of onboarding. Android/desktop get a one-tap Install
+ * "You're all set" finale of onboarding, reached after the first booking.
+ * Hosts the WhatsApp connect card (passed in as a slot so this stays a client
+ * component) and the install prompt: Android/desktop get a one-tap Install
  * (beforeinstallprompt); iOS gets the Share → Add to Home Screen steps.
- * "Done" never gates on the actual install — it's undetectable on iOS.
+ * Neither gates "Done" — install is undetectable on iOS and WhatsApp is
+ * optional now that the phone number was captured mid-flow.
  */
-export function InstallStep() {
+export function InstallStep({ whatsAppSlot }: { whatsAppSlot?: React.ReactNode }) {
   const [deferred, setDeferred] = useState<BeforeInstallPromptEvent | null>(null);
   const [installed, setInstalled] = useState(false);
   const [standalone, setStandalone] = useState(false);
@@ -62,9 +65,11 @@ export function InstallStep() {
         <p className="mt-2 text-fg-2">
           {done
             ? "Your booking is in and the app is on your home screen."
-            : "One last thing — put Sharwin on your home screen so your schedule is a tap away."}
+            : "Your booking is in. Two optional extras before you go —"}
         </p>
       </div>
+
+      {whatsAppSlot && <div className="text-left">{whatsAppSlot}</div>}
 
       {!done &&
         (isIos ? (

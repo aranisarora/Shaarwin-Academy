@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { PlayersStep, type ExistingPlayer } from "@/components/app/onboarding/PlayersStep";
-import { WhatsAppStep } from "@/components/app/onboarding/WhatsAppStep";
+import { PhoneStep } from "@/components/app/onboarding/PhoneStep";
 import { NotificationsStep } from "@/components/app/onboarding/NotificationsStep";
 import { ChoosePathStep } from "@/components/app/onboarding/ChoosePathStep";
 
@@ -13,8 +13,9 @@ const STEPS = [
       "Tell us who'll be at the table — you can add or change players any time from your profile.",
   },
   {
-    title: "Your WhatsApp assistant",
-    blurb: "Link WhatsApp once and manage everything from a chat.",
+    title: "Your phone number",
+    blurb:
+      "For class updates — and if the academy pre-registered you, it unlocks your plan.",
   },
   {
     title: "Stay in the loop",
@@ -42,6 +43,7 @@ export function OnboardingFlow({
   profileName: string;
   existing: ExistingPlayer[];
   initialStep: number;
+  /** profiles.phone if already set (e.g. WhatsApp-provisioned accounts). */
   linkedPhone: string | null;
   initialPrefs: Record<string, boolean>;
 }) {
@@ -69,7 +71,7 @@ export function OnboardingFlow({
           onDone={() => setStep(1)}
         />
       )}
-      {step === 1 && <WhatsAppStep linkedPhone={linkedPhone} onDone={() => setStep(2)} />}
+      {step === 1 && <PhoneStep initialPhone={linkedPhone} onDone={() => setStep(2)} />}
       {step === 2 && (
         <NotificationsStep initialPrefs={initialPrefs} onDone={() => setStep(3)} />
       )}
