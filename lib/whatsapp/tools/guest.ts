@@ -1,11 +1,10 @@
-// Tools available to unlinked phone numbers: public academy info, account
-// linking, and in-chat signup. Nothing here can read another user's data —
-// the admin client is used only for public catalogue reads and the identity
-// handshakes in lib/whatsapp/identity.ts.
+// Tools that need no account: public academy info. Unknown numbers are
+// auto-provisioned a client account before the agent runs, so "guest" only
+// occurs defensively (e.g. a DB hiccup); nothing here can read user data —
+// the admin client is used only for public catalogue reads.
 
-import { consumeLinkCode, signUpNewClient } from "@/lib/whatsapp/identity";
 import { getBrowseSessions } from "@/lib/booking";
-import { fail, fmtIST, formatPricePence, ok, type WaTool } from "./types";
+import { fmtIST, formatPricePence, ok, type WaTool } from "./types";
 
 export const academyInfo: WaTool = {
   name: "get_academy_info",
@@ -51,70 +50,4 @@ export const academyInfo: WaTool = {
   },
 };
 
-export const linkAccount: WaTool = {
-  name: "link_account",
-  description:
-    "Link this WhatsApp number to an existing academy account using the one-time code the user generated in the webapp (looks like TT-XXXXXX). Ask for the code if they say they already have an account.",
-  input_schema: {
-    type: "object",
-    properties: {
-      code: { type: "string", description: "The link code, e.g. TT-4F7K2N" },
-    },
-    required: ["code"],
-  },
-  run: async (input, ctx) => {
-    const result = await consumeLinkCode(ctx.admin, String(input.code ?? ""), ctx.phone);
-    if (!result.ok) {
-      const copy: Record<string, string> = {
-        code_not_found: "That code wasn't recognised. Codes look like TT-XXXXXX.",
-        code_already_used: "That code was already used. Generate a fresh one in the webapp.",
-        code_expired: "That code has expired (they last 15 minutes). Generate a fresh one in the webapp.",
-      };
-      return fail(copy[result.error] ?? "Linking failed.");
-    }
-    return ok({
-      linked: true,
-      note: "Account linked. The user's next message will be handled with their account active — greet them by name and offer help.",
-    });
-  },
-};
-
-export const signUp: WaTool = {
-  name: "sign_up_new_client",
-  description:
-    "Create a brand-new client account for this WhatsApp number. Use only after collecting BOTH full name and email address, and after the user confirms they don't already have an account.",
-  input_schema: {
-    type: "object",
-    properties: {
-      full_name: { type: "string" },
-      email: { type: "string" },
-    },
-    required: ["full_name", "email"],
-  },
-  run: async (input, ctx) => {
-    const name = String(input.full_name ?? "").trim();
-    if (name.length < 2) return fail("Full name looks empty.");
-    const result = await signUpNewClient(ctx.admin, ctx.phone, name, String(input.email ?? ""));
-    if (!result.ok) {
-      const copy: Record<string, string> = {
-        invalid_email: "That email doesn't look valid.",
-        email_taken:
-          "An account with that email already exists. They should generate a link code from the webapp profile page instead (or use 'forgot password' to get back in).",
-        signup_failed: "Signup failed — try again in a moment.",
-      };
-      return fail(copy[result.error] ?? "Signup failed.");
-    }
-    if (result.role === "coach") {
-      return ok({
-        created: true,
-        note: "Account created as a coach (they were on the invite list) and this number is now linked. Their next message will be handled with coach tools — greet them and offer their schedule, rosters and availability.",
-      });
-    }
-    return ok({
-      created: true,
-      note: "Account created and this number is now linked. They can browse sessions right away; to book they'll need a membership (payments happen on the website pricing page).",
-    });
-  },
-};
-
-export const guestTools: WaTool[] = [academyInfo, linkAccount, signUp];
+export const guestTools: WaTool[] = [academyInfo];

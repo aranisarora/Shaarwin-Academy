@@ -29,3 +29,19 @@ export function normalizePhone(raw: string | null | undefined): string | null {
   if (digits.length < 7 || digits.length > 15) return null;
   return `+${digits}`;
 }
+
+/**
+ * Normalize a phone number typed into a form. Twilio always delivers E.164,
+ * but people type local numbers — normalizePhone would happily turn
+ * "9812345678" into the junk E.164 "+9812345678", which never matches the
+ * WhatsApp inbound "+91…", silently forking the account on first message.
+ * So: a bare 10-digit Indian mobile (6-9 prefix) gets +91; anything else must
+ * carry an explicit country code ("+" or "00"), or it's rejected.
+ */
+export function normalizePhoneInput(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const s = raw.trim().replace(/[^\d+]/g, "");
+  if (s.startsWith("+") || s.startsWith("00")) return normalizePhone(s);
+  if (/^[6-9]\d{9}$/.test(s)) return `+91${s}`;
+  return null;
+}

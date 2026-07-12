@@ -2,8 +2,8 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
-import { adminClient } from "@/lib/whatsapp/identity";
-import { normalizePhone } from "@/lib/whatsapp/phone";
+import { adminClient, linkPhoneToUser } from "@/lib/whatsapp/identity";
+import { normalizePhoneInput } from "@/lib/whatsapp/phone";
 
 type Result = { ok: boolean; error?: string };
 
@@ -110,8 +110,9 @@ export type ConfirmPhoneResult = Result & {
  * Step 2 — confirm a phone number. Updating profiles.phone fires the
  * profiles_claim_client_invite trigger, which claims any pre-registration
  * invite for this number and grants its gifted plan — so pre-registered
- * clients can book immediately, no WhatsApp link required. The bot also
- * auto-links this number the first time it messages in.
+ * clients can book immediately. The wa_links row is created right here, so
+ * WhatsApp notifications flow without waiting for a first inbound message
+ * (out-of-window sends use the approved template).
  */
 export async function confirmPhone(rawPhone: string): Promise<ConfirmPhoneResult> {
   const supabase = await createClient();
@@ -120,9 +121,25 @@ export async function confirmPhone(rawPhone: string): Promise<ConfirmPhoneResult
   } = await supabase.auth.getUser();
   if (!user) return { ok: false, error: "Sign in first." };
 
-  const phone = normalizePhone(rawPhone);
+  const phone = normalizePhoneInput(rawPhone);
   if (!phone) {
     return { ok: false, error: "That doesn't look like a phone number — include the country code, e.g. +91." };
+  }
+
+  // profiles.phone is unique (it's how the WhatsApp bot identifies accounts);
+  // pre-check for a friendly message instead of a constraint error.
+  const admin = adminClient();
+  const { data: taken } = await admin
+    .from("profiles")
+    .select("id")
+    .eq("phone", phone)
+    .neq("id", user.id)
+    .maybeSingle();
+  if (taken) {
+    return {
+      ok: false,
+      error: "That number is already on another account — use a different number, or contact the academy.",
+    };
   }
 
   const { error } = await supabase
@@ -130,6 +147,9 @@ export async function confirmPhone(rawPhone: string): Promise<ConfirmPhoneResult
     .update({ phone })
     .eq("id", user.id);
   if (error) return { ok: false, error: "Couldn't save the number. Try again." };
+
+  // Bind the number for WhatsApp delivery and inbound identity immediately.
+  await linkPhoneToUser(admin, phone, user.id);
 
   await bumpStep(supabase, user.id, 2);
 

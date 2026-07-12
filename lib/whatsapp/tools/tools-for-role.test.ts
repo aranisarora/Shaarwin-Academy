@@ -17,7 +17,6 @@ describe("toolsForRole", () => {
       "send_membership_checkout_link",
       "update_profile",
       "add_player",
-      "unlink_whatsapp",
     ]) {
       expect(n).toContain(tool);
     }
@@ -66,11 +65,9 @@ describe("toolsForRole", () => {
     }
   });
 
-  it("guests can only see public info + onboarding", () => {
+  it("guests (unresolved numbers) can only see public info", () => {
     const n = names("guest");
-    expect(n).toContain("get_academy_info");
-    expect(n).not.toContain("book_group_session");
-    expect(n).not.toContain("cancel_session");
+    expect(n).toEqual(["get_academy_info"]);
   });
 
   it("every tool has a unique name and a description per role", () => {

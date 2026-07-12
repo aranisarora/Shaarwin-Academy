@@ -3,7 +3,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { normalizePhone } from "@/lib/whatsapp/phone";
-import { adminClient, autoProvisionClient } from "@/lib/whatsapp/identity";
+import { adminClient, autoProvisionClient, linkPhoneToUser } from "@/lib/whatsapp/identity";
 import type { OpResult } from "@/lib/admin-ops-types";
 
 export async function updateClientCore(
@@ -15,12 +15,35 @@ export async function updateClientCore(
 ): Promise<OpResult> {
   if (!fullName.trim()) return { ok: false, error: "Name can't be empty." };
   const normalized = phone.trim() ? normalizePhone(phone) : null;
+  if (phone.trim() && !normalized) {
+    return { ok: false, error: "That phone number doesn't look valid." };
+  }
+
+  // profiles.phone is unique — surface a friendly message, not a DB error.
+  const admin = adminClient();
+  if (normalized) {
+    const { data: taken } = await admin
+      .from("profiles")
+      .select("id")
+      .eq("phone", normalized)
+      .neq("id", clientId)
+      .maybeSingle();
+    if (taken) {
+      return { ok: false, error: "That number is already on another account." };
+    }
+  }
+
   const { error } = await supabase
     .from("profiles")
     .update({ full_name: fullName.trim(), phone: normalized })
     .eq("id", clientId)
     .eq("role", "client");
   if (error) return { ok: false, error: "Couldn't save the details." };
+
+  // Keep WhatsApp identity/delivery in step with the number.
+  if (normalized) await linkPhoneToUser(admin, normalized, clientId);
+  else await admin.from("wa_links").delete().eq("user_id", clientId);
+
   await supabase.from("audit_log").insert({
     actor_id: founderId,
     action: "client.update",
