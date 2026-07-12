@@ -159,7 +159,7 @@ async function handleLinkCode(
       .eq("id", result.userId)
       .maybeSingle();
     const name = profile?.full_name?.trim().split(" ")[0];
-    reply = `You're linked${name ? `, ${name}` : ""} ✅ — this number is now connected to your Sharwin Academy account. Ask me anything: book a class, reschedule, check your schedule.`;
+    reply = `You're linked${name ? `, ${name}` : ""} ✅ — this number is now connected to your Sharwin Academy account.\n\nHere's what I can do for you:\n• 📅 Book or reschedule classes\n• 🗓 Check your upcoming schedule\n• ❓ Answer questions about plans, timings, or sessions\n• And more — just ask in plain English!\n\nHead back to the app now to finish setting up your account 👉`;
   } else if (result.error === "code_expired") {
     reply =
       "That link code has expired — open the app and tap Connect WhatsApp again for a fresh one.";

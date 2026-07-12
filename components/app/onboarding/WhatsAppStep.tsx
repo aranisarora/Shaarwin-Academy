@@ -124,13 +124,16 @@ export function WhatsAppStep({
           {result && !result.ok && <p className="text-sm text-err">{result.error}</p>}
 
           {polling && (
-            <div className="flex items-center justify-between rounded-[12px] border border-line bg-surface-2 p-4">
+            <div className="space-y-3 rounded-[12px] border border-line bg-surface-2 p-4">
               <p className="text-sm text-fg-2">
-                Waiting for your WhatsApp message to arrive…
+                Once you&apos;ve sent the message on WhatsApp, come back here to continue setup.
               </p>
-              <Button variant="ghost" onClick={refresh} disabled={checking}>
-                {checking ? <Spinner /> : "Refresh"}
-              </Button>
+              <div className="flex items-center justify-between">
+                <p className="text-sm text-fg-2">Waiting for your message to arrive…</p>
+                <Button variant="ghost" onClick={refresh} disabled={checking}>
+                  {checking ? <Spinner /> : "Refresh"}
+                </Button>
+              </div>
             </div>
           )}
 
