@@ -69,6 +69,8 @@ type Slot = {
 export type GroupEntitlement = {
   hasGroupPlan: boolean;
   trialPlayerIds: string[];
+  /** Players whose trial has already been consumed — distinguishes "used" from "never had". */
+  usedTrialPlayerIds: string[];
   dropinCredits: number;
 };
 
@@ -105,6 +107,7 @@ export function BookBrowser({
         ? "dropin"
         : null;
   const canBook = hasGroupPlan || credit !== null;
+  const trialUsed = entitlement.usedTrialPlayerIds.includes(playerId);
   const playerName =
     players.find((p) => p.id === playerId)?.full_name ?? "your player";
 
@@ -215,6 +218,7 @@ export function BookBrowser({
                 {rows.map((slot) => {
                   const s = slot.next;
                   const left = s.capacity - s.confirmed;
+                  const bookedHere = s.myBookings.length > 0;
                   return (
                     <li key={slot.key}>
                       <button
@@ -231,11 +235,15 @@ export function BookBrowser({
                         </div>
                         <div className="flex flex-col items-end gap-1.5">
                           <Badge>{s.level === "any" ? "all levels" : s.level}</Badge>
-                          <span
-                            className={`tnum text-xs ${left <= 0 ? "text-err" : left <= 3 ? "text-ember" : "text-fg-2"}`}
-                          >
-                            {left <= 0 ? "FULL — waitlist" : `${left} left`}
-                          </span>
+                          {bookedHere ? (
+                            <span className="tnum text-xs text-ok">booked</span>
+                          ) : (
+                            <span
+                              className={`tnum text-xs ${left <= 0 ? "text-err" : left <= 3 ? "text-ember" : "text-fg-2"}`}
+                            >
+                              {left <= 0 ? "FULL — waitlist" : `${left} left`}
+                            </span>
+                          )}
                         </div>
                       </button>
                     </li>
@@ -332,86 +340,123 @@ export function BookBrowser({
               </div>
             )}
 
-            {result?.ok ? (
-              <div className="rounded-[12px] border border-ok p-4 text-center">
-                <span
-                  aria-hidden
-                  className="ball-drop mx-auto mb-2 block h-4 w-4 rounded-full bg-ember"
-                />
-                <p className="font-medium">
-                  {result.recurring
-                    ? `You're in — ${PLURAL[selected.weekday] ?? selected.weekday} at ${selected.time}, every week.`
-                    : result.firstStatus === "confirmed"
-                      ? "Booked. See you at the table."
-                      : "You're on the waitlist — we'll tell you the moment a spot opens."}
-                </p>
-                {result.recurring && (
-                  <p className="mt-1 text-sm text-fg-2">
-                    {result.confirmed} session{result.confirmed === 1 ? "" : "s"} confirmed
-                    {result.waitlisted > 0 ? `, ${result.waitlisted} waitlisted` : ""}. New
-                    weeks are booked automatically — manage it from your schedule.
-                  </p>
-                )}
-                <div className="mt-4">
-                  <WhatsAppSayHi label="Want a reminder?" />
-                </div>
-                {onboarding && (
-                  <Link
-                    href="/app/onboarding/done"
-                    className="mt-4 inline-flex min-h-11 w-full items-center justify-center rounded-[8px] bg-ember px-5 font-semibold text-ivory hover:bg-ember-2"
-                  >
-                    Continue — finish setup
-                  </Link>
-                )}
-              </div>
-            ) : !canBook ? (
-              <div className="space-y-3">
-                <p className="text-sm text-fg-2">
-                  {entitlement.trialPlayerIds.length > 0
-                    ? `${playerName} has already used the free trial. Get a membership to book weekly, or buy a drop-in class.`
-                    : "You need a membership or a drop-in class to book this slot."}
-                </p>
-                <Link
-                  href="/app/membership"
-                  className="inline-flex min-h-11 w-full items-center justify-center rounded-[8px] bg-ember px-5 font-semibold text-ivory hover:bg-ember-2"
-                >
-                  See plans &amp; drop-ins
-                </Link>
-              </div>
-            ) : (
-              <>
-                {credit === "trial" && (
-                  <div className="rounded-[10px] border border-ok bg-surface-2 p-3 text-sm">
-                    <p className="font-semibold">
-                      {playerName}&apos;s first class is free — on us. 🎉
+            {(() => {
+              // Booking the selected player already holds for this specific session.
+              const existingBooking = selected.next.myBookings.find(
+                (b) => b.playerId === playerId || b.playerId === null
+              ) ?? null;
+
+              if (result?.ok) {
+                return (
+                  <div className="rounded-[12px] border border-ok p-4 text-center">
+                    <span
+                      aria-hidden
+                      className="ball-drop mx-auto mb-2 block h-4 w-4 rounded-full bg-ember"
+                    />
+                    <p className="font-medium">
+                      {result.recurring
+                        ? `You're in — ${PLURAL[selected.weekday] ?? selected.weekday} at ${selected.time}, every week.`
+                        : result.firstStatus === "confirmed"
+                          ? "Booked. See you at the table."
+                          : "You're on the waitlist — we'll tell you the moment a spot opens."}
                     </p>
-                    <p className="mt-0.5 text-fg-2">
-                      This booking uses the free trial. No payment needed.
-                    </p>
+                    {result.recurring && (
+                      <p className="mt-1 text-sm text-fg-2">
+                        {result.confirmed} session{result.confirmed === 1 ? "" : "s"} confirmed
+                        {result.waitlisted > 0 ? `, ${result.waitlisted} waitlisted` : ""}. New
+                        weeks are booked automatically — manage it from your schedule.
+                      </p>
+                    )}
+                    <div className="mt-4">
+                      <WhatsAppSayHi label="Want a reminder?" />
+                    </div>
+                    {onboarding && (
+                      <Link
+                        href="/app/onboarding/done"
+                        className="mt-4 inline-flex min-h-11 w-full items-center justify-center rounded-[8px] bg-ember px-5 font-semibold text-ivory hover:bg-ember-2"
+                      >
+                        Continue — finish setup
+                      </Link>
+                    )}
                   </div>
-                )}
-                {credit === "dropin" && (
-                  <p className="text-sm text-fg-2">
-                    Uses 1 of your {entitlement.dropinCredits} drop-in{" "}
-                    {entitlement.dropinCredits === 1 ? "class" : "classes"}.
-                  </p>
-                )}
-                <Button onClick={book} disabled={pending || !playerId} className="w-full">
-                  {pending ? (
-                    <Spinner />
-                  ) : selected.next.confirmed >= selected.next.capacity ? (
-                    "Join waitlist"
-                  ) : recurring ? (
-                    `Book ${PLURAL[selected.weekday] ?? selected.weekday} at ${selected.time}`
-                  ) : (
-                    "Book this session"
+                );
+              }
+
+              if (existingBooking) {
+                return (
+                  <div className="rounded-[12px] border border-ok p-4 text-center">
+                    <span
+                      aria-hidden
+                      className="ball-drop mx-auto mb-2 block h-4 w-4 rounded-full bg-ember"
+                    />
+                    <p className="font-medium">
+                      {existingBooking.status === "confirmed"
+                        ? "You're booked for this session."
+                        : "You're on the waitlist for this session."}
+                    </p>
+                    <Link
+                      href="/app/schedule"
+                      className="mt-4 inline-flex min-h-11 w-full items-center justify-center rounded-[8px] bg-surface-2 px-5 font-semibold hover:bg-surface"
+                    >
+                      View in schedule
+                    </Link>
+                  </div>
+                );
+              }
+
+              if (!canBook) {
+                return (
+                  <div className="space-y-3">
+                    <p className="text-sm text-fg-2">
+                      {trialUsed
+                        ? `${playerName}'s free trial has been used. Get a membership to book weekly, or buy a drop-in class.`
+                        : "You need a membership or a drop-in class to book this slot."}
+                    </p>
+                    <Link
+                      href="/app/membership"
+                      className="inline-flex min-h-11 w-full items-center justify-center rounded-[8px] bg-ember px-5 font-semibold text-ivory hover:bg-ember-2"
+                    >
+                      See plans &amp; drop-ins
+                    </Link>
+                  </div>
+                );
+              }
+
+              return (
+                <>
+                  {credit === "trial" && (
+                    <div className="rounded-[10px] border border-ok bg-surface-2 p-3 text-sm">
+                      <p className="font-semibold">
+                        {playerName}&apos;s first class is free — on us. 🎉
+                      </p>
+                      <p className="mt-0.5 text-fg-2">
+                        This booking uses the free trial. No payment needed.
+                      </p>
+                    </div>
                   )}
-                </Button>
-                {result && !result.ok && (
-                  <p className="text-sm text-err">{result.error}</p>
-                )}
-              </>
-            )}
+                  {credit === "dropin" && (
+                    <p className="text-sm text-fg-2">
+                      Uses 1 of your {entitlement.dropinCredits} drop-in{" "}
+                      {entitlement.dropinCredits === 1 ? "class" : "classes"}.
+                    </p>
+                  )}
+                  <Button onClick={book} disabled={pending || !playerId} className="w-full">
+                    {pending ? (
+                      <Spinner />
+                    ) : selected.next.confirmed >= selected.next.capacity ? (
+                      "Join waitlist"
+                    ) : recurring ? (
+                      `Book ${PLURAL[selected.weekday] ?? selected.weekday} at ${selected.time}`
+                    ) : (
+                      "Book this session"
+                    )}
+                  </Button>
+                  {result && !result.ok && (
+                    <p className="text-sm text-err">{result.error}</p>
+                  )}
+                </>
+              );
+            })()}
           </div>
         )}
       </Sheet>

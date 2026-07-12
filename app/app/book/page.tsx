@@ -18,7 +18,7 @@ export default async function BookPage({
   const { onboarding } = await searchParams;
   const { supabase, user } = await requireUser("/app/book");
   const [sessions, venues, summary, players] = await Promise.all([
-    getBrowseSessions(supabase),
+    getBrowseSessions(supabase, user.id),
     getVenues(),
     getSubscriptionSummary(supabase, user.id),
     supabase
@@ -43,6 +43,10 @@ export default async function BookPage({
           trialPlayerIds: summary.hasAccountTrial
             ? players.map((p) => p.id)
             : summary.openTrialPlayerIds,
+          // Used to show "trial already used" vs generic "no entitlement".
+          usedTrialPlayerIds: summary.accountTrialUsed
+            ? players.map((p) => p.id)
+            : summary.usedTrialPlayerIds,
           dropinCredits: summary.dropinCredits,
         }}
       />

@@ -11,6 +11,8 @@ export type BrowseSession = {
   durationMinutes: number;
   capacity: number;
   confirmed: number;
+  /** Active bookings the current household holds for this session (one per player). */
+  myBookings: { id: string; status: "confirmed" | "waitlisted"; playerId: string | null }[];
   venue: { id: string; name: string; postcode: string; lat: number; lng: number };
   coachName: string | null;
 };
@@ -18,6 +20,7 @@ export type BrowseSession = {
 /** Sessions for the browse screen with live seat counts. */
 export async function getBrowseSessions(
   supabase: SupabaseClient,
+  clientId: string,
   days = 14
 ): Promise<BrowseSession[]> {
   const until = new Date(Date.now() + days * 86400000).toISOString();
@@ -35,12 +38,18 @@ export async function getBrowseSessions(
   if (!sessions || sessions.length === 0) return [];
 
   const ids = sessions.map((s) => s.id);
-  const [{ data: bookingRows }, coachNames] = await Promise.all([
+  const [{ data: bookingRows }, { data: myBookingRows }, coachNames] = await Promise.all([
     supabase
       .from("bookings")
       .select("session_id")
       .in("session_id", ids)
       .eq("status", "confirmed"),
+    supabase
+      .from("bookings")
+      .select("id,session_id,status,player_id")
+      .in("session_id", ids)
+      .eq("client_id", clientId)
+      .in("status", ["confirmed", "waitlisted"]),
     getCoachNames(
       supabase,
       sessions.map((s) => s.coach_id).filter(Boolean) as string[]
@@ -50,6 +59,20 @@ export async function getBrowseSessions(
   const counts = new Map<string, number>();
   for (const row of bookingRows ?? []) {
     counts.set(row.session_id, (counts.get(row.session_id) ?? 0) + 1);
+  }
+
+  const myBookings = new Map<
+    string,
+    { id: string; status: "confirmed" | "waitlisted"; playerId: string | null }[]
+  >();
+  for (const row of myBookingRows ?? []) {
+    const entry = myBookings.get(row.session_id) ?? [];
+    entry.push({
+      id: row.id,
+      status: row.status as "confirmed" | "waitlisted",
+      playerId: row.player_id ?? null,
+    });
+    myBookings.set(row.session_id, entry);
   }
 
   return sessions.map((s) => {
@@ -71,6 +94,7 @@ export async function getBrowseSessions(
       durationMinutes: cls.duration_minutes,
       capacity: s.capacity_override ?? cls.capacity,
       confirmed: counts.get(s.id) ?? 0,
+      myBookings: myBookings.get(s.id) ?? [],
       venue: cls.venues,
       coachName: s.coach_id ? (coachNames.get(s.coach_id) ?? null) : null,
     };

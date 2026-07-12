@@ -24,8 +24,12 @@ export type SubscriptionSummary = {
   minutesBalance: number;
   /** Players who still hold a legacy per-player free trial class. */
   openTrialPlayerIds: string[];
+  /** Players whose per-player trial has already been consumed. */
+  usedTrialPlayerIds: string[];
   /** Unused account-level free trial — usable by any household player. */
   hasAccountTrial: boolean;
+  /** True if an account-level trial was consumed (regardless of open state). */
+  accountTrialUsed: boolean;
   /** Purchased drop-in group classes not yet used. */
   dropinCredits: number;
   /** Any alive subscription (either plan). */
@@ -74,7 +78,7 @@ export async function getSubscriptionSummary(
   clientId: string,
   graceDays = 7
 ): Promise<SubscriptionSummary> {
-  const [{ data: subs }, { data: ledger }, { data: credits }] = await Promise.all([
+  const [{ data: subs }, { data: ledger }, { data: credits }, { data: usedCredits }] = await Promise.all([
     supabase
       .from("subscriptions")
       .select(
@@ -92,6 +96,12 @@ export async function getSubscriptionSummary(
       .select("type,player_id")
       .eq("client_id", clientId)
       .is("consumed_at", null),
+    supabase
+      .from("class_credits")
+      .select("type,player_id")
+      .eq("client_id", clientId)
+      .eq("type", "group_trial")
+      .not("consumed_at", "is", null),
   ]);
 
   const minutesBalance = (ledger ?? []).reduce(
@@ -133,6 +143,10 @@ export async function getSubscriptionSummary(
   const hasAccountTrial = (credits ?? []).some(
     (c) => c.type === "group_trial" && !c.player_id
   );
+  const usedTrialPlayerIds = (usedCredits ?? [])
+    .filter((c) => c.player_id)
+    .map((c) => c.player_id as string);
+  const accountTrialUsed = (usedCredits ?? []).some((c) => !c.player_id);
   const dropinCredits = (credits ?? []).filter(
     (c) => c.type === "group_dropin"
   ).length;
@@ -143,7 +157,9 @@ export async function getSubscriptionSummary(
     privatePlan,
     minutesBalance,
     openTrialPlayerIds,
+    usedTrialPlayerIds,
     hasAccountTrial,
+    accountTrialUsed,
     dropinCredits,
     active: Boolean(groupPlan?.active || privatePlan?.active),
     status: primary?.status ?? null,
