@@ -4,7 +4,7 @@ import { requireUser } from "@/lib/auth";
 import { AdminShell } from "@/components/app/AdminShell";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
-import { WhatsAppConnect } from "@/components/app/WhatsAppConnect";
+import { WhatsAppAssistantCard } from "@/components/app/WhatsAppAssistantCard";
 
 export const metadata: Metadata = { title: "Admin" };
 
@@ -83,7 +83,7 @@ export default async function AdminDashboardPage() {
           ))}
         </div>
 
-        <WhatsAppConnect />
+        <WhatsAppAssistantCard />
 
         <div>
           <h2 className="label mb-3">Exceptions inbox</h2>

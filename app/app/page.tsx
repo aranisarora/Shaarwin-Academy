@@ -8,7 +8,7 @@ import { ClientShell } from "@/components/app/ClientShell";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ButtonLink } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
-import { WhatsAppConnect } from "@/components/app/WhatsAppConnect";
+import { WhatsAppAssistantCard } from "@/components/app/WhatsAppAssistantCard";
 import { AddressDisplay } from "@/components/app/AddressDisplay";
 
 export const metadata: Metadata = { title: "Home" };
@@ -109,7 +109,7 @@ export default async function AppHomePage() {
           </ButtonLink>
         </div>
 
-        <WhatsAppConnect />
+        <WhatsAppAssistantCard />
 
         {summary.active ? (
           <p className="text-sm text-fg-2">

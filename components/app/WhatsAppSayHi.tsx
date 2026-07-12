@@ -2,11 +2,11 @@
 
 /**
  * Client-side WhatsApp CTA: a wa.me deep link that opens the assistant chat
- * with a prefilled message. No link code — onboarding captures the client's
- * phone, so the bot recognises the number and auto-links on the first
- * inbound message (resolveIdentity's profiles.phone fallback). That first
- * message is also what opens the WhatsApp session window, letting the
- * assistant send updates. Renders nothing if no bot number is configured.
+ * with a prefilled message. The account is already bound to its confirmed
+ * number (wa_links, written when the phone is saved), so no handshake is
+ * needed — but the first inbound message opens the 24h WhatsApp session
+ * window, letting the assistant reply free-form instead of via template.
+ * Renders nothing if no bot number is configured.
  */
 export function WhatsAppSayHi({
   message = "Hi! I'd like to get my class updates on WhatsApp.",

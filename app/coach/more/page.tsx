@@ -3,7 +3,7 @@ import { requireUser } from "@/lib/auth";
 import { CoachShell } from "@/components/app/CoachShell";
 import { CoachProfileEditor } from "@/components/app/CoachProfileEditor";
 import { AvailabilityEditor } from "@/components/app/AvailabilityEditor";
-import { WhatsAppConnect } from "@/components/app/WhatsAppConnect";
+import { WhatsAppAssistantCard } from "@/components/app/WhatsAppAssistantCard";
 import { InstallAppCard } from "@/components/app/InstallAppCard";
 import { SignOutButton } from "@/components/app/SignOutButton";
 
@@ -44,7 +44,7 @@ export default async function CoachMorePage() {
           baseAddress={coach?.base_address ?? ""}
         />
         <AvailabilityEditor windows={windows ?? []} timeOff={timeOff ?? []} />
-        <WhatsAppConnect />
+        <WhatsAppAssistantCard />
         <InstallAppCard />
       </div>
     </CoachShell>

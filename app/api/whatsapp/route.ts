@@ -5,12 +5,10 @@
 // timeout.
 
 import { after } from "next/server";
-import type { SupabaseClient } from "@supabase/supabase-js";
 import { runAgent } from "@/lib/whatsapp/agent";
 import {
   adminClient,
   autoProvisionClient,
-  consumeLinkCode,
   resolveIdentity,
   userClientFor,
 } from "@/lib/whatsapp/identity";
@@ -101,15 +99,6 @@ async function handleMessage(phone: string, body: string, hasMedia: boolean) {
     return;
   }
 
-  // Link codes skip the LLM entirely — and must run before auto-provisioning,
-  // which would otherwise mint a throwaway account for an unknown phone that
-  // is one message away from linking to its real one.
-  const linkCode = body.match(/\bTT-[A-Z0-9]{4,8}\b/i)?.[0];
-  if (linkCode) {
-    await handleLinkCode(admin, phone, body, linkCode);
-    return;
-  }
-
   // Phone-first identity: resolve, and if the number is genuinely unknown,
   // provision a client account for it (the number is Twilio-verified, so no
   // code or OTP is needed). A DB error must NOT silently degrade to guest.
@@ -139,42 +128,5 @@ async function handleMessage(phone: string, body: string, hasMedia: boolean) {
   }
 
   const reply = await runAgent({ phone, userText: body, profile, supabase, admin });
-  await sendWhatsApp(phone, reply);
-}
-
-/** Redeem a "Link my account: TT-XXXXXX" message directly — no LLM. */
-async function handleLinkCode(
-  admin: SupabaseClient,
-  phone: string,
-  body: string,
-  code: string
-) {
-  const result = await consumeLinkCode(admin, code, phone);
-
-  let reply: string;
-  if (result.ok) {
-    const { data: profile } = await admin
-      .from("profiles")
-      .select("full_name")
-      .eq("id", result.userId)
-      .maybeSingle();
-    const name = profile?.full_name?.trim().split(" ")[0];
-    reply = `You're linked${name ? `, ${name}` : ""} ✅ — this number is now connected to your Sharwin Academy account.\n\nHere's what I can do for you:\n• 📅 Book or reschedule classes\n• 🗓 Check your upcoming schedule\n• ❓ Answer questions about plans, timings, or sessions\n• And more — just ask in plain English!\n\nHead back to the app now to finish setting up your account 👉`;
-  } else if (result.error === "code_expired") {
-    reply =
-      "That link code has expired — open the app and tap Connect WhatsApp again for a fresh one.";
-  } else if (result.error === "code_already_used") {
-    reply =
-      "That link code was already used. If this wasn't you, generate a new code from the app.";
-  } else {
-    reply =
-      "I couldn't find that link code — double-check it, or generate a new one from the app.";
-  }
-
-  // Keep chat history (and the flood guard) coherent even though no LLM ran.
-  await admin.from("wa_messages").insert([
-    { phone, role: "user", content: body.slice(0, 4000) },
-    { phone, role: "assistant", content: reply.slice(0, 4000) },
-  ]);
   await sendWhatsApp(phone, reply);
 }

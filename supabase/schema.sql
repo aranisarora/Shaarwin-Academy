@@ -359,7 +359,7 @@ create table public.profiles (
   razorpay_customer_id text,
   onboarded_at timestamptz,
   -- multi-step onboarding progress: 0 players pending, 1 players saved,
-  -- 2 WhatsApp connected/phone confirmed, 3 notification prefs saved
+  -- 2 phone confirmed (setup done; onboarded_at stamps completion)
   onboarding_step smallint default 0 not null
 );
 
@@ -407,14 +407,6 @@ create table public.venues (
   address_details jsonb,
   active boolean default true not null,
   created_at timestamptz default now() not null
-);
-
-create table public.wa_link_codes (
-  code text not null,
-  user_id uuid not null,
-  created_at timestamptz default now() not null,
-  expires_at timestamptz not null,
-  used_at timestamptz
 );
 
 create table public.wa_links (
@@ -548,8 +540,6 @@ ALTER TABLE public.subscriptions ADD CONSTRAINT subscriptions_pkey PRIMARY KEY (
 ALTER TABLE public.subscriptions ADD CONSTRAINT subscriptions_client_id_fkey FOREIGN KEY (client_id) REFERENCES profiles(id) ON DELETE CASCADE;
 ALTER TABLE public.subscriptions ADD CONSTRAINT subscriptions_plan_id_fkey FOREIGN KEY (plan_id) REFERENCES plans(id);
 ALTER TABLE public.venues ADD CONSTRAINT venues_pkey PRIMARY KEY (id);
-ALTER TABLE public.wa_link_codes ADD CONSTRAINT wa_link_codes_pkey PRIMARY KEY (code);
-ALTER TABLE public.wa_link_codes ADD CONSTRAINT wa_link_codes_user_id_fkey FOREIGN KEY (user_id) REFERENCES profiles(id) ON DELETE CASCADE;
 ALTER TABLE public.wa_links ADD CONSTRAINT wa_links_user_id_key UNIQUE (user_id);
 ALTER TABLE public.wa_links ADD CONSTRAINT wa_links_pkey PRIMARY KEY (phone);
 ALTER TABLE public.wa_links ADD CONSTRAINT wa_links_user_id_fkey FOREIGN KEY (user_id) REFERENCES profiles(id) ON DELETE CASCADE;
@@ -588,7 +578,7 @@ CREATE INDEX private_booking_series_client_active ON public.private_booking_seri
 CREATE UNIQUE INDEX private_booking_series_one_active ON public.private_booking_series USING btree (player_id, weekday, start_time) WHERE active;
 CREATE INDEX private_credit_ledger_client_id_idx ON public.private_credit_ledger USING btree (client_id);
 CREATE INDEX subscriptions_client_id_status_idx ON public.subscriptions USING btree (client_id, status);
-CREATE INDEX wa_link_codes_user_idx ON public.wa_link_codes USING btree (user_id);
+CREATE UNIQUE INDEX profiles_phone_key ON public.profiles USING btree (phone) WHERE (phone IS NOT NULL);
 CREATE INDEX wa_messages_phone_idx ON public.wa_messages USING btree (phone, created_at DESC);
 
 -- ── Functions ────────────────────────────────────────────────────────────────
@@ -3174,7 +3164,6 @@ alter table public.settings enable row level security;
 alter table public.student_notes enable row level security;
 alter table public.subscriptions enable row level security;
 alter table public.venues enable row level security;
-alter table public.wa_link_codes enable row level security;
 alter table public.wa_links enable row level security;
 alter table public.wa_messages enable row level security;
 alter table public.webhook_events enable row level security;

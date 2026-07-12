@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { normalizePhone } from "./phone";
+import { normalizePhone, normalizePhoneInput } from "./phone";
 
 describe("normalizePhone", () => {
   it("keeps a clean E.164 number", () => {
@@ -34,5 +34,26 @@ describe("normalizePhone", () => {
     expect(normalizePhone(null)).toBeNull();
     expect(normalizePhone("abc")).toBeNull();
     expect(normalizePhone("+12")).toBeNull();
+  });
+});
+
+describe("normalizePhoneInput (typed into a form)", () => {
+  it("passes explicit country codes through", () => {
+    expect(normalizePhoneInput("+91 98123 45678")).toBe("+919812345678");
+    expect(normalizePhoneInput("0044 7911 123456")).toBe("+447911123456");
+  });
+
+  it("assumes +91 for a bare 10-digit Indian mobile", () => {
+    expect(normalizePhoneInput("9812345678")).toBe("+919812345678");
+    expect(normalizePhoneInput("98123 45678")).toBe("+919812345678");
+  });
+
+  it("rejects local numbers it can't safely place (the account-fork bug)", () => {
+    // normalizePhone would turn this into junk E.164 "+9812345678" that never
+    // matches the WhatsApp sender — the input variant must refuse instead.
+    expect(normalizePhoneInput("0812345678")).toBeNull();
+    expect(normalizePhoneInput("98123")).toBeNull();
+    expect(normalizePhoneInput("")).toBeNull();
+    expect(normalizePhoneInput(null)).toBeNull();
   });
 });
