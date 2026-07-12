@@ -69,7 +69,7 @@ export function AdminCalendar({
       <p className="tnum font-medium">{fmtWhen(session.starts_at)}</p>
       <p className="text-xs text-fg-2">
         {session.title}
-        {session.venueName ? ` — ${session.venueName}` : ""}
+        {(session.venueName ?? session.playerName) ? ` — ${session.venueName ?? session.playerName}` : ""}
       </p>
       {session.coachId && session.coachArrivedAt && (
         <span className="mt-1.5 inline-flex">
