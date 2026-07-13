@@ -1,9 +1,8 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import { requireUser } from "@/lib/auth";
 import { utcToAcademyWall } from "@/lib/academy-time";
 import { AdminShell } from "@/components/app/AdminShell";
-import { AdminCalendar } from "@/components/app/AdminCalendar";
+import { AdminCalendarNav } from "@/components/app/AdminCalendarNav";
 import type {
   ClassRow,
   ClientOption,
@@ -28,65 +27,52 @@ export default async function AdminCalendarPage({
   from.setDate(from.getDate() + weekOffset * 7);
   const to = new Date(from.getTime() + 7 * 86400000);
 
-  const [{ data: sessions }, { data: coaches }, { data: classes }, { data: venues }, { data: clients }] =
-    await Promise.all([
-      supabase
-        .from("class_sessions")
-        .select(
-          "id,starts_at,ends_at,coach_id,coach_arrived_at,capacity_override,classes!inner(id,title,description,skill_level,capacity,duration_minutes,recurrence_rule,active,venue_id,class_type,venues(name,address,postcode,lat,lng,address_details),private_class_details(client_id,address,postcode,lat,lng,access_notes,address_details))"
-        )
-        .eq("status", "scheduled")
-        .gte("starts_at", from.toISOString())
-        .lt("starts_at", to.toISOString())
-        .order("starts_at"),
-      supabase
-        .from("coaches")
-        .select("id,active,profiles!inner(full_name)")
-        .eq("active", true),
-      supabase
-        .from("classes")
-        .select(
-          "id,title,description,skill_level,capacity,duration_minutes,recurrence_rule,active,ends_on,venue_id,venues(name)"
-        )
-        .eq("class_type", "group")
-        .order("title"),
-      supabase.from("venues").select("id,name,active").order("name"),
-      supabase
-        .from("profiles")
-        .select("id,full_name,players(id,full_name)")
-        .eq("role", "client")
-        .order("full_name"),
-    ]);
+  // Round 1: everything in parallel — sessions, coaches, classes, venues, clients, invites
+  const [
+    { data: sessions },
+    { data: coaches },
+    { data: classes },
+    { data: venues },
+    { data: clients },
+    { data: invites },
+  ] = await Promise.all([
+    supabase
+      .from("class_sessions")
+      .select(
+        "id,starts_at,ends_at,coach_id,coach_arrived_at,capacity_override,classes!inner(id,title,description,skill_level,capacity,duration_minutes,recurrence_rule,active,venue_id,class_type,venues(name,address,postcode,lat,lng,address_details),private_class_details(client_id,address,postcode,lat,lng,access_notes,address_details))"
+      )
+      .eq("status", "scheduled")
+      .gte("starts_at", from.toISOString())
+      .lt("starts_at", to.toISOString())
+      .order("starts_at"),
+    supabase
+      .from("coaches")
+      .select("id,active,profiles!inner(full_name)")
+      .eq("active", true),
+    supabase
+      .from("classes")
+      .select(
+        "id,title,description,skill_level,capacity,duration_minutes,recurrence_rule,active,ends_on,venue_id,venues(name)"
+      )
+      .eq("class_type", "group")
+      .order("title"),
+    supabase.from("venues").select("id,name,active").order("name"),
+    supabase
+      .from("profiles")
+      .select("id,full_name,players(id,full_name)")
+      .eq("role", "client")
+      .order("full_name"),
+    supabase
+      .from("client_invites")
+      .select("id,phone,full_name")
+      .is("claimed_at", null)
+      .order("created_at", { ascending: false }),
+  ]);
 
-  const { data: invites } = await supabase
-    .from("client_invites")
-    .select("id,phone,full_name")
-    .is("claimed_at", null)
-    .order("created_at", { ascending: false });
-
-  // Each class's next scheduled session gives its canonical wall-clock slot —
-  // the baseline for "every week" edits and the weekly-classes list.
+  // Round 2: nextSessions and privProfiles are independent of each other but
+  // both depend on round-1 data — run them in parallel.
   const classIds = (classes ?? []).map((c) => c.id);
-  const { data: nextSessions } = classIds.length
-    ? await supabase
-        .from("class_sessions")
-        .select("class_id,starts_at")
-        .in("class_id", classIds)
-        .eq("status", "scheduled")
-        .gt("starts_at", new Date().toISOString())
-        .order("starts_at")
-    : { data: [] };
-  const nextByClass = new Map<string, string>();
-  for (const s of nextSessions ?? []) {
-    if (!nextByClass.has(s.class_id)) nextByClass.set(s.class_id, s.starts_at);
-  }
-  const classTime = (classId: string, fallbackIso: string) => {
-    const iso = nextByClass.get(classId) ?? fallbackIso;
-    return utcToAcademyWall(new Date(iso)).time;
-  };
 
-  // Batch-fetch client names for private sessions — avoids a deeply-nested
-  // join that proved unreliable across PostgREST versions.
   type PrivDetail = {
     client_id: string;
     address: string;
@@ -115,8 +101,6 @@ export default async function AdminCalendarPage({
       lng: number;
       address_details: Partial<StructuredAddress> | null;
     } | null;
-    // One-to-one (class_id is both PK and FK), so PostgREST embeds it as a
-    // single object — but tolerate an array shape too, defensively.
     private_class_details: PrivDetail | PrivDetail[] | null;
   };
 
@@ -137,16 +121,36 @@ export default async function AdminCalendarPage({
         .filter((id): id is string => id !== null)
     ),
   ];
-  const clientNameMap = new Map<string, string>();
-  if (privateClientIds.length > 0) {
-    const { data: privProfiles } = await supabase
-      .from("profiles")
-      .select("id,full_name")
-      .in("id", privateClientIds);
-    for (const p of privProfiles ?? []) {
-      clientNameMap.set(p.id, p.full_name);
-    }
+
+  const [{ data: nextSessions }, { data: privProfiles }] = await Promise.all([
+    classIds.length
+      ? supabase
+          .from("class_sessions")
+          .select("class_id,starts_at")
+          .in("class_id", classIds)
+          .eq("status", "scheduled")
+          .gt("starts_at", new Date().toISOString())
+          .order("starts_at")
+      : { data: [] as { class_id: string; starts_at: string }[] },
+    privateClientIds.length > 0
+      ? supabase
+          .from("profiles")
+          .select("id,full_name")
+          .in("id", privateClientIds)
+      : { data: [] as { id: string; full_name: string }[] },
+  ]);
+
+  const nextByClass = new Map<string, string>();
+  for (const s of nextSessions ?? []) {
+    if (!nextByClass.has(s.class_id)) nextByClass.set(s.class_id, s.starts_at);
   }
+  const classTime = (classId: string, fallbackIso: string) => {
+    const iso = nextByClass.get(classId) ?? fallbackIso;
+    return utcToAcademyWall(new Date(iso)).time;
+  };
+
+  const clientNameMap = new Map<string, string>();
+  for (const p of privProfiles ?? []) clientNameMap.set(p.id, p.full_name);
 
   const rows: SessionRow[] = (sessions ?? []).map((s) => {
     const cls = s.classes as unknown as ClsShape;
@@ -168,9 +172,6 @@ export default async function AdminCalendarPage({
           })
         : null;
 
-    // For private sessions: prefer the stored POI name from address_details,
-    // then fall back to the first comma-segment of the raw address (which
-    // Mapbox sets to the venue name when a POI is selected, e.g. "La Plazzo").
     const privLocationName = priv
       ? (priv.address_details?.name ??
           (priv.address.includes(",")
@@ -226,7 +227,6 @@ export default async function AdminCalendarPage({
     };
   });
 
-  // No players yet is fine — booking a private session auto-creates one.
   const clientRows: ClientOption[] = (clients ?? []).map((c) => ({
     id: c.id,
     name: c.full_name,
@@ -242,37 +242,23 @@ export default async function AdminCalendarPage({
     phone: i.phone,
   }));
 
-  const rangeLabel = new Intl.DateTimeFormat("en-GB", {
+  const fmt = new Intl.DateTimeFormat("en-GB", {
     day: "numeric",
     month: "short",
     timeZone: "Asia/Kolkata",
   });
-  const navBtn =
-    "rounded-[8px] border border-line px-4 py-2 text-sm hover:border-ember hover:text-ember";
+  const rangeLabel = `${fmt.format(from)} – ${fmt.format(new Date(to.getTime() - 86400000))}${weekOffset === 0 ? " (this week)" : ""}`;
+
+  // Serialise the Map to a plain object for the client component prop.
+  const nextByClassObj = Object.fromEntries(nextByClass);
 
   return (
     <AdminShell title="Schedule">
-      <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
-          <Link href={`/admin/calendar?week=${weekOffset - 1}`} className={navBtn}>
-            ← Earlier
-          </Link>
-          {weekOffset !== 0 && (
-            <Link href="/admin/calendar" className={navBtn}>
-              This week
-            </Link>
-          )}
-          <Link href={`/admin/calendar?week=${weekOffset + 1}`} className={navBtn}>
-            Later →
-          </Link>
-        </div>
-        <p className="tnum text-sm text-fg-2">
-          {rangeLabel.format(from)} – {rangeLabel.format(new Date(to.getTime() - 86400000))}
-          {weekOffset === 0 ? " (this week)" : ""}
-        </p>
-      </div>
-      <AdminCalendar
-        sessions={rows}
+      <AdminCalendarNav
+        initialWeekOffset={weekOffset}
+        initialSessions={rows}
+        initialRangeLabel={rangeLabel}
+        nextByClass={nextByClassObj}
         coaches={coachList}
         classes={classRows}
         venues={venues ?? []}
