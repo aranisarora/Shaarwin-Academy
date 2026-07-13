@@ -311,7 +311,7 @@ export function AdminAddSheet({
                 value={form.durationMinutes}
                 onChange={(e) => setForm({ ...form, durationMinutes: Number(e.target.value) })}
               >
-                {[60, 90, 120].map((d) => (
+                {[60, 90, 120, 150, 180, 210, 240].map((d) => (
                   <option key={d} value={d}>{d} min</option>
                 ))}
               </Select>
