@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
@@ -13,7 +13,6 @@ import { Spinner } from "@/components/ui/Spinner";
  * Booking intent survives auth via ?next= and sessionStorage.
  */
 export function AuthForm({ mode }: { mode: "login" | "signup" }) {
-  const router = useRouter();
   const params = useSearchParams();
   const supabase = createClient();
 
@@ -61,8 +60,9 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
     setBusy(false);
     if (error) return setError("That code didn't match. Check and try again.");
     sessionStorage.removeItem("auth_next");
-    router.push(target);
-    router.refresh();
+    // Hard navigate so the browser sends the fresh auth cookie in the server
+    // request — router.push fires an RSC fetch before the cookie is committed.
+    window.location.replace(target);
   }
 
   async function google() {
