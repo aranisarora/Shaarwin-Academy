@@ -320,7 +320,7 @@ export function AdminCalendar({
             setMessage(m);
             setAdding(false);
           }}
-          classes={activeClasses.map((c) => ({ id: c.id, title: c.title }))}
+          classes={activeClasses}
           coaches={coaches}
           venues={venues}
           clients={clients}

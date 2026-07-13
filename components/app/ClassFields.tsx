@@ -42,19 +42,15 @@ export function time12h(time: string): string {
   return `${h12}:${String(m ?? 0).padStart(2, "0")} ${period}`;
 }
 
-/** Auto-generate a class title from its defining attributes. */
-export function generateClassTitle(skillLevel: string, weekday: string, time: string): string {
-  const level =
-    skillLevel === "any"
-      ? "All levels"
-      : skillLevel.charAt(0).toUpperCase() + skillLevel.slice(1);
+/** Auto-generate a class title from its schedule. */
+export function generateClassTitle(weekday: string, time: string, venueName?: string): string {
   const day = WEEKDAY_NAME[weekday] ?? weekday;
-  return `${level} — ${day} ${time12h(time)}`;
+  return venueName ? `${day} ${time12h(time)} · ${venueName}` : `${day} ${time12h(time)}`;
 }
 
-/** Description, level, venue, spots and length — everything about a class
- * except its weekly slot (day/time live with the caller). Title is derived
- * automatically and not shown as an editable field. */
+/** Venue, spots and length — everything about a class except its weekly slot
+ * (day/time live with the caller). Level is not surfaced here since it is not
+ * meaningful for this academy. Title is derived automatically. */
 export function ClassDetailFields({
   form,
   onChange,
@@ -74,15 +70,6 @@ export function ClassDetailFields({
       />
       <div className="grid grid-cols-2 gap-3">
         <Select
-          label="Level"
-          value={form.skillLevel}
-          onChange={(e) => onChange({ ...form, skillLevel: e.target.value })}
-        >
-          {["any", "beginner", "intermediate", "advanced", "elite"].map((l) => (
-            <option key={l} value={l}>{l === "any" ? "any level" : l}</option>
-          ))}
-        </Select>
-        <Select
           label="Venue"
           value={form.venueId}
           onChange={(e) => onChange({ ...form, venueId: e.target.value })}
@@ -93,13 +80,6 @@ export function ClassDetailFields({
             </option>
           ))}
         </Select>
-        <Input
-          label="Spots"
-          type="number"
-          min={1}
-          value={form.capacity}
-          onChange={(e) => onChange({ ...form, capacity: Number(e.target.value) })}
-        />
         <Select
           label="Length"
           value={form.durationMinutes}
@@ -109,6 +89,13 @@ export function ClassDetailFields({
             <option key={d} value={d}>{d} min</option>
           ))}
         </Select>
+        <Input
+          label="Spots"
+          type="number"
+          min={1}
+          value={form.capacity}
+          onChange={(e) => onChange({ ...form, capacity: Number(e.target.value) })}
+        />
       </div>
     </>
   );

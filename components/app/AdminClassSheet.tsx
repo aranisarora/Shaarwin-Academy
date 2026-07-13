@@ -37,7 +37,7 @@ export function AdminClassSheet({
   // Mounted fresh per class (parent keys on cls.id), so initializers read the
   // class directly — no prop-sync effects.
   const [form, setForm] = useState<ClassFormState>({
-    title: generateClassTitle(cls.level, cls.weekday, cls.time),
+    title: generateClassTitle(cls.weekday, cls.time, cls.venueName ?? undefined),
     description: cls.description,
     skillLevel: cls.level,
     capacity: cls.capacity,
@@ -49,7 +49,8 @@ export function AdminClassSheet({
   });
 
   function updateForm(next: ClassFormState) {
-    setForm({ ...next, title: generateClassTitle(next.skillLevel, next.weekday, next.time) });
+    const venueName = venues.find((v) => v.id === next.venueId)?.name;
+    setForm({ ...next, title: generateClassTitle(next.weekday, next.time, venueName) });
   }
   const [coachTarget, setCoachTarget] = useState("");
   const [lock, setLock] = useState(true);
