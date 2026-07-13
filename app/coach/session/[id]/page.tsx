@@ -12,6 +12,16 @@ import { ACADEMY_TZ, nowMs } from "@/lib/academy-time";
 
 export const metadata: Metadata = { title: "Session" };
 
+type PrivDetail = {
+  address: string;
+  postcode: string;
+  lat: number;
+  lng: number;
+  access_notes: string | null;
+  has_table: boolean;
+  address_details: Partial<StructuredAddress> | null;
+};
+
 export default async function CoachSessionPage({
   params,
 }: {
@@ -43,19 +53,12 @@ export default async function CoachSessionPage({
       lng: number;
       address_details: Partial<StructuredAddress> | null;
     } | null;
-    private_class_details:
-      | {
-          address: string;
-          postcode: string;
-          lat: number;
-          lng: number;
-          access_notes: string | null;
-          has_table: boolean;
-          address_details: Partial<StructuredAddress> | null;
-        }[]
-      | null;
+    private_class_details: PrivDetail | PrivDetail[] | null;
   };
-  const priv = cls.private_class_details?.[0] ?? null;
+  // PostgREST returns this one-to-one embed as a single object (not an array),
+  // so normalize both shapes rather than blindly indexing [0].
+  const rawPriv = cls.private_class_details;
+  const priv = Array.isArray(rawPriv) ? (rawPriv[0] ?? null) : (rawPriv ?? null);
   const address: StructuredAddress | null = cls.venues
     ? fromDetails(cls.venues.address_details, {
         address: cls.venues.address,

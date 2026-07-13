@@ -1,6 +1,16 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { fromDetails, type StructuredAddress } from "@/lib/address";
 
+type PrivDetail = {
+  address: string;
+  postcode: string;
+  lat: number;
+  lng: number;
+  access_notes: string | null;
+  address_details: Partial<StructuredAddress> | null;
+  profiles: { full_name: string } | null;
+};
+
 export type CoachSession = {
   id: string;
   starts_at: string;
@@ -66,19 +76,12 @@ export async function getCoachSessions(
         lng: number;
         address_details: Partial<StructuredAddress> | null;
       } | null;
-      private_class_details:
-        | {
-            address: string;
-            postcode: string;
-            lat: number;
-            lng: number;
-            access_notes: string | null;
-            address_details: Partial<StructuredAddress> | null;
-            profiles: { full_name: string } | null;
-          }[]
-        | null;
+      private_class_details: PrivDetail | PrivDetail[] | null;
     };
-    const priv = cls.private_class_details?.[0] ?? null;
+    // PostgREST returns this one-to-one embed as a single object (not an array),
+    // so normalize both shapes rather than blindly indexing [0].
+    const rawPriv = cls.private_class_details;
+    const priv = Array.isArray(rawPriv) ? (rawPriv[0] ?? null) : (rawPriv ?? null);
     const address = cls.venues
       ? fromDetails(cls.venues.address_details, {
           address: cls.venues.address,
