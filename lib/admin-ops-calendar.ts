@@ -481,6 +481,128 @@ export async function createPrivateSessionCore(
   return { ok: true };
 }
 
+/**
+ * Cancel all future scheduled private sessions for the same client as the
+ * given session. Refunds minutes and notifies the client + affected coaches.
+ * Used by the admin "Cancel all upcoming sessions" action on the session sheet.
+ */
+export async function cancelFuturePrivateSessionsCore(
+  supabase: SupabaseClient,
+  founderId: string,
+  sessionId: string
+): Promise<OpResult & { cancelled?: number }> {
+  // Resolve the client from this session's class.
+  const { data: anchor } = await supabase
+    .from("class_sessions")
+    .select("id,classes!inner(class_type,private_class_details(client_id))")
+    .eq("id", sessionId)
+    .maybeSingle();
+  if (!anchor) return { ok: false, error: "Session not found." };
+
+  const cls = anchor.classes as unknown as {
+    class_type: string;
+    private_class_details: { client_id: string }[] | { client_id: string } | null;
+  };
+  if (cls.class_type !== "private") return { ok: false, error: "Not a private session." };
+  const det = cls.private_class_details;
+  const clientId = Array.isArray(det) ? det[0]?.client_id : det?.client_id;
+  if (!clientId) return { ok: false, error: "Client not found." };
+
+  // All future class IDs for this client's private sessions.
+  const { data: clientClasses } = await supabase
+    .from("private_class_details")
+    .select("class_id")
+    .eq("client_id", clientId);
+  const classIds = (clientClasses ?? []).map((c) => c.class_id);
+  if (!classIds.length) return { ok: true, cancelled: 0 };
+
+  // Future scheduled sessions across those classes.
+  const { data: futureSessions } = await supabase
+    .from("class_sessions")
+    .select("id,coach_id,classes!inner(title,duration_minutes)")
+    .in("class_id", classIds)
+    .eq("status", "scheduled")
+    .gt("starts_at", new Date().toISOString());
+
+  const sessions = futureSessions ?? [];
+  if (!sessions.length) return { ok: true, cancelled: 0 };
+
+  const sessionIds = sessions.map((s) => s.id);
+
+  // Cancel all the sessions.
+  await supabase
+    .from("class_sessions")
+    .update({ status: "cancelled", cancel_reason: "cancelled by academy" })
+    .in("id", sessionIds);
+
+  // Find bookings, cancel them, and refund minutes.
+  const { data: bookings } = await supabase
+    .from("bookings")
+    .select("id,client_id,session_id")
+    .in("session_id", sessionIds)
+    .in("status", ["confirmed", "waitlisted"]);
+
+  const durationBySession = new Map<string, number>(
+    sessions.map((s) => [
+      s.id,
+      (s.classes as unknown as { duration_minutes: number }).duration_minutes,
+    ])
+  );
+
+  for (const b of bookings ?? []) {
+    await supabase
+      .from("bookings")
+      .update({
+        status: "cancelled_by_academy",
+        cancelled_at: new Date().toISOString(),
+        cancel_reason: "cancelled by academy",
+      })
+      .eq("id", b.id);
+
+    const mins = durationBySession.get(b.session_id) ?? 60;
+    await supabase.from("private_credit_ledger").insert({
+      client_id: b.client_id,
+      booking_id: b.id,
+      delta_minutes: mins,
+      reason: "cancellation_refund",
+      note: "academy cancelled all upcoming sessions",
+    });
+  }
+
+  // One notification to the client.
+  await supabase.from("notifications").insert({
+    user_id: clientId,
+    type: "session_cancelled",
+    title: "Upcoming sessions cancelled",
+    body: `Your upcoming private sessions have been cancelled — your minutes have been returned.`,
+    data: { url: "/app/schedule" },
+  });
+
+  // Notify affected coaches (de-duped).
+  const coachIds = new Set(
+    sessions.map((s) => s.coach_id).filter((c): c is string => !!c)
+  );
+  for (const coachId of coachIds) {
+    await supabase.from("notifications").insert({
+      user_id: coachId,
+      type: "session_cancelled",
+      title: "Private sessions cancelled",
+      body: `All upcoming private sessions for this client have been cancelled.`,
+      data: { url: "/coach" },
+    });
+  }
+
+  await supabase.from("audit_log").insert({
+    actor_id: founderId,
+    action: "session.cancel_private_series",
+    entity: "class_sessions",
+    entity_id: sessionId,
+    meta: { client_id: clientId, cancelled: sessions.length },
+  });
+
+  return { ok: true, cancelled: sessions.length };
+}
+
 /** Add a single extra session to an existing class (e.g. a holiday special). */
 export async function createOneOffSessionCore(
   supabase: SupabaseClient,

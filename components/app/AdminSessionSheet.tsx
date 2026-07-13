@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
 import { Spinner } from "@/components/ui/Spinner";
 import {
+  cancelAllFuturePrivateSessions,
   endGroupClass,
   moveSession,
   reassignSession,
@@ -424,6 +425,33 @@ export function AdminSessionSheet({
                 }}
               >
                 End this class — remove every week
+              </button>
+            )}
+            {session.isPrivate && (
+              <button
+                disabled={pending}
+                className="w-full text-center text-sm text-err underline-offset-4 hover:underline"
+                onClick={() => {
+                  if (
+                    !window.confirm(
+                      `Cancel all upcoming private sessions for ${session.playerName ?? "this client"}? Their minutes will be returned and they'll be notified.`
+                    )
+                  )
+                    return;
+                  startTransition(async () => {
+                    const r = await cancelAllFuturePrivateSessions(session.id);
+                    if (r.ok) {
+                      setMessage(
+                        r.cancelled
+                          ? `Cancelled ${r.cancelled} upcoming session${r.cancelled === 1 ? "" : "s"} — minutes returned.`
+                          : "No upcoming sessions found."
+                      );
+                      onClose();
+                    } else setMessage(r.error ?? "Failed.");
+                  });
+                }}
+              >
+                Cancel all upcoming sessions for this client
               </button>
             )}
           </div>
