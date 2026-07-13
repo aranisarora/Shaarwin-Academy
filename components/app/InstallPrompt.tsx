@@ -20,8 +20,6 @@ export function InstallPrompt() {
 
   useEffect(() => {
     if (localStorage.getItem("sharwin_install_done")) return;
-    const booked = localStorage.getItem("sharwin_has_booked") === "1";
-    if (!booked) return;
 
     const standalone =
       window.matchMedia("(display-mode: standalone)").matches ||
@@ -29,12 +27,21 @@ export function InstallPrompt() {
       window.navigator.standalone === true;
     if (standalone) return;
 
-    const ios = /iphone|ipad|ipod/i.test(navigator.userAgent);
+    const ua = navigator.userAgent;
+    const iosViaUA = /iphone|ipad|ipod/i.test(ua);
+    const iosViaTouch =
+      /Mac/.test(navigator.platform ?? "") && navigator.maxTouchPoints > 1;
+    const ios = iosViaUA || iosViaTouch;
     setIsIos(ios);
     if (ios) {
       setShow(true);
       return;
     }
+
+    // Non-iOS: only show after the user has made a booking (less intrusive).
+    const booked = localStorage.getItem("sharwin_has_booked") === "1";
+    if (!booked) return;
+
     const onPrompt = (e: Event) => {
       e.preventDefault();
       setDeferred(e as BeforeInstallPromptEvent);
