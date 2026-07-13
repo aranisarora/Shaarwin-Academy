@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth";
+import { effectiveCoachId } from "@/lib/coach-preview";
 import { CoachShell } from "@/components/app/CoachShell";
 import { Badge } from "@/components/ui/Badge";
 import { SessionRoster } from "@/components/app/SessionRoster";
@@ -18,6 +19,7 @@ export default async function CoachSessionPage({
 }) {
   const { id } = await params;
   const { supabase, user } = await requireUser(`/coach/session/${id}`);
+  const coachId = await effectiveCoachId(user.id);
 
   const { data: session } = await supabase
     .from("class_sessions")
@@ -27,7 +29,7 @@ export default async function CoachSessionPage({
     .eq("id", id)
     .maybeSingle();
 
-  if (!session || session.coach_id !== user.id) notFound();
+  if (!session || session.coach_id !== coachId) notFound();
 
   const cls = session.classes as unknown as {
     title: string;

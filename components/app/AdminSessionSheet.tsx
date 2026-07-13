@@ -19,6 +19,7 @@ import {
   updateGroupClass,
 } from "@/app/admin/calendar/actions";
 import { cancelSession, getRankedCoaches } from "@/app/admin/actions";
+import { viewAsCoach } from "@/app/coach/preview-actions";
 import { AddressDisplay } from "@/components/app/AddressDisplay";
 import { ClassDetailFields, generateClassTitle, type ClassFormState } from "./ClassFields";
 import { TimeSelect12h } from "./TimeSelect12h";
@@ -255,6 +256,18 @@ export function AdminSessionSheet({
                   <Badge tone="neutral">Coach not arrived yet</Badge>
                 ))}
             </div>
+            {session.coachId && (
+              <button
+                type="button"
+                onClick={() =>
+                  startTransition(() => viewAsCoach(session.coachId as string))
+                }
+                disabled={pending}
+                className="mt-3 text-sm text-ember hover:underline disabled:opacity-50"
+              >
+                View this coach&apos;s app →
+              </button>
+            )}
           </div>
 
           {/* ── Coach (always per-session) ── */}

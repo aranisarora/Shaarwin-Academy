@@ -16,6 +16,7 @@ import {
   savePendingCoach,
   setCoachActive,
 } from "@/app/admin/coaches/actions";
+import { viewAsCoach } from "@/app/coach/preview-actions";
 
 export type CoachRow = {
   id: string;
@@ -267,6 +268,13 @@ export function CoachManager({
               </button>
               <div className="flex flex-col items-end gap-1.5">
                 <Badge tone={c.active ? "ok" : "err"}>{c.active ? "working" : "paused"}</Badge>
+                <button
+                  onClick={() => startTransition(() => viewAsCoach(c.id))}
+                  disabled={isPending}
+                  className="text-sm text-ember hover:underline disabled:opacity-50"
+                >
+                  View as coach
+                </button>
               </div>
             </div>
           </li>
