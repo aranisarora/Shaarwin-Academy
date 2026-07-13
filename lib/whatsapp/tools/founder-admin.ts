@@ -248,42 +248,78 @@ const setSessionCapacity: WaTool = {
 const createOneOff: WaTool = {
   name: "create_one_off_session",
   description:
-    "Add a single extra session to an existing class (class_id from list_classes), e.g. a holiday special. Date YYYY-MM-DD, time HH:MM (IST). coach_id optional — the engine assigns one otherwise.",
+    "Add one or more extra sessions to an existing class (class_id from list_classes), e.g. holiday specials. Supports multiselect dates: pass dates as an array (e.g. ['2025-12-25','2025-12-26']) to create multiple sessions in one shot — mirroring the admin 'Add to schedule' sheet. Time HH:MM (IST). coach_id optional — the engine assigns one otherwise.",
   input_schema: {
     type: "object",
     properties: {
       class_id: { type: "string" },
-      date: { type: "string" },
+      dates: {
+        type: "array",
+        items: { type: "string" },
+        description: "One or more dates YYYY-MM-DD (IST). Creates one session per date. Preferred over date for multi-date creation.",
+      },
+      date: { type: "string", description: "Single date YYYY-MM-DD (IST) — use dates[] for multi-date" },
       time: { type: "string" },
       coach_id: { type: "string" },
     },
-    required: ["class_id", "date", "time"],
+    required: ["class_id", "time"],
   },
   run: async (input, ctx) => {
-    const result = await createOneOffSessionCore(
-      ctx.supabase!,
-      ctx.profile!.id,
-      String(input.class_id),
-      String(input.date),
-      String(input.time),
-      input.coach_id ? String(input.coach_id) : ""
-    );
-    return result.ok ? ok({ created: true }) : fail(result.error ?? "Failed.");
+    // Resolve dates array — accept array or fall back to singular date.
+    const rawDates: string[] = Array.isArray(input.dates) && input.dates.length > 0
+      ? input.dates.map((d) => String(d))
+      : input.date
+        ? [String(input.date)]
+        : [];
+    if (rawDates.length === 0) return fail("Provide at least one date (dates or date).");
+
+    const created: string[] = [];
+    const failed: { date: string; error: string }[] = [];
+    for (const date of rawDates) {
+      const result = await createOneOffSessionCore(
+        ctx.supabase!,
+        ctx.profile!.id,
+        String(input.class_id),
+        date,
+        String(input.time),
+        input.coach_id ? String(input.coach_id) : ""
+      );
+      if (result.ok) {
+        created.push(date);
+      } else {
+        failed.push({ date, error: result.error ?? "Failed." });
+      }
+    }
+
+    if (created.length === 0) return fail(failed.map((f) => `${f.date}: ${f.error}`).join("; "));
+    return ok({
+      created: created.length,
+      dates: created,
+      ...(failed.length > 0 && { partial_failures: failed }),
+    });
   },
 };
 
 const createPrivate: WaTool = {
   name: "create_private_session",
   description:
-    "Book a private one-to-one session FOR a client (client_id from list_clients). Creates the session, books the client in, notifies them, and debits the session's minutes from their private balance (which may go negative — top up via adjust_private_credits). Location: pass EITHER venue_id (from list_venues — reuses the venue's saved address) OR a free-text address to geocode. Sensible defaults fill anything the founder didn't state — duration_minutes → 60, has_table → true, player → the client's default; the reply lists every default used. MONEY-ADJACENT: if the founder's request is complete and unambiguous, just book it and report what you did (defaults used + minutes debited) — no separate yes needed. Only pause to confirm when something is genuinely ambiguous or missing. Date YYYY-MM-DD, time HH:MM (IST). coach_id optional — the engine assigns one otherwise.",
+    "Book a private one-to-one session FOR a client (client_id from list_clients). Supports recurring: pass recur_weeks (2–12) to book the same slot for N consecutive weeks in one shot — mirroring the admin 'Add to schedule' recurring toggle; the whole series rolls back if any week fails. Creates sessions, books the client, notifies them, and debits minutes from their private balance per session (balance may go negative — top up via adjust_private_credits). Location: pass EITHER venue_id (from list_venues) OR a free-text address to geocode. Defaults: duration_minutes → 60, has_table → true, player → client's default, recur_weeks → 1 (single session). MONEY-ADJACENT: if the request is complete and unambiguous, just book it and report defaults used + minutes debited — no separate yes needed. Date YYYY-MM-DD, time HH:MM (IST). coach_id optional.",
   input_schema: {
     type: "object",
     properties: {
       client_id: { type: "string" },
       player_name: { type: "string", description: "Which household player — omit for the default" },
-      date: { type: "string", description: "YYYY-MM-DD (IST)" },
+      date: { type: "string", description: "YYYY-MM-DD (IST) — first (or only) session date" },
       time: { type: "string", description: "HH:MM (IST)" },
       duration_minutes: { type: "number", description: "60 or 90 — defaults to 60 if omitted" },
+      recur_weeks: {
+        type: "number",
+        description: "1–12. Creates one session per week for N weeks starting on date, same weekday/time. Default 1 (single session). Mirrors admin recurring toggle.",
+      },
+      override_plan_limits: {
+        type: "boolean",
+        description: "Skip plan duration/frequency checks (use to comp a session or handle special cases). Default false.",
+      },
       venue_id: { type: "string", description: "A saved venue (from list_venues) — used instead of address" },
       address: { type: "string", description: "Free-text address to geocode — omit if venue_id is given" },
       access_notes: { type: "string", description: "Entry instructions, if any" },
@@ -336,12 +372,15 @@ const createPrivate: WaTool = {
 
     const durationMinutes = Number(input.duration_minutes) === 90 ? 90 : 60;
     const hasTable = input.has_table != null ? Boolean(input.has_table) : true;
+    const recurWeeks = input.recur_weeks != null ? Math.min(Math.max(Math.trunc(Number(input.recur_weeks)), 1), 12) : 1;
     const result = await createPrivateSessionCore(ctx.supabase!, ctx.profile!.id, {
       clientId: String(input.client_id),
       playerId,
       date: String(input.date),
       time: String(input.time),
       durationMinutes,
+      recurWeeks,
+      overridePlanLimits: input.override_plan_limits ? Boolean(input.override_plan_limits) : false,
       address,
       lat,
       lng,
@@ -357,15 +396,17 @@ const createPrivate: WaTool = {
       coachId: input.coach_id ? String(input.coach_id) : undefined,
     });
     if (!result.ok) return fail(result.error ?? "Failed.");
-    // Surface which values were defaulted so the reply can name them.
     const defaults_used: Record<string, unknown> = {};
     if (input.duration_minutes == null) defaults_used.duration_minutes = 60;
     if (input.has_table == null) defaults_used.has_table = true;
     if (!input.player_name) defaults_used.player = "client's default";
+    if (input.recur_weeks == null) defaults_used.recur_weeks = 1;
     return ok({
-      created: true,
+      created: recurWeeks,
+      sessions: recurWeeks === 1 ? "1 session booked" : `${recurWeeks} weekly sessions booked`,
       location: resolvedPlace,
       duration_minutes: durationMinutes,
+      minutes_debited: recurWeeks * durationMinutes,
       defaults_used,
       note: "Client notified; minutes debited.",
     });
