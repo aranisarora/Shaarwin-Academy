@@ -1803,6 +1803,17 @@ begin
 end;
 $function$;
 
+CREATE OR REPLACE FUNCTION public._delete_class_on_private_details_delete()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+AS $function$
+BEGIN
+  DELETE FROM classes WHERE id = OLD.class_id;
+  RETURN OLD;
+END;
+$function$;
+
 CREATE OR REPLACE FUNCTION public.handle_new_user()
  RETURNS trigger
  LANGUAGE plpgsql
@@ -3120,6 +3131,7 @@ CREATE OR REPLACE VIEW public.coach_client_view AS
   SELECT id, full_name, avatar_url FROM profiles p;
 
 -- ── Triggers ─────────────────────────────────────────────────────────────────
+CREATE TRIGGER trg_private_class_details_after_delete AFTER DELETE ON public.private_class_details FOR EACH ROW EXECUTE FUNCTION _delete_class_on_private_details_delete();
 CREATE TRIGGER profiles_grant_trial AFTER INSERT ON public.profiles FOR EACH ROW WHEN ((new.role = 'client'::user_role)) EXECUTE FUNCTION grant_signup_trial();
 CREATE TRIGGER seed_coach_availability AFTER INSERT ON public.coaches FOR EACH ROW EXECUTE FUNCTION seed_default_coach_availability();
 CREATE TRIGGER bookings_ops_feed_insert AFTER INSERT ON public.bookings FOR EACH ROW EXECUTE FUNCTION ops_notify_booking_created();
