@@ -265,6 +265,7 @@ export function AdminSessionSheet({
                   startTransition(async () => {
                     const ok = await viewAsCoach(session.coachId as string);
                     if (ok) router.push("/coach");
+                    else setMessage("Preview unavailable — only founders can view as coach.");
                   })
                 }
                 disabled={pending}

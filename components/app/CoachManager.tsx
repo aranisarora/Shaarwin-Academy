@@ -275,6 +275,7 @@ export function CoachManager({
                     startTransition(async () => {
                       const ok = await viewAsCoach(c.id);
                       if (ok) router.push("/coach");
+                      else setMessage("Preview unavailable — only founders can view as coach.");
                     })
                   }
                   disabled={isPending}
