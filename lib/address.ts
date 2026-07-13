@@ -14,6 +14,7 @@ export type AddressLabel = "home" | "work" | "other";
 
 export type StructuredAddress = {
   // Geocoded base — `formatted` is the only field guaranteed present.
+  name: string | null; // short POI display name (e.g., "La Plazzo"); null for plain addresses
   formatted: string;
   locality: string | null; // area / neighbourhood
   subLocality: string | null;
@@ -33,6 +34,7 @@ export type StructuredAddress = {
 };
 
 export const EMPTY_ADDRESS: StructuredAddress = {
+  name: null,
   formatted: "",
   locality: null,
   subLocality: null,
@@ -91,6 +93,7 @@ export function applyGeocode(
   const [lng, lat] = hit.center;
   return {
     ...prev,
+    name: hit.name ?? null,
     formatted: hit.place_name,
     locality: hit.locality ?? null,
     city: hit.city ?? null,

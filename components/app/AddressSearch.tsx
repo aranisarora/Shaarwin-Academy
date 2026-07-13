@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Input } from "@/components/ui/Input";
 
 export type GeocodeHit = {
+  name?: string; // short POI name (e.g., "La Plazzo") — only set for poi results
   place_name: string;
   center: [number, number];
   postcode: string;
@@ -118,6 +119,9 @@ export function AddressSearch({
       const p = feat.properties ?? {};
       const ctx = p.context ?? {};
       onSelect({
+        // Only carry the short name for POI results; for streets/addresses it
+        // would just be the road name, which isn't a useful display label.
+        name: p.feature_type === "poi" ? (p.name ?? undefined) : undefined,
         place_name:
           p.full_address ||
           [p.name, p.place_formatted].filter(Boolean).join(", "),

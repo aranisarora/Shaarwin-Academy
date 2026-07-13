@@ -33,7 +33,7 @@ export default async function AdminCalendarPage({
       supabase
         .from("class_sessions")
         .select(
-          "id,starts_at,ends_at,coach_id,coach_arrived_at,capacity_override,classes!inner(id,title,description,skill_level,capacity,duration_minutes,recurrence_rule,active,venue_id,class_type,venues(name,address,postcode,lat,lng,address_details),private_class_details(address,postcode,lat,lng,access_notes,address_details,profiles!client_id(full_name)))"
+          "id,starts_at,ends_at,coach_id,coach_arrived_at,capacity_override,classes!inner(id,title,description,skill_level,capacity,duration_minutes,recurrence_rule,active,venue_id,class_type,venues(name,address,postcode,lat,lng,address_details),private_class_details(client_id,address,postcode,lat,lng,access_notes,address_details))"
         )
         .eq("status", "scheduled")
         .gte("starts_at", from.toISOString())
@@ -85,38 +85,64 @@ export default async function AdminCalendarPage({
     return utcToAcademyWall(new Date(iso)).time;
   };
 
+  // Batch-fetch client names for private sessions — avoids a deeply-nested
+  // join that proved unreliable across PostgREST versions.
+  type PrivDetail = {
+    client_id: string;
+    address: string;
+    postcode: string;
+    lat: number;
+    lng: number;
+    access_notes: string | null;
+    address_details: Partial<StructuredAddress> | null;
+  };
+  type ClsShape = {
+    id: string;
+    title: string;
+    description: string | null;
+    skill_level: string;
+    capacity: number;
+    duration_minutes: number;
+    recurrence_rule: string | null;
+    active: boolean;
+    venue_id: string | null;
+    class_type: string;
+    venues: {
+      name: string;
+      address: string;
+      postcode: string;
+      lat: number;
+      lng: number;
+      address_details: Partial<StructuredAddress> | null;
+    } | null;
+    private_class_details: PrivDetail[] | null;
+  };
+
+  const privateClientIds = [
+    ...new Set(
+      (sessions ?? [])
+        .map((s) => {
+          const cls = s.classes as unknown as ClsShape;
+          return cls.class_type === "private"
+            ? (cls.private_class_details?.[0]?.client_id ?? null)
+            : null;
+        })
+        .filter((id): id is string => id !== null)
+    ),
+  ];
+  const clientNameMap = new Map<string, string>();
+  if (privateClientIds.length > 0) {
+    const { data: privProfiles } = await supabase
+      .from("profiles")
+      .select("id,full_name")
+      .in("id", privateClientIds);
+    for (const p of privProfiles ?? []) {
+      clientNameMap.set(p.id, p.full_name);
+    }
+  }
+
   const rows: SessionRow[] = (sessions ?? []).map((s) => {
-    const cls = s.classes as unknown as {
-      id: string;
-      title: string;
-      description: string | null;
-      skill_level: string;
-      capacity: number;
-      duration_minutes: number;
-      recurrence_rule: string | null;
-      active: boolean;
-      venue_id: string | null;
-      class_type: string;
-      venues: {
-        name: string;
-        address: string;
-        postcode: string;
-        lat: number;
-        lng: number;
-        address_details: Partial<StructuredAddress> | null;
-      } | null;
-      private_class_details:
-        | {
-            address: string;
-            postcode: string;
-            lat: number;
-            lng: number;
-            access_notes: string | null;
-            address_details: Partial<StructuredAddress> | null;
-            profiles: { full_name: string } | null;
-          }[]
-        | null;
-    };
+    const cls = s.classes as unknown as ClsShape;
     const priv = cls.private_class_details?.[0] ?? null;
     const address: StructuredAddress | null = cls.venues
       ? fromDetails(cls.venues.address_details, {
@@ -134,6 +160,18 @@ export default async function AdminCalendarPage({
             access_notes: priv.access_notes,
           })
         : null;
+
+    // For private sessions: prefer the stored POI name from address_details,
+    // then fall back to the first comma-segment of the raw address (which
+    // Mapbox sets to the venue name when a POI is selected, e.g. "La Plazzo").
+    const privLocationName = priv
+      ? (priv.address_details?.name ??
+          (priv.address.includes(",")
+            ? priv.address.split(",")[0].trim()
+            : priv.address) ??
+          null)
+      : null;
+
     return {
       id: s.id,
       starts_at: s.starts_at,
@@ -143,8 +181,8 @@ export default async function AdminCalendarPage({
       title: cls.title,
       capacity: s.capacity_override ?? cls.capacity,
       isPrivate: cls.class_type === "private",
-      venueName: cls.venues?.name ?? null,
-      playerName: priv?.profiles?.full_name ?? null,
+      venueName: cls.venues?.name ?? privLocationName,
+      playerName: priv ? (clientNameMap.get(priv.client_id) ?? null) : null,
       address,
       classId: cls.id,
       classActive: cls.active,
