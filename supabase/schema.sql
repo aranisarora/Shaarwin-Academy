@@ -1679,20 +1679,12 @@ CREATE OR REPLACE FUNCTION public.get_bookable_slots(p_lat double precision, p_l
  STABLE SECURITY DEFINER
  SET search_path TO 'public'
 AS $function$
-declare
-  v_is_junior boolean;
 begin
-  select pl.date_of_birth is not null
-     and pl.date_of_birth > (current_date - interval '18 years')
-  into v_is_junior
-  from players pl where pl.id = p_player;
-
   return query
   with candidate_coaches as (
     select c.* from coaches c
     where c.active
       and haversine_km(p_lat, p_lng, c.base_lat, c.base_lng) <= c.travel_radius_km
-      and (not coalesce(v_is_junior, false) or c.dbs_checked)
   ),
   slots as (
     select generate_series(
