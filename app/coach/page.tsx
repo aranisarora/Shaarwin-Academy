@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { requireUser } from "@/lib/auth";
+import { effectiveCoachId } from "@/lib/coach-preview";
 import { getCoachSessions } from "@/lib/coach-data";
 import { CoachShell } from "@/components/app/CoachShell";
 import { Badge } from "@/components/ui/Badge";
@@ -31,10 +32,11 @@ function dayLabel(iso: string) {
 
 export default async function CoachSchedulePage() {
   const { supabase, user } = await requireUser("/coach");
+  const coachId = await effectiveCoachId(user.id);
   const from = new Date();
   from.setHours(0, 0, 0, 0);
   const to = new Date(from.getTime() + 28 * 86400000);
-  const sessions = await getCoachSessions(supabase, user.id, from, to);
+  const sessions = await getCoachSessions(supabase, coachId, from, to);
 
   const todayKey = dayLabel(new Date().toISOString());
 

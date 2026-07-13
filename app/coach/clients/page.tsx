@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { requireUser } from "@/lib/auth";
+import { effectiveCoachId } from "@/lib/coach-preview";
 import { CoachShell } from "@/components/app/CoachShell";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Badge } from "@/components/ui/Badge";
@@ -9,12 +10,13 @@ export const metadata: Metadata = { title: "Clients" };
 
 export default async function CoachClientsPage() {
   const { supabase, user } = await requireUser("/coach/clients");
+  const coachId = await effectiveCoachId(user.id);
 
   // Players the coach actually coaches — via bookings on own sessions (RLS-safe).
   const { data: rows } = await supabase
     .from("bookings")
     .select("player_id,status,players(full_name,skill_level),class_sessions!inner(coach_id)")
-    .eq("class_sessions.coach_id", user.id)
+    .eq("class_sessions.coach_id", coachId)
     .in("status", ["confirmed", "attended", "no_show"]);
 
   const unique = new Map<
