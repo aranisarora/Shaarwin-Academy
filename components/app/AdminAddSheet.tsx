@@ -43,7 +43,7 @@ const MODES: { value: Mode; label: string; blurb: string }[] = [
   {
     value: "private",
     label: "Private session",
-    blurb: "A one-to-one session for a client at their address. Uses the client's private minutes.",
+    blurb: "A one-to-one session for a client at their address — one-off or repeating weekly. Uses the client's private minutes.",
   },
 ];
 
@@ -88,6 +88,8 @@ export function AdminAddSheet({
     duration: 60,
     coachId: "",
     overrideLimits: false,
+    recurring: false,
+    recurWeeks: 4,
   });
   const [address, setAddress] = useState<StructuredAddress>(EMPTY_ADDRESS);
   const [message, setMessage] = useState<string | null>(null);
@@ -116,6 +118,8 @@ export function AdminAddSheet({
         duration: 60,
         coachId: "",
         overrideLimits: false,
+        recurring: false,
+        recurWeeks: 4,
       });
       setAddress(EMPTY_ADDRESS);
     }
@@ -150,6 +154,7 @@ export function AdminAddSheet({
           addressDetails: address as unknown as Record<string, unknown>,
           coachId: priv.coachId || undefined,
           overridePlanLimits: priv.overrideLimits,
+          recurWeeks: priv.recurring ? priv.recurWeeks : 1,
         };
         const r = isInvite
           ? await createPrivateSessionForInvite(priv.clientId.slice("invite:".length), details)
@@ -158,12 +163,18 @@ export function AdminAddSheet({
               clientId: priv.clientId,
               playerId: priv.playerId || undefined,
             });
-        if (r.ok)
+        if (r.ok) {
+          const recurring = priv.recurring && priv.recurWeeks > 1;
           onDone(
             isInvite
-              ? "Account created and private session booked — it'll be waiting when they sign in."
-              : "Private session booked — the client has been told."
+              ? recurring
+                ? `Account created and ${priv.recurWeeks} weekly private sessions booked — waiting when they sign in.`
+                : "Account created and private session booked — it'll be waiting when they sign in."
+              : recurring
+                ? `${priv.recurWeeks} weekly private sessions booked — the client has been told.`
+                : "Private session booked — the client has been told."
           );
+        }
         else setMessage(r.error ?? "Couldn't book the session.");
       }
     });
@@ -314,7 +325,7 @@ export function AdminAddSheet({
             )}
             <div className="grid grid-cols-2 gap-3">
               <Input
-                label="Day"
+                label={priv.recurring ? "First session" : "Day"}
                 type="date"
                 value={priv.date}
                 onChange={(e) => setPriv({ ...priv, date: e.target.value })}
@@ -334,6 +345,29 @@ export function AdminAddSheet({
                 <option key={d} value={d}>{d} min</option>
               ))}
             </Select>
+            <label className="flex min-h-11 cursor-pointer items-center gap-3 rounded-[12px] border border-line bg-surface-2 px-4 py-3">
+              <input
+                type="checkbox"
+                checked={priv.recurring}
+                onChange={(e) => setPriv({ ...priv, recurring: e.target.checked })}
+                className="h-4 w-4 accent-[var(--ember,#c2410c)]"
+              />
+              <span className="text-sm">
+                Repeat weekly — book the same slot every week.
+              </span>
+            </label>
+            {priv.recurring && (
+              <Select
+                label="How many weeks?"
+                hint="Each week takes its own minutes from the client's balance."
+                value={priv.recurWeeks}
+                onChange={(e) => setPriv({ ...priv, recurWeeks: Number(e.target.value) })}
+              >
+                {[2, 3, 4, 5, 6, 7, 8, 10, 12].map((w) => (
+                  <option key={w} value={w}>{w} weeks</option>
+                ))}
+              </Select>
+            )}
             <AddressForm
               value={address}
               onChange={setAddress}
@@ -375,6 +409,8 @@ export function AdminAddSheet({
             "Publish class"
           ) : mode === "oneoff" ? (
             "Add session"
+          ) : priv.recurring && priv.recurWeeks > 1 ? (
+            `Book ${priv.recurWeeks} weekly sessions`
           ) : (
             "Book private session"
           )}

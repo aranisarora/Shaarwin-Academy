@@ -203,7 +203,20 @@ export type PrivateSessionInput = {
   coachId?: string;
   /** Founder comp: skip the client's plan duration/weekly-frequency checks. */
   overridePlanLimits?: boolean;
+  /**
+   * Repeat the session weekly. 1 (or unset) books a single session; N books the
+   * same weekday/time for N consecutive weeks, each its own private class,
+   * session, booking and minutes debit — all-or-nothing.
+   */
+  recurWeeks?: number;
 };
+
+/** A wall-clock date (YYYY-MM-DD) shifted forward by whole weeks. */
+function addWeeksToWallDate(date: string, weeks: number): string {
+  const d = new Date(`${date}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + weeks * 7);
+  return d.toISOString().slice(0, 10);
+}
 
 /** Start of the ISO week containing `d`, at midnight Asia/Kolkata, as UTC. */
 function istWeekWindow(d: Date): { from: Date; to: Date } {
@@ -222,6 +235,10 @@ function istWeekWindow(d: Date): { from: Date; to: Date } {
  * 24h lead time and balance check don't apply. The debit keeps the ledger
  * symmetric with the cancel-refund path; the balance may go negative and the
  * founder can top it up via adjustCreditsCore.
+ *
+ * With `recurWeeks > 1` this repeats the same weekday/time for that many weeks,
+ * one independent private class per week (mirroring the client-side weekly
+ * series), rolling the whole run back if any week fails.
  */
 export async function createPrivateSessionCore(
   supabase: SupabaseClient,
@@ -270,9 +287,16 @@ export async function createPrivateSessionCore(
   }
 
   const duration = input.durationMinutes === 90 ? 90 : 60;
-  const start = academyWallToUtc(input.date, input.time);
-  if (!(start > new Date())) return { ok: false, error: "Pick a time in the future." };
-  const end = new Date(start.getTime() + duration * 60000);
+  const weeks = Math.min(Math.max(Math.trunc(input.recurWeeks ?? 1), 1), 12);
+
+  // One occurrence per week from the chosen start date, same weekday/time.
+  const occurrences = Array.from({ length: weeks }, (_, i) => {
+    const date = addWeeksToWallDate(input.date, i);
+    const start = academyWallToUtc(date, input.time);
+    return { date, start, end: new Date(start.getTime() + duration * 60000) };
+  });
+  if (!(occurrences[0].start > new Date()))
+    return { ok: false, error: "Pick a time in the future." };
 
   // Mirror the client-side plan enforcement (duration + weekly frequency)
   // unless the founder explicitly overrides to comp a session.
@@ -290,123 +314,169 @@ export async function createPrivateSessionCore(
       };
     }
     if (limits?.sessions_per_week != null) {
-      const { from, to } = istWeekWindow(start);
-      const { count } = await supabase
-        .from("bookings")
-        .select("id,class_sessions!inner(starts_at,classes!inner(class_type))", {
-          count: "exact",
-          head: true,
-        })
-        .eq("client_id", input.clientId)
-        .eq("status", "confirmed")
-        .eq("class_sessions.classes.class_type", "private")
-        .gte("class_sessions.starts_at", from.toISOString())
-        .lt("class_sessions.starts_at", to.toISOString());
-      if ((count ?? 0) >= limits.sessions_per_week) {
-        return {
-          ok: false,
-          error: `They've already got their plan's ${limits.sessions_per_week} private session${limits.sessions_per_week > 1 ? "s" : ""} that week — tick "ignore plan limits" to add another.`,
-        };
+      // Each occurrence lands in its own week, so check every week we'd fill.
+      for (let i = 0; i < occurrences.length; i++) {
+        const { from, to } = istWeekWindow(occurrences[i].start);
+        const { count } = await supabase
+          .from("bookings")
+          .select("id,class_sessions!inner(starts_at,classes!inner(class_type))", {
+            count: "exact",
+            head: true,
+          })
+          .eq("client_id", input.clientId)
+          .eq("status", "confirmed")
+          .eq("class_sessions.classes.class_type", "private")
+          .gte("class_sessions.starts_at", from.toISOString())
+          .lt("class_sessions.starts_at", to.toISOString());
+        if ((count ?? 0) >= limits.sessions_per_week) {
+          const lead =
+            weeks > 1 ? `Week ${i + 1}: they've` : "They've";
+          return {
+            ok: false,
+            error: `${lead} already got their plan's ${limits.sessions_per_week} private session${limits.sessions_per_week > 1 ? "s" : ""} that week — tick "ignore plan limits" to add another.`,
+          };
+        }
       }
     }
   }
 
-  const { data: cls, error: clsErr } = await supabase
-    .from("classes")
-    .insert({
-      class_type: "private",
-      title: "Private session",
-      skill_level: "beginner",
-      capacity: 1,
-      duration_minutes: duration,
-      starts_on: input.date,
-      created_by: founderId,
-    })
-    .select("id")
-    .single();
-  if (clsErr || !cls) return { ok: false, error: "Couldn't create the session." };
+  // Create each occurrence. Track what we made so a mid-run failure can undo
+  // the whole series — a half-booked recurring run shouldn't linger.
+  const createdClassIds: string[] = [];
+  const createdLedgerIds: string[] = [];
+  const createdSessions: { id: string; start: Date }[] = [];
 
-  const { error: detErr } = await supabase.from("private_class_details").insert({
-    class_id: cls.id,
-    client_id: input.clientId,
-    player_id: playerId,
-    address: input.address,
-    postcode: input.postcode ?? "",
-    lat: input.lat,
-    lng: input.lng,
-    has_table: input.hasTable ?? true,
-    access_notes: input.accessNotes || null,
-    address_details: input.addressDetails ?? null,
-  });
-  if (detErr) {
-    await supabase.from("classes").delete().eq("id", cls.id);
-    return { ok: false, error: "Couldn't save the address." };
+  async function rollback() {
+    if (createdLedgerIds.length)
+      await supabase.from("private_credit_ledger").delete().in("id", createdLedgerIds);
+    // Deleting the class cascades to its details, session and booking.
+    if (createdClassIds.length)
+      await supabase.from("classes").delete().in("id", createdClassIds);
   }
 
-  const { data: session, error: sessErr } = await supabase
-    .from("class_sessions")
-    .insert({
+  for (const occ of occurrences) {
+    const { data: cls, error: clsErr } = await supabase
+      .from("classes")
+      .insert({
+        class_type: "private",
+        title: "Private session",
+        skill_level: "beginner",
+        capacity: 1,
+        duration_minutes: duration,
+        starts_on: occ.date,
+        created_by: founderId,
+      })
+      .select("id")
+      .single();
+    if (clsErr || !cls) {
+      await rollback();
+      return { ok: false, error: "Couldn't create the session." };
+    }
+    createdClassIds.push(cls.id);
+
+    const { error: detErr } = await supabase.from("private_class_details").insert({
       class_id: cls.id,
-      coach_id: input.coachId || null,
-      starts_at: start.toISOString(),
-      ends_at: end.toISOString(),
-    })
-    .select("id")
-    .single();
-  if (sessErr || !session) {
-    await supabase.from("classes").delete().eq("id", cls.id);
-    return {
-      ok: false,
-      error: sessErr?.message.includes("coach_no_overlap")
-        ? "That coach is already busy then — pick another coach or leave it on automatic."
-        : "Couldn't create the session.",
-    };
-  }
+      client_id: input.clientId,
+      player_id: playerId,
+      address: input.address,
+      postcode: input.postcode ?? "",
+      lat: input.lat,
+      lng: input.lng,
+      has_table: input.hasTable ?? true,
+      access_notes: input.accessNotes || null,
+      address_details: input.addressDetails ?? null,
+    });
+    if (detErr) {
+      await rollback();
+      return { ok: false, error: "Couldn't save the address." };
+    }
 
-  const { error: bookErr } = await supabase.from("bookings").insert({
-    session_id: session.id,
-    client_id: input.clientId,
-    player_id: playerId,
-    status: "confirmed",
-  });
-  if (bookErr) {
-    await supabase.from("classes").delete().eq("id", cls.id);
-    return { ok: false, error: "Couldn't book the client in." };
-  }
+    const { data: session, error: sessErr } = await supabase
+      .from("class_sessions")
+      .insert({
+        class_id: cls.id,
+        coach_id: input.coachId || null,
+        starts_at: occ.start.toISOString(),
+        ends_at: occ.end.toISOString(),
+      })
+      .select("id")
+      .single();
+    if (sessErr || !session) {
+      await rollback();
+      return {
+        ok: false,
+        error: sessErr?.message.includes("coach_no_overlap")
+          ? "That coach is already busy then — pick another coach or leave it on automatic."
+          : "Couldn't create the session.",
+      };
+    }
+    createdSessions.push({ id: session.id, start: occ.start });
 
-  await supabase.from("private_credit_ledger").insert({
-    client_id: input.clientId,
-    delta_minutes: -duration,
-    reason: "booking",
-    note: "booked by academy",
-  });
+    const { data: booking, error: bookErr } = await supabase
+      .from("bookings")
+      .insert({
+        session_id: session.id,
+        client_id: input.clientId,
+        player_id: playerId,
+        status: "confirmed",
+      })
+      .select("id")
+      .single();
+    if (bookErr || !booking) {
+      await rollback();
+      return { ok: false, error: "Couldn't book the client in." };
+    }
+
+    const { data: ledger } = await supabase
+      .from("private_credit_ledger")
+      .insert({
+        client_id: input.clientId,
+        booking_id: booking.id,
+        delta_minutes: -duration,
+        reason: "booking",
+        note: "booked by academy",
+      })
+      .select("id")
+      .single();
+    if (ledger) createdLedgerIds.push(ledger.id);
+  }
 
   if (!input.coachId) await supabase.rpc("assign_unassigned_sessions");
 
-  const when = whenIST(start);
+  const firstWhen = whenIST(occurrences[0].start);
   await supabase.from("notifications").insert({
     user_id: input.clientId,
     type: "new_private_session",
-    title: "Private session booked",
-    body: `We've set up a private session for ${when} — it's on your schedule.`,
-    data: { session_id: session.id, url: "/app/schedule" },
+    title: weeks > 1 ? "Weekly private sessions booked" : "Private session booked",
+    body:
+      weeks > 1
+        ? `We've set up ${weeks} weekly private sessions starting ${firstWhen} — they're on your schedule.`
+        : `We've set up a private session for ${firstWhen} — it's on your schedule.`,
+    data: { session_id: createdSessions[0].id, url: "/app/schedule" },
   });
   if (input.coachId) {
-    await supabase.from("notifications").insert({
-      user_id: input.coachId,
-      type: "new_private_session",
-      title: "New private session",
-      body: `${when} — ${input.address}`,
-      data: { session_id: session.id, url: `/coach/session/${session.id}` },
-    });
+    for (const s of createdSessions) {
+      await supabase.from("notifications").insert({
+        user_id: input.coachId,
+        type: "new_private_session",
+        title: "New private session",
+        body: `${whenIST(s.start)} — ${input.address}`,
+        data: { session_id: s.id, url: `/coach/session/${s.id}` },
+      });
+    }
   }
 
   await supabase.from("audit_log").insert({
     actor_id: founderId,
     action: "session.create_private",
     entity: "class_sessions",
-    entity_id: session.id,
-    meta: { client_id: input.clientId, minutes: duration },
+    entity_id: createdSessions[0].id,
+    meta: {
+      client_id: input.clientId,
+      minutes: duration,
+      weeks,
+      sessions: createdSessions.length,
+    },
   });
   return { ok: true };
 }
