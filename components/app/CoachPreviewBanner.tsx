@@ -1,7 +1,6 @@
 "use client";
 
 import { useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { exitCoachView } from "@/app/coach/preview-actions";
 import { Spinner } from "@/components/ui/Spinner";
 
@@ -10,7 +9,6 @@ import { Spinner } from "@/components/ui/Spinner";
  * "Back to admin" clears the preview cookie and returns to /admin/coaches.
  */
 export function CoachPreviewBanner({ coachName }: { coachName: string }) {
-  const router = useRouter();
   const [pending, start] = useTransition();
   return (
     <div className="sticky top-0 z-40 flex items-center justify-between gap-3 bg-ember px-5 py-2 text-ivory">
@@ -22,7 +20,9 @@ export function CoachPreviewBanner({ coachName }: { coachName: string }) {
         onClick={() =>
           start(async () => {
             await exitCoachView();
-            router.push("/admin/coaches");
+            // Hard navigation so the cleared cookie is re-read by the server and
+            // the admin app renders fresh, rather than a cached RSC payload.
+            window.location.assign("/admin/coaches");
           })
         }
         disabled={pending}

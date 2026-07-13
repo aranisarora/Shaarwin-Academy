@@ -5,7 +5,6 @@
 // change is for "just this session" or "every week" (the whole class).
 
 import { useEffect, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { Sheet } from "@/components/ui/Sheet";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -74,7 +73,6 @@ export function AdminSessionSheet({
     { coachId: string; name: string; score: number }[] | null
   >(null);
   const [message, setMessage] = useState<string | null>(null);
-  const router = useRouter();
   const [pending, startTransition] = useTransition();
 
   useEffect(() => {
@@ -264,7 +262,10 @@ export function AdminSessionSheet({
                 onClick={() =>
                   startTransition(async () => {
                     const ok = await viewAsCoach(session.coachId as string);
-                    if (ok) router.push("/coach");
+                    // Hard navigation: the preview cookie is set httpOnly by the
+                    // server action, so a soft router.push would re-render /coach
+                    // from the client cache without it. A full load re-reads it.
+                    if (ok) window.location.assign("/coach");
                     else setMessage("Preview unavailable — only founders can view as coach.");
                   })
                 }

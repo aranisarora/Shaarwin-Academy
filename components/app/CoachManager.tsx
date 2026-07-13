@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
@@ -93,7 +92,6 @@ export function CoachManager({
   coaches: CoachRow[];
   pending: PendingCoachRow[];
 }) {
-  const router = useRouter();
   const [mode, setMode] = useState<Mode>(null);
   const [form, setForm] = useState<Form>(EMPTY_FORM);
   // Address typeahead state lives here so it resets correctly each time a
@@ -274,7 +272,10 @@ export function CoachManager({
                   onClick={() =>
                     startTransition(async () => {
                       const ok = await viewAsCoach(c.id);
-                      if (ok) router.push("/coach");
+                      // Hard navigation: the preview cookie is set httpOnly by the
+                      // server action, so a soft router.push would re-render /coach
+                      // from the client cache without it. A full load re-reads it.
+                      if (ok) window.location.assign("/coach");
                       else setMessage("Preview unavailable — only founders can view as coach.");
                     })
                   }
