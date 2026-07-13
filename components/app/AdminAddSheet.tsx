@@ -392,6 +392,18 @@ export function AdminAddSheet({
               ))}
             </Select>
 
+            <Select
+              label="Coach"
+              hint="Leave on automatic and the best-fitting coach is picked for you."
+              value={oneOff.coachId}
+              onChange={(e) => setOneOff((o) => ({ ...o, coachId: e.target.value }))}
+            >
+              <option value="">Automatic — pick the best fit</option>
+              {coaches.map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </Select>
+
             <div>
               <p className="label mb-2">Dates</p>
               <p className="mb-2 text-sm text-fg-2">
@@ -431,18 +443,6 @@ export function AdminAddSheet({
               value={oneOff.time}
               onChange={(time) => setOneOff((o) => ({ ...o, time }))}
             />
-
-            <Select
-              label="Coach"
-              hint="Leave on automatic and the best-fitting coach is picked for you."
-              value={oneOff.coachId}
-              onChange={(e) => setOneOff((o) => ({ ...o, coachId: e.target.value }))}
-            >
-              <option value="">Automatic — pick the best fit</option>
-              {coaches.map((c) => (
-                <option key={c.id} value={c.id}>{c.name}</option>
-              ))}
-            </Select>
           </>
         )}
 
@@ -492,6 +492,18 @@ export function AdminAddSheet({
                 ))}
               </Select>
             )}
+
+            <Select
+              label="Coach"
+              hint="Leave on automatic and the best-fitting coach is picked for you."
+              value={priv.coachId}
+              onChange={(e) => setPriv({ ...priv, coachId: e.target.value })}
+            >
+              <option value="">Automatic — pick the best fit</option>
+              {coaches.map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </Select>
 
             <div className="grid grid-cols-2 gap-3">
               <Input
@@ -558,18 +570,6 @@ export function AdminAddSheet({
               onChange={setAddress}
               searchLabel="Where does the session happen?"
             />
-
-            <Select
-              label="Coach"
-              hint="Leave on automatic and the best-fitting coach is picked for you."
-              value={priv.coachId}
-              onChange={(e) => setPriv({ ...priv, coachId: e.target.value })}
-            >
-              <option value="">Automatic — pick the best fit</option>
-              {coaches.map((c) => (
-                <option key={c.id} value={c.id}>{c.name}</option>
-              ))}
-            </Select>
 
             <div>
               <button
