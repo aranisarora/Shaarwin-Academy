@@ -35,6 +35,7 @@ export function AdminCalendar({
   venues,
   clients,
   invites,
+  onRefresh,
 }: {
   sessions: SessionRow[];
   coaches: Coach[];
@@ -42,6 +43,7 @@ export function AdminCalendar({
   venues: Venue[];
   clients: ClientOption[];
   invites: InviteOption[];
+  onRefresh?: () => void;
 }) {
   const [selected, setSelected] = useState<SessionRow | null>(null);
   const [editingClass, setEditingClass] = useState<ClassRow | null>(null);
@@ -295,7 +297,10 @@ export function AdminCalendar({
           session={selected}
           coaches={coaches}
           venues={venues}
-          onClose={() => setSelected(null)}
+          onClose={() => {
+            setSelected(null);
+            onRefresh?.();
+          }}
         />
       )}
 
@@ -309,6 +314,7 @@ export function AdminCalendar({
           onDone={(m) => {
             setMessage(m);
             setEditingClass(null);
+            onRefresh?.();
           }}
         />
       )}
@@ -319,6 +325,7 @@ export function AdminCalendar({
           onDone={(m) => {
             setMessage(m);
             setAdding(false);
+            onRefresh?.();
           }}
           classes={activeClasses}
           coaches={coaches}
