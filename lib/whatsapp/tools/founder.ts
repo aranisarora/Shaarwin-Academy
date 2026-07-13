@@ -190,7 +190,7 @@ const reassign: WaTool = {
 const createClass: WaTool = {
   name: "create_group_class",
   description:
-    "Create a weekly group class — it repeats every week and the next 8 weeks of sessions go on the calendar. Only venue (list_venues for venue_id), weekday (MO..SU) and start time HH:MM (IST) are essential. Everything else has a sensible default the founder can override: skill_level → any, capacity → 8, duration_minutes → 60, title → auto-generated from the level (e.g. 'Beginner Group Class'). If the founder gives those three essentials, just create it and report what defaults you used — no need to interrogate them for a title or capacity. Coach optional — the engine assigns one otherwise.",
+    "Create one or more weekly group classes — each repeats every week and the next 8 weeks of sessions go on the calendar. Supports multiselect days: pass weekdays as an array (e.g. ['MO','WE','FR']) to create one class per day in one shot — mirroring the admin 'Add to schedule' sheet. Only venue (list_venues for venue_id), at least one weekday and start time HH:MM (IST) are essential. Everything else has a sensible default the founder can override: skill_level → any, capacity → 8, duration_minutes → 60, title → auto-generated from the level (e.g. 'Beginner Group Class'). If the founder gives those essentials, just create and report defaults used. Coach optional — the engine assigns one otherwise.",
   input_schema: {
     type: "object",
     properties: {
@@ -200,11 +200,16 @@ const createClass: WaTool = {
       capacity: { type: "number", description: "Defaults to 8 if omitted" },
       duration_minutes: { type: "number", description: "Defaults to 60 if omitted" },
       venue_id: { type: "string" },
-      weekday: { type: "string", description: "MO, TU, WE, TH, FR, SA or SU" },
+      weekdays: {
+        type: "array",
+        items: { type: "string" },
+        description: "One or more weekdays: MO, TU, WE, TH, FR, SA, SU. Creates one class per day. Preferred over weekday for multi-day creation.",
+      },
+      weekday: { type: "string", description: "Single weekday (MO..SU) — use weekdays[] for multi-day" },
       time: { type: "string", description: "HH:MM 24h, academy time" },
       coach_id: { type: "string" },
     },
-    required: ["venue_id", "weekday", "time"],
+    required: ["venue_id", "time"],
   },
   run: async (input, ctx) => {
     const skillLevel = input.skill_level != null ? String(input.skill_level) : "any";
@@ -217,24 +222,48 @@ const createClass: WaTool = {
           ? "Group Class"
           : `${skillLevel.charAt(0).toUpperCase()}${skillLevel.slice(1)} Group Class`;
 
-    const result = await createGroupClassCore(ctx.supabase!, ctx.profile!.id, {
-      title,
-      description: String(input.description ?? ""),
-      skillLevel,
-      capacity,
-      durationMinutes,
-      venueId: String(input.venue_id),
-      weekday: String(input.weekday).toUpperCase(),
-      time: String(input.time),
-      coachId: input.coach_id ? String(input.coach_id) : undefined,
-    });
-    if (!result.ok) return fail(result.error ?? "Failed.");
+    // Resolve weekdays array — accept array or fall back to singular weekday.
+    const rawDays: string[] = Array.isArray(input.weekdays) && input.weekdays.length > 0
+      ? input.weekdays.map((d) => String(d).toUpperCase())
+      : input.weekday
+        ? [String(input.weekday).toUpperCase()]
+        : [];
+    if (rawDays.length === 0) return fail("Provide at least one weekday (weekdays or weekday).");
+
     const defaults_used: Record<string, unknown> = {};
     if (input.title == null || !String(input.title).trim()) defaults_used.title = title;
     if (input.skill_level == null) defaults_used.skill_level = "any";
     if (input.capacity == null) defaults_used.capacity = 8;
     if (input.duration_minutes == null) defaults_used.duration_minutes = 60;
-    return ok({ created: true, defaults_used });
+
+    const created: string[] = [];
+    const failed: { weekday: string; error: string }[] = [];
+    for (const weekday of rawDays) {
+      const result = await createGroupClassCore(ctx.supabase!, ctx.profile!.id, {
+        title,
+        description: String(input.description ?? ""),
+        skillLevel,
+        capacity,
+        durationMinutes,
+        venueId: String(input.venue_id),
+        weekday,
+        time: String(input.time),
+        coachId: input.coach_id ? String(input.coach_id) : undefined,
+      });
+      if (result.ok) {
+        created.push(weekday);
+      } else {
+        failed.push({ weekday, error: result.error ?? "Failed." });
+      }
+    }
+
+    if (created.length === 0) return fail(failed.map((f) => `${f.weekday}: ${f.error}`).join("; "));
+    return ok({
+      created: created.length,
+      weekdays: created,
+      ...(failed.length > 0 && { partial_failures: failed }),
+      defaults_used,
+    });
   },
 };
 
