@@ -2685,7 +2685,7 @@ CREATE OR REPLACE FUNCTION public.seed_default_coach_availability()
 AS $function$
 begin
   insert into coach_availability (coach_id, weekday, start_time, end_time)
-  select new.id, d, '16:00', '22:00'
+  select new.id, d, '10:00', '22:00'
   from generate_series(0, 6) as d
   where not exists (
     select 1 from coach_availability where coach_id = new.id
