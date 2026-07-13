@@ -37,6 +37,19 @@ const MODES: { value: Mode; label: string }[] = [
   { value: "private", label: "Private session" },
 ];
 
+const WEEKDAY_DOW: Record<string, number> = {
+  SU: 0, MO: 1, TU: 2, WE: 3, TH: 4, FR: 5, SA: 6,
+};
+
+/** First calendar date on or after `startDate` that falls on `weekdayCode`. */
+function firstOccurrenceOnOrAfter(startDate: string, weekdayCode: string): string {
+  const [y, m, d] = startDate.split("-").map(Number);
+  const date = new Date(y, m - 1, d);
+  const daysUntil = (((WEEKDAY_DOW[weekdayCode] ?? 1) - date.getDay()) + 7) % 7;
+  const result = new Date(date.getTime() + daysUntil * 86400000);
+  return `${result.getFullYear()}-${String(result.getMonth() + 1).padStart(2, "0")}-${String(result.getDate()).padStart(2, "0")}`;
+}
+
 /** "2025-07-14" → "Mon 14 Jul" */
 function fmtDateTag(iso: string): string {
   const [y, m, d] = iso.split("-").map(Number);
@@ -110,7 +123,8 @@ export function AdminAddSheet({
   const [priv, setPriv] = useState({
     clientId: "",
     playerId: "",
-    date: "",
+    date: "",       // used when one-off
+    startFrom: "",  // used when recurring — anchor for weekday calculation
     time: "17:00",
     duration: 60,
     coachId: "",
@@ -118,8 +132,15 @@ export function AdminAddSheet({
     recurring: false,
     recurWeeks: 4,
   });
+  const [privWeekdays, setPrivWeekdays] = useState<string[]>(["MO"]);
   const [address, setAddress] = useState<StructuredAddress>(EMPTY_ADDRESS);
   const [showAdvanced, setShowAdvanced] = useState(false);
+
+  function togglePrivDay(code: string) {
+    setPrivWeekdays((prev) =>
+      prev.includes(code) ? prev.filter((d) => d !== code) : [...prev, code]
+    );
+  }
 
   // ── Shared ──────────────────────────────────────────────────────────────────
   const [message, setMessage] = useState<string | null>(null);
@@ -145,6 +166,7 @@ export function AdminAddSheet({
         clientId: "",
         playerId: "",
         date: "",
+        startFrom: "",
         time: "17:00",
         duration: 60,
         coachId: "",
@@ -152,6 +174,7 @@ export function AdminAddSheet({
         recurring: false,
         recurWeeks: 4,
       });
+      setPrivWeekdays(["MO"]);
       setAddress(EMPTY_ADDRESS);
       setShowAdvanced(false);
     }
@@ -197,7 +220,49 @@ export function AdminAddSheet({
             ? `${oneOff.dates.length} sessions added to the schedule.`
             : "Session added to the schedule."
         );
+      } else if (priv.recurring) {
+        // Recurring: one series per selected weekday, starting from the first
+        // occurrence of that weekday on or after startFrom.
+        const baseDetails = {
+          time: priv.time,
+          durationMinutes: priv.duration,
+          address: address.formatted,
+          postcode: address.postcode ?? "",
+          lat: address.lat!,
+          lng: address.lng!,
+          accessNotes: address.accessNotes ?? undefined,
+          addressDetails: address as unknown as Record<string, unknown>,
+          coachId: priv.coachId || undefined,
+          overridePlanLimits: priv.overrideLimits,
+          recurWeeks: priv.recurWeeks,
+        };
+        for (const day of privWeekdays) {
+          const date = firstOccurrenceOnOrAfter(priv.startFrom, day);
+          const r = isInvite
+            ? await createPrivateSessionForInvite(priv.clientId.slice("invite:".length), {
+                ...baseDetails,
+                date,
+              })
+            : await createPrivateSession({
+                ...baseDetails,
+                date,
+                clientId: priv.clientId,
+                playerId: priv.playerId || undefined,
+              });
+          if (!r.ok) {
+            setMessage(r.error ?? "Couldn't book the session.");
+            return;
+          }
+        }
+        const totalSessions = privWeekdays.length * priv.recurWeeks;
+        const dayNames = privWeekdays.map((d) => WEEKDAY_NAME[d] ?? d).join(", ");
+        onDone(
+          isInvite
+            ? `Account created and ${totalSessions} private sessions booked (${dayNames}) — waiting when they sign in.`
+            : `${totalSessions} private sessions booked (${dayNames}) — the client has been told.`
+        );
       } else {
+        // One-off
         const details = {
           date: priv.date,
           time: priv.time,
@@ -210,7 +275,7 @@ export function AdminAddSheet({
           addressDetails: address as unknown as Record<string, unknown>,
           coachId: priv.coachId || undefined,
           overridePlanLimits: priv.overrideLimits,
-          recurWeeks: priv.recurring ? priv.recurWeeks : 1,
+          recurWeeks: 1,
         };
         const r = isInvite
           ? await createPrivateSessionForInvite(priv.clientId.slice("invite:".length), details)
@@ -220,15 +285,10 @@ export function AdminAddSheet({
               playerId: priv.playerId || undefined,
             });
         if (r.ok) {
-          const recurring = priv.recurring && priv.recurWeeks > 1;
           onDone(
             isInvite
-              ? recurring
-                ? `Account created and ${priv.recurWeeks} weekly private sessions booked — waiting when they sign in.`
-                : "Account created and private session booked — it'll be waiting when they sign in."
-              : recurring
-                ? `${priv.recurWeeks} weekly private sessions booked — the client has been told.`
-                : "Private session booked — the client has been told."
+              ? "Account created and private session booked — it'll be waiting when they sign in."
+              : "Private session booked — the client has been told."
           );
         } else setMessage(r.error ?? "Couldn't book the session.");
       }
@@ -242,8 +302,12 @@ export function AdminAddSheet({
       ? !!form.venueId && weekdays.length > 0
       : mode === "oneoff"
         ? !!oneOff.classId && oneOff.dates.length > 0 && !!oneOff.time
-        : !!priv.clientId && !!priv.date && !!priv.time && isAddressComplete(address);
+        : !!priv.clientId && !!priv.time && isAddressComplete(address) &&
+          (priv.recurring
+            ? privWeekdays.length > 0 && !!priv.startFrom
+            : !!priv.date);
 
+  const totalPrivSessions = privWeekdays.length * priv.recurWeeks;
   const submitLabel =
     mode === "weekly"
       ? weekdays.length > 1
@@ -253,8 +317,10 @@ export function AdminAddSheet({
         ? oneOff.dates.length > 1
           ? `Add ${oneOff.dates.length} sessions`
           : "Add session"
-        : priv.recurring && priv.recurWeeks > 1
-          ? `Book ${priv.recurWeeks} weekly sessions`
+        : priv.recurring
+          ? privWeekdays.length > 1
+            ? `Book ${totalPrivSessions} sessions`
+            : `Book ${priv.recurWeeks} weekly sessions`
           : "Book private session";
 
   return (
@@ -505,30 +571,6 @@ export function AdminAddSheet({
               ))}
             </Select>
 
-            <div className="grid grid-cols-2 gap-3">
-              <Input
-                label={priv.recurring ? "First session" : "Date"}
-                type="date"
-                value={priv.date}
-                onChange={(e) => setPriv({ ...priv, date: e.target.value })}
-              />
-              <TimeSelect12h
-                label="Time"
-                value={priv.time}
-                onChange={(time) => setPriv({ ...priv, time })}
-              />
-            </div>
-
-            <Select
-              label="Length"
-              value={priv.duration}
-              onChange={(e) => setPriv({ ...priv, duration: Number(e.target.value) })}
-            >
-              {[60, 90].map((d) => (
-                <option key={d} value={d}>{d} min</option>
-              ))}
-            </Select>
-
             <fieldset className="space-y-2">
               <legend className="label">Repeat</legend>
               <label className="flex min-h-11 cursor-pointer items-center gap-3 rounded-[12px] border border-line bg-surface-2 px-4 py-3">
@@ -564,6 +606,75 @@ export function AdminAddSheet({
                 </span>
               </label>
             </fieldset>
+
+            {/* One-off: single date picker */}
+            {!priv.recurring && (
+              <div className="grid grid-cols-2 gap-3">
+                <Input
+                  label="Date"
+                  type="date"
+                  value={priv.date}
+                  onChange={(e) => setPriv({ ...priv, date: e.target.value })}
+                />
+                <TimeSelect12h
+                  label="Time"
+                  value={priv.time}
+                  onChange={(time) => setPriv({ ...priv, time })}
+                />
+              </div>
+            )}
+
+            {/* Recurring: day multiselect + start-from anchor + time */}
+            {priv.recurring && (
+              <>
+                <div>
+                  <p className="label mb-2">Days</p>
+                  <p className="mb-2 text-sm text-fg-2">
+                    Pick one or more — a recurring series is created for each day.
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    {WEEKDAYS.map(([code, name]) => (
+                      <button
+                        key={code}
+                        type="button"
+                        onClick={() => togglePrivDay(code)}
+                        aria-pressed={privWeekdays.includes(code)}
+                        className={`rounded-full border px-4 py-1.5 text-sm font-medium transition-colors ${
+                          privWeekdays.includes(code)
+                            ? "border-ember bg-ember text-ivory"
+                            : "border-line hover:border-ember"
+                        }`}
+                      >
+                        {name.slice(0, 3)}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <Input
+                    label="Start from"
+                    type="date"
+                    value={priv.startFrom}
+                    onChange={(e) => setPriv({ ...priv, startFrom: e.target.value })}
+                  />
+                  <TimeSelect12h
+                    label="Time"
+                    value={priv.time}
+                    onChange={(time) => setPriv({ ...priv, time })}
+                  />
+                </div>
+              </>
+            )}
+
+            <Select
+              label="Length"
+              value={priv.duration}
+              onChange={(e) => setPriv({ ...priv, duration: Number(e.target.value) })}
+            >
+              {[60, 90].map((d) => (
+                <option key={d} value={d}>{d} min</option>
+              ))}
+            </Select>
 
             <AddressForm
               value={address}
