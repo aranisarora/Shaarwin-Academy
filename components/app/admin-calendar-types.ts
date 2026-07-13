@@ -44,7 +44,16 @@ export type ClassRow = {
 };
 
 export type Coach = { id: string; name: string };
-export type Venue = { id: string; name: string; active: boolean };
+export type Venue = {
+  id: string;
+  name: string;
+  active: boolean;
+  address: string;
+  postcode: string;
+  lat: number;
+  lng: number;
+  address_details: Record<string, unknown> | null;
+};
 export type ClientOption = {
   id: string;
   name: string;
