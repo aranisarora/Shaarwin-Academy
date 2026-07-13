@@ -6,6 +6,7 @@ import { utcToAcademyWall } from "@/lib/academy-time";
 import { fromDetails, type StructuredAddress } from "@/lib/address";
 import type { SessionRow } from "@/components/app/admin-calendar-types";
 import {
+  cancelFuturePrivateSessionsCore,
   createOneOffSessionCore,
   createPrivateSessionCore,
   deleteGroupClassCore,
@@ -88,6 +89,17 @@ export async function endGroupClass(classId: string): Promise<Result> {
   if (!result.ok) return result;
   refresh();
   return { ok: true };
+}
+
+export async function cancelAllFuturePrivateSessions(
+  sessionId: string
+): Promise<Result & { cancelled?: number }> {
+  const { supabase, founder } = await requireFounder();
+  if (!founder) return { ok: false, error: "Founder only." };
+  const result = await cancelFuturePrivateSessionsCore(supabase, founder.id, sessionId);
+  if (!result.ok) return result;
+  refresh();
+  return { ok: true, cancelled: result.cancelled };
 }
 
 export async function restoreGroupClass(classId: string): Promise<Result> {
