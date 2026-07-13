@@ -5,6 +5,7 @@
 // change is for "just this session" or "every week" (the whole class).
 
 import { useEffect, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { Sheet } from "@/components/ui/Sheet";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -73,6 +74,7 @@ export function AdminSessionSheet({
     { coachId: string; name: string; score: number }[] | null
   >(null);
   const [message, setMessage] = useState<string | null>(null);
+  const router = useRouter();
   const [pending, startTransition] = useTransition();
 
   useEffect(() => {
@@ -260,7 +262,10 @@ export function AdminSessionSheet({
               <button
                 type="button"
                 onClick={() =>
-                  startTransition(() => viewAsCoach(session.coachId as string))
+                  startTransition(async () => {
+                    const ok = await viewAsCoach(session.coachId as string);
+                    if (ok) router.push("/coach");
+                  })
                 }
                 disabled={pending}
                 className="mt-3 text-sm text-ember hover:underline disabled:opacity-50"

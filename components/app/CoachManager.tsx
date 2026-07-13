@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
@@ -92,6 +93,7 @@ export function CoachManager({
   coaches: CoachRow[];
   pending: PendingCoachRow[];
 }) {
+  const router = useRouter();
   const [mode, setMode] = useState<Mode>(null);
   const [form, setForm] = useState<Form>(EMPTY_FORM);
   // Address typeahead state lives here so it resets correctly each time a
@@ -269,7 +271,12 @@ export function CoachManager({
               <div className="flex flex-col items-end gap-1.5">
                 <Badge tone={c.active ? "ok" : "err"}>{c.active ? "working" : "paused"}</Badge>
                 <button
-                  onClick={() => startTransition(() => viewAsCoach(c.id))}
+                  onClick={() =>
+                    startTransition(async () => {
+                      const ok = await viewAsCoach(c.id);
+                      if (ok) router.push("/coach");
+                    })
+                  }
                   disabled={isPending}
                   className="text-sm text-ember hover:underline disabled:opacity-50"
                 >
