@@ -115,7 +115,14 @@ export default async function AdminCalendarPage({
       lng: number;
       address_details: Partial<StructuredAddress> | null;
     } | null;
-    private_class_details: PrivDetail[] | null;
+    // One-to-one (class_id is both PK and FK), so PostgREST embeds it as a
+    // single object — but tolerate an array shape too, defensively.
+    private_class_details: PrivDetail | PrivDetail[] | null;
+  };
+
+  const privOf = (cls: ClsShape): PrivDetail | null => {
+    const d = cls.private_class_details;
+    return Array.isArray(d) ? (d[0] ?? null) : (d ?? null);
   };
 
   const privateClientIds = [
@@ -124,7 +131,7 @@ export default async function AdminCalendarPage({
         .map((s) => {
           const cls = s.classes as unknown as ClsShape;
           return cls.class_type === "private"
-            ? (cls.private_class_details?.[0]?.client_id ?? null)
+            ? (privOf(cls)?.client_id ?? null)
             : null;
         })
         .filter((id): id is string => id !== null)
@@ -143,7 +150,7 @@ export default async function AdminCalendarPage({
 
   const rows: SessionRow[] = (sessions ?? []).map((s) => {
     const cls = s.classes as unknown as ClsShape;
-    const priv = cls.private_class_details?.[0] ?? null;
+    const priv = privOf(cls);
     const address: StructuredAddress | null = cls.venues
       ? fromDetails(cls.venues.address_details, {
           address: cls.venues.address,
