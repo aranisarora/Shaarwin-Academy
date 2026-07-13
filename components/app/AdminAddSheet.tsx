@@ -15,8 +15,6 @@ import {
   createPrivateSession,
   createPrivateSessionForInvite,
 } from "@/app/admin/calendar/actions";
-import { AddressForm, isAddressComplete } from "@/components/app/AddressForm";
-import { EMPTY_ADDRESS, type StructuredAddress } from "@/lib/address";
 import { EMPTY_CLASS_FORM, generateClassTitle, time12h, type ClassFormState } from "./ClassFields";
 import { TimeSelect12h } from "./TimeSelect12h";
 import {
@@ -128,12 +126,12 @@ export function AdminAddSheet({
     time: "17:00",
     duration: 60,
     coachId: "",
+    venueId: venues[0]?.id ?? "",
     overrideLimits: false,
     recurring: false,
     recurWeeks: 4,
   });
   const [privWeekdays, setPrivWeekdays] = useState<string[]>(["MO"]);
-  const [address, setAddress] = useState<StructuredAddress>(EMPTY_ADDRESS);
   const [showAdvanced, setShowAdvanced] = useState(false);
 
   function togglePrivDay(code: string) {
@@ -170,12 +168,12 @@ export function AdminAddSheet({
         time: "17:00",
         duration: 60,
         coachId: "",
+        venueId: venues[0]?.id ?? "",
         overrideLimits: false,
         recurring: false,
         recurWeeks: 4,
       });
       setPrivWeekdays(["MO"]);
-      setAddress(EMPTY_ADDRESS);
       setShowAdvanced(false);
     }
   }
@@ -220,77 +218,73 @@ export function AdminAddSheet({
             ? `${oneOff.dates.length} sessions added to the schedule.`
             : "Session added to the schedule."
         );
-      } else if (priv.recurring) {
-        // Recurring: one series per selected weekday, starting from the first
-        // occurrence of that weekday on or after startFrom.
-        const baseDetails = {
+      } else {
+        const venue = venues.find((v) => v.id === priv.venueId);
+        if (!venue) {
+          setMessage("Please select a venue.");
+          return;
+        }
+        const locationDetails = {
           time: priv.time,
           durationMinutes: priv.duration,
-          address: address.formatted,
-          postcode: address.postcode ?? "",
-          lat: address.lat!,
-          lng: address.lng!,
-          accessNotes: address.accessNotes ?? undefined,
-          addressDetails: address as unknown as Record<string, unknown>,
+          address: venue.address,
+          postcode: venue.postcode,
+          lat: venue.lat,
+          lng: venue.lng,
+          addressDetails: venue.address_details
+            ? { ...venue.address_details, name: venue.name }
+            : { name: venue.name },
           coachId: priv.coachId || undefined,
           overridePlanLimits: priv.overrideLimits,
-          recurWeeks: priv.recurWeeks,
         };
-        for (const day of privWeekdays) {
-          const date = firstOccurrenceOnOrAfter(priv.startFrom, day);
+
+        if (priv.recurring) {
+          // Recurring: one series per selected weekday, starting from the first
+          // occurrence of that weekday on or after startFrom.
+          const baseDetails = { ...locationDetails, recurWeeks: priv.recurWeeks };
+          for (const day of privWeekdays) {
+            const date = firstOccurrenceOnOrAfter(priv.startFrom, day);
+            const r = isInvite
+              ? await createPrivateSessionForInvite(priv.clientId.slice("invite:".length), {
+                  ...baseDetails,
+                  date,
+                })
+              : await createPrivateSession({
+                  ...baseDetails,
+                  date,
+                  clientId: priv.clientId,
+                  playerId: priv.playerId || undefined,
+                });
+            if (!r.ok) {
+              setMessage(r.error ?? "Couldn't book the session.");
+              return;
+            }
+          }
+          const totalSessions = privWeekdays.length * priv.recurWeeks;
+          const dayNames = privWeekdays.map((d) => WEEKDAY_NAME[d] ?? d).join(", ");
+          onDone(
+            isInvite
+              ? `Account created and ${totalSessions} private sessions booked (${dayNames}) — waiting when they sign in.`
+              : `${totalSessions} private sessions booked (${dayNames}) — the client has been told.`
+          );
+        } else {
+          // One-off
+          const details = { ...locationDetails, date: priv.date, recurWeeks: 1 };
           const r = isInvite
-            ? await createPrivateSessionForInvite(priv.clientId.slice("invite:".length), {
-                ...baseDetails,
-                date,
-              })
+            ? await createPrivateSessionForInvite(priv.clientId.slice("invite:".length), details)
             : await createPrivateSession({
-                ...baseDetails,
-                date,
+                ...details,
                 clientId: priv.clientId,
                 playerId: priv.playerId || undefined,
               });
-          if (!r.ok) {
-            setMessage(r.error ?? "Couldn't book the session.");
-            return;
-          }
+          if (r.ok) {
+            onDone(
+              isInvite
+                ? "Account created and private session booked — it'll be waiting when they sign in."
+                : "Private session booked — the client has been told."
+            );
+          } else setMessage(r.error ?? "Couldn't book the session.");
         }
-        const totalSessions = privWeekdays.length * priv.recurWeeks;
-        const dayNames = privWeekdays.map((d) => WEEKDAY_NAME[d] ?? d).join(", ");
-        onDone(
-          isInvite
-            ? `Account created and ${totalSessions} private sessions booked (${dayNames}) — waiting when they sign in.`
-            : `${totalSessions} private sessions booked (${dayNames}) — the client has been told.`
-        );
-      } else {
-        // One-off
-        const details = {
-          date: priv.date,
-          time: priv.time,
-          durationMinutes: priv.duration,
-          address: address.formatted,
-          postcode: address.postcode ?? "",
-          lat: address.lat!,
-          lng: address.lng!,
-          accessNotes: address.accessNotes ?? undefined,
-          addressDetails: address as unknown as Record<string, unknown>,
-          coachId: priv.coachId || undefined,
-          overridePlanLimits: priv.overrideLimits,
-          recurWeeks: 1,
-        };
-        const r = isInvite
-          ? await createPrivateSessionForInvite(priv.clientId.slice("invite:".length), details)
-          : await createPrivateSession({
-              ...details,
-              clientId: priv.clientId,
-              playerId: priv.playerId || undefined,
-            });
-        if (r.ok) {
-          onDone(
-            isInvite
-              ? "Account created and private session booked — it'll be waiting when they sign in."
-              : "Private session booked — the client has been told."
-          );
-        } else setMessage(r.error ?? "Couldn't book the session.");
       }
     });
   }
@@ -302,7 +296,7 @@ export function AdminAddSheet({
       ? !!form.venueId && weekdays.length > 0
       : mode === "oneoff"
         ? !!oneOff.classId && oneOff.dates.length > 0 && !!oneOff.time
-        : !!priv.clientId && !!priv.time && isAddressComplete(address) &&
+        : !!priv.clientId && !!priv.time && !!priv.venueId &&
           (priv.recurring
             ? privWeekdays.length > 0 && !!priv.startFrom
             : !!priv.date);
@@ -666,21 +660,28 @@ export function AdminAddSheet({
               </>
             )}
 
-            <Select
-              label="Length"
-              value={priv.duration}
-              onChange={(e) => setPriv({ ...priv, duration: Number(e.target.value) })}
-            >
-              {[60, 90].map((d) => (
-                <option key={d} value={d}>{d} min</option>
-              ))}
-            </Select>
-
-            <AddressForm
-              value={address}
-              onChange={setAddress}
-              searchLabel="Where does the session happen?"
-            />
+            <div className="grid grid-cols-2 gap-3">
+              <Select
+                label="Venue"
+                value={priv.venueId}
+                onChange={(e) => setPriv({ ...priv, venueId: e.target.value })}
+              >
+                {venues.map((v) => (
+                  <option key={v.id} value={v.id}>
+                    {v.active ? v.name : `${v.name} (hidden)`}
+                  </option>
+                ))}
+              </Select>
+              <Select
+                label="Length"
+                value={priv.duration}
+                onChange={(e) => setPriv({ ...priv, duration: Number(e.target.value) })}
+              >
+                {[60, 90].map((d) => (
+                  <option key={d} value={d}>{d} min</option>
+                ))}
+              </Select>
+            </div>
 
             <div>
               <button
