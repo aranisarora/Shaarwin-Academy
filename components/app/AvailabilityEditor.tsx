@@ -27,7 +27,7 @@ export function AvailabilityEditor({
   timeOff: TimeOff[];
 }) {
   const [weekday, setWeekday] = useState(0);
-  const [start, setStart] = useState("16:00");
+  const [start, setStart] = useState("10:00");
   const [end, setEnd] = useState("22:00");
   const [offStart, setOffStart] = useState("");
   const [offEnd, setOffEnd] = useState("");
