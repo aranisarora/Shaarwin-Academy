@@ -110,21 +110,23 @@ const listSessions: WaTool = {
 const cancelSession: WaTool = {
   name: "cancel_session",
   description:
-    "Cancel a whole session: bookings become cancelled_by_academy, private clients get minutes refunded, everyone affected is notified. DESTRUCTIVE — always restate the session and get an explicit yes first. A reason is required.",
+    "Cancel a whole session: bookings become cancelled_by_academy, private clients get minutes refunded, everyone affected is notified. DESTRUCTIVE — always restate the session and get an explicit yes first. Reason is optional (defaults to 'Cancelled by the academy').",
   input_schema: {
     type: "object",
     properties: {
       session_id: { type: "string" },
-      reason: { type: "string" },
+      reason: { type: "string", description: "Optional — defaults to 'Cancelled by the academy'" },
     },
-    required: ["session_id", "reason"],
+    required: ["session_id"],
   },
   run: async (input, ctx) => {
     const result = await cancelSessionCore(
       ctx.supabase!,
       ctx.profile!.id,
       String(input.session_id),
-      String(input.reason)
+      input.reason != null && String(input.reason).trim()
+        ? String(input.reason)
+        : "Cancelled by the academy"
     );
     return result.ok ? ok({ cancelled: true }) : fail(result.error ?? "Failed.");
   },
@@ -188,35 +190,51 @@ const reassign: WaTool = {
 const createClass: WaTool = {
   name: "create_group_class",
   description:
-    "Create a weekly group class — it repeats every week and the next 8 weeks of sessions go on the calendar. Collect and confirm ALL details first: title, skill level (any/beginner/intermediate/advanced/elite), capacity, duration in minutes, venue (use list_venues for venue_id), weekday (MO..SU), start time HH:MM (IST). Coach optional — the engine assigns one otherwise.",
+    "Create a weekly group class — it repeats every week and the next 8 weeks of sessions go on the calendar. Only venue (list_venues for venue_id), weekday (MO..SU) and start time HH:MM (IST) are essential. Everything else has a sensible default the founder can override: skill_level → any, capacity → 8, duration_minutes → 60, title → auto-generated from the level (e.g. 'Beginner Group Class'). If the founder gives those three essentials, just create it and report what defaults you used — no need to interrogate them for a title or capacity. Coach optional — the engine assigns one otherwise.",
   input_schema: {
     type: "object",
     properties: {
-      title: { type: "string" },
+      title: { type: "string", description: "Optional — auto-generated from the level if omitted" },
       description: { type: "string" },
-      skill_level: { type: "string", description: "any | beginner | intermediate | advanced | elite" },
-      capacity: { type: "number" },
-      duration_minutes: { type: "number" },
+      skill_level: { type: "string", description: "any | beginner | intermediate | advanced | elite — defaults to any" },
+      capacity: { type: "number", description: "Defaults to 8 if omitted" },
+      duration_minutes: { type: "number", description: "Defaults to 60 if omitted" },
       venue_id: { type: "string" },
       weekday: { type: "string", description: "MO, TU, WE, TH, FR, SA or SU" },
       time: { type: "string", description: "HH:MM 24h, academy time" },
       coach_id: { type: "string" },
     },
-    required: ["title", "skill_level", "capacity", "duration_minutes", "venue_id", "weekday", "time"],
+    required: ["venue_id", "weekday", "time"],
   },
   run: async (input, ctx) => {
+    const skillLevel = input.skill_level != null ? String(input.skill_level) : "any";
+    const capacity = input.capacity != null ? Number(input.capacity) : 8;
+    const durationMinutes = input.duration_minutes != null ? Number(input.duration_minutes) : 60;
+    const title =
+      input.title != null && String(input.title).trim()
+        ? String(input.title)
+        : skillLevel === "any"
+          ? "Group Class"
+          : `${skillLevel.charAt(0).toUpperCase()}${skillLevel.slice(1)} Group Class`;
+
     const result = await createGroupClassCore(ctx.supabase!, ctx.profile!.id, {
-      title: String(input.title),
+      title,
       description: String(input.description ?? ""),
-      skillLevel: String(input.skill_level),
-      capacity: Number(input.capacity),
-      durationMinutes: Number(input.duration_minutes),
+      skillLevel,
+      capacity,
+      durationMinutes,
       venueId: String(input.venue_id),
       weekday: String(input.weekday).toUpperCase(),
       time: String(input.time),
       coachId: input.coach_id ? String(input.coach_id) : undefined,
     });
-    return result.ok ? ok({ created: true }) : fail(result.error ?? "Failed.");
+    if (!result.ok) return fail(result.error ?? "Failed.");
+    const defaults_used: Record<string, unknown> = {};
+    if (input.title == null || !String(input.title).trim()) defaults_used.title = title;
+    if (input.skill_level == null) defaults_used.skill_level = "any";
+    if (input.capacity == null) defaults_used.capacity = 8;
+    if (input.duration_minutes == null) defaults_used.duration_minutes = 60;
+    return ok({ created: true, defaults_used });
   },
 };
 
@@ -369,15 +387,15 @@ const grantComp: WaTool = {
 const adjustCredits: WaTool = {
   name: "adjust_private_credits",
   description:
-    "Add or remove private-coaching minutes for a client (positive or negative delta). MONEY-ADJACENT — restate client, delta and reason, get an explicit yes first.",
+    "Add or remove private-coaching minutes for a client (positive or negative delta). MONEY-ADJACENT — restate client and delta, get an explicit yes first. Note is optional (defaults to 'Adjusted by admin').",
   input_schema: {
     type: "object",
     properties: {
       client_id: { type: "string" },
       delta_minutes: { type: "number" },
-      note: { type: "string" },
+      note: { type: "string", description: "Optional — defaults to 'Adjusted by admin'" },
     },
-    required: ["client_id", "delta_minutes", "note"],
+    required: ["client_id", "delta_minutes"],
   },
   run: async (input, ctx) => {
     const result = await adjustCreditsCore(
@@ -385,7 +403,7 @@ const adjustCredits: WaTool = {
       ctx.profile!.id,
       String(input.client_id),
       Number(input.delta_minutes),
-      String(input.note)
+      input.note != null && String(input.note).trim() ? String(input.note) : "Adjusted by admin"
     );
     return result.ok ? ok({ adjusted: true }) : fail(result.error ?? "Failed.");
   },

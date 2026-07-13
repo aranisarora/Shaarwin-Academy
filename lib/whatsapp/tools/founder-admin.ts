@@ -275,7 +275,7 @@ const createOneOff: WaTool = {
 const createPrivate: WaTool = {
   name: "create_private_session",
   description:
-    "Book a private one-to-one session FOR a client (client_id from list_clients). Creates the session at the given address, books the client in, notifies them, and debits the session's minutes from their private balance (which may go negative — top up via adjust_private_credits). MONEY-ADJACENT — restate client, date/time, duration and address, get an explicit yes first. Date YYYY-MM-DD, time HH:MM (IST). player_name optional (defaults to the client's first player); coach_id optional — the engine assigns one otherwise.",
+    "Book a private one-to-one session FOR a client (client_id from list_clients). Creates the session, books the client in, notifies them, and debits the session's minutes from their private balance (which may go negative — top up via adjust_private_credits). Location: pass EITHER venue_id (from list_venues — reuses the venue's saved address) OR a free-text address to geocode. Sensible defaults fill anything the founder didn't state — duration_minutes → 60, has_table → true, player → the client's default; the reply lists every default used. MONEY-ADJACENT: if the founder's request is complete and unambiguous, just book it and report what you did (defaults used + minutes debited) — no separate yes needed. Only pause to confirm when something is genuinely ambiguous or missing. Date YYYY-MM-DD, time HH:MM (IST). coach_id optional — the engine assigns one otherwise.",
   input_schema: {
     type: "object",
     properties: {
@@ -283,17 +283,43 @@ const createPrivate: WaTool = {
       player_name: { type: "string", description: "Which household player — omit for the default" },
       date: { type: "string", description: "YYYY-MM-DD (IST)" },
       time: { type: "string", description: "HH:MM (IST)" },
-      duration_minutes: { type: "number", description: "60 or 90" },
-      address: { type: "string" },
+      duration_minutes: { type: "number", description: "60 or 90 — defaults to 60 if omitted" },
+      venue_id: { type: "string", description: "A saved venue (from list_venues) — used instead of address" },
+      address: { type: "string", description: "Free-text address to geocode — omit if venue_id is given" },
       access_notes: { type: "string", description: "Entry instructions, if any" },
       has_table: { type: "boolean", description: "Does the address have a table? Default true" },
       coach_id: { type: "string" },
     },
-    required: ["client_id", "date", "time", "duration_minutes", "address"],
+    required: ["client_id", "date", "time"],
   },
   run: async (input, ctx) => {
-    const geo = await geocode(String(input.address));
-    if (!geo) return fail("Couldn't locate that address — ask for a fuller address.");
+    // Location: a saved venue (preferred — reuses its geocoded coords) or
+    // free-text to geocode now. Exactly one of the two is required.
+    let address: string;
+    let lat: number;
+    let lng: number;
+    let resolvedPlace: string | undefined;
+    if (input.venue_id) {
+      const { data: venue } = await ctx.supabase!
+        .from("venues")
+        .select("name,address,lat,lng")
+        .eq("id", String(input.venue_id))
+        .maybeSingle();
+      if (!venue) return fail("No venue with that id — check list_venues.");
+      address = venue.address;
+      lat = Number(venue.lat);
+      lng = Number(venue.lng);
+      resolvedPlace = venue.name;
+    } else if (input.address) {
+      const geo = await geocode(String(input.address));
+      if (!geo) return fail("Couldn't locate that address — ask for a fuller address.");
+      address = String(input.address);
+      lat = geo.lat;
+      lng = geo.lng;
+      resolvedPlace = geo.place;
+    } else {
+      return fail("Need a location — pass a venue_id (from list_venues) or an address.");
+    }
 
     let playerId: string | undefined;
     if (input.player_name) {
@@ -308,29 +334,41 @@ const createPrivate: WaTool = {
       playerId = match.id;
     }
 
+    const durationMinutes = Number(input.duration_minutes) === 90 ? 90 : 60;
+    const hasTable = input.has_table != null ? Boolean(input.has_table) : true;
     const result = await createPrivateSessionCore(ctx.supabase!, ctx.profile!.id, {
       clientId: String(input.client_id),
       playerId,
       date: String(input.date),
       time: String(input.time),
-      durationMinutes: Number(input.duration_minutes) === 90 ? 90 : 60,
-      address: String(input.address),
-      lat: geo.lat,
-      lng: geo.lng,
-      hasTable: input.has_table != null ? Boolean(input.has_table) : true,
+      durationMinutes,
+      address,
+      lat,
+      lng,
+      hasTable,
       accessNotes: input.access_notes ? String(input.access_notes) : undefined,
       addressDetails: {
-        formatted: geo.place ?? String(input.address),
-        lat: geo.lat,
-        lng: geo.lng,
+        formatted: resolvedPlace ?? address,
+        lat,
+        lng,
         accessNotes: input.access_notes ?? null,
-        label: "home",
+        label: input.venue_id ? "venue" : "home",
       },
       coachId: input.coach_id ? String(input.coach_id) : undefined,
     });
-    return result.ok
-      ? ok({ created: true, resolved_address: geo.place, note: "Client notified; minutes debited." })
-      : fail(result.error ?? "Failed.");
+    if (!result.ok) return fail(result.error ?? "Failed.");
+    // Surface which values were defaulted so the reply can name them.
+    const defaults_used: Record<string, unknown> = {};
+    if (input.duration_minutes == null) defaults_used.duration_minutes = 60;
+    if (input.has_table == null) defaults_used.has_table = true;
+    if (!input.player_name) defaults_used.player = "client's default";
+    return ok({
+      created: true,
+      location: resolvedPlace,
+      duration_minutes: durationMinutes,
+      defaults_used,
+      note: "Client notified; minutes debited.",
+    });
   },
 };
 
