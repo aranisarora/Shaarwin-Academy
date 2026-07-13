@@ -172,6 +172,21 @@ export async function confirmPhone(rawPhone: string): Promise<ConfirmPhoneResult
 }
 
 /**
+ * Step 2 fast-path: phone was already saved (e.g. pre-set by admin or a prior
+ * session that stalled after saving but before bumping). Just advance the step
+ * so finishOnboardingSetup won't block on the guard.
+ */
+export async function acknowledgePhoneStep(): Promise<Result> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Sign in first." };
+  await bumpStep(supabase, user.id, 2);
+  return { ok: true };
+}
+
+/**
  * Step 3 — the setup steps are done; stamp onboarded_at so requireUser stops
  * routing here, then the client heads into the real booking flow.
  * (Notification prefs are all-on by default and editable in profile settings —

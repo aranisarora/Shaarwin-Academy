@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Spinner } from "@/components/ui/Spinner";
-import { confirmPhone, type ConfirmPhoneResult } from "@/app/app/onboarding/actions";
+import { acknowledgePhoneStep, confirmPhone, type ConfirmPhoneResult } from "@/app/app/onboarding/actions";
 
 /**
  * Onboarding step 2: confirm a phone number. Saving it is what claims a
@@ -24,6 +24,8 @@ export function PhoneStep({
   const [saved, setSaved] = useState<ConfirmPhoneResult | null>(
     initialPhone ? { ok: true } : null
   );
+  // True when the phone was pre-loaded; clicking "Next" must still bump the DB step.
+  const [preLoaded] = useState(!!initialPhone);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -36,6 +38,19 @@ export function PhoneStep({
       if (r.ok) setSaved(r);
       else setError(r.error ?? "Couldn't save the number.");
     });
+  }
+
+  function next() {
+    if (preLoaded && !saved?.preRegistered) {
+      // Phone was already in the profile — confirmPhone was never called,
+      // so onboarding_step wasn't bumped. Do it now before advancing.
+      startTransition(async () => {
+        await acknowledgePhoneStep();
+        onDone();
+      });
+    } else {
+      onDone();
+    }
   }
 
   return (
@@ -78,8 +93,8 @@ export function PhoneStep({
       {error && <p className="text-sm text-err">{error}</p>}
 
       {confirmed ? (
-        <Button onClick={onDone} className="w-full" size="lg">
-          Next
+        <Button onClick={next} disabled={pending} className="w-full" size="lg">
+          {pending ? <Spinner /> : "Next"}
         </Button>
       ) : (
         <Button
