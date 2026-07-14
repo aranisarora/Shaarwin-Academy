@@ -2883,6 +2883,20 @@ begin
   select full_name into v_player from players where id = new.player_id;
   select full_name into v_client from profiles where id = new.client_id;
 
+  -- For series bookings, only notify the founder on the first session booked.
+  -- Subsequent inserts in the same series (same transaction) would otherwise
+  -- flood WhatsApp with one message per future occurrence.
+  if new.series_id is not null then
+    if exists (select 1 from bookings where series_id = new.series_id and id <> new.id) then
+      return new;
+    end if;
+  end if;
+  if new.private_series_id is not null then
+    if exists (select 1 from bookings where private_series_id = new.private_series_id and id <> new.id) then
+      return new;
+    end if;
+  end if;
+
   if v_class.class_type = 'private' then
     select address into v_where from private_class_details where class_id = v_class.id;
   else
