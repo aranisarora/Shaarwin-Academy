@@ -17,7 +17,7 @@ import {
 export const metadata: Metadata = {
   title: "Locations",
   description:
-    "Sharwin TTA venues across Bengaluru with weekly group schedules.",
+    "Sharwin Table Tennis Academy venues across Bengaluru with weekly group schedules.",
 };
 
 // Waits on Supabase inside a <Suspense> boundary so the page header and CTAs

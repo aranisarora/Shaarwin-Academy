@@ -18,17 +18,20 @@ const siteUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
   title: {
-    default: "Sharwin TTA — Table Tennis Academy, Bengaluru",
-    template: "%s — Sharwin TTA",
+    default: "Sharwin Table Tennis Academy — Bengaluru",
+    template: "%s — Sharwin Table Tennis Academy",
   },
   description:
     "ITTF-certified coaching at your society, school, college or office. Play faster. Think faster.",
+  alternates: {
+    canonical: siteUrl,
+  },
   openGraph: {
-    title: "Sharwin TTA — Table Tennis Academy, Bengaluru",
+    title: "Sharwin Table Tennis Academy — Bengaluru",
     description:
       "ITTF-certified coaching at your society, school, college or office. Play faster. Think faster.",
     url: siteUrl,
-    siteName: "Sharwin TTA",
+    siteName: "Sharwin Table Tennis Academy",
     images: [{ url: "/images/og-card.jpg", width: 1920, height: 1005 }],
     locale: "en_GB",
     type: "website",

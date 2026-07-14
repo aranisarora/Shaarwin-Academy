@@ -2,8 +2,8 @@ import type { MetadataRoute } from "next";
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "Sharwin Academy",
-    short_name: "Sharwin Academy",
+    name: "Sharwin Table Tennis Academy",
+    short_name: "Sharwin TTA",
     description: "Book table tennis classes and private coaching.",
     start_url: "/app",
     display: "standalone",

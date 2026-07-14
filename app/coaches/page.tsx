@@ -7,7 +7,7 @@ import { getCoaches } from "@/lib/data";
 
 export const metadata: Metadata = {
   title: "Coaches",
-  description: "Meet the Sharwin TTA coaching team.",
+  description: "Meet the Sharwin Table Tennis Academy coaching team.",
 };
 
 async function CoachGrid() {
