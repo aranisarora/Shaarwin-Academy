@@ -125,37 +125,41 @@ export function AdminCalendar({
   const today = wallDate(new Date().toISOString());
   const emptyCoaches = lanes.byCoach.filter(({ rows }) => rows.length === 0).map(({ coach }) => coach);
 
-  // Under a day header the card only needs the time; in the ungrouped
-  // "no coach" box it carries the full weekday + date instead.
-  const Block = ({ session, showDay = false }: { session: SessionRow; showDay?: boolean }) => (
-    <button
-      onClick={() => {
-        setMessage(null);
-        setSelected(session);
-      }}
-      className={`w-full rounded-[8px] border px-3 py-2 text-left text-sm hover:border-ember ${
-        session.coachId ? "border-line bg-surface-2" : "border-err bg-surface-2"
-      }`}
-    >
-      <div className="flex items-baseline justify-between gap-2">
+  // Card colour codes the session: red border = no coach yet (fix me);
+  // ember left-accent = private 1:1; plain = a group class. Under a day
+  // header the card shows just the time; the ungrouped "no coach" box
+  // carries the full weekday + date instead.
+  const Block = ({ session, showDay = false }: { session: SessionRow; showDay?: boolean }) => {
+    const tone = !session.coachId
+      ? "border-err bg-surface-2"
+      : session.isPrivate
+        ? "border-line border-l-[3px] border-l-ember bg-surface-2"
+        : "border-line bg-surface-2";
+    return (
+      <button
+        onClick={() => {
+          setMessage(null);
+          setSelected(session);
+        }}
+        className={`w-full rounded-[8px] border px-3 py-2 text-left text-sm hover:border-ember ${tone}`}
+      >
         <p className="tnum font-medium">
           {showDay ? fmtWhen(session.starts_at) : clockTime(session.starts_at)}
         </p>
-        {session.isPrivate && <Badge tone="ember">Private</Badge>}
-      </div>
-      <p className="text-xs text-fg-2">
-        {session.title}
-        {(session.playerName || session.venueName)
-          ? ` — ${[session.playerName, session.venueName].filter(Boolean).join(" @ ")}`
-          : ""}
-      </p>
-      {session.coachId && session.coachArrivedAt && (
-        <span className="mt-1.5 inline-flex">
-          <Badge tone="ok">✓ Arrived {clockTime(session.coachArrivedAt)}</Badge>
-        </span>
-      )}
-    </button>
-  );
+        <p className="text-xs text-fg-2">
+          {session.title}
+          {(session.playerName || session.venueName)
+            ? ` — ${[session.playerName, session.venueName].filter(Boolean).join(" @ ")}`
+            : ""}
+        </p>
+        {session.coachId && session.coachArrivedAt && (
+          <span className="mt-1.5 inline-flex">
+            <Badge tone="ok">✓ Arrived {clockTime(session.coachArrivedAt)}</Badge>
+          </span>
+        )}
+      </button>
+    );
+  };
 
   const DayGroups = ({ rows }: { rows: SessionRow[] }) => (
     <div className="space-y-3">
@@ -206,7 +210,9 @@ export function AdminCalendar({
         .filter(({ rows }) => rows.length > 0)
         .map(({ coach, rows }) => (
           <div key={coach.id} className="space-y-3">
-            <p className="label">{coach.name}</p>
+            <p className="border-b border-line pb-1.5 text-base font-semibold text-fg">
+              {coach.name}
+            </p>
             <DayGroups rows={rows} />
           </div>
         ))}
