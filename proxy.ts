@@ -9,6 +9,11 @@ const roleHome: Record<string, string> = {
   founder: "/admin",
 };
 
+// Founder "view as coach" preview cookie (see lib/coach-preview.ts). While it is
+// set, a founder is allowed into /coach so the preview actually renders — the
+// coach pages verify the cookie server-side, so this can't be used to escalate.
+const PREVIEW_COOKIE = "preview_coach_id";
+
 export async function proxy(request: NextRequest) {
   let response = NextResponse.next({ request });
 
@@ -60,6 +65,15 @@ export async function proxy(request: NextRequest) {
 
   const role = profile?.role ?? "client";
   const home = roleHome[role] ?? "/app";
+
+  // A founder previewing a coach is allowed into /coach; without this the
+  // wrong-role redirect below would bounce them straight back to /admin and the
+  // preview would never render.
+  const previewingCoach =
+    role === "founder" &&
+    !!request.cookies.get(PREVIEW_COOKIE)?.value &&
+    (pathname === "/coach" || pathname.startsWith("/coach/"));
+  if (previewingCoach) return response;
 
   // Wrong-role access → redirect to own home.
   if (!pathname.startsWith(home)) {
