@@ -303,7 +303,7 @@ const createOneOff: WaTool = {
 const createPrivate: WaTool = {
   name: "create_private_session",
   description:
-    "Book a private one-to-one session FOR a client (client_id from list_clients). Supports recurring: pass recur_weeks (2–12) to book the same slot for N consecutive weeks in one shot — mirroring the admin 'Add to schedule' recurring toggle; the whole series rolls back if any week fails. Creates sessions, books the client, notifies them, and debits minutes from their private balance per session (balance may go negative — top up via adjust_private_credits). Location: pass EITHER venue_id (from list_venues) OR a free-text address to geocode. Defaults: duration_minutes → 60, has_table → true, player → client's default, recur_weeks → 1 (single session). MONEY-ADJACENT: if the request is complete and unambiguous, just book it and report defaults used + minutes debited — no separate yes needed. Date YYYY-MM-DD, time HH:MM (IST). coach_id optional.",
+    "Book a private one-to-one session FOR a client (client_id from list_clients). Supports recurring: pass recur_weeks (2–12) to stand up a weekly private slot — a standing series booked that many weeks ahead that the client sees as 'Weekly', can cancel all future weeks of, and that the nightly generator keeps rolling while their plan is live (same as the admin 'Add to schedule' recurring toggle). The whole run rolls back if any week fails. Creates sessions, books the client, notifies them, and debits minutes from their private balance per session (balance may go negative — top up via adjust_private_credits). Location: pass EITHER venue_id (from list_venues) OR a free-text address to geocode. Defaults: duration_minutes → 60, has_table → true, player → client's default, recur_weeks → 1 (single session). MONEY-ADJACENT: if the request is complete and unambiguous, just book it and report defaults used + minutes debited — no separate yes needed. Date YYYY-MM-DD, time HH:MM (IST). coach_id optional.",
   input_schema: {
     type: "object",
     properties: {
@@ -314,7 +314,7 @@ const createPrivate: WaTool = {
       duration_minutes: { type: "number", description: "60 or 90 — defaults to 60 if omitted" },
       recur_weeks: {
         type: "number",
-        description: "1–12. Creates one session per week for N weeks starting on date, same weekday/time. Default 1 (single session). Mirrors admin recurring toggle.",
+        description: "1–12. Stands up a weekly private slot starting on date (same weekday/time), booked N weeks ahead as a managed series the nightly generator keeps rolling. Default 1 (single one-off session). Mirrors admin recurring toggle.",
       },
       override_plan_limits: {
         type: "boolean",

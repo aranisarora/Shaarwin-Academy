@@ -204,9 +204,9 @@ export type PrivateSessionInput = {
   /** Founder comp: skip the client's plan duration/weekly-frequency checks. */
   overridePlanLimits?: boolean;
   /**
-   * Repeat the session weekly. 1 (or unset) books a single session; N books the
-   * same weekday/time for N consecutive weeks, each its own private class,
-   * session, booking and minutes debit — all-or-nothing.
+   * Repeat the session weekly. 1 (or unset) books a single one-off session; N
+   * stands up a recurring weekly slot — a private_booking_series booked N weeks
+   * ahead, which the nightly generator then keeps rolling. All-or-nothing.
    */
   recurWeeks?: number;
 };
@@ -236,9 +236,12 @@ function istWeekWindow(d: Date): { from: Date; to: Date } {
  * symmetric with the cancel-refund path; the balance may go negative and the
  * founder can top it up via adjustCreditsCore.
  *
- * With `recurWeeks > 1` this repeats the same weekday/time for that many weeks,
- * one independent private class per week (mirroring the client-side weekly
- * series), rolling the whole run back if any week fails.
+ * With `recurWeeks > 1` this creates a real private_booking_series (the same
+ * model as the client-side create_private_series): the slot shows as "Weekly",
+ * the client can cancel all future weeks from their schedule, and the nightly
+ * generate_private_sessions keeps rolling the horizon while their plan is live.
+ * The initial `recurWeeks` weeks are booked here; the whole run rolls back if
+ * any week fails.
  */
 export async function createPrivateSessionCore(
   supabase: SupabaseClient,
@@ -288,6 +291,13 @@ export async function createPrivateSessionCore(
 
   const duration = input.durationMinutes === 90 ? 90 : 60;
   const weeks = Math.min(Math.max(Math.trunc(input.recurWeeks ?? 1), 1), 12);
+  // >1 week means a standing weekly slot, not a fixed block: we create a real
+  // private_booking_series (same model as the client-side create_private_series)
+  // so it shows as "Weekly", the client can cancel all future weeks, and the
+  // nightly generate_private_sessions keeps rolling the horizon.
+  const recurring = weeks > 1;
+  // ISO weekday (Mon=1..Sun=7) of the first occurrence, in the IST wall date.
+  const isoWeekday = (((new Date(`${input.date}T00:00:00Z`).getUTCDay() + 6) % 7) + 1);
 
   // One occurrence per week from the chosen start date, same weekday/time.
   const occurrences = Array.from({ length: weeks }, (_, i) => {
@@ -345,6 +355,7 @@ export async function createPrivateSessionCore(
   const createdClassIds: string[] = [];
   const createdLedgerIds: string[] = [];
   const createdSessions: { id: string; start: Date }[] = [];
+  let seriesId: string | null = null;
 
   async function rollback() {
     if (createdLedgerIds.length)
@@ -352,6 +363,41 @@ export async function createPrivateSessionCore(
     // Deleting the class cascades to its details, session and booking.
     if (createdClassIds.length)
       await supabase.from("classes").delete().in("id", createdClassIds);
+    if (seriesId)
+      await supabase.from("private_booking_series").delete().eq("id", seriesId);
+  }
+
+  // Stand up the standing series first, so every occurrence below links to it.
+  if (recurring) {
+    const { data: series, error: seriesErr } = await supabase
+      .from("private_booking_series")
+      .insert({
+        client_id: input.clientId,
+        player_id: playerId,
+        preferred_coach: input.coachId || null,
+        weekday: isoWeekday,
+        start_time: input.time,
+        duration_minutes: duration,
+        address: input.address,
+        postcode: input.postcode ?? "",
+        lat: input.lat,
+        lng: input.lng,
+        has_table: input.hasTable ?? true,
+        access_notes: input.accessNotes || null,
+        address_details: input.addressDetails ?? null,
+      })
+      .select("id")
+      .single();
+    if (seriesErr || !series) {
+      return {
+        ok: false,
+        error:
+          seriesErr?.code === "23505"
+            ? "This client already has a weekly slot at that day and time."
+            : "Couldn't set up the weekly series.",
+      };
+    }
+    seriesId = series.id;
   }
 
   for (const occ of occurrences) {
@@ -419,6 +465,7 @@ export async function createPrivateSessionCore(
         client_id: input.clientId,
         player_id: playerId,
         status: "confirmed",
+        private_series_id: seriesId,
       })
       .select("id")
       .single();
@@ -450,7 +497,7 @@ export async function createPrivateSessionCore(
     title: weeks > 1 ? "Weekly private sessions booked" : "Private session booked",
     body:
       weeks > 1
-        ? `We've set up ${weeks} weekly private sessions starting ${firstWhen} — they're on your schedule.`
+        ? `We've set up a weekly private slot starting ${firstWhen} — it's on your schedule, and you can manage it there.`
         : `We've set up a private session for ${firstWhen} — it's on your schedule.`,
     data: { session_id: createdSessions[0].id, url: "/app/schedule" },
   });
@@ -476,6 +523,7 @@ export async function createPrivateSessionCore(
       minutes: duration,
       weeks,
       sessions: createdSessions.length,
+      private_series_id: seriesId,
     },
   });
   return { ok: true };
