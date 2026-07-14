@@ -81,6 +81,16 @@ export function weekdayOfDate(date: string): string {
   return ["SU", "MO", "TU", "WE", "TH", "FR", "SA"][new Date(y, m - 1, d).getDay()];
 }
 
+/** "Mon 14 Jul" — day header for grouping the week view by day. */
+export function dayLabel(iso: string): string {
+  return new Intl.DateTimeFormat("en-GB", {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    timeZone: "Asia/Kolkata",
+  }).format(new Date(iso));
+}
+
 /** "Sat 12 Jul, 6:30 pm" — display formatting in academy time. */
 export function fmtWhen(iso: string): string {
   return new Intl.DateTimeFormat("en-GB", {

@@ -17,7 +17,9 @@ import {
   WEEKDAY_NAME,
   WEEKDAYS,
   clockTime,
+  dayLabel,
   fmtWhen,
+  wallDate,
   type ClassRow,
   type ClientOption,
   type Coach,
@@ -27,6 +29,24 @@ import {
 } from "./admin-calendar-types";
 
 const WEEKDAY_ORDER = WEEKDAYS.map(([code]) => code) as string[];
+
+// Sessions arrive already sorted by start time, so grouping them by academy
+// wall-date yields days in chronological order with each day's sessions in
+// order. `today` (an academy YYYY-MM-DD) flags the current day in this week.
+type DayGroup = { key: string; label: string; isToday: boolean; rows: SessionRow[] };
+function groupByDay(rows: SessionRow[], today: string): DayGroup[] {
+  const groups: DayGroup[] = [];
+  for (const s of rows) {
+    const key = wallDate(s.starts_at);
+    let g = groups[groups.length - 1];
+    if (!g || g.key !== key) {
+      g = { key, label: dayLabel(s.starts_at), isToday: key === today, rows: [] };
+      groups.push(g);
+    }
+    g.rows.push(s);
+  }
+  return groups;
+}
 
 export function AdminCalendar({
   sessions,
@@ -102,8 +122,12 @@ export function AdminCalendar({
   }, [sessions, coaches]);
 
   const activeClasses = classes.filter((c) => c.active);
+  const today = wallDate(new Date().toISOString());
+  const emptyCoaches = lanes.byCoach.filter(({ rows }) => rows.length === 0).map(({ coach }) => coach);
 
-  const Block = ({ session }: { session: SessionRow }) => (
+  // Under a day header the card only needs the time; in the ungrouped
+  // "no coach" box it carries the full weekday + date instead.
+  const Block = ({ session, showDay = false }: { session: SessionRow; showDay?: boolean }) => (
     <button
       onClick={() => {
         setMessage(null);
@@ -113,7 +137,12 @@ export function AdminCalendar({
         session.coachId ? "border-line bg-surface-2" : "border-err bg-surface-2"
       }`}
     >
-      <p className="tnum font-medium">{fmtWhen(session.starts_at)}</p>
+      <div className="flex items-baseline justify-between gap-2">
+        <p className="tnum font-medium">
+          {showDay ? fmtWhen(session.starts_at) : clockTime(session.starts_at)}
+        </p>
+        {session.isPrivate && <Badge tone="ember">Private</Badge>}
+      </div>
       <p className="text-xs text-fg-2">
         {session.title}
         {(session.playerName || session.venueName)
@@ -126,6 +155,26 @@ export function AdminCalendar({
         </span>
       )}
     </button>
+  );
+
+  const DayGroups = ({ rows }: { rows: SessionRow[] }) => (
+    <div className="space-y-3">
+      {groupByDay(rows, today).map((day) => (
+        <div key={day.key}>
+          <p
+            className={`mb-2 text-xs font-medium ${day.isToday ? "text-ember" : "text-fg-2"}`}
+          >
+            {day.label}
+            {day.isToday ? " · Today" : ""}
+          </p>
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+            {day.rows.map((s) => (
+              <Block key={s.id} session={s} />
+            ))}
+          </div>
+        </div>
+      ))}
+    </div>
   );
 
   return (
@@ -147,28 +196,27 @@ export function AdminCalendar({
           <p className="label mb-3 !text-err">No coach yet — tap to fix</p>
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
             {lanes.unassigned.map((s) => (
-              <Block key={s.id} session={s} />
+              <Block key={s.id} session={s} showDay />
             ))}
           </div>
         </div>
       )}
 
-      {lanes.byCoach.map(({ coach, rows }) => (
-        <div key={coach.id}>
-          <p className="label mb-2">{coach.name}</p>
-          {rows.length === 0 ? (
-            <p className="rounded-[12px] border border-line bg-surface-2 px-4 py-3 text-sm text-fg-2">
-              Nothing this week.
-            </p>
-          ) : (
-            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-              {rows.map((s) => (
-                <Block key={s.id} session={s} />
-              ))}
-            </div>
-          )}
-        </div>
-      ))}
+      {lanes.byCoach
+        .filter(({ rows }) => rows.length > 0)
+        .map(({ coach, rows }) => (
+          <div key={coach.id} className="space-y-3">
+            <p className="label">{coach.name}</p>
+            <DayGroups rows={rows} />
+          </div>
+        ))}
+
+      {emptyCoaches.length > 0 && (
+        <p className="text-sm text-fg-2">
+          No sessions this week:{" "}
+          <span className="text-fg">{emptyCoaches.map((c) => c.name).join(", ")}</span>.
+        </p>
+      )}
 
       {coaches.length === 0 && (
         <p className="rounded-[12px] border border-line bg-surface-2 p-4 text-sm text-fg-2">

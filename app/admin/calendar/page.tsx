@@ -247,7 +247,9 @@ export default async function AdminCalendarPage({
     month: "short",
     timeZone: "Asia/Kolkata",
   });
-  const rangeLabel = `${fmt.format(from)} – ${fmt.format(new Date(to.getTime() - 86400000))}${weekOffset === 0 ? " (this week)" : ""}`;
+  // The "(this week)" suffix is owned by AdminCalendarNav so SSR and
+  // client-side week navigation render the label identically.
+  const rangeLabel = `${fmt.format(from)} – ${fmt.format(new Date(to.getTime() - 86400000))}`;
 
   // Serialise the Map to a plain object for the client component prop.
   const nextByClassObj = Object.fromEntries(nextByClass);
