@@ -497,7 +497,7 @@ ALTER TABLE public.notifications ADD CONSTRAINT notifications_pkey PRIMARY KEY (
 ALTER TABLE public.notifications ADD CONSTRAINT notifications_user_id_fkey FOREIGN KEY (user_id) REFERENCES profiles(id) ON DELETE CASCADE;
 ALTER TABLE public.student_notes ADD CONSTRAINT student_notes_pkey PRIMARY KEY (id);
 ALTER TABLE public.student_notes ADD CONSTRAINT student_notes_player_id_fkey FOREIGN KEY (player_id) REFERENCES players(id) ON DELETE CASCADE;
-ALTER TABLE public.student_notes ADD CONSTRAINT student_notes_author_id_fkey FOREIGN KEY (author_id) REFERENCES profiles(id);
+ALTER TABLE public.student_notes ADD CONSTRAINT student_notes_author_id_fkey FOREIGN KEY (author_id) REFERENCES profiles(id) ON DELETE CASCADE;
 ALTER TABLE public.orders ADD CONSTRAINT orders_pkey PRIMARY KEY (id);
 ALTER TABLE public.orders ADD CONSTRAINT orders_razorpay_order_id_key UNIQUE (razorpay_order_id);
 ALTER TABLE public.orders ADD CONSTRAINT orders_client_id_fkey FOREIGN KEY (client_id) REFERENCES profiles(id) ON DELETE CASCADE;
