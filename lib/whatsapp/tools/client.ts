@@ -372,7 +372,7 @@ const listPlans: WaTool = {
 const listOneOffs: WaTool = {
   name: "list_one_off_products",
   description:
-    "One-off purchases that need no membership: a drop-in group class, single private sessions (60/90 min), and the discounted intro private session (a promotion, one per child — make sure the user knows it's a promo). Group members get member pricing on private sessions. Use before sending a payment link.",
+    "One-off purchases that need no membership: a drop-in group class, single private sessions (60 min), and the discounted intro private session (a promotion, one per child — make sure the user knows it's a promo). Group members get member pricing on private sessions. Use before sending a payment link.",
   input_schema: { type: "object", properties: {} },
   run: async (_input, ctx) => {
     const [{ data: products }, { data: isMember }] = await Promise.all([

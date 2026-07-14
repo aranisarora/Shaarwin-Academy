@@ -21,7 +21,7 @@ const faqs = [
   },
   {
     q: "How does membership work?",
-    a: "One monthly payment, cancel anytime. Group plans hold a weekly routine — one, two or three classes a week. Private plans book a weekly one-to-one session at your home, 60 or 90 minutes. You can also pay per class without any membership; plans just work out cheaper.",
+    a: "One monthly payment, cancel anytime. Group plans hold a weekly routine — one, two or three classes a week. Private plans book 60-minute one-to-one sessions at your home, from once to four times a week. You can also pay per class without any membership; plans just work out cheaper.",
   },
   {
     q: "What if I need to cancel a session?",

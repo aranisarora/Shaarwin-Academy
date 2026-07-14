@@ -67,14 +67,14 @@ on conflict (id) do nothing;
 -- plans (P04 table, monthly billing). price_pence holds paise (minor unit of
 -- INR): ₹2,399 = 239,900. group_sessions_per_week > 0 = group plan with a
 -- weekly cap; 0 = private plan (no group access).
-insert into plans (id, name, description, price_pence, currency, billing_interval_months, group_sessions_per_week, private_minutes_per_cycle) values
-  ('00000000-0000-4000-8000-0000000000d4', 'Group — 1×/week', 'One group class a week.', 129900, 'inr', 1, 1, 0),
-  ('00000000-0000-4000-8000-0000000000d5', 'Group — 2×/week', 'Two group classes a week. Our most popular plan.', 239900, 'inr', 1, 2, 0),
-  ('00000000-0000-4000-8000-0000000000d6', 'Group — 3×/week', 'Three group classes a week.', 329900, 'inr', 1, 3, 0),
-  ('00000000-0000-4000-8000-0000000000d7', 'Private — Weekly, 60 min', 'A weekly 60-minute home session (260 minutes a month).', 419900, 'inr', 1, 0, 260),
-  ('00000000-0000-4000-8000-0000000000d8', 'Private — Weekly, 90 min', 'A weekly 90-minute home session (390 minutes a month).', 599900, 'inr', 1, 0, 390),
-  ('00000000-0000-4000-8000-0000000000d9', 'Private — 2×/week, 60 min', 'Two 60-minute home sessions a week (520 minutes a month).', 799900, 'inr', 1, 0, 520),
-  ('00000000-0000-4000-8000-0000000000da', 'Private — 2×/week, 90 min', 'Two 90-minute home sessions a week (780 minutes a month).', 1149900, 'inr', 1, 0, 780)
+insert into plans (id, name, description, price_pence, currency, billing_interval_months, group_sessions_per_week, private_minutes_per_cycle, private_sessions_per_week, private_session_minutes) values
+  ('00000000-0000-4000-8000-0000000000d4', 'Group — 1×/week', 'One group class a week.', 129900, 'inr', 1, 1, 0, null, null),
+  ('00000000-0000-4000-8000-0000000000d5', 'Group — 2×/week', 'Two group classes a week. Our most popular plan.', 239900, 'inr', 1, 2, 0, null, null),
+  ('00000000-0000-4000-8000-0000000000d6', 'Group — 3×/week', 'Three group classes a week.', 349900, 'inr', 1, 3, 0, null, null),
+  ('00000000-0000-4000-8000-0000000000d7', 'Private — Weekly, 60 min', 'A weekly 60-minute home session (260 minutes a month).', 499900, 'inr', 1, 0, 260, 1, 60),
+  ('00000000-0000-4000-8000-0000000000d9', 'Private — 2×/week, 60 min', 'Two 60-minute home sessions a week (520 minutes a month).', 909900, 'inr', 1, 0, 520, 2, 60),
+  ('00000000-0000-4000-8000-0000000000db', 'Private — 3×/week, 60 min', 'Three 60-minute home sessions a week (780 minutes a month).', 1200000, 'inr', 1, 0, 780, 3, 60),
+  ('00000000-0000-4000-8000-0000000000dc', 'Private — 4×/week, 60 min', 'Four 60-minute home sessions a week (1040 minutes a month).', 1600000, 'inr', 1, 0, 1040, 4, 60)
 on conflict (id) do nothing;
 
 -- one-off products (0017): drop-in group class, à-la-carte private hours,

@@ -2,6 +2,7 @@
 --
 -- GENERATED from the live database via the Supabase MCP server. Do not edit by
 -- hand. Regenerate after any schema change (see AGENTS.md -> Database).
+-- Last verified: 2026-07-14 (migration 0028 is DML-only; DDL unchanged).
 --
 -- This is a reference dump, grouped for readability (extensions, enums, tables,
 -- constraints, indexes, functions, view, RLS). It is not guaranteed to run

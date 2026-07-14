@@ -82,9 +82,9 @@ const P = {
   group2: "00000000-0000-4000-8000-0000000000d5",
   group3: "00000000-0000-4000-8000-0000000000d6",
   privateWeekly60: "00000000-0000-4000-8000-0000000000d7",
-  privateWeekly90: "00000000-0000-4000-8000-0000000000d8",
   privateTwice60: "00000000-0000-4000-8000-0000000000d9",
-  privateTwice90: "00000000-0000-4000-8000-0000000000da",
+  privateThrice60: "00000000-0000-4000-8000-0000000000db",
+  privateFourx60: "00000000-0000-4000-8000-0000000000dc",
 };
 const C = {
   lakefrontJuniors: "00000000-0000-4000-8000-0000000001f1",
@@ -145,13 +145,13 @@ await upsert("venues", [
 await upsert("plans", [
   // Monthly billing. price_pence holds paise (minor unit of INR): ₹2,399 = 239,900.
   // group_sessions_per_week > 0 = group plan; 0 = private plan (no group access).
-  { id: P.group1, name: "Group — 1×/week", description: "One group class a week.", price_pence: 129900, currency: "inr", billing_interval_months: 1, group_sessions_per_week: 1, private_minutes_per_cycle: 0 },
-  { id: P.group2, name: "Group — 2×/week", description: "Two group classes a week. Our most popular plan.", price_pence: 239900, currency: "inr", billing_interval_months: 1, group_sessions_per_week: 2, private_minutes_per_cycle: 0 },
-  { id: P.group3, name: "Group — 3×/week", description: "Three group classes a week.", price_pence: 329900, currency: "inr", billing_interval_months: 1, group_sessions_per_week: 3, private_minutes_per_cycle: 0 },
-  { id: P.privateWeekly60, name: "Private — Weekly, 60 min", description: "A weekly 60-minute home session (260 minutes a month).", price_pence: 419900, currency: "inr", billing_interval_months: 1, group_sessions_per_week: 0, private_minutes_per_cycle: 260 },
-  { id: P.privateWeekly90, name: "Private — Weekly, 90 min", description: "A weekly 90-minute home session (390 minutes a month).", price_pence: 599900, currency: "inr", billing_interval_months: 1, group_sessions_per_week: 0, private_minutes_per_cycle: 390 },
-  { id: P.privateTwice60, name: "Private — 2×/week, 60 min", description: "Two 60-minute home sessions a week (520 minutes a month).", price_pence: 799900, currency: "inr", billing_interval_months: 1, group_sessions_per_week: 0, private_minutes_per_cycle: 520 },
-  { id: P.privateTwice90, name: "Private — 2×/week, 90 min", description: "Two 90-minute home sessions a week (780 minutes a month).", price_pence: 1149900, currency: "inr", billing_interval_months: 1, group_sessions_per_week: 0, private_minutes_per_cycle: 780 },
+  { id: P.group1, name: "Group — 1×/week", description: "One group class a week.", price_pence: 159900, currency: "inr", billing_interval_months: 1, group_sessions_per_week: 1, private_minutes_per_cycle: 0 },
+  { id: P.group2, name: "Group — 2×/week", description: "Two group classes a week. Our most popular plan.", price_pence: 249900, currency: "inr", billing_interval_months: 1, group_sessions_per_week: 2, private_minutes_per_cycle: 0 },
+  { id: P.group3, name: "Group — 3×/week", description: "Three group classes a week.", price_pence: 349900, currency: "inr", billing_interval_months: 1, group_sessions_per_week: 3, private_minutes_per_cycle: 0 },
+  { id: P.privateWeekly60, name: "Private — Weekly, 60 min", description: "A weekly 60-minute home session (260 minutes a month).", price_pence: 499900, currency: "inr", billing_interval_months: 1, group_sessions_per_week: 0, private_minutes_per_cycle: 260, private_sessions_per_week: 1, private_session_minutes: 60 },
+  { id: P.privateTwice60, name: "Private — 2×/week, 60 min", description: "Two 60-minute home sessions a week (520 minutes a month).", price_pence: 909900, currency: "inr", billing_interval_months: 1, group_sessions_per_week: 0, private_minutes_per_cycle: 520, private_sessions_per_week: 2, private_session_minutes: 60 },
+  { id: P.privateThrice60, name: "Private — 3×/week, 60 min", description: "Three 60-minute home sessions a week (780 minutes a month).", price_pence: 1200000, currency: "inr", billing_interval_months: 1, group_sessions_per_week: 0, private_minutes_per_cycle: 780, private_sessions_per_week: 3, private_session_minutes: 60 },
+  { id: P.privateFourx60, name: "Private — 4×/week, 60 min", description: "Four 60-minute home sessions a week (1040 minutes a month).", price_pence: 1600000, currency: "inr", billing_interval_months: 1, group_sessions_per_week: 0, private_minutes_per_cycle: 1040, private_sessions_per_week: 4, private_session_minutes: 60 },
 ]);
 
 await upsert("products", [
