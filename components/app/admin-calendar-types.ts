@@ -15,6 +15,9 @@ export type SessionRow = {
   isPrivate: boolean;
   venueName: string | null;
   playerName: string | null;
+  // For private sessions: the assigned client, or null for an "open" slot held
+  // without a client yet. Drives the "unassigned" label and the assign action.
+  privateClientId: string | null;
   address: StructuredAddress | null;
   // Class scope — what "every week" edits apply to. Present on group sessions.
   classId: string;

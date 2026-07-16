@@ -188,7 +188,12 @@ export async function setSessionCapacityCore(
 }
 
 export type PrivateSessionInput = {
-  clientId: string;
+  /**
+   * The client this session is booked for. Omit to hold an "open" private slot
+   * (coach + venue + time, no client) — no booking or minutes debit until a
+   * client is assigned later via assignPrivateSessionClientCore.
+   */
+  clientId?: string;
   playerId?: string; // defaults to the client's first player
   date: string; // YYYY-MM-DD academy wall clock
   time: string; // HH:MM
@@ -248,44 +253,50 @@ export async function createPrivateSessionCore(
   founderId: string,
   input: PrivateSessionInput
 ): Promise<OpResult> {
+  // No client → an open slot: no player, no booking, no minutes debit.
+  const isOpen = !input.clientId;
+  const clientId = input.clientId;
+
   let playerId = input.playerId;
-  if (playerId) {
-    const { data: p } = await supabase
-      .from("players")
-      .select("id")
-      .eq("id", playerId)
-      .eq("client_id", input.clientId)
-      .maybeSingle();
-    if (!p) return { ok: false, error: "That player doesn't belong to this client." };
-  } else {
-    const { data: p } = await supabase
-      .from("players")
-      .select("id")
-      .eq("client_id", input.clientId)
-      .order("created_at")
-      .limit(1)
-      .maybeSingle();
-    if (!p) {
-      // Founder-initiated booking for an account that never added a player —
-      // create one from the client's name so the session has someone on it.
-      const { data: prof } = await supabase
-        .from("profiles")
-        .select("full_name")
-        .eq("id", input.clientId)
-        .maybeSingle();
-      const { data: fresh, error: freshErr } = await supabase
+  if (!isOpen && clientId) {
+    if (playerId) {
+      const { data: p } = await supabase
         .from("players")
-        .insert({
-          client_id: input.clientId,
-          full_name: prof?.full_name?.trim() || "Player",
-        })
         .select("id")
-        .single();
-      if (freshErr || !fresh)
-        return { ok: false, error: "That client has no player profile yet." };
-      playerId = fresh.id;
+        .eq("id", playerId)
+        .eq("client_id", clientId)
+        .maybeSingle();
+      if (!p) return { ok: false, error: "That player doesn't belong to this client." };
     } else {
-      playerId = p.id;
+      const { data: p } = await supabase
+        .from("players")
+        .select("id")
+        .eq("client_id", clientId)
+        .order("created_at")
+        .limit(1)
+        .maybeSingle();
+      if (!p) {
+        // Founder-initiated booking for an account that never added a player —
+        // create one from the client's name so the session has someone on it.
+        const { data: prof } = await supabase
+          .from("profiles")
+          .select("full_name")
+          .eq("id", clientId)
+          .maybeSingle();
+        const { data: fresh, error: freshErr } = await supabase
+          .from("players")
+          .insert({
+            client_id: clientId,
+            full_name: prof?.full_name?.trim() || "Player",
+          })
+          .select("id")
+          .single();
+        if (freshErr || !fresh)
+          return { ok: false, error: "That client has no player profile yet." };
+        playerId = fresh.id;
+      } else {
+        playerId = p.id;
+      }
     }
   }
 
@@ -294,8 +305,9 @@ export async function createPrivateSessionCore(
   // >1 week means a standing weekly slot, not a fixed block: we create a real
   // private_booking_series (same model as the client-side create_private_series)
   // so it shows as "Weekly", the client can cancel all future weeks, and the
-  // nightly generate_private_sessions keeps rolling the horizon.
-  const recurring = weeks > 1;
+  // nightly generate_private_sessions keeps rolling the horizon. Open slots have
+  // no client to key a series to, so they're always a single held session.
+  const recurring = weeks > 1 && !isOpen;
   // ISO weekday (Mon=1..Sun=7) of the first occurrence, in the IST wall date.
   const isoWeekday = (((new Date(`${input.date}T00:00:00Z`).getUTCDay() + 6) % 7) + 1);
 
@@ -309,10 +321,11 @@ export async function createPrivateSessionCore(
     return { ok: false, error: "Pick a time in the future." };
 
   // Mirror the client-side plan enforcement (duration + weekly frequency)
-  // unless the founder explicitly overrides to comp a session.
-  if (!input.overridePlanLimits) {
+  // unless the founder explicitly overrides to comp a session. Open slots have
+  // no client, so there's no plan to enforce.
+  if (!isOpen && clientId && !input.overridePlanLimits) {
     const { data: limitRows } = await supabase.rpc("private_plan_limits", {
-      p_client: input.clientId,
+      p_client: clientId,
     });
     const limits = (Array.isArray(limitRows) ? limitRows[0] : limitRows) as
       | { sessions_per_week: number | null; session_minutes: number | null }
@@ -333,7 +346,7 @@ export async function createPrivateSessionCore(
             count: "exact",
             head: true,
           })
-          .eq("client_id", input.clientId)
+          .eq("client_id", clientId)
           .eq("status", "confirmed")
           .eq("class_sessions.classes.class_type", "private")
           .gte("class_sessions.starts_at", from.toISOString())
@@ -372,7 +385,7 @@ export async function createPrivateSessionCore(
     const { data: series, error: seriesErr } = await supabase
       .from("private_booking_series")
       .insert({
-        client_id: input.clientId,
+        client_id: clientId,
         player_id: playerId,
         preferred_coach: input.coachId || null,
         weekday: isoWeekday,
@@ -405,7 +418,7 @@ export async function createPrivateSessionCore(
       .from("classes")
       .insert({
         class_type: "private",
-        title: "Private session",
+        title: isOpen ? "Private — unassigned" : "Private session",
         skill_level: "beginner",
         capacity: 1,
         duration_minutes: duration,
@@ -422,8 +435,8 @@ export async function createPrivateSessionCore(
 
     const { error: detErr } = await supabase.from("private_class_details").insert({
       class_id: cls.id,
-      client_id: input.clientId,
-      player_id: playerId,
+      client_id: clientId ?? null,
+      player_id: playerId ?? null,
       address: input.address,
       postcode: input.postcode ?? "",
       lat: input.lat,
@@ -458,49 +471,55 @@ export async function createPrivateSessionCore(
     }
     createdSessions.push({ id: session.id, start: occ.start });
 
-    const { data: booking, error: bookErr } = await supabase
-      .from("bookings")
-      .insert({
-        session_id: session.id,
-        client_id: input.clientId,
-        player_id: playerId,
-        status: "confirmed",
-        private_series_id: seriesId,
-      })
-      .select("id")
-      .single();
-    if (bookErr || !booking) {
-      await rollback();
-      return { ok: false, error: "Couldn't book the client in." };
-    }
+    // Open slot: no client yet, so no booking and no minutes debit. The empty
+    // held session is filled later via assignPrivateSessionClientCore.
+    if (clientId) {
+      const { data: booking, error: bookErr } = await supabase
+        .from("bookings")
+        .insert({
+          session_id: session.id,
+          client_id: clientId,
+          player_id: playerId,
+          status: "confirmed",
+          private_series_id: seriesId,
+        })
+        .select("id")
+        .single();
+      if (bookErr || !booking) {
+        await rollback();
+        return { ok: false, error: "Couldn't book the client in." };
+      }
 
-    const { data: ledger } = await supabase
-      .from("private_credit_ledger")
-      .insert({
-        client_id: input.clientId,
-        booking_id: booking.id,
-        delta_minutes: -duration,
-        reason: "booking",
-        note: "booked by academy",
-      })
-      .select("id")
-      .single();
-    if (ledger) createdLedgerIds.push(ledger.id);
+      const { data: ledger } = await supabase
+        .from("private_credit_ledger")
+        .insert({
+          client_id: clientId,
+          booking_id: booking.id,
+          delta_minutes: -duration,
+          reason: "booking",
+          note: "booked by academy",
+        })
+        .select("id")
+        .single();
+      if (ledger) createdLedgerIds.push(ledger.id);
+    }
   }
 
   if (!input.coachId) await supabase.rpc("assign_unassigned_sessions");
 
   const firstWhen = whenIST(occurrences[0].start);
-  await supabase.from("notifications").insert({
-    user_id: input.clientId,
-    type: "new_private_session",
-    title: weeks > 1 ? "Weekly private sessions booked" : "Private session booked",
-    body:
-      weeks > 1
-        ? `We've set up a weekly private slot starting ${firstWhen} — it's on your schedule, and you can manage it there.`
-        : `We've set up a private session for ${firstWhen} — it's on your schedule.`,
-    data: { session_id: createdSessions[0].id, url: "/app/schedule" },
-  });
+  if (clientId) {
+    await supabase.from("notifications").insert({
+      user_id: clientId,
+      type: "new_private_session",
+      title: recurring ? "Weekly private sessions booked" : "Private session booked",
+      body:
+        recurring
+          ? `We've set up a weekly private slot starting ${firstWhen} — it's on your schedule, and you can manage it there.`
+          : `We've set up a private session for ${firstWhen} — it's on your schedule.`,
+      data: { session_id: createdSessions[0].id, url: "/app/schedule" },
+    });
+  }
   if (input.coachId) {
     for (const s of createdSessions) {
       await supabase.from("notifications").insert({
@@ -519,12 +538,184 @@ export async function createPrivateSessionCore(
     entity: "class_sessions",
     entity_id: createdSessions[0].id,
     meta: {
-      client_id: input.clientId,
+      client_id: clientId ?? null,
       minutes: duration,
-      weeks,
+      weeks: recurring ? weeks : 1,
       sessions: createdSessions.length,
       private_series_id: seriesId,
     },
+  });
+  return { ok: true };
+}
+
+/**
+ * Assign a client to an "open" private slot created without one. Fills the held
+ * session in place: sets the client/player on the details, books them in, debits
+ * their minutes and notifies them — the mirror of the booking half of
+ * createPrivateSessionCore. Only touches this one session (open slots are single
+ * held sessions, never a standing series).
+ */
+export async function assignPrivateSessionClientCore(
+  supabase: SupabaseClient,
+  founderId: string,
+  sessionId: string,
+  clientId: string,
+  playerId?: string,
+  overridePlanLimits = false
+): Promise<OpResult> {
+  const { data: session } = await supabase
+    .from("class_sessions")
+    .select(
+      "id,starts_at,coach_id,status,classes!inner(id,class_type,duration_minutes,private_class_details(client_id))"
+    )
+    .eq("id", sessionId)
+    .maybeSingle();
+  if (!session) return { ok: false, error: "Session not found." };
+  if (session.status !== "scheduled")
+    return { ok: false, error: "That session isn't open for booking." };
+
+  const cls = session.classes as unknown as {
+    id: string;
+    class_type: string;
+    duration_minutes: number;
+    private_class_details: { client_id: string | null }[] | { client_id: string | null } | null;
+  };
+  if (cls.class_type !== "private") return { ok: false, error: "Not a private session." };
+  const det = cls.private_class_details;
+  const existing = Array.isArray(det) ? det[0]?.client_id : det?.client_id;
+  if (existing) return { ok: false, error: "This session already has a client." };
+
+  const duration = cls.duration_minutes;
+  const start = new Date(session.starts_at);
+  if (!(start > new Date())) return { ok: false, error: "That session is in the past." };
+
+  // Resolve the player: given one (must belong to the client), the client's
+  // first, or a fresh one made from their name.
+  let resolvedPlayer = playerId;
+  if (resolvedPlayer) {
+    const { data: p } = await supabase
+      .from("players")
+      .select("id")
+      .eq("id", resolvedPlayer)
+      .eq("client_id", clientId)
+      .maybeSingle();
+    if (!p) return { ok: false, error: "That player doesn't belong to this client." };
+  } else {
+    const { data: p } = await supabase
+      .from("players")
+      .select("id")
+      .eq("client_id", clientId)
+      .order("created_at")
+      .limit(1)
+      .maybeSingle();
+    if (p) {
+      resolvedPlayer = p.id;
+    } else {
+      const { data: prof } = await supabase
+        .from("profiles")
+        .select("full_name")
+        .eq("id", clientId)
+        .maybeSingle();
+      const { data: fresh, error: freshErr } = await supabase
+        .from("players")
+        .insert({ client_id: clientId, full_name: prof?.full_name?.trim() || "Player" })
+        .select("id")
+        .single();
+      if (freshErr || !fresh)
+        return { ok: false, error: "That client has no player profile yet." };
+      resolvedPlayer = fresh.id;
+    }
+  }
+
+  // Mirror the plan check (duration + this week's frequency) unless overridden.
+  if (!overridePlanLimits) {
+    const { data: limitRows } = await supabase.rpc("private_plan_limits", {
+      p_client: clientId,
+    });
+    const limits = (Array.isArray(limitRows) ? limitRows[0] : limitRows) as
+      | { sessions_per_week: number | null; session_minutes: number | null }
+      | undefined;
+    if (limits?.session_minutes != null && duration !== limits.session_minutes) {
+      return {
+        ok: false,
+        error: `Their plan covers ${limits.session_minutes}-minute sessions — tick "ignore plan limits" to assign a different length.`,
+      };
+    }
+    if (limits?.sessions_per_week != null) {
+      const { from, to } = istWeekWindow(start);
+      const { count } = await supabase
+        .from("bookings")
+        .select("id,class_sessions!inner(starts_at,classes!inner(class_type))", {
+          count: "exact",
+          head: true,
+        })
+        .eq("client_id", clientId)
+        .eq("status", "confirmed")
+        .eq("class_sessions.classes.class_type", "private")
+        .gte("class_sessions.starts_at", from.toISOString())
+        .lt("class_sessions.starts_at", to.toISOString());
+      if ((count ?? 0) >= limits.sessions_per_week) {
+        return {
+          ok: false,
+          error: `They've already got their plan's ${limits.sessions_per_week} private session${limits.sessions_per_week > 1 ? "s" : ""} that week — tick "ignore plan limits" to add another.`,
+        };
+      }
+    }
+  }
+
+  // Attach the client to the slot, then book them in. If the booking fails,
+  // roll the details back to unassigned so the slot stays clean.
+  const { error: detErr } = await supabase
+    .from("private_class_details")
+    .update({ client_id: clientId, player_id: resolvedPlayer })
+    .eq("class_id", cls.id);
+  if (detErr) return { ok: false, error: "Couldn't assign the client." };
+
+  const { data: booking, error: bookErr } = await supabase
+    .from("bookings")
+    .insert({
+      session_id: sessionId,
+      client_id: clientId,
+      player_id: resolvedPlayer,
+      status: "confirmed",
+    })
+    .select("id")
+    .single();
+  if (bookErr || !booking) {
+    await supabase
+      .from("private_class_details")
+      .update({ client_id: null, player_id: null })
+      .eq("class_id", cls.id);
+    return { ok: false, error: "Couldn't book the client in." };
+  }
+
+  await supabase
+    .from("classes")
+    .update({ title: "Private session" })
+    .eq("id", cls.id);
+
+  await supabase.from("private_credit_ledger").insert({
+    client_id: clientId,
+    booking_id: booking.id,
+    delta_minutes: -duration,
+    reason: "booking",
+    note: "booked by academy",
+  });
+
+  await supabase.from("notifications").insert({
+    user_id: clientId,
+    type: "new_private_session",
+    title: "Private session booked",
+    body: `We've set up a private session for ${whenIST(start)} — it's on your schedule.`,
+    data: { session_id: sessionId, url: "/app/schedule" },
+  });
+
+  await supabase.from("audit_log").insert({
+    actor_id: founderId,
+    action: "session.assign_private",
+    entity: "class_sessions",
+    entity_id: sessionId,
+    meta: { client_id: clientId, minutes: duration },
   });
   return { ok: true };
 }

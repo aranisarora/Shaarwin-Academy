@@ -318,8 +318,8 @@ create table public.private_booking_series (
 
 create table public.private_class_details (
   class_id uuid not null,
-  client_id uuid not null,
-  player_id uuid not null,
+  client_id uuid,
+  player_id uuid,
   address text not null,
   postcode text not null,
   lat float8 not null,

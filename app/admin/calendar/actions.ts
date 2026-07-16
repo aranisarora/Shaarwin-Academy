@@ -6,6 +6,7 @@ import { utcToAcademyWall } from "@/lib/academy-time";
 import { fromDetails, type StructuredAddress } from "@/lib/address";
 import type { SessionRow } from "@/components/app/admin-calendar-types";
 import {
+  assignPrivateSessionClientCore,
   cancelFuturePrivateSessionsCore,
   createOneOffSessionCore,
   createPrivateSessionCore,
@@ -175,6 +176,28 @@ export async function createPrivateSession(input: PrivateSessionInput): Promise<
   return { ok: true };
 }
 
+/** Assign a client to an "open" private slot that was created without one. */
+export async function assignPrivateSessionClient(
+  sessionId: string,
+  clientId: string,
+  playerId?: string,
+  overridePlanLimits = false
+): Promise<Result> {
+  const { supabase, founder } = await requireFounder();
+  if (!founder) return { ok: false, error: "Founder only." };
+  const result = await assignPrivateSessionClientCore(
+    supabase,
+    founder.id,
+    sessionId,
+    clientId,
+    playerId,
+    overridePlanLimits
+  );
+  if (!result.ok) return result;
+  refresh();
+  return { ok: true };
+}
+
 /**
  * Book a private session for a pre-registered client (a phone invite with no
  * account yet). The invite is turned into a real client account first, then
@@ -202,7 +225,7 @@ export async function createPrivateSessionForInvite(
 // ── Week data for client-side navigation ─────────────────────────────────────
 
 type PrivDetail = {
-  client_id: string;
+  client_id: string | null;
   address: string;
   postcode: string;
   lat: number;
@@ -330,7 +353,8 @@ export async function fetchWeekSessions(
       capacity: s.capacity_override ?? cls.capacity,
       isPrivate: cls.class_type === "private",
       venueName: cls.venues?.name ?? privLocationName,
-      playerName: priv ? (clientNameMap.get(priv.client_id) ?? null) : null,
+      playerName: priv?.client_id ? (clientNameMap.get(priv.client_id) ?? null) : null,
+      privateClientId: priv?.client_id ?? null,
       address,
       classId: cls.id,
       classActive: cls.active,

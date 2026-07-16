@@ -74,7 +74,7 @@ export default async function AdminCalendarPage({
   const classIds = (classes ?? []).map((c) => c.id);
 
   type PrivDetail = {
-    client_id: string;
+    client_id: string | null;
     address: string;
     postcode: string;
     lat: number;
@@ -190,7 +190,8 @@ export default async function AdminCalendarPage({
       capacity: s.capacity_override ?? cls.capacity,
       isPrivate: cls.class_type === "private",
       venueName: cls.venues?.name ?? privLocationName,
-      playerName: priv ? (clientNameMap.get(priv.client_id) ?? null) : null,
+      playerName: priv?.client_id ? (clientNameMap.get(priv.client_id) ?? null) : null,
+      privateClientId: priv?.client_id ?? null,
       address,
       classId: cls.id,
       classActive: cls.active,

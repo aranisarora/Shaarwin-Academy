@@ -145,7 +145,10 @@ export function AdminAddSheet({
   const [pending, startTransition] = useTransition();
 
   const isInvite = priv.clientId.startsWith("invite:");
-  const client = isInvite ? null : (clients.find((c) => c.id === priv.clientId) ?? null);
+  // "open" → hold a private slot with no client, to be assigned later.
+  const isOpen = priv.clientId === "open";
+  const client =
+    isInvite || isOpen ? null : (clients.find((c) => c.id === priv.clientId) ?? null);
 
   function resetMode(next: Mode) {
     setMode(next);
@@ -238,7 +241,17 @@ export function AdminAddSheet({
           overridePlanLimits: priv.overrideLimits,
         };
 
-        if (priv.recurring) {
+        if (isOpen) {
+          // Open slot: a single held session with no client, no minutes debit.
+          const r = await createPrivateSession({
+            ...locationDetails,
+            date: priv.date,
+            recurWeeks: 1,
+          });
+          if (r.ok) {
+            onDone("Open private slot added — assign a client to it any time.");
+          } else setMessage(r.error ?? "Couldn't add the slot.");
+        } else if (priv.recurring) {
           // Recurring: one series per selected weekday, starting from the first
           // occurrence of that weekday on or after startFrom.
           const baseDetails = { ...locationDetails, recurWeeks: priv.recurWeeks };
@@ -297,9 +310,11 @@ export function AdminAddSheet({
       : mode === "oneoff"
         ? !!oneOff.classId && oneOff.dates.length > 0 && !!oneOff.time
         : !!priv.clientId && !!priv.time && !!priv.venueId &&
-          (priv.recurring
-            ? privWeekdays.length > 0 && !!priv.startFrom
-            : !!priv.date);
+          (isOpen
+            ? !!priv.date
+            : priv.recurring
+              ? privWeekdays.length > 0 && !!priv.startFrom
+              : !!priv.date);
 
   const totalPrivSessions = privWeekdays.length * priv.recurWeeks;
   const submitLabel =
@@ -311,11 +326,13 @@ export function AdminAddSheet({
         ? oneOff.dates.length > 1
           ? `Add ${oneOff.dates.length} sessions`
           : "Add session"
-        : priv.recurring
-          ? privWeekdays.length > 1
-            ? `Book ${totalPrivSessions} sessions`
-            : `Book ${priv.recurWeeks} weekly sessions`
-          : "Book private session";
+        : isOpen
+          ? "Add open slot"
+          : priv.recurring
+            ? privWeekdays.length > 1
+              ? `Book ${totalPrivSessions} sessions`
+              : `Book ${priv.recurWeeks} weekly sessions`
+            : "Book private session";
 
   return (
     <Sheet open onClose={onClose} title="Add to schedule">
@@ -512,9 +529,14 @@ export function AdminAddSheet({
             <Select
               label="Client"
               value={priv.clientId}
-              onChange={(e) => setPriv({ ...priv, clientId: e.target.value, playerId: "" })}
+              onChange={(e) => {
+                const v = e.target.value;
+                // Open slots are single held sessions — never recurring.
+                setPriv({ ...priv, clientId: v, playerId: "", recurring: v === "open" ? false : priv.recurring });
+              }}
             >
               <option value="">— pick a client —</option>
+              <option value="open">No client — open slot (assign later)</option>
               {clients.length > 0 && (
                 <optgroup label="Clients">
                   {clients.map((c) => (
@@ -537,6 +559,13 @@ export function AdminAddSheet({
               <p className="text-sm text-fg-2">
                 Booking this creates their account right away — when they sign in with
                 this phone number, the session is already on their schedule.
+              </p>
+            )}
+
+            {isOpen && (
+              <p className="text-sm text-fg-2">
+                Holds an empty private slot — pick a coach, venue and time now, then assign
+                a client from the session later. No minutes are charged until you do.
               </p>
             )}
 
@@ -565,6 +594,7 @@ export function AdminAddSheet({
               ))}
             </Select>
 
+            {!isOpen && (
             <fieldset className="space-y-2">
               <legend className="label">Repeat</legend>
               <label className="flex min-h-11 cursor-pointer items-center gap-3 rounded-[12px] border border-line bg-surface-2 px-4 py-3">
@@ -600,6 +630,7 @@ export function AdminAddSheet({
                 </span>
               </label>
             </fieldset>
+            )}
 
             {/* One-off: single date picker */}
             {!priv.recurring && (
@@ -683,39 +714,43 @@ export function AdminAddSheet({
               </Select>
             </div>
 
-            <div>
-              <button
-                type="button"
-                onClick={() => setShowAdvanced((s) => !s)}
-                className="text-sm text-fg-2 underline-offset-4 hover:underline"
-              >
-                {showAdvanced ? "▼" : "▶"} Advanced
-              </button>
-              {showAdvanced && (
-                <div className="mt-3 rounded-[12px] border border-line bg-surface-2 p-4">
-                  <label className="flex cursor-pointer items-start gap-3">
-                    <input
-                      type="checkbox"
-                      checked={priv.overrideLimits}
-                      onChange={(e) => setPriv({ ...priv, overrideLimits: e.target.checked })}
-                      className="mt-0.5 h-4 w-4 accent-[var(--ember,#c2410c)]"
-                    />
-                    <span className="text-sm">
-                      <span className="font-medium">Override plan restrictions</span>
-                      <span className="mt-0.5 block text-fg-2">
-                        Lets you book beyond this client&apos;s weekly session limit or maximum
-                        session length.
+            {!isOpen && (
+              <div>
+                <button
+                  type="button"
+                  onClick={() => setShowAdvanced((s) => !s)}
+                  className="text-sm text-fg-2 underline-offset-4 hover:underline"
+                >
+                  {showAdvanced ? "▼" : "▶"} Advanced
+                </button>
+                {showAdvanced && (
+                  <div className="mt-3 rounded-[12px] border border-line bg-surface-2 p-4">
+                    <label className="flex cursor-pointer items-start gap-3">
+                      <input
+                        type="checkbox"
+                        checked={priv.overrideLimits}
+                        onChange={(e) => setPriv({ ...priv, overrideLimits: e.target.checked })}
+                        className="mt-0.5 h-4 w-4 accent-[var(--ember,#c2410c)]"
+                      />
+                      <span className="text-sm">
+                        <span className="font-medium">Override plan restrictions</span>
+                        <span className="mt-0.5 block text-fg-2">
+                          Lets you book beyond this client&apos;s weekly session limit or maximum
+                          session length.
+                        </span>
                       </span>
-                    </span>
-                  </label>
-                </div>
-              )}
-            </div>
+                    </label>
+                  </div>
+                )}
+              </div>
+            )}
 
-            <p className="text-sm text-fg-2">
-              This takes the session&apos;s minutes from the client&apos;s private balance —
-              top it up from the Clients tab if needed.
-            </p>
+            {!isOpen && (
+              <p className="text-sm text-fg-2">
+                This takes the session&apos;s minutes from the client&apos;s private balance —
+                top it up from the Clients tab if needed.
+              </p>
+            )}
           </>
         )}
 

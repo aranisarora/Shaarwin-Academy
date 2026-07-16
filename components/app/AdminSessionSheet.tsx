@@ -12,6 +12,7 @@ import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
 import { Spinner } from "@/components/ui/Spinner";
 import {
+  assignPrivateSessionClient,
   cancelAllFuturePrivateSessions,
   endGroupClass,
   moveSession,
@@ -30,6 +31,7 @@ import {
   wallDate,
   wallTime,
   weekdayOfDate,
+  type ClientOption,
   type Coach,
   type SessionRow,
   type Venue,
@@ -41,11 +43,13 @@ export function AdminSessionSheet({
   session,
   coaches,
   venues,
+  clients,
   onClose,
 }: {
   session: SessionRow;
   coaches: Coach[];
   venues: Venue[];
+  clients: ClientOption[];
   onClose: () => void;
 }) {
   // Mounted fresh per session (parent keys on session.id), so initializers
@@ -75,6 +79,30 @@ export function AdminSessionSheet({
   >(null);
   const [message, setMessage] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+
+  // Open private slot (created without a client): pick one to fill it.
+  const isOpenPrivate = session.isPrivate && !session.privateClientId;
+  const [assignClientId, setAssignClientId] = useState("");
+  const [assignPlayerId, setAssignPlayerId] = useState("");
+  const [assignOverride, setAssignOverride] = useState(false);
+  const assignClient = clients.find((c) => c.id === assignClientId) ?? null;
+
+  function assign() {
+    if (!assignClientId) return;
+    setMessage(null);
+    startTransition(async () => {
+      const r = await assignPrivateSessionClient(
+        session.id,
+        assignClientId,
+        assignPlayerId || undefined,
+        assignOverride
+      );
+      if (r.ok) {
+        setMessage("Client assigned — the session is on their schedule and their minutes were debited.");
+        onClose();
+      } else setMessage(r.error ?? "Couldn't assign the client.");
+    });
+  }
 
   useEffect(() => {
     let alive = true;
@@ -278,6 +306,65 @@ export function AdminSessionSheet({
             )}
           </div>
 
+          {/* ── Assign a client (open private slot only) ── */}
+          {isOpenPrivate && (
+            <div className="space-y-3 rounded-[12px] border border-ember p-4">
+              <div>
+                <p className="label">Assign a client</p>
+                <p className="mt-1 text-sm text-fg-2">
+                  This slot is held with no client yet. Pick one to book them in — their
+                  minutes are debited when you do.
+                </p>
+              </div>
+              <Select
+                label="Client"
+                value={assignClientId}
+                onChange={(e) => {
+                  setAssignClientId(e.target.value);
+                  setAssignPlayerId("");
+                }}
+              >
+                <option value="">— pick a client —</option>
+                {clients.map((c) => (
+                  <option key={c.id} value={c.id}>
+                    {c.name || "Unnamed client"}
+                  </option>
+                ))}
+              </Select>
+              {assignClient && assignClient.players.length > 1 && (
+                <Select
+                  label="Player"
+                  value={assignPlayerId}
+                  onChange={(e) => setAssignPlayerId(e.target.value)}
+                >
+                  <option value="">{assignClient.players[0].name} (default)</option>
+                  {assignClient.players.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </Select>
+              )}
+              <label className="flex cursor-pointer items-start gap-3 text-sm">
+                <input
+                  type="checkbox"
+                  checked={assignOverride}
+                  onChange={(e) => setAssignOverride(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 accent-[var(--ember)]"
+                />
+                <span>
+                  <span className="font-medium">Ignore plan limits</span>
+                  <span className="mt-0.5 block text-fg-2">
+                    Book beyond this client&apos;s weekly session limit or session length.
+                  </span>
+                </span>
+              </label>
+              <Button onClick={assign} disabled={pending || !assignClientId} className="w-full">
+                {pending ? <Spinner /> : "Assign client"}
+              </Button>
+            </div>
+          )}
+
           {/* ── Coach (always per-session) ── */}
           <div className="space-y-3 rounded-[12px] border border-line p-4">
             <p className="label">Coach</p>
@@ -428,7 +515,7 @@ export function AdminSessionSheet({
                 End this class — remove every week
               </button>
             )}
-            {session.isPrivate && (
+            {session.isPrivate && session.privateClientId && (
               <button
                 disabled={pending}
                 className="w-full text-center text-sm text-err underline-offset-4 hover:underline"

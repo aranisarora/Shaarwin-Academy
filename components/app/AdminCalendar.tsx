@@ -351,6 +351,7 @@ export function AdminCalendar({
           session={selected}
           coaches={coaches}
           venues={venues}
+          clients={clients}
           onClose={() => {
             setSelected(null);
             onRefresh?.();
