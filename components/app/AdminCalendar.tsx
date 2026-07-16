@@ -144,7 +144,8 @@ export function AdminCalendar({
         className={`w-full rounded-[8px] border px-3 py-2 text-left text-sm hover:border-ember ${tone}`}
       >
         <p className="tnum font-medium">
-          {showDay ? fmtWhen(session.starts_at) : clockTime(session.starts_at)}
+          {showDay ? fmtWhen(session.starts_at) : clockTime(session.starts_at)} –{" "}
+          {clockTime(session.ends_at)}
         </p>
         <p className="text-xs text-fg-2">
           {session.title}
