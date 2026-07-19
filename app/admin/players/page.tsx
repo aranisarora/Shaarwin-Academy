@@ -27,7 +27,14 @@ export default async function AdminPlayersPage({
     .order("created_at", { ascending: false });
 
   const ids = (clients ?? []).map((c) => c.id);
-  const [{ data: subs }, { data: invoices }, { data: bookings }, { data: plans }, { data: players }] =
+  const [
+    { data: subs },
+    { data: invoices },
+    { data: bookings },
+    { data: plans },
+    { data: players },
+    { data: schoolPlayers },
+  ] =
     await Promise.all([
       ids.length
         ? supabase
@@ -58,6 +65,13 @@ export default async function AdminPlayersPage({
             .in("client_id", ids)
             .order("created_at")
         : Promise.resolve({ data: [] }),
+      // School players have no account holder — fetched on their own and joined
+      // to the school (venue) they attend.
+      supabase
+        .from("players")
+        .select("id,full_name,skill_level,date_of_birth,notes,created_at,grade,venues(name)")
+        .is("client_id", null)
+        .order("created_at"),
     ]);
 
   const subByClient = new Map(
@@ -114,7 +128,7 @@ export default async function AdminPlayersPage({
   // holder's contact details. Archived clients' players stay hidden, matching
   // the default client list.
   const clientById = new Map((clients ?? []).map((c) => [c.id, c]));
-  const playerRows = (players ?? [])
+  const householdRows = (players ?? [])
     .filter((p) => {
       const c = clientById.get(p.client_id);
       return c && c.deleted_at === null;
@@ -128,13 +142,32 @@ export default async function AdminPlayersPage({
         dateOfBirth: (p.date_of_birth as string | null) ?? null,
         notes: (p.notes as string | null) ?? null,
         createdAt: p.created_at as string,
-        clientId: p.client_id,
+        clientId: p.client_id as string | null,
         clientName: c.full_name ?? "",
         clientEmail: c.email ?? "",
         clientPhone: c.phone ?? null,
+        school: null as string | null,
       };
-    })
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    });
+
+  // Account-less school players, tagged with the school they attend.
+  const schoolRows = (schoolPlayers ?? []).map((p) => ({
+    id: p.id,
+    name: p.full_name,
+    skillLevel: p.skill_level,
+    dateOfBirth: (p.date_of_birth as string | null) ?? null,
+    notes: (p.notes as string | null) ?? null,
+    createdAt: p.created_at as string,
+    clientId: null as string | null,
+    clientName: "",
+    clientEmail: "",
+    clientPhone: null,
+    school: (p.venues as unknown as { name: string } | null)?.name ?? "School",
+  }));
+
+  const playerRows = [...householdRows, ...schoolRows].sort((a, b) =>
+    b.createdAt.localeCompare(a.createdAt)
+  );
 
   return (
     <AdminShell title="Players">

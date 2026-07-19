@@ -29,6 +29,7 @@ export type NewClass = {
   weekday: string; // MO..SU
   time: string; // HH:MM
   coachId?: string;
+  isSchool?: boolean;
 };
 
 export async function createGroupClassCore(
@@ -40,6 +41,7 @@ export async function createGroupClassCore(
     .from("classes")
     .insert({
       class_type: "group",
+      is_school: input.isSchool ?? false,
       title: input.title,
       description: input.description || null,
       skill_level: input.skillLevel,

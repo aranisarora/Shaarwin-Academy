@@ -27,13 +27,18 @@ import {
   type Venue,
 } from "./admin-calendar-types";
 
-type Mode = "weekly" | "oneoff" | "private";
+type Mode = "weekly" | "oneoff" | "private" | "school";
 
 const MODES: { value: Mode; label: string }[] = [
   { value: "weekly", label: "Weekly class" },
+  { value: "school", label: "School class" },
   { value: "oneoff", label: "Extra session" },
   { value: "private", label: "Private session" },
 ];
+
+// School blocks run far longer than a normal group class.
+const WEEKLY_DURATIONS = [60, 90, 120, 150, 180, 210, 240];
+const SCHOOL_DURATIONS = [60, 90, 120, 150, 180, 210, 240, 270, 300, 330, 360];
 
 const WEEKDAY_DOW: Record<string, number> = {
   SU: 0, MO: 1, TU: 2, WE: 3, TH: 4, FR: 5, SA: 6,
@@ -157,6 +162,11 @@ export function AdminAddSheet({
       setForm({ ...EMPTY_CLASS_FORM, venueId: venues[0]?.id ?? "" });
       setWeekdays(["MO"]);
     }
+    if (next === "school") {
+      // School blocks hold a whole class of pupils and run longer.
+      setForm({ ...EMPTY_CLASS_FORM, venueId: venues[0]?.id ?? "", capacity: 30, durationMinutes: 120 });
+      setWeekdays(["MO"]);
+    }
     if (next === "oneoff") {
       const cls = classes[0];
       setOneOff({ classId: cls?.id ?? "", dates: [], time: cls?.time ?? "18:30", coachId: "" });
@@ -184,13 +194,15 @@ export function AdminAddSheet({
   function submit() {
     setMessage(null);
     startTransition(async () => {
-      if (mode === "weekly") {
+      if (mode === "weekly" || mode === "school") {
+        const isSchool = mode === "school";
         const venueName = venues.find((v) => v.id === form.venueId)?.name;
         for (const day of weekdays) {
           const r = await createGroupClass({
             ...form,
             weekday: day,
             title: generateClassTitle(day, form.time, venueName),
+            isSchool,
           });
           if (!r.ok) {
             setMessage(r.error ?? "Couldn't create the class.");
@@ -198,10 +210,11 @@ export function AdminAddSheet({
           }
         }
         const dayNames = weekdays.map((d) => WEEKDAY_NAME[d] ?? d).join(", ");
+        const noun = isSchool ? "school class" : "class";
         onDone(
           weekdays.length > 1
-            ? `${weekdays.length} classes published — ${dayNames} at ${time12h(form.time)}.`
-            : "Class published — the next 8 weeks of sessions are on the schedule."
+            ? `${weekdays.length} ${noun}es published — ${dayNames} at ${time12h(form.time)}.`
+            : `${isSchool ? "School class" : "Class"} published — the next 8 weeks of sessions are on the schedule.`
         );
       } else if (mode === "oneoff") {
         for (const date of oneOff.dates) {
@@ -305,7 +318,7 @@ export function AdminAddSheet({
   const venueName = venues.find((v) => v.id === form.venueId)?.name;
 
   const canSubmit =
-    mode === "weekly"
+    mode === "weekly" || mode === "school"
       ? !!form.venueId && weekdays.length > 0
       : mode === "oneoff"
         ? !!oneOff.classId && oneOff.dates.length > 0 && !!oneOff.time
@@ -318,10 +331,12 @@ export function AdminAddSheet({
 
   const totalPrivSessions = privWeekdays.length * priv.recurWeeks;
   const submitLabel =
-    mode === "weekly"
+    mode === "weekly" || mode === "school"
       ? weekdays.length > 1
         ? `Publish ${weekdays.length} classes`
-        : "Publish class"
+        : mode === "school"
+          ? "Publish school class"
+          : "Publish class"
       : mode === "oneoff"
         ? oneOff.dates.length > 1
           ? `Add ${oneOff.dates.length} sessions`
@@ -338,7 +353,7 @@ export function AdminAddSheet({
     <Sheet open onClose={onClose} title="Add to schedule">
       <div className="space-y-5">
         {/* Mode tabs */}
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-2 gap-2">
           {MODES.map((m) => (
             <button
               key={m.value}
@@ -356,9 +371,16 @@ export function AdminAddSheet({
           ))}
         </div>
 
-        {/* ── Weekly class ──────────────────────────────────────────────────── */}
-        {mode === "weekly" && (
+        {/* ── Weekly / School class ─────────────────────────────────────────── */}
+        {(mode === "weekly" || mode === "school") && (
           <>
+            {mode === "school" && (
+              <p className="rounded-[12px] border border-line bg-surface-2 px-4 py-3 text-sm text-fg-2">
+                A school class is held at a school or university and isn&apos;t bookable online.
+                Pick the school as the venue — coaches add the pupils who turn up, right from
+                the session.
+              </p>
+            )}
             <Select
               label="Coach"
               hint="Leave on automatic and the best-fitting coach is picked for you."
@@ -388,7 +410,7 @@ export function AdminAddSheet({
                 value={form.durationMinutes}
                 onChange={(e) => setForm({ ...form, durationMinutes: Number(e.target.value) })}
               >
-                {[60, 90, 120, 150, 180, 210, 240].map((d) => (
+                {(mode === "school" ? SCHOOL_DURATIONS : WEEKLY_DURATIONS).map((d) => (
                   <option key={d} value={d}>{d} min</option>
                 ))}
               </Select>

@@ -13,10 +13,11 @@ type PlayerRow = {
   dateOfBirth: string | null;
   notes: string | null;
   createdAt: string;
-  clientId: string;
+  clientId: string | null;
   clientName: string;
   clientEmail: string;
   clientPhone: string | null;
+  school?: string | null;
 };
 
 const LEVELS = ["beginner", "intermediate", "advanced", "elite"] as const;
@@ -71,6 +72,8 @@ function displayName(row: PlayerRow): string {
 }
 
 function clientSubline(row: PlayerRow): string {
+  // School players have no account holder — show the school they attend.
+  if (row.school) return `${row.school} · school player`;
   const parts: string[] = [];
   if (isRealName(row.clientName) && row.clientName !== displayName(row))
     parts.push(row.clientName);
@@ -140,7 +143,8 @@ export function PlayerManager({ players }: { players: PlayerRow[] }) {
           p.name.toLowerCase().includes(q) ||
           p.clientName.toLowerCase().includes(q) ||
           p.clientEmail.toLowerCase().includes(q) ||
-          (p.clientPhone ?? "").toLowerCase().includes(q))
+          (p.clientPhone ?? "").toLowerCase().includes(q) ||
+          (p.school ?? "").toLowerCase().includes(q))
     );
   }, [players, search, level]);
 
@@ -238,6 +242,15 @@ export function PlayerManager({ players }: { players: PlayerRow[] }) {
               </div>
             )}
 
+            {selected.school ? (
+              <div className="space-y-2 rounded-[12px] border border-line p-4">
+                <p className="label">School</p>
+                <p className="font-medium">{selected.school}</p>
+                <p className="text-sm text-fg-2">
+                  School player — no account holder. Added by a coach at the class.
+                </p>
+              </div>
+            ) : (
             <div className="space-y-2 rounded-[12px] border border-line p-4">
               <p className="label">Account holder</p>
               <p className="font-medium">
@@ -264,6 +277,7 @@ export function PlayerManager({ players }: { players: PlayerRow[] }) {
                 </>
               )}
             </div>
+            )}
 
             <Link
               href={`/admin/players/${selected.id}`}

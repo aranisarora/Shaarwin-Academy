@@ -54,7 +54,7 @@ create table public.audit_log (
 
 create table public.booking_series (
   id uuid default gen_random_uuid() not null,
-  client_id uuid not null,
+  client_id uuid,
   player_id uuid not null,
   class_id uuid not null,
   weekday integer not null,
@@ -67,7 +67,7 @@ create table public.booking_series (
 create table public.bookings (
   id uuid default gen_random_uuid() not null,
   session_id uuid not null,
-  client_id uuid not null,
+  client_id uuid,
   player_id uuid not null,
   status booking_status default 'confirmed'::booking_status not null,
   waitlist_position integer,
@@ -111,6 +111,7 @@ create table public.class_sessions (
 create table public.classes (
   id uuid default gen_random_uuid() not null,
   class_type class_type not null,
+  is_school boolean default false not null,
   title text not null,
   description text,
   skill_level skill_level default 'beginner'::skill_level not null,
@@ -276,12 +277,14 @@ create table public.plans (
 
 create table public.players (
   id uuid default gen_random_uuid() not null,
-  client_id uuid not null,
+  client_id uuid,
   full_name text not null,
   date_of_birth date,
   skill_level skill_level default 'beginner'::skill_level not null,
   notes text,
-  created_at timestamptz default now() not null
+  created_at timestamptz default now() not null,
+  school_venue_id uuid,
+  grade smallint
 );
 
 create table public.products (
@@ -510,6 +513,7 @@ ALTER TABLE public.plans ADD CONSTRAINT plans_pkey PRIMARY KEY (id);
 ALTER TABLE public.plans ADD CONSTRAINT plans_price_pence_check CHECK ((price_pence >= 0));
 ALTER TABLE public.players ADD CONSTRAINT players_pkey PRIMARY KEY (id);
 ALTER TABLE public.players ADD CONSTRAINT players_client_id_fkey FOREIGN KEY (client_id) REFERENCES profiles(id) ON DELETE CASCADE;
+ALTER TABLE public.players ADD CONSTRAINT players_school_venue_id_fkey FOREIGN KEY (school_venue_id) REFERENCES venues(id) ON DELETE SET NULL;
 ALTER TABLE public.products ADD CONSTRAINT products_pkey PRIMARY KEY (id);
 ALTER TABLE public.products ADD CONSTRAINT products_price_pence_check CHECK ((price_pence >= 0));
 ALTER TABLE public.products ADD CONSTRAINT products_member_price_pence_check CHECK ((member_price_pence >= 0));
@@ -1174,6 +1178,67 @@ begin
   where status = 'pending'
     and (data->>'booking_id')::uuid = p_booking
     and type in ('reminder_24h', 'reminder_2h');
+end;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.add_school_player(p_session uuid, p_full_name text, p_grade smallint)
+ RETURNS uuid
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare
+  v_uid       uuid := auth.uid();
+  v_class     classes%rowtype;
+  v_start     timestamptz;
+  v_player    uuid;
+  v_series    uuid;
+  v_weekday   int;
+  v_time      time;
+  v_dob       date;
+begin
+  select cs.starts_at into v_start from class_sessions cs where cs.id = p_session;
+  if not found then raise exception 'session not found'; end if;
+  select c.* into v_class
+  from class_sessions cs join classes c on c.id = cs.class_id
+  where cs.id = p_session;
+  if not v_class.is_school then raise exception 'not a school class'; end if;
+
+  if not (is_founder() or exists (
+      select 1 from class_sessions cs
+      where cs.id = p_session and cs.coach_id = v_uid)) then
+    raise exception 'not authorised';
+  end if;
+
+  if coalesce(btrim(p_full_name), '') = '' then
+    raise exception 'name required';
+  end if;
+
+  -- Approximate DOB from grade: an Indian Grade N pupil is roughly N + 5 years old.
+  if p_grade is not null then
+    v_dob := make_date(extract(year from now())::int - (p_grade + 5), 1, 1);
+  end if;
+
+  insert into players (client_id, full_name, date_of_birth, grade, school_venue_id, skill_level)
+  values (null, btrim(p_full_name), v_dob, p_grade, v_class.venue_id, 'beginner')
+  returning id into v_player;
+
+  -- Weekly series so future generated sessions pick them up automatically.
+  v_weekday := extract(isodow from (v_start at time zone 'Asia/Kolkata'))::int;
+  v_time    := (v_start at time zone 'Asia/Kolkata')::time;
+  insert into booking_series (client_id, player_id, class_id, weekday, start_time)
+  values (null, v_player, v_class.id, v_weekday, v_time)
+  returning id into v_series;
+
+  -- Book this session and every future scheduled session of the class now.
+  insert into bookings (session_id, client_id, player_id, status, series_id)
+  select cs.id, null, v_player, 'confirmed', v_series
+  from class_sessions cs
+  where cs.class_id = v_class.id
+    and cs.status = 'scheduled'
+    and cs.starts_at >= v_start;
+
+  return v_player;
 end;
 $function$;
 
@@ -3205,7 +3270,7 @@ CREATE POLICY "coach updates own session notes" ON public.class_sessions AS PERM
 CREATE POLICY "founder writes sessions" ON public.class_sessions AS PERMISSIVE FOR ALL TO public USING (is_founder());
 CREATE POLICY "read scheduled sessions" ON public.class_sessions AS PERMISSIVE FOR SELECT TO public USING ((class_is_public_group(class_id) OR (coach_id = auth.uid()) OR is_founder() OR client_owns_private_class(class_id)));
 CREATE POLICY "founder writes classes" ON public.classes AS PERMISSIVE FOR ALL TO public USING (is_founder());
-CREATE POLICY "public reads active group classes" ON public.classes AS PERMISSIVE FOR SELECT TO public USING ((((active = true) AND (class_type = 'group'::class_type)) OR is_founder() OR (is_coach() AND coach_teaches_class(id)) OR client_owns_private_class(id)));
+CREATE POLICY "public reads active group classes" ON public.classes AS PERMISSIVE FOR SELECT TO public USING ((((active = true) AND (class_type = 'group'::class_type) AND (is_school = false)) OR is_founder() OR (is_coach() AND coach_teaches_class(id)) OR client_owns_private_class(id)));
 CREATE POLICY "founder all client invites" ON public.client_invites AS PERMISSIVE FOR ALL TO public USING (is_founder());
 CREATE POLICY "assignments visible" ON public.coach_assignments AS PERMISSIVE FOR SELECT TO public USING (((coach_id = auth.uid()) OR is_founder()));
 CREATE POLICY "founder writes assignments" ON public.coach_assignments AS PERMISSIVE FOR ALL TO public USING (is_founder());

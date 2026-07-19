@@ -34,7 +34,7 @@ export default async function CoachSessionPage({
   const { data: session } = await supabase
     .from("class_sessions")
     .select(
-      "id,starts_at,ends_at,coach_id,coach_notes,coach_arrived_at,coach_confirmed_at,classes!inner(title,skill_level,class_type,venues(name,address,postcode,lat,lng,address_details),private_class_details(address,postcode,lat,lng,access_notes,has_table,address_details))"
+      "id,starts_at,ends_at,coach_id,coach_notes,coach_arrived_at,coach_confirmed_at,classes!inner(title,skill_level,class_type,is_school,venues(name,address,postcode,lat,lng,address_details),private_class_details(address,postcode,lat,lng,access_notes,has_table,address_details))"
     )
     .eq("id", id)
     .maybeSingle();
@@ -45,6 +45,7 @@ export default async function CoachSessionPage({
     title: string;
     skill_level: string;
     class_type: string;
+    is_school: boolean;
     venues: {
       name: string;
       address: string;
@@ -159,6 +160,7 @@ export default async function CoachSessionPage({
           startsAt={session.starts_at}
           roster={rows}
           coachNotes={session.coach_notes}
+          isSchool={cls.is_school}
         />
       </div>
     </CoachShell>

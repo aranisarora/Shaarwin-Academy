@@ -4,11 +4,13 @@ import { useRef, useState, useTransition } from "react";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { nowMs } from "@/lib/academy-time";
+import { Input } from "@/components/ui/Input";
 import {
   setAttendance,
   saveSessionNotes,
   reportProblem,
   cantMakeIt,
+  addSchoolPlayer,
 } from "@/app/coach/session/[id]/actions";
 
 type RosterRow = {
@@ -25,17 +27,55 @@ export function SessionRoster({
   startsAt,
   roster,
   coachNotes,
+  isSchool = false,
 }: {
   sessionId: string;
   startsAt: string;
   roster: RosterRow[];
   coachNotes: string | null;
+  isSchool?: boolean;
 }) {
   const [rows, setRows] = useState(roster);
   const [notes, setNotes] = useState(coachNotes ?? "");
   const [message, setMessage] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // ── School classes: register walk-in pupils ──────────────────────────────
+  const [adding, setAdding] = useState(false);
+  const [newName, setNewName] = useState("");
+  const [newGrade, setNewGrade] = useState("");
+
+  function addPlayer() {
+    const name = newName.trim();
+    if (name === "") {
+      setMessage("Enter the player's name.");
+      return;
+    }
+    const grade = newGrade.trim() === "" ? null : Number(newGrade);
+    setMessage(null);
+    startTransition(async () => {
+      const r = await addSchoolPlayer(sessionId, name, grade);
+      if (!r.ok || !r.bookingId) {
+        setMessage(r.error ?? "Couldn't add the player.");
+        return;
+      }
+      setRows((prev) => [
+        ...prev,
+        {
+          id: r.bookingId!,
+          status: "confirmed",
+          coachNote: null,
+          name,
+          level: "beginner",
+          junior: grade !== null && grade + 5 < 18,
+        },
+      ]);
+      setNewName("");
+      setNewGrade("");
+      setAdding(false);
+    });
+  }
 
   const attendanceOpen =
     nowMs() >= new Date(startsAt).getTime() - 15 * 60000 &&
@@ -70,10 +110,14 @@ export function SessionRoster({
   return (
     <div className="space-y-6">
       <div>
-        <p className="mb-1 text-lg font-semibold">Mark attendance</p>
+        <p className="mb-1 text-lg font-semibold">
+          {isSchool ? "Players" : "Mark attendance"}
+        </p>
         <p className="mb-3 text-sm text-fg-2">
-          Tap each player as they arrive to record who showed up.
-          {!attendanceOpen && " Opens 15 minutes before the session starts."}
+          {isSchool
+            ? "Add each pupil who turns up, then tap them present or absent."
+            : "Tap each player as they arrive to record who showed up."}
+          {!attendanceOpen && " Attendance opens 15 minutes before the session starts."}
         </p>
         {rows.length === 0 && (
           <p className="text-sm text-fg-2">No bookings yet.</p>
@@ -134,6 +178,51 @@ export function SessionRoster({
             );
           })}
         </ul>
+
+        {isSchool && (
+          <div className="mt-3">
+            {adding ? (
+              <div className="space-y-3 rounded-[12px] border border-line bg-surface-2 p-4">
+                <Input
+                  label="Player name"
+                  value={newName}
+                  onChange={(e) => setNewName(e.target.value)}
+                  autoFocus
+                />
+                <Input
+                  label="Grade"
+                  type="number"
+                  min={1}
+                  max={13}
+                  hint="Their school grade — used to work out their age."
+                  value={newGrade}
+                  onChange={(e) => setNewGrade(e.target.value)}
+                />
+                <div className="flex gap-2">
+                  <Button disabled={pending} onClick={addPlayer}>
+                    Add player
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    disabled={pending}
+                    onClick={() => {
+                      setAdding(false);
+                      setNewName("");
+                      setNewGrade("");
+                      setMessage(null);
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <Button variant="ghost" onClick={() => setAdding(true)} className="w-full">
+                + Add player
+              </Button>
+            )}
+          </div>
+        )}
       </div>
 
       <div>

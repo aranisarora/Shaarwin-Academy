@@ -60,6 +60,44 @@ export async function setAttendance(
   return { ok: true };
 }
 
+/**
+ * Add a walk-in player to a school class. Only the coach at the session knows
+ * who turned up, so they register the pupil (name + school grade) here. The
+ * add_school_player RPC (SECURITY DEFINER) creates the account-less player,
+ * enrols them in the weekly series and books them onto this + future sessions.
+ */
+export async function addSchoolPlayer(
+  sessionId: string,
+  fullName: string,
+  grade: number | null
+): Promise<Result & { bookingId?: string }> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Sign in first." };
+  if (fullName.trim() === "") return { ok: false, error: "Enter the player's name." };
+
+  const { data: playerId, error } = await supabase.rpc("add_school_player", {
+    p_session: sessionId,
+    p_full_name: fullName.trim(),
+    p_grade: grade,
+  });
+  if (error) return { ok: false, error: "Couldn't add the player. Try again." };
+
+  // The booking just created for this session — so the coach can mark
+  // attendance for the new pupil straight away.
+  const { data: booking } = await supabase
+    .from("bookings")
+    .select("id")
+    .eq("session_id", sessionId)
+    .eq("player_id", playerId as string)
+    .maybeSingle();
+
+  revalidatePath(`/coach/session/${sessionId}`);
+  return { ok: true, bookingId: booking?.id };
+}
+
 export async function saveSessionNotes(sessionId: string, notes: string): Promise<Result> {
   const { supabase, session } = await requireCoachSession(sessionId);
   if (!session) return { ok: false, error: "Not your session." };
