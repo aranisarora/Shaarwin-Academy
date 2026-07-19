@@ -465,7 +465,7 @@ ALTER TABLE public.classes ADD CONSTRAINT classes_pkey PRIMARY KEY (id);
 ALTER TABLE public.classes ADD CONSTRAINT classes_created_by_fkey FOREIGN KEY (created_by) REFERENCES profiles(id) ON DELETE SET NULL;
 ALTER TABLE public.classes ADD CONSTRAINT classes_venue_id_fkey FOREIGN KEY (venue_id) REFERENCES venues(id);
 ALTER TABLE public.classes ADD CONSTRAINT classes_capacity_check CHECK ((capacity >= 1));
-ALTER TABLE public.classes ADD CONSTRAINT classes_duration_minutes_check CHECK (((duration_minutes >= 30) AND (duration_minutes <= 240)));
+ALTER TABLE public.classes ADD CONSTRAINT classes_duration_minutes_check CHECK (((duration_minutes >= 30) AND (duration_minutes <= 360)));
 ALTER TABLE public.classes ADD CONSTRAINT group_needs_venue CHECK (((class_type <> 'group'::class_type) OR (venue_id IS NOT NULL)));
 ALTER TABLE public.client_invites ADD CONSTRAINT client_invites_pkey PRIMARY KEY (id);
 ALTER TABLE public.client_invites ADD CONSTRAINT client_invites_phone_key UNIQUE (phone);
