@@ -70,7 +70,7 @@ export async function setCoachActive(coachId: string, active: boolean): Promise<
   const result = await setCoachActiveCore(supabase, founder.id, coachId, active);
   if (!result.ok) return result;
   revalidatePath("/admin/coaches");
-  revalidatePath("/admin/calendar");
+  revalidatePath("/admin/schedule");
   return { ok: true };
 }
 

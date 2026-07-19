@@ -176,7 +176,7 @@ async function sweepCoachConfirmations() {
               type: "ops_coach_unconfirmed",
               title: "Coach hasn't confirmed",
               body: `${coach?.full_name ?? "The coach"} still hasn't confirmed ${title} (${when})${coach?.phone ? ` — chase them on ${coach.phone}` : ""}.`,
-              data: { session_id: s.id, url: "/admin/calendar" },
+              data: { session_id: s.id, url: "/admin/schedule" },
             }))
           );
         }

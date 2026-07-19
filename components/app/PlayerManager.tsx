@@ -266,7 +266,7 @@ export function PlayerManager({ players }: { players: PlayerRow[] }) {
             </div>
 
             <Link
-              href={`/admin/clients/${selected.id}`}
+              href={`/admin/players/${selected.id}`}
               className="block rounded-[12px] border border-line bg-surface-2 px-4 py-3 text-center text-sm font-medium hover:bg-surface"
             >
               View player profile →

@@ -8,7 +8,7 @@ import { useMemo, useState, useTransition } from "react";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Select } from "@/components/ui/Select";
-import { topUpSessions } from "@/app/admin/calendar/actions";
+import { topUpSessions } from "@/app/admin/schedule/actions";
 import { AdminSessionSheet } from "./AdminSessionSheet";
 import { AdminClassSheet } from "./AdminClassSheet";
 import { AdminAddSheet } from "./AdminAddSheet";

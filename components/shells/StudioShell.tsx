@@ -10,11 +10,14 @@ import { BottomTabBar, type TabItem } from "@/components/ui/BottomTabBar";
 export function StudioShell({
   title,
   tabs,
+  mobileTabs,
   actions,
   children,
 }: {
   title: React.ReactNode;
   tabs: TabItem[];
+  /** Optional override for the mobile bottom bar (max 5 shown); defaults to `tabs`. */
+  mobileTabs?: TabItem[];
   actions?: React.ReactNode;
   children: React.ReactNode;
 }) {
@@ -47,7 +50,7 @@ export function StudioShell({
         </header>
         <main className="flex-1 px-5 pb-24 pt-6 lg:pb-10">{children}</main>
       </div>
-      <BottomTabBar items={tabs} />
+      <BottomTabBar items={mobileTabs ?? tabs} />
     </div>
   );
 }

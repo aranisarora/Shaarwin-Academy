@@ -27,7 +27,7 @@ import {
 type Result = { ok: boolean; error?: string; code?: string };
 
 function refresh() {
-  revalidatePath("/admin/calendar");
+  revalidatePath("/admin/schedule");
   revalidatePath("/admin");
 }
 
@@ -218,7 +218,7 @@ export async function createPrivateSessionForInvite(
   });
   if (!result.ok) return result;
   refresh();
-  revalidatePath("/admin/clients");
+  revalidatePath("/admin/players");
   return { ok: true };
 }
 

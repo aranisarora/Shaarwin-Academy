@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useState, useTransition } from "react";
-import { fetchWeekSessions } from "@/app/admin/calendar/actions";
+import { fetchWeekSessions } from "@/app/admin/schedule/actions";
 import { AdminCalendar } from "./AdminCalendar";
 import type {
   ClassRow,
@@ -48,7 +48,7 @@ export function AdminCalendarNav({
       setWeekOffset(newOffset);
       setRangeLabel(result.rangeLabel);
       // Update URL without triggering a Next.js server re-render
-      const url = newOffset !== 0 ? `/admin/calendar?week=${newOffset}` : "/admin/calendar";
+      const url = newOffset !== 0 ? `/admin/schedule?week=${newOffset}` : "/admin/schedule";
       window.history.replaceState(null, "", url);
     });
   };

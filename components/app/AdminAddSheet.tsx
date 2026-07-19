@@ -14,7 +14,7 @@ import {
   createOneOffSession,
   createPrivateSession,
   createPrivateSessionForInvite,
-} from "@/app/admin/calendar/actions";
+} from "@/app/admin/schedule/actions";
 import { EMPTY_CLASS_FORM, generateClassTitle, time12h, type ClassFormState } from "./ClassFields";
 import { TimeSelect12h } from "./TimeSelect12h";
 import {

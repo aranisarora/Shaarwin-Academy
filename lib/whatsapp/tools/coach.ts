@@ -417,7 +417,7 @@ const cantMakeSession: WaTool = {
             type: "session_unassigned",
             title: "Cover needed",
             body: "A coach dropped a session.",
-            data: { session_id: input.session_id, url: "/admin/calendar" },
+            data: { session_id: input.session_id, url: "/admin/schedule" },
           }))
         );
       }

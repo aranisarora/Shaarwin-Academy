@@ -282,7 +282,7 @@ export function CoachManager({
                   disabled={isPending}
                   className="text-sm text-ember hover:underline disabled:opacity-50"
                 >
-                  View as coach
+                  View as {c.name}
                 </button>
               </div>
             </div>

@@ -26,7 +26,7 @@ export async function createGroupClass(input: NewClass): Promise<Result> {
   const result = await createGroupClassCore(supabase, founder.id, input);
   if (!result.ok) return result;
 
-  revalidatePath("/admin/calendar");
+  revalidatePath("/admin/schedule");
   return { ok: true };
 }
 
@@ -35,7 +35,7 @@ export async function setClassActive(classId: string, active: boolean): Promise<
   if (!founder) return { ok: false, error: "Founder only." };
   const result = await setClassActiveCore(supabase, founder.id, classId, active);
   if (!result.ok) return result;
-  revalidatePath("/admin/calendar");
+  revalidatePath("/admin/schedule");
   return { ok: true };
 }
 
@@ -47,7 +47,7 @@ export async function cancelSession(sessionId: string, reason: string): Promise<
   const result = await cancelSessionCore(supabase, founder.id, sessionId, reason);
   if (!result.ok) return result;
 
-  revalidatePath("/admin/calendar");
+  revalidatePath("/admin/schedule");
   return { ok: true };
 }
 
@@ -87,7 +87,7 @@ export async function grantCompSubscription(clientId: string, planId: string): P
   if (!founder) return { ok: false, error: "Founder only." };
   const result = await grantCompCore(supabase, founder.id, clientId, planId);
   if (!result.ok) return result;
-  revalidatePath("/admin/clients");
+  revalidatePath("/admin/players");
   return { ok: true };
 }
 
@@ -100,7 +100,7 @@ export async function adjustCredits(
   if (!founder) return { ok: false, error: "Founder only." };
   const result = await adjustCreditsCore(supabase, founder.id, clientId, deltaMinutes, note);
   if (!result.ok) return result;
-  revalidatePath("/admin/clients");
+  revalidatePath("/admin/players");
   return { ok: true };
 }
 

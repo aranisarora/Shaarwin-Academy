@@ -16,7 +16,7 @@ import {
   updateClient,
   setClientBlocked,
   setClientArchived,
-} from "@/app/admin/clients/actions";
+} from "@/app/admin/players/actions";
 
 export type PendingClientRow = {
   id: string;
@@ -363,7 +363,7 @@ export function ClientManager({
                   {selected.students.map((s) => (
                     <li key={s.id}>
                       <Link
-                        href={`/admin/clients/${s.id}`}
+                        href={`/admin/players/${s.id}`}
                         className="group flex items-center justify-between gap-3 py-2.5"
                       >
                         <div>

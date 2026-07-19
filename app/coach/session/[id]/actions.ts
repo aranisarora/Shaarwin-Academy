@@ -131,7 +131,7 @@ export async function reportProblem(sessionId: string): Promise<Result> {
         type: "session_issue",
         title: "Coach reported a problem",
         body: "Open the session to follow up.",
-        data: { session_id: sessionId, url: "/admin/calendar" },
+        data: { session_id: sessionId, url: "/admin/schedule" },
       }))
     );
   }
@@ -165,7 +165,7 @@ export async function cantMakeIt(sessionId: string): Promise<Result> {
           type: "session_unassigned",
           title: "Cover needed",
           body: "A coach dropped a session.",
-          data: { session_id: sessionId, url: "/admin/calendar" },
+          data: { session_id: sessionId, url: "/admin/schedule" },
         }))
       );
     }

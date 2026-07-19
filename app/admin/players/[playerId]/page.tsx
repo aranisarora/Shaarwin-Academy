@@ -16,7 +16,7 @@ export default async function AdminStudentPage({
   params: Promise<{ playerId: string }>;
 }) {
   const { playerId } = await params;
-  const { supabase, profile } = await requireUser(`/admin/clients/${playerId}`);
+  const { supabase, profile } = await requireUser(`/admin/players/${playerId}`);
 
   const { data: player } = await supabase
     .from("players")
@@ -57,7 +57,7 @@ export default async function AdminStudentPage({
           {parent && (
             <p className="mt-1 text-sm text-fg-2">
               Account:{" "}
-              <Link href="/admin/clients" className="text-ember hover:underline">
+              <Link href="/admin/players" className="text-ember hover:underline">
                 {parent.full_name}
               </Link>{" "}
               · {parent.email}

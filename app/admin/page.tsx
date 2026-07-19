@@ -100,7 +100,7 @@ export default async function AdminDashboardPage() {
               {(unassigned.data ?? []).map((s) => (
                 <Link
                   key={s.id}
-                  href="/admin/calendar"
+                  href="/admin/schedule"
                   className="flex items-center justify-between rounded-[12px] border border-err bg-surface-2 px-4 py-3 hover:bg-surface"
                 >
                   <div>
@@ -146,7 +146,7 @@ export default async function AdminDashboardPage() {
               {(pastDue.data ?? []).map((s) => (
                 <Link
                   key={s.id}
-                  href="/admin/clients"
+                  href="/admin/players"
                   className="flex items-center justify-between rounded-[12px] border border-line bg-surface-2 px-4 py-3 hover:bg-surface"
                 >
                   <p className="font-medium">
@@ -159,7 +159,7 @@ export default async function AdminDashboardPage() {
               {(issues.data ?? []).map((n) => (
                 <Link
                   key={n.id}
-                  href={(n.data as { url?: string })?.url ?? "/admin/calendar"}
+                  href={(n.data as { url?: string })?.url ?? "/admin/schedule"}
                   className="flex items-center justify-between rounded-[12px] border border-line bg-surface-2 px-4 py-3 hover:bg-surface"
                 >
                   <div>

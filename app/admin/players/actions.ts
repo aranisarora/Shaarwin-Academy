@@ -19,7 +19,7 @@ export async function addClientInvite(details: ClientInviteDetails): Promise<Res
   if (!founder) return { ok: false, error: "Founder only." };
   const result = await addClientInviteCore(supabase, founder.id, details);
   if (!result.ok) return result;
-  revalidatePath("/admin/clients");
+  revalidatePath("/admin/players");
   return { ok: true };
 }
 
@@ -31,7 +31,7 @@ export async function savePendingClient(
   if (!founder) return { ok: false, error: "Founder only." };
   const result = await savePendingClientCore(supabase, founder.id, id, details);
   if (!result.ok) return result;
-  revalidatePath("/admin/clients");
+  revalidatePath("/admin/players");
   return { ok: true };
 }
 
@@ -40,7 +40,7 @@ export async function deletePendingClient(id: string): Promise<Result> {
   if (!founder) return { ok: false, error: "Founder only." };
   const result = await deletePendingClientCore(supabase, founder.id, id);
   if (!result.ok) return result;
-  revalidatePath("/admin/clients");
+  revalidatePath("/admin/players");
   return { ok: true };
 }
 
@@ -53,7 +53,7 @@ export async function updateClient(
   if (!founder) return { ok: false, error: "Founder only." };
   const result = await updateClientCore(supabase, founder.id, clientId, fullName, phone);
   if (!result.ok) return result;
-  revalidatePath("/admin/clients");
+  revalidatePath("/admin/players");
   return { ok: true };
 }
 
@@ -62,7 +62,7 @@ export async function setClientBlocked(clientId: string, blocked: boolean): Prom
   if (!founder) return { ok: false, error: "Founder only." };
   const result = await setClientBlockedCore(supabase, founder.id, clientId, blocked);
   if (!result.ok) return result;
-  revalidatePath("/admin/clients");
+  revalidatePath("/admin/players");
   return { ok: true };
 }
 
@@ -71,6 +71,6 @@ export async function setClientArchived(clientId: string, archived: boolean): Pr
   if (!founder) return { ok: false, error: "Founder only." };
   const result = await setClientArchivedCore(supabase, founder.id, clientId, archived);
   if (!result.ok) return result;
-  revalidatePath("/admin/clients");
+  revalidatePath("/admin/players");
   return { ok: true };
 }

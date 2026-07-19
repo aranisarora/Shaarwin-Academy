@@ -1,15 +1,18 @@
 import { StudioShell } from "@/components/shells/StudioShell";
 
-// Bottom tab bar shows the first 4; the desktop sidebar shows all of them.
+// Desktop sidebar shows all tabs, "More" last. The mobile bottom bar fits 5,
+// so it keeps "More" (→ settings) in place of the tabs that don't fit.
 const tabs = [
   { href: "/admin", label: "Inbox", icon: "●" },
-  { href: "/admin/calendar", label: "Schedule", icon: "▦" },
-  { href: "/admin/clients", label: "Clients", icon: "◉" },
-  { href: "/admin/settings", label: "More", icon: "≡" },
+  { href: "/admin/schedule", label: "Schedule", icon: "▦" },
+  { href: "/admin/players", label: "Players", icon: "◉" },
   { href: "/admin/coaches", label: "Coaches", icon: "◎" },
   { href: "/admin/venues", label: "Venues", icon: "▲" },
   { href: "/admin/billing", label: "Billing", icon: "£" },
+  { href: "/admin/settings", label: "More", icon: "≡" },
 ];
+
+const mobileTabs = [...tabs.slice(0, 4), tabs[tabs.length - 1]];
 
 export function AdminShell({
   title,
@@ -21,7 +24,7 @@ export function AdminShell({
   children: React.ReactNode;
 }) {
   return (
-    <StudioShell title={title} tabs={tabs} actions={actions}>
+    <StudioShell title={title} tabs={tabs} mobileTabs={mobileTabs} actions={actions}>
       {children}
     </StudioShell>
   );

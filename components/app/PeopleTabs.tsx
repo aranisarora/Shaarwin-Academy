@@ -31,7 +31,7 @@ export function PeopleTabs({
   function switchTo(next: View) {
     setView(next);
     // Keep the URL shareable/bookmarkable without a server round-trip.
-    router.replace(next === "players" ? "/admin/clients?view=players" : "/admin/clients", {
+    router.replace(next === "clients" ? "/admin/players?view=clients" : "/admin/players", {
       scroll: false,
     });
   }
@@ -52,8 +52,8 @@ export function PeopleTabs({
   return (
     <div className="space-y-4">
       <div className="flex gap-2">
-        {tabBtn("clients", "Account holders", clients.length)}
         {tabBtn("players", "Players", players.length)}
+        {tabBtn("clients", "Account holders", clients.length)}
       </div>
       {view === "clients" ? (
         <ClientManager clients={clients} plans={plans} pending={pending} />

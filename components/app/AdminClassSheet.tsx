@@ -16,7 +16,7 @@ import {
   reassignClassCoach,
   restoreGroupClass,
   updateGroupClass,
-} from "@/app/admin/calendar/actions";
+} from "@/app/admin/schedule/actions";
 import { ClassDetailFields, generateClassTitle, type ClassFormState } from "./ClassFields";
 import { TimeSelect12h } from "./TimeSelect12h";
 import { WEEKDAYS, type ClassRow, type Coach, type Venue } from "./admin-calendar-types";

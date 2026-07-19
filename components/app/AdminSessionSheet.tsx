@@ -19,7 +19,7 @@ import {
   reassignSession,
   setSessionCapacity,
   updateGroupClass,
-} from "@/app/admin/calendar/actions";
+} from "@/app/admin/schedule/actions";
 import { cancelSession, getRankedCoaches } from "@/app/admin/actions";
 import { viewAsCoach } from "@/app/coach/preview-actions";
 import { AddressDisplay } from "@/components/app/AddressDisplay";
