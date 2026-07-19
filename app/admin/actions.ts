@@ -27,6 +27,7 @@ export async function createGroupClass(input: NewClass): Promise<Result> {
   if (!result.ok) return result;
 
   revalidatePath("/admin/schedule");
+  revalidatePath("/admin/weekly");
   return { ok: true };
 }
 
@@ -36,6 +37,7 @@ export async function setClassActive(classId: string, active: boolean): Promise<
   const result = await setClassActiveCore(supabase, founder.id, classId, active);
   if (!result.ok) return result;
   revalidatePath("/admin/schedule");
+  revalidatePath("/admin/weekly");
   return { ok: true };
 }
 

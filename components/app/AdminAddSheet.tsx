@@ -1,7 +1,10 @@
 "use client";
 
-// "Add to schedule" sheet: a new weekly class, an extra one-off session of an
-// existing class, or a private session booked for a client.
+// One sheet, two homes:
+//  - "create" (Weekly classes tab): create a repeating group, school or
+//    private class.
+//  - "oneoff" (Schedule tab): add something to the calendar just once — an
+//    extra session of an existing class, or a one-off private session.
 
 import { useState, useTransition } from "react";
 import { Sheet } from "@/components/ui/Sheet";
@@ -28,13 +31,19 @@ import {
 } from "./admin-calendar-types";
 
 type Mode = "weekly" | "oneoff" | "private" | "school";
+type Variant = "create" | "oneoff";
 
-const MODES: { value: Mode; label: string }[] = [
-  { value: "weekly", label: "Weekly class" },
-  { value: "school", label: "School class" },
-  { value: "oneoff", label: "Extra session" },
-  { value: "private", label: "Private session" },
-];
+const MODE_SETS: Record<Variant, { value: Mode; label: string }[]> = {
+  create: [
+    { value: "weekly", label: "Group class" },
+    { value: "school", label: "School class" },
+    { value: "private", label: "Private class" },
+  ],
+  oneoff: [
+    { value: "oneoff", label: "Extra group session" },
+    { value: "private", label: "Private session" },
+  ],
+};
 
 // School blocks run far longer than a normal group class.
 const WEEKLY_DURATIONS = [60, 90, 120, 150, 180, 210, 240];
@@ -71,6 +80,7 @@ function classLabel(c: ClassRow): string {
 }
 
 export function AdminAddSheet({
+  variant = "create",
   onClose,
   onDone,
   classes,
@@ -79,6 +89,7 @@ export function AdminAddSheet({
   clients,
   invites,
 }: {
+  variant?: Variant;
   onClose: () => void;
   onDone: (message: string) => void;
   classes: ClassRow[];
@@ -87,7 +98,8 @@ export function AdminAddSheet({
   clients: ClientOption[];
   invites: InviteOption[];
 }) {
-  const [mode, setMode] = useState<Mode>("weekly");
+  const modes = MODE_SETS[variant];
+  const [mode, setMode] = useState<Mode>(modes[0].value);
 
   // ── Weekly class state ──────────────────────────────────────────────────────
   const [form, setForm] = useState<ClassFormState>(() => ({
@@ -133,7 +145,9 @@ export function AdminAddSheet({
     coachId: "",
     venueId: venues[0]?.id ?? "",
     overrideLimits: false,
-    recurring: false,
+    // On the Weekly classes tab a private class repeats by default; the
+    // Schedule tab only ever books one-offs.
+    recurring: variant === "create",
     recurWeeks: 4,
   });
   const [privWeekdays, setPrivWeekdays] = useState<string[]>(["MO"]);
@@ -183,7 +197,7 @@ export function AdminAddSheet({
         coachId: "",
         venueId: venues[0]?.id ?? "",
         overrideLimits: false,
-        recurring: false,
+        recurring: variant === "create",
         recurWeeks: 4,
       });
       setPrivWeekdays(["MO"]);
@@ -350,11 +364,15 @@ export function AdminAddSheet({
             : "Book private session";
 
   return (
-    <Sheet open onClose={onClose} title="Add to schedule">
+    <Sheet
+      open
+      onClose={onClose}
+      title={variant === "oneoff" ? "Add a one-off session" : "Create a class"}
+    >
       <div className="space-y-5">
         {/* Mode tabs */}
-        <div className="grid grid-cols-2 gap-2">
-          {MODES.map((m) => (
+        <div className={`grid gap-2 ${modes.length === 3 ? "grid-cols-3" : "grid-cols-2"}`}>
+          {modes.map((m) => (
             <button
               key={m.value}
               type="button"
@@ -616,7 +634,9 @@ export function AdminAddSheet({
               ))}
             </Select>
 
-            {!isOpen && (
+            {/* One-off sessions from the Schedule tab never repeat — the
+                repeating kind lives in the Weekly classes tab. */}
+            {!isOpen && variant === "create" && (
             <fieldset className="space-y-2">
               <legend className="label">Repeat</legend>
               <label className="flex min-h-11 cursor-pointer items-center gap-3 rounded-[12px] border border-line bg-surface-2 px-4 py-3">

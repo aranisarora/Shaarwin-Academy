@@ -28,6 +28,7 @@ type Result = { ok: boolean; error?: string; code?: string };
 
 function refresh() {
   revalidatePath("/admin/schedule");
+  revalidatePath("/admin/weekly");
   revalidatePath("/admin");
 }
 

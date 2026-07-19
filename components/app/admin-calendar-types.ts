@@ -45,6 +45,7 @@ export type ClassRow = {
   endsOn: string | null; // set when the class was ended — restorable
   venueId: string | null;
   venueName: string | null;
+  isSchool: boolean; // held at a school — not bookable online
 };
 
 export type Coach = { id: string; name: string };

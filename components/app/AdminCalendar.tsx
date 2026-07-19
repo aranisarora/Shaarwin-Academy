@@ -1,21 +1,17 @@
 "use client";
 
-// The merged admin calendar: week view (one lane per coach), the weekly
-// classes that generate it, and everything you can add to it. Tap a session
-// to change it — "just this session" or "every week", Google Calendar-style.
+// The admin schedule: this week's session instances, one lane per coach.
+// Tap a session to change it — "just this session" or "every week", Google
+// Calendar-style. The repeating classes that generate these sessions live in
+// the Weekly classes tab; here you only add one-offs.
 
-import { useMemo, useState, useTransition } from "react";
+import Link from "next/link";
+import { useMemo, useState } from "react";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
-import { Select } from "@/components/ui/Select";
-import { topUpSessions } from "@/app/admin/schedule/actions";
 import { AdminSessionSheet } from "./AdminSessionSheet";
-import { AdminClassSheet } from "./AdminClassSheet";
 import { AdminAddSheet } from "./AdminAddSheet";
-import { time12h } from "./ClassFields";
 import {
-  WEEKDAY_NAME,
-  WEEKDAYS,
   clockTime,
   dayLabel,
   fmtWhen,
@@ -27,8 +23,6 @@ import {
   type SessionRow,
   type Venue,
 } from "./admin-calendar-types";
-
-const WEEKDAY_ORDER = WEEKDAYS.map(([code]) => code) as string[];
 
 // Sessions arrive already sorted by start time, so grouping them by academy
 // wall-date yields days in chronological order with each day's sessions in
@@ -66,51 +60,8 @@ export function AdminCalendar({
   onRefresh?: () => void;
 }) {
   const [selected, setSelected] = useState<SessionRow | null>(null);
-  const [editingClass, setEditingClass] = useState<ClassRow | null>(null);
   const [adding, setAdding] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
-  const [pending, startTransition] = useTransition();
-
-  // Filters for the weekly-classes list — location (venue), day, level and
-  // status. Options are drawn from the classes that actually exist so we never
-  // show an empty bucket.
-  const [venueFilter, setVenueFilter] = useState("all");
-  const [dayFilter, setDayFilter] = useState("all");
-  const [levelFilter, setLevelFilter] = useState("all");
-  const [statusFilter, setStatusFilter] = useState("active");
-
-  const venueOptions = useMemo(
-    () =>
-      [...new Set(classes.map((c) => c.venueName ?? ""))].sort((a, b) =>
-        a.localeCompare(b)
-      ),
-    [classes]
-  );
-  const dayOptions = useMemo(
-    () =>
-      [...new Set(classes.map((c) => c.weekday))].sort(
-        (a, b) => WEEKDAY_ORDER.indexOf(a) - WEEKDAY_ORDER.indexOf(b)
-      ),
-    [classes]
-  );
-  const levelOptions = useMemo(
-    () => [...new Set(classes.map((c) => c.level))].sort((a, b) => a.localeCompare(b)),
-    [classes]
-  );
-
-  const filteredClasses = useMemo(
-    () =>
-      classes.filter((c) => {
-        if (venueFilter !== "all" && (c.venueName ?? "") !== venueFilter) return false;
-        if (dayFilter !== "all" && c.weekday !== dayFilter) return false;
-        if (levelFilter !== "all" && c.level !== levelFilter) return false;
-        if (statusFilter === "active" && !c.active) return false;
-        if (statusFilter === "paused" && (c.active || c.endsOn)) return false;
-        if (statusFilter === "ended" && (c.active || !c.endsOn)) return false;
-        return true;
-      }),
-    [classes, venueFilter, dayFilter, levelFilter, statusFilter]
-  );
 
   const lanes = useMemo(() => {
     const unassigned = sessions.filter((s) => !s.coachId);
@@ -192,9 +143,17 @@ export function AdminCalendar({
             setMessage(null);
           }}
         >
-          Add to schedule
+          Add a one-off session
         </Button>
       </div>
+
+      <p className="text-sm text-fg-2">
+        Repeating classes are created and edited in the{" "}
+        <Link href="/admin/weekly" className="text-fg underline underline-offset-4">
+          Weekly classes
+        </Link>{" "}
+        tab.
+      </p>
 
       {lanes.unassigned.length > 0 && (
         <div className="rounded-[12px] border border-err p-4">
@@ -231,121 +190,6 @@ export function AdminCalendar({
         </p>
       )}
 
-      {/* ── The weekly classes behind the calendar ── */}
-      <div className="space-y-2 border-t border-line pt-5">
-        <div className="flex items-center justify-between gap-2">
-          <p className="label">Weekly classes</p>
-          <button
-            disabled={pending}
-            className="text-sm text-fg-2 underline-offset-4 hover:underline"
-            onClick={() =>
-              startTransition(async () => {
-                const r = await topUpSessions();
-                setMessage(
-                  r.ok
-                    ? r.created
-                      ? `Added ${r.created} upcoming sessions.`
-                      : "The calendar is already fully topped up."
-                    : (r.error ?? "Failed.")
-                );
-              })
-            }
-          >
-            {pending ? "Topping up…" : "Top up the next 8 weeks"}
-          </button>
-        </div>
-        <p className="text-sm text-fg-2">
-          Each one repeats every week and fills the calendar above. Tap to change a class —
-          for a one-week-only change, tap that session in the calendar instead.
-        </p>
-
-        {classes.length > 0 && (
-          <div className="grid grid-cols-2 gap-2 pt-1 sm:grid-cols-4">
-            <Select
-              aria-label="Filter by location"
-              value={venueFilter}
-              onChange={(e) => setVenueFilter(e.target.value)}
-            >
-              <option value="all">All locations</option>
-              {venueOptions.map((v) => (
-                <option key={v} value={v}>
-                  {v || "No venue"}
-                </option>
-              ))}
-            </Select>
-            <Select
-              aria-label="Filter by day"
-              value={dayFilter}
-              onChange={(e) => setDayFilter(e.target.value)}
-            >
-              <option value="all">Any day</option>
-              {dayOptions.map((d) => (
-                <option key={d} value={d}>
-                  {WEEKDAY_NAME[d] ?? d}
-                </option>
-              ))}
-            </Select>
-            <Select
-              aria-label="Filter by level"
-              value={levelFilter}
-              onChange={(e) => setLevelFilter(e.target.value)}
-            >
-              <option value="all">Any level</option>
-              {levelOptions.map((l) => (
-                <option key={l} value={l}>
-                  {l}
-                </option>
-              ))}
-            </Select>
-            <Select
-              aria-label="Filter by status"
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-            >
-              <option value="all">All statuses</option>
-              <option value="active">Active</option>
-              <option value="paused">Paused</option>
-              <option value="ended">Ended</option>
-            </Select>
-          </div>
-        )}
-
-        {filteredClasses.map((c) => (
-          <button
-            key={c.id}
-            onClick={() => {
-              setMessage(null);
-              setEditingClass(c);
-            }}
-            className="flex w-full items-center justify-between gap-3 rounded-[12px] border border-line bg-surface-2 px-4 py-3 text-left hover:border-ember"
-          >
-            <span>
-              <span className="block font-medium">
-                {c.title} · {c.venueName ?? "No venue"}
-              </span>
-              <span className="block text-sm text-fg-2">
-                {WEEKDAY_NAME[c.weekday] ?? "One-off"}s {time12h(c.time)} ·{" "}
-                {c.duration} min · up to {c.capacity} players
-              </span>
-            </span>
-            <span className="flex flex-col items-end gap-1.5">
-              <Badge>{c.level}</Badge>
-              {!c.active && <Badge tone="err">{c.endsOn ? "ended — tap to restore" : "paused"}</Badge>}
-            </span>
-          </button>
-        ))}
-        {classes.length === 0 && (
-          <p className="rounded-[12px] border border-line bg-surface-2 p-4 text-sm text-fg-2">
-            No weekly classes yet — tap “Add to schedule”.
-          </p>
-        )}
-        {classes.length > 0 && filteredClasses.length === 0 && (
-          <p className="rounded-[12px] border border-line bg-surface-2 p-4 text-sm text-fg-2">
-            No classes match these filters.
-          </p>
-        )}
-      </div>
-
       {selected && (
         <AdminSessionSheet
           key={selected.id}
@@ -360,23 +204,9 @@ export function AdminCalendar({
         />
       )}
 
-      {editingClass && (
-        <AdminClassSheet
-          key={editingClass.id}
-          cls={editingClass}
-          coaches={coaches}
-          venues={venues}
-          onClose={() => setEditingClass(null)}
-          onDone={(m) => {
-            setMessage(m);
-            setEditingClass(null);
-            onRefresh?.();
-          }}
-        />
-      )}
-
       {adding && (
         <AdminAddSheet
+          variant="oneoff"
           onClose={() => setAdding(false)}
           onDone={(m) => {
             setMessage(m);
