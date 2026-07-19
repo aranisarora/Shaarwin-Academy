@@ -167,6 +167,29 @@ export async function createOneOffSession(
   return { ok: true };
 }
 
+/**
+ * Register a pupil on a school class from the admin schedule. Uses the same
+ * add_school_player RPC as the coach flow (authorised here as the founder):
+ * creates the account-less player, enrols them and books this + future sessions.
+ */
+export async function addSchoolPlayer(
+  sessionId: string,
+  fullName: string,
+  grade: number | null
+): Promise<Result> {
+  const { supabase, founder } = await requireFounder();
+  if (!founder) return { ok: false, error: "Founder only." };
+  if (fullName.trim() === "") return { ok: false, error: "Enter the player's name." };
+  const { error } = await supabase.rpc("add_school_player", {
+    p_session: sessionId,
+    p_full_name: fullName.trim(),
+    p_grade: grade,
+  });
+  if (error) return { ok: false, error: "Couldn't add the player. Try again." };
+  refresh();
+  return { ok: true };
+}
+
 export async function createPrivateSession(input: PrivateSessionInput): Promise<Result> {
   const { supabase, founder } = await requireFounder();
   if (!founder) return { ok: false, error: "Founder only." };
@@ -244,6 +267,7 @@ type ClsShape = {
   active: boolean;
   venue_id: string | null;
   class_type: string;
+  is_school: boolean;
   venues: {
     name: string;
     address: string;
@@ -283,7 +307,7 @@ export async function fetchWeekSessions(
   const { data: rawSessions } = await supabase
     .from("class_sessions")
     .select(
-      "id,starts_at,ends_at,coach_id,coach_arrived_at,capacity_override,classes!inner(id,title,description,skill_level,capacity,duration_minutes,recurrence_rule,active,venue_id,class_type,venues(name,address,postcode,lat,lng,address_details),private_class_details(client_id,address,postcode,lat,lng,access_notes,address_details))"
+      "id,starts_at,ends_at,coach_id,coach_arrived_at,capacity_override,classes!inner(id,title,description,skill_level,capacity,duration_minutes,recurrence_rule,active,venue_id,class_type,is_school,venues(name,address,postcode,lat,lng,address_details),private_class_details(client_id,address,postcode,lat,lng,access_notes,address_details))"
     )
     .eq("status", "scheduled")
     .gte("starts_at", from.toISOString())
@@ -352,6 +376,7 @@ export async function fetchWeekSessions(
       title: cls.title,
       capacity: s.capacity_override ?? cls.capacity,
       isPrivate: cls.class_type === "private",
+      isSchool: cls.is_school,
       venueName: cls.venues?.name ?? privLocationName,
       playerName: priv?.client_id ? (clientNameMap.get(priv.client_id) ?? null) : null,
       privateClientId: priv?.client_id ?? null,

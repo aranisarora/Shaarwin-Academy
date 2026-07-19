@@ -12,6 +12,7 @@ import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
 import { Spinner } from "@/components/ui/Spinner";
 import {
+  addSchoolPlayer,
   assignPrivateSessionClient,
   cancelAllFuturePrivateSessions,
   endGroupClass,
@@ -86,6 +87,30 @@ export function AdminSessionSheet({
   const [assignPlayerId, setAssignPlayerId] = useState("");
   const [assignOverride, setAssignOverride] = useState(false);
   const assignClient = clients.find((c) => c.id === assignClientId) ?? null;
+
+  // School class: register a walk-in pupil (name + grade).
+  const [schoolAdding, setSchoolAdding] = useState(false);
+  const [schoolName, setSchoolName] = useState("");
+  const [schoolGrade, setSchoolGrade] = useState("");
+
+  function addPupil() {
+    const name = schoolName.trim();
+    if (name === "") {
+      setMessage("Enter the player's name.");
+      return;
+    }
+    const grade = schoolGrade.trim() === "" ? null : Number(schoolGrade);
+    setMessage(null);
+    startTransition(async () => {
+      const r = await addSchoolPlayer(session.id, name, grade);
+      if (r.ok) {
+        setSchoolName("");
+        setSchoolGrade("");
+        setSchoolAdding(false);
+        setMessage(`${name} added to the class.`);
+      } else setMessage(r.error ?? "Couldn't add the player.");
+    });
+  }
 
   function assign() {
     if (!assignClientId) return;
@@ -275,6 +300,7 @@ export function AdminSessionSheet({
             )}
             <div className="mt-2 flex flex-wrap gap-2">
               {session.isPrivate && <Badge tone="ember">Private</Badge>}
+              {session.isSchool && <Badge tone="ember">School class</Badge>}
               {!session.classActive && !session.isPrivate && (
                 <Badge tone="neutral">Booking paused</Badge>
               )}
@@ -305,6 +331,58 @@ export function AdminSessionSheet({
               </button>
             )}
           </div>
+
+          {/* ── School class: add a pupil ── */}
+          {session.isSchool && (
+            <div className="space-y-3 rounded-[12px] border border-line p-4">
+              <div>
+                <p className="label">Players</p>
+                <p className="mt-1 text-sm text-fg-2">
+                  School pupils aren&apos;t booked online — add whoever attends. The coach can
+                  also add them from the session.
+                </p>
+              </div>
+              {schoolAdding ? (
+                <>
+                  <Input
+                    label="Player name"
+                    value={schoolName}
+                    onChange={(e) => setSchoolName(e.target.value)}
+                    autoFocus
+                  />
+                  <Input
+                    label="Grade"
+                    type="number"
+                    min={1}
+                    max={13}
+                    hint="Their school grade — used to work out their age."
+                    value={schoolGrade}
+                    onChange={(e) => setSchoolGrade(e.target.value)}
+                  />
+                  <div className="flex gap-2">
+                    <Button onClick={addPupil} disabled={pending}>
+                      {pending ? <Spinner /> : "Add player"}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      disabled={pending}
+                      onClick={() => {
+                        setSchoolAdding(false);
+                        setSchoolName("");
+                        setSchoolGrade("");
+                      }}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                </>
+              ) : (
+                <Button variant="ghost" onClick={() => setSchoolAdding(true)} className="w-full">
+                  + Add player
+                </Button>
+              )}
+            </div>
+          )}
 
           {/* ── Assign a client (open private slot only) ── */}
           {isOpenPrivate && (

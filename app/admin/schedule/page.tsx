@@ -39,7 +39,7 @@ export default async function AdminCalendarPage({
     supabase
       .from("class_sessions")
       .select(
-        "id,starts_at,ends_at,coach_id,coach_arrived_at,capacity_override,classes!inner(id,title,description,skill_level,capacity,duration_minutes,recurrence_rule,active,venue_id,class_type,venues(name,address,postcode,lat,lng,address_details),private_class_details(client_id,address,postcode,lat,lng,access_notes,address_details))"
+        "id,starts_at,ends_at,coach_id,coach_arrived_at,capacity_override,classes!inner(id,title,description,skill_level,capacity,duration_minutes,recurrence_rule,active,venue_id,class_type,is_school,venues(name,address,postcode,lat,lng,address_details),private_class_details(client_id,address,postcode,lat,lng,access_notes,address_details))"
       )
       .eq("status", "scheduled")
       .gte("starts_at", from.toISOString())
@@ -93,6 +93,7 @@ export default async function AdminCalendarPage({
     active: boolean;
     venue_id: string | null;
     class_type: string;
+    is_school: boolean;
     venues: {
       name: string;
       address: string;
@@ -189,6 +190,7 @@ export default async function AdminCalendarPage({
       title: cls.title,
       capacity: s.capacity_override ?? cls.capacity,
       isPrivate: cls.class_type === "private",
+      isSchool: cls.is_school,
       venueName: cls.venues?.name ?? privLocationName,
       playerName: priv?.client_id ? (clientNameMap.get(priv.client_id) ?? null) : null,
       privateClientId: priv?.client_id ?? null,

@@ -13,6 +13,7 @@ export type SessionRow = {
   title: string;
   capacity: number; // effective for this session (override ?? class default)
   isPrivate: boolean;
+  isSchool: boolean; // group class held at a school — coaches/admins add players
   venueName: string | null;
   playerName: string | null;
   // For private sessions: the assigned client, or null for an "open" slot held
