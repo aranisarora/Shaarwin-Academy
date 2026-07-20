@@ -71,15 +71,13 @@ export async function POST(request: Request) {
 
   after(async () => {
     try {
-      if (buttonPayload || buttonText) {
-        await handleInteractive(phone, {
-          payload: buttonPayload,
-          text: buttonText || body,
-          originalSid,
-        });
-      } else {
-        await handleMessage(phone, body, Number(params.NumMedia ?? 0) > 0);
-      }
+      await handleInbound(phone, {
+        body,
+        hasMedia: Number(params.NumMedia ?? 0) > 0,
+        payload: buttonPayload,
+        buttonText,
+        originalSid,
+      });
     } catch (err) {
       console.error("wa: message handling failed", err);
       await sendWhatsApp(
@@ -93,74 +91,37 @@ export async function POST(request: Request) {
 }
 
 /**
- * A tapped quick-reply button → run the coach action it maps to (confirm /
- * arrived / late / attendance) with no LLM. Anything we don't recognise falls
- * through to the normal assistant so nothing is lost.
+ * Handle one inbound WhatsApp event — a tapped quick-reply button OR a typed
+ * message. Identity is resolved once, up front.
+ *
+ * For a coach we first try the deterministic class-action handler on whatever
+ * arrived — a button tap OR the words the reminder invites ("coming" /
+ * "arrived" / "running late" / "all present") — so those run the exact RPC with
+ * no LLM and can't leave the assistant guessing which session was meant. Only
+ * genuine free text (and anyone who isn't a coach) reaches the assistant.
  */
-async function handleInteractive(
+async function handleInbound(
   phone: string,
-  ev: { payload: string; text: string; originalSid: string }
+  ev: {
+    body: string;
+    hasMedia: boolean;
+    payload: string;
+    buttonText: string;
+    originalSid: string;
+  }
 ) {
-  const admin = adminClient();
-  const identity = await resolveIdentity(admin, phone);
-  const profile = identity.profile;
-  if (!profile) {
-    await handleMessage(phone, ev.text, false);
-    return;
-  }
+  const isTap = Boolean(ev.payload || ev.buttonText);
+  // A tap carries its label in buttonText; a typed message carries it in body.
+  const text = ev.buttonText || ev.body;
 
-  const supabase = await userClientFor(profile.email);
-  if (!supabase) {
-    console.error("wa: session mint failed for", profile.id);
-    await sendWhatsApp(
-      phone,
-      "I couldn't securely access your account just now. Please try again in a minute."
-    );
-    return;
-  }
-
-  const reply = await handleInteractiveReply({
-    admin,
-    supabase,
-    profile,
-    payload: ev.payload,
-    text: ev.text,
-    originalSid: ev.originalSid,
-  });
-  if (reply === null) {
-    // Not a recognised interactive action — let the assistant take it.
-    await handleMessage(phone, ev.text, false);
-    return;
-  }
-
-  await admin.from("wa_messages").insert([
-    { phone, role: "user", content: (ev.text || ev.payload).slice(0, 4000) },
-    { phone, role: "assistant", content: reply.slice(0, 4000) },
-  ]);
-  await sendWhatsApp(phone, reply);
-}
-
-async function handleMessage(phone: string, body: string, hasMedia: boolean) {
-  if (!body) {
-    if (hasMedia) {
+  if (!isTap && !ev.body) {
+    if (ev.hasMedia) {
       await sendWhatsApp(phone, "I can only read text messages for now — type what you need!");
     }
     return;
   }
 
   const admin = adminClient();
-
-  // Cheap flood guard before any LLM spend.
-  const { count } = await admin
-    .from("wa_messages")
-    .select("id", { count: "exact", head: true })
-    .eq("phone", phone)
-    .eq("role", "user")
-    .gte("created_at", new Date(Date.now() - 60000).toISOString());
-  if ((count ?? 0) >= RATE_LIMIT_PER_MINUTE) {
-    await sendWhatsApp(phone, "You're messaging faster than I can think — give me a minute 🙂");
-    return;
-  }
 
   // Phone-first identity: resolve, and if the number is genuinely unknown,
   // provision a client account for it (the number is Twilio-verified, so no
@@ -190,6 +151,41 @@ async function handleMessage(phone: string, body: string, hasMedia: boolean) {
     return;
   }
 
-  const reply = await runAgent({ phone, userText: body, profile, supabase, admin });
+  // Coaches: a class action (a tap, or the typed words the reminder invites)
+  // runs the same RPC as the app with no LLM. Returns null when the message
+  // isn't a recognised action, so ordinary chat falls through to the assistant.
+  if (profile.role === "coach") {
+    const reply = await handleInteractiveReply({
+      admin,
+      supabase,
+      profile,
+      payload: ev.payload,
+      text,
+      originalSid: ev.originalSid,
+    });
+    if (reply !== null) {
+      await admin.from("wa_messages").insert([
+        { phone, role: "user", content: (text || ev.payload).slice(0, 4000) },
+        { phone, role: "assistant", content: reply.slice(0, 4000) },
+      ]);
+      await sendWhatsApp(phone, reply);
+      return;
+    }
+  }
+
+  // Free text (or a non-coach) → the assistant. Cheap flood guard first, before
+  // any LLM spend.
+  const { count } = await admin
+    .from("wa_messages")
+    .select("id", { count: "exact", head: true })
+    .eq("phone", phone)
+    .eq("role", "user")
+    .gte("created_at", new Date(Date.now() - 60000).toISOString());
+  if ((count ?? 0) >= RATE_LIMIT_PER_MINUTE) {
+    await sendWhatsApp(phone, "You're messaging faster than I can think — give me a minute 🙂");
+    return;
+  }
+
+  const reply = await runAgent({ phone, userText: text, profile, supabase, admin });
   await sendWhatsApp(phone, reply);
 }

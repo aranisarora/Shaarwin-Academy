@@ -24,24 +24,49 @@ type ButtonId = (typeof WA_BUTTON)[keyof typeof WA_BUTTON];
 const AFTER_GROUP: ReadonlySet<ButtonId> = new Set([WA_BUTTON.AC_PRESENT, WA_BUTTON.AC_ABSENT]);
 const KNOWN_IDS: ReadonlySet<string> = new Set(Object.values(WA_BUTTON));
 
-// Fallback when a channel delivers the button title but no payload id: map the
-// exact button text back to its action. (Loose free text is left to the agent.)
-const TITLE_TO_ID: Record<string, ButtonId> = {
+// Exact matches: a known payload id, or the button's exact title typed out.
+// Unambiguous — nobody types "all present ✅" in casual chat — so always honoured.
+const EXACT_TITLE_TO_ID: Record<string, ButtonId> = {
   "i'm coming": WA_BUTTON.COACH_CONFIRM,
   "im coming": WA_BUTTON.COACH_CONFIRM,
   "i've arrived": WA_BUTTON.COACH_ARRIVED,
   "ive arrived": WA_BUTTON.COACH_ARRIVED,
-  "running late": WA_BUTTON.COACH_LATE,
   "all present ✅": WA_BUTTON.AC_PRESENT,
   "all present": WA_BUTTON.AC_PRESENT,
   "some absent": WA_BUTTON.AC_ABSENT,
 };
 
-function resolveAction(payload: string, text: string): ButtonId | null {
+// Informal shorthands the reminder explicitly invites ("Reply 'coming',
+// 'arrived', or 'running late'"). These double as ordinary words, so the caller
+// only honours them when they line up with a real session (else → the agent).
+const LOOSE_WORD_TO_ID: Record<string, ButtonId> = {
+  coming: WA_BUTTON.COACH_CONFIRM,
+  confirm: WA_BUTTON.COACH_CONFIRM,
+  confirmed: WA_BUTTON.COACH_CONFIRM,
+  arrived: WA_BUTTON.COACH_ARRIVED,
+  reached: WA_BUTTON.COACH_ARRIVED,
+  "running late": WA_BUTTON.COACH_LATE,
+  late: WA_BUTTON.COACH_LATE,
+  present: WA_BUTTON.AC_PRESENT,
+  absent: WA_BUTTON.AC_ABSENT,
+};
+
+// A tapped button id, or the button's exact title — always a deliberate action.
+function resolveExact(payload: string, text: string): ButtonId | null {
   const p = (payload || "").trim();
   if (KNOWN_IDS.has(p)) return p as ButtonId;
   const t = (text || "").trim().toLowerCase();
-  return TITLE_TO_ID[t] ?? null;
+  return EXACT_TITLE_TO_ID[t] ?? null;
+}
+
+// A one-word status reply. Matched on the whole message (not a substring) so
+// "running late for the airport" doesn't count — only a bare "running late".
+function resolveLoose(text: string): ButtonId | null {
+  const t = (text || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[.!]+$/, "");
+  return LOOSE_WORD_TO_ID[t] ?? null;
 }
 
 /**
@@ -58,14 +83,23 @@ export async function handleInteractiveReply(opts: {
   originalSid: string;
 }): Promise<string | null> {
   const { admin, supabase, profile } = opts;
-  const action = resolveAction(opts.payload, opts.text);
-  if (!action) return null;
-  // Only coaches ever receive these prompts; anyone else falls through.
+  // Only coaches ever act on these prompts; anyone else falls through.
   if (profile.role !== "coach") return null;
+
+  // Exact taps/titles are honoured outright; a loose one-word reply only when it
+  // resolves to a real session (checked below).
+  const exact = resolveExact(opts.payload, opts.text);
+  const loose = exact ? null : resolveLoose(opts.text);
+  const action = exact ?? loose;
+  if (!action) return null;
 
   const group = AFTER_GROUP.has(action) ? "after" : "before";
   const sessionId = await resolveSession(admin, supabase, profile.id, group, opts.originalSid);
   if (!sessionId) {
+    // A tap / exact phrase is unmistakably an action → help them place it. A
+    // bare word matching no live session is likely just conversation, so hand
+    // it back to the assistant (null) rather than nag about "which class?".
+    if (loose && !opts.originalSid) return null;
     return "Thanks! I couldn't tell which session that was for though — which class did you mean? You can also update it in the app.";
   }
 
