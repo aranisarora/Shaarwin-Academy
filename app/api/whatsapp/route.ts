@@ -6,6 +6,7 @@
 
 import { after } from "next/server";
 import { runAgent } from "@/lib/whatsapp/agent";
+import { handleInteractiveReply } from "@/lib/whatsapp/interactive";
 import {
   adminClient,
   autoProvisionClient,
@@ -62,9 +63,23 @@ export async function POST(request: Request) {
     return EMPTY_TWIML;
   }
 
+  // Quick-reply button taps carry the button's payload id + title, and echo the
+  // SID of the message they replied to. Handle those deterministically.
+  const buttonPayload = (params.ButtonPayload ?? "").trim();
+  const buttonText = (params.ButtonText ?? "").trim();
+  const originalSid = (params.OriginalRepliedMessageSid ?? "").trim();
+
   after(async () => {
     try {
-      await handleMessage(phone, body, Number(params.NumMedia ?? 0) > 0);
+      if (buttonPayload || buttonText) {
+        await handleInteractive(phone, {
+          payload: buttonPayload,
+          text: buttonText || body,
+          originalSid,
+        });
+      } else {
+        await handleMessage(phone, body, Number(params.NumMedia ?? 0) > 0);
+      }
     } catch (err) {
       console.error("wa: message handling failed", err);
       await sendWhatsApp(
@@ -75,6 +90,54 @@ export async function POST(request: Request) {
   });
 
   return EMPTY_TWIML;
+}
+
+/**
+ * A tapped quick-reply button → run the coach action it maps to (confirm /
+ * arrived / late / attendance) with no LLM. Anything we don't recognise falls
+ * through to the normal assistant so nothing is lost.
+ */
+async function handleInteractive(
+  phone: string,
+  ev: { payload: string; text: string; originalSid: string }
+) {
+  const admin = adminClient();
+  const identity = await resolveIdentity(admin, phone);
+  const profile = identity.profile;
+  if (!profile) {
+    await handleMessage(phone, ev.text, false);
+    return;
+  }
+
+  const supabase = await userClientFor(profile.email);
+  if (!supabase) {
+    console.error("wa: session mint failed for", profile.id);
+    await sendWhatsApp(
+      phone,
+      "I couldn't securely access your account just now. Please try again in a minute."
+    );
+    return;
+  }
+
+  const reply = await handleInteractiveReply({
+    admin,
+    supabase,
+    profile,
+    payload: ev.payload,
+    text: ev.text,
+    originalSid: ev.originalSid,
+  });
+  if (reply === null) {
+    // Not a recognised interactive action — let the assistant take it.
+    await handleMessage(phone, ev.text, false);
+    return;
+  }
+
+  await admin.from("wa_messages").insert([
+    { phone, role: "user", content: (ev.text || ev.payload).slice(0, 4000) },
+    { phone, role: "assistant", content: reply.slice(0, 4000) },
+  ]);
+  await sendWhatsApp(phone, reply);
 }
 
 async function handleMessage(phone: string, body: string, hasMedia: boolean) {

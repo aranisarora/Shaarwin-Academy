@@ -2631,6 +2631,8 @@ begin
                || ' for the ' || v_time || ' session.';
   end if;
 
+  -- Booked clients (parents) are always told — arrived or late both matter to
+  -- them.
   insert into notifications (user_id, type, title, body, data)
   select distinct b.client_id, v_type, v_title, v_body,
          jsonb_build_object('session_id', p_session, 'url', '/app')
@@ -2638,10 +2640,15 @@ begin
    where b.session_id = p_session
      and b.status in ('confirmed', 'attended');
 
-  insert into notifications (user_id, type, title, body, data)
-  select p.id, v_type, v_title, v_body,
-         jsonb_build_object('session_id', p_session, 'url', '/admin/calendar')
-    from profiles p where p.role = 'founder';
+  -- Founders are pinged ONLY when the coach is running late (they may need to
+  -- act). A normal on-time arrival needs no founder ping; the notify worker
+  -- escalates separately if the class starts with no arrival marked.
+  if p_late then
+    insert into notifications (user_id, type, title, body, data)
+    select p.id, v_type, v_title, v_body,
+           jsonb_build_object('session_id', p_session, 'url', '/admin/schedule')
+      from profiles p where p.role = 'founder';
+  end if;
 
   return v_arrived;
 end;
@@ -2791,8 +2798,6 @@ CREATE OR REPLACE FUNCTION public.coach_confirm_session(p_session uuid)
 AS $function$
 declare
   v_session class_sessions%rowtype;
-  v_name    text;
-  v_title   text;
   v_at      timestamptz;
 begin
   select * into v_session from class_sessions where id = p_session;
@@ -2808,15 +2813,9 @@ begin
    where id = p_session
    returning coach_confirmed_at into v_at;
 
-  select split_part(coalesce(nullif(trim(full_name), ''), 'Coach'), ' ', 1)
-    into v_name from profiles where id = v_session.coach_id;
-  select title into v_title from classes where id = v_session.class_id;
-
-  perform notify_founders('ops_coach_confirmed', 'Coach confirmed',
-    'Coach ' || v_name || ' confirmed they''re taking ' || coalesce(v_title, 'a session')
-    || ' — ' || fmt_ist(v_session.starts_at) || '.',
-    jsonb_build_object('session_id', p_session, 'url', '/admin/calendar'));
-
+  -- Founders are intentionally NOT notified: a routine confirmation needs no
+  -- action from them. The notify worker escalates only when a coach has still
+  -- not confirmed ~10 minutes before the class starts.
   return v_at;
 end;
 $function$;
