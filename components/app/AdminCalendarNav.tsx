@@ -2,6 +2,7 @@
 
 import { useCallback, useState, useTransition } from "react";
 import { fetchWeekSessions } from "@/app/admin/schedule/actions";
+import { shiftWallDate } from "@/lib/academy-time";
 import { AdminCalendar } from "./AdminCalendar";
 import type {
   ClassRow,
@@ -16,7 +17,8 @@ const navBtn =
   "rounded-[8px] border border-line px-4 py-2 text-sm hover:border-ember hover:text-ember disabled:opacity-50 disabled:cursor-not-allowed";
 
 export function AdminCalendarNav({
-  initialWeekOffset,
+  initialAnchor,
+  today,
   initialSessions,
   initialRangeLabel,
   nextByClass,
@@ -26,7 +28,11 @@ export function AdminCalendarNav({
   clients,
   invites,
 }: {
-  initialWeekOffset: number;
+  // The 7-day window starts on `initialAnchor` (a "YYYY-MM-DD" academy wall
+  // date); `today` is the academy date at load, used to reset and to flag the
+  // current week.
+  initialAnchor: string;
+  today: string;
   initialSessions: SessionRow[];
   initialRangeLabel: string;
   nextByClass: Record<string, string>;
@@ -36,19 +42,21 @@ export function AdminCalendarNav({
   clients: ClientOption[];
   invites: InviteOption[];
 }) {
-  const [weekOffset, setWeekOffset] = useState(initialWeekOffset);
+  const [anchor, setAnchor] = useState(initialAnchor);
   const [sessions, setSessions] = useState(initialSessions);
   const [rangeLabel, setRangeLabel] = useState(initialRangeLabel);
   const [isPending, startTransition] = useTransition();
 
-  const navigate = (newOffset: number) => {
+  const navigate = (newAnchor: string) => {
     startTransition(async () => {
-      const result = await fetchWeekSessions(newOffset, nextByClass);
+      const result = await fetchWeekSessions(newAnchor, nextByClass);
       setSessions(result.sessions);
-      setWeekOffset(newOffset);
+      setAnchor(newAnchor);
       setRangeLabel(result.rangeLabel);
-      // Update URL without triggering a Next.js server re-render
-      const url = newOffset !== 0 ? `/admin/schedule?week=${newOffset}` : "/admin/schedule";
+      // Update URL without triggering a Next.js server re-render. The current
+      // week stays on the bare path so it's the canonical/shareable default.
+      const url =
+        newAnchor !== today ? `/admin/schedule?date=${newAnchor}` : "/admin/schedule";
       window.history.replaceState(null, "", url);
     });
   };
@@ -57,38 +65,50 @@ export function AdminCalendarNav({
   // stays fresh without a full page reload.
   const refreshSessions = useCallback(() => {
     startTransition(async () => {
-      const result = await fetchWeekSessions(weekOffset, nextByClass);
+      const result = await fetchWeekSessions(anchor, nextByClass);
       setSessions(result.sessions);
     });
-  }, [weekOffset, nextByClass]);
+  }, [anchor, nextByClass]);
+
+  const isThisWeek = anchor === today;
 
   return (
     <>
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <button
-            onClick={() => navigate(weekOffset - 1)}
+            onClick={() => navigate(shiftWallDate(anchor, -7))}
             disabled={isPending}
             className={navBtn}
           >
             ← Earlier
           </button>
-          {weekOffset !== 0 && (
-            <button onClick={() => navigate(0)} disabled={isPending} className={navBtn}>
-              This week
-            </button>
-          )}
           <button
-            onClick={() => navigate(weekOffset + 1)}
+            onClick={() => navigate(shiftWallDate(anchor, 7))}
             disabled={isPending}
             className={navBtn}
           >
             Later →
           </button>
+          <input
+            type="date"
+            aria-label="Jump to a date"
+            value={anchor}
+            onChange={(e) => {
+              if (e.target.value) navigate(e.target.value);
+            }}
+            disabled={isPending}
+            className="rounded-[8px] border border-line bg-surface-2 px-3 py-2 text-sm text-fg hover:border-ember focus:border-ember focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+          />
+          {!isThisWeek && (
+            <button onClick={() => navigate(today)} disabled={isPending} className={navBtn}>
+              This week
+            </button>
+          )}
         </div>
         <p className="tnum text-sm text-fg-2">
           {rangeLabel}
-          {weekOffset === 0 ? " (this week)" : ""}
+          {isThisWeek ? " (this week)" : ""}
           {isPending ? " …" : ""}
         </p>
       </div>

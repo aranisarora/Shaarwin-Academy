@@ -5,8 +5,11 @@ import { redirect } from "next/navigation";
 export default async function AdminCalendarPage({
   searchParams,
 }: {
-  searchParams: Promise<{ week?: string }>;
+  searchParams: Promise<{ date?: string; week?: string }>;
 }) {
-  const { week } = await searchParams;
-  redirect(week ? `/admin/schedule?week=${week}` : "/admin/schedule");
+  const { date, week } = await searchParams;
+  if (date) redirect(`/admin/schedule?date=${date}`);
+  // Legacy links used a week offset; the schedule page still understands it.
+  if (week) redirect(`/admin/schedule?week=${week}`);
+  redirect("/admin/schedule");
 }

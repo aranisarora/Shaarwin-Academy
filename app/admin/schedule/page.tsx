@@ -1,6 +1,11 @@
 import type { Metadata } from "next";
 import { requireUser } from "@/lib/auth";
-import { utcToAcademyWall } from "@/lib/academy-time";
+import {
+  academyToday,
+  academyWallToUtc,
+  shiftWallDate,
+  utcToAcademyWall,
+} from "@/lib/academy-time";
 import { AdminShell } from "@/components/app/AdminShell";
 import { AdminCalendarNav } from "@/components/app/AdminCalendarNav";
 import type {
@@ -16,15 +21,25 @@ export const metadata: Metadata = { title: "Schedule" };
 export default async function AdminCalendarPage({
   searchParams,
 }: {
-  searchParams: Promise<{ week?: string }>;
+  searchParams: Promise<{ date?: string; week?: string }>;
 }) {
   const { supabase } = await requireUser("/admin/schedule");
-  const { week } = await searchParams;
-  const weekOffset = Number.parseInt(week ?? "0", 10) || 0;
+  const { date, week } = await searchParams;
 
-  const from = new Date();
-  from.setHours(0, 0, 0, 0);
-  from.setDate(from.getDate() + weekOffset * 7);
+  // The schedule shows a 7-day window starting on an anchor date. Prefer an
+  // explicit ?date=, fall back to a legacy ?week= offset (old links / stored
+  // notification URLs), otherwise start today. The window runs from academy
+  // (IST) midnight of the anchor to IST midnight seven days later.
+  const today = academyToday();
+  const validDate = date && /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : null;
+  const legacyOffset = !validDate && week ? Number.parseInt(week, 10) : Number.NaN;
+  const anchor = validDate
+    ? validDate
+    : Number.isFinite(legacyOffset)
+      ? shiftWallDate(today, legacyOffset * 7)
+      : today;
+
+  const from = academyWallToUtc(anchor, "00:00");
   const to = new Date(from.getTime() + 7 * 86400000);
 
   // Round 1: everything in parallel — sessions, coaches, classes, venues, clients, invites
@@ -261,7 +276,8 @@ export default async function AdminCalendarPage({
   return (
     <AdminShell title="Schedule">
       <AdminCalendarNav
-        initialWeekOffset={weekOffset}
+        initialAnchor={anchor}
+        today={today}
         initialSessions={rows}
         initialRangeLabel={rangeLabel}
         nextByClass={nextByClassObj}

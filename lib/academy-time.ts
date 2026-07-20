@@ -59,3 +59,20 @@ export function utcToAcademyWall(date: Date): { date: string; time: string; isoW
     isoWeekday: ((shifted.getUTCDay() + 6) % 7) + 1,
   };
 }
+
+/** Today's date on the academy wall clock, "YYYY-MM-DD". */
+export function academyToday(): string {
+  return utcToAcademyWall(new Date(nowMs())).date;
+}
+
+/**
+ * Shift a "YYYY-MM-DD" wall date by whole days. Pure calendar arithmetic (no
+ * timezone involved) — used to step the schedule window and to translate a
+ * legacy week offset into an anchor date. Rolls over months/years correctly.
+ */
+export function shiftWallDate(dateStr: string, days: number): string {
+  const [y, mo, d] = dateStr.split("-").map(Number);
+  const shifted = new Date(Date.UTC(y, mo - 1, d + days));
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${shifted.getUTCFullYear()}-${pad(shifted.getUTCMonth() + 1)}-${pad(shifted.getUTCDate())}`;
+}

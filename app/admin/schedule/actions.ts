@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { requireFounder } from "@/lib/founder";
-import { utcToAcademyWall } from "@/lib/academy-time";
+import { academyWallToUtc, utcToAcademyWall } from "@/lib/academy-time";
 import { fromDetails, type StructuredAddress } from "@/lib/address";
 import type { SessionRow } from "@/components/app/admin-calendar-types";
 import {
@@ -315,23 +315,22 @@ function privOf(cls: ClsShape): PrivDetail | null {
 }
 
 /**
- * Fetches sessions for a given week offset and maps them to SessionRow[].
- * Called by AdminCalendarNav for client-side week navigation — avoids a full
- * page reload and only re-fetches the week-specific session data.
+ * Fetches the 7-day window of sessions starting on `anchor` (a "YYYY-MM-DD"
+ * academy wall date) and maps them to SessionRow[]. Called by AdminCalendarNav
+ * for client-side navigation — avoids a full page reload and only re-fetches
+ * the window-specific session data.
  *
  * nextByClass is the class-id → next-session-ISO map computed on initial page
  * load and passed down as a plain object (serialisable over the wire).
  */
 export async function fetchWeekSessions(
-  weekOffset: number,
+  anchor: string,
   nextByClass: Record<string, string>
 ): Promise<{ sessions: SessionRow[]; rangeLabel: string }> {
   const { supabase, founder } = await requireFounder();
   if (!founder) return { sessions: [], rangeLabel: "" };
 
-  const from = new Date();
-  from.setHours(0, 0, 0, 0);
-  from.setDate(from.getDate() + weekOffset * 7);
+  const from = academyWallToUtc(anchor, "00:00");
   const to = new Date(from.getTime() + 7 * 86400000);
 
   const { data: rawSessions } = await supabase
