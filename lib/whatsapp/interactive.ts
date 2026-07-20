@@ -104,7 +104,7 @@ export async function handleInteractiveReply(opts: {
         .select("id");
       if (error) return "Couldn't save attendance just now — please mark it in the app.";
       const n = data?.length ?? 0;
-      const who = n === 0 ? "everyone" : `all ${n} student${n === 1 ? "" : "s"}`;
+      const who = n === 0 ? "everyone" : n === 1 ? "the student" : `all ${n} students`;
       return `✅ Marked ${who} present. Don't forget to add a quick assessment note for each: ${sessionLink}`;
     }
     case WA_BUTTON.AC_ABSENT: {
