@@ -570,13 +570,14 @@ function interactiveContentFor(
 ): Record<string, string> | null {
   const d = row.data ?? {};
   if (row.type === "coach_before_class" && TWILIO_WA_COACH_REMINDER_SID) {
+    // {{3}} = time + venue in one value ("6:30 pm at La Plazza") — WhatsApp
+    // rejects templates with adjacent variables, so we can't use two here.
     return {
       ContentSid: TWILIO_WA_COACH_REMINDER_SID,
       ContentVariables: JSON.stringify({
         "1": firstName,
         "2": String(d.class_title ?? "your class"),
-        "3": String(d.time_str ?? ""),
-        "4": String(d.location_str ?? ""),
+        "3": `${String(d.time_str ?? "")}${String(d.location_str ?? "")}`.trim() || "soon",
       }),
     };
   }

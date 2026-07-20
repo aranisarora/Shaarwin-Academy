@@ -102,11 +102,13 @@ const TEMPLATES = [
     def: {
       friendly_name: "coach_class_reminder",
       language: "en",
-      variables: { 1: "Augustine", 2: "Beginners Batch", 3: "6:30 pm", 4: " at La Plazza" },
+      // {{3}} folds time + venue into one value ("6:30 pm at La Plazza"):
+      // WhatsApp disallows variables that are adjacent, or at the start/end.
+      variables: { 1: "Augustine", 2: "Beginners Batch", 3: "6:30 pm at La Plazza" },
       types: {
         "twilio/quick-reply": {
           body:
-            "Hi {{1}} 👋 Reminder: your class *{{2}}* starts at {{3}}{{4}}. Tap below to keep us posted — see you on court!",
+            "Hi {{1}} 👋 Reminder: your class *{{2}}* starts at {{3}}. Tap a button below to keep us posted — see you on court!",
           actions: [
             { title: "I'm coming", id: "coach_confirm" },
             { title: "I've arrived", id: "coach_arrived" },
@@ -115,7 +117,7 @@ const TEMPLATES = [
         },
         "twilio/text": {
           body:
-            'Hi {{1}}! Reminder: {{2}} starts at {{3}}{{4}}. Reply "coming", "arrived", or "running late" to keep us posted.',
+            'Hi {{1}}! Reminder: {{2}} starts at {{3}}. Reply "coming", "arrived", or "running late" to keep us posted.',
         },
       },
     },
@@ -133,15 +135,17 @@ const TEMPLATES = [
       },
       types: {
         "twilio/quick-reply": {
+          // Body can't start or end with a variable → trailing text after {{3}}.
           body:
-            "🎉 Great work wrapping up *{{1}}*! {{2}} Please confirm today's attendance and add a quick assessment note for each student here: {{3}}",
+            "🎉 Great work wrapping up *{{1}}*! {{2}} Please confirm today's attendance and add a quick assessment note for each student here: {{3}} — thank you! 🙌",
+          // WhatsApp button titles can't contain emojis/newlines/formatting.
           actions: [
-            { title: "All present ✅", id: "ac_present" },
+            { title: "All present", id: "ac_present" },
             { title: "Some absent", id: "ac_absent" },
           ],
         },
         "twilio/text": {
-          body: "Great work finishing {{1}}! {{2}} Confirm attendance & add notes: {{3}}",
+          body: "Great work finishing {{1}}! {{2}} Confirm attendance & add notes: {{3}} — thank you!",
         },
       },
     },
