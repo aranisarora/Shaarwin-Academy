@@ -18,8 +18,10 @@ import {
   endGroupClass,
   moveSession,
   reassignSession,
+  getSessionRoster,
   setSessionCapacity,
   updateGroupClass,
+  type RosterEntry,
 } from "@/app/admin/schedule/actions";
 import { cancelSession, getRankedCoaches } from "@/app/admin/actions";
 import { viewAsCoach } from "@/app/coach/preview-actions";
@@ -108,6 +110,7 @@ export function AdminSessionSheet({
         setSchoolGrade("");
         setSchoolAdding(false);
         setMessage(`${name} added to the class.`);
+        getSessionRoster(session.id).then(setRoster);
       } else setMessage(r.error ?? "Couldn't add the player.");
     });
   }
@@ -129,10 +132,16 @@ export function AdminSessionSheet({
     });
   }
 
+  // Who's booked and whether they showed up — loaded alongside the coach ranks.
+  const [roster, setRoster] = useState<RosterEntry[] | null>(null);
+
   useEffect(() => {
     let alive = true;
     getRankedCoaches(session.id).then((r) => {
       if (alive) setRanked(r);
+    });
+    getSessionRoster(session.id).then((r) => {
+      if (alive) setRoster(r);
     });
     return () => {
       alive = false;
@@ -218,6 +227,32 @@ export function AdminSessionSheet({
       setStep("edit");
     });
   }
+
+  // Booked players with attendance — attended/no-show set by the coach on the
+  // session sheet; "confirmed" means nobody has marked them yet.
+  const rosterList =
+    roster === null ? (
+      <div className="flex justify-center py-2">
+        <Spinner />
+      </div>
+    ) : roster.length === 0 ? (
+      <p className="text-sm text-fg-2">No players booked yet.</p>
+    ) : (
+      <ul className="space-y-1.5">
+        {roster.map((p) => (
+          <li key={p.id} className="flex items-center justify-between gap-3 text-sm">
+            <span>{p.name}</span>
+            {p.status === "attended" ? (
+              <Badge tone="ok">Present</Badge>
+            ) : p.status === "no_show" ? (
+              <Badge tone="err">Absent</Badge>
+            ) : (
+              <Badge>Unmarked</Badge>
+            )}
+          </li>
+        ))}
+      </ul>
+    );
 
   return (
     <Sheet open onClose={onClose} title={session.title}>
@@ -342,6 +377,7 @@ export function AdminSessionSheet({
                   also add them from the session.
                 </p>
               </div>
+              {rosterList}
               {schoolAdding ? (
                 <>
                   <Input
@@ -381,6 +417,14 @@ export function AdminSessionSheet({
                   + Add player
                 </Button>
               )}
+            </div>
+          )}
+
+          {/* ── Players + attendance (school classes show this in their own box) ── */}
+          {!session.isSchool && (
+            <div className="space-y-3 rounded-[12px] border border-line p-4">
+              <p className="label">Players</p>
+              {rosterList}
             </div>
           )}
 

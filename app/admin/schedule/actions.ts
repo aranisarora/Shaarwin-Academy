@@ -246,6 +246,35 @@ export async function createPrivateSessionForInvite(
   return { ok: true };
 }
 
+// ── Session roster (players + attendance) ────────────────────────────────────
+
+export type RosterEntry = {
+  id: string;
+  name: string;
+  /** "attended" = present, "no_show" = absent, "confirmed" = unmarked. */
+  status: "confirmed" | "attended" | "no_show";
+};
+
+/** Who's booked on a session and whether they were marked present or absent —
+ * shown in the admin session sheet. */
+export async function getSessionRoster(sessionId: string): Promise<RosterEntry[]> {
+  const { supabase, founder } = await requireFounder();
+  if (!founder) return [];
+  const { data } = await supabase
+    .from("bookings")
+    .select("id,status,players(full_name)")
+    .eq("session_id", sessionId)
+    .in("status", ["confirmed", "attended", "no_show"]);
+  return (data ?? [])
+    .map((b) => ({
+      id: b.id,
+      name:
+        (b.players as unknown as { full_name: string } | null)?.full_name ?? "Unknown player",
+      status: b.status as RosterEntry["status"],
+    }))
+    .sort((a, b) => a.name.localeCompare(b.name));
+}
+
 // ── Week data for client-side navigation ─────────────────────────────────────
 
 type PrivDetail = {
@@ -310,7 +339,7 @@ export async function fetchWeekSessions(
     .select(
       "id,starts_at,ends_at,coach_id,coach_arrived_at,capacity_override,classes!inner(id,title,description,skill_level,capacity,duration_minutes,recurrence_rule,active,venue_id,class_type,is_school,venues(name,address,postcode,lat,lng,address_details),private_class_details(client_id,address,postcode,lat,lng,access_notes,address_details))"
     )
-    .eq("status", "scheduled")
+    .in("status", ["scheduled", "completed"])
     .gte("starts_at", from.toISOString())
     .lt("starts_at", to.toISOString())
     .order("starts_at");

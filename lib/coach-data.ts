@@ -45,6 +45,7 @@ export async function getCoachSessions(
       "id,starts_at,ends_at,status,capacity_override,classes!inner(id,title,skill_level,capacity,class_type,venues(name,address,postcode,lat,lng,address_details),private_class_details(address,postcode,lat,lng,access_notes,address_details,profiles!client_id(full_name)))"
     )
     .eq("coach_id", coachId)
+    .in("status", ["scheduled", "completed"])
     .gte("starts_at", from.toISOString())
     .lt("starts_at", to.toISOString())
     .order("starts_at");

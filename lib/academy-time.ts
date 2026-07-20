@@ -14,6 +14,20 @@ export function nowMs(): number {
   return Date.now();
 }
 
+/** Where a session sits relative to now — drives the schedule card status
+ * visuals in both the admin and coach apps. */
+export type SessionTimeStatus = "completed" | "in_progress" | "upcoming";
+
+export function sessionTimeStatus(
+  startsAt: string,
+  endsAt: string,
+  now: number = Date.now()
+): SessionTimeStatus {
+  if (new Date(endsAt).getTime() <= now) return "completed";
+  if (new Date(startsAt).getTime() <= now) return "in_progress";
+  return "upcoming";
+}
+
 /** Timezone offset in minutes at a given instant (IST is a fixed +05:30 — minutes matter). */
 export function academyOffsetMinutes(date: Date): number {
   const fmt = new Intl.DateTimeFormat("en-GB", {
