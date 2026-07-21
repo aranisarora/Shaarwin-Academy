@@ -119,8 +119,7 @@ export function CoachManager({
   // Photo preview + generation state (edit mode).
   const [photoUrl, setPhotoUrl] = useState("");
   const [uploadingPhoto, setUploadingPhoto] = useState(false);
-  // Delete + reassign state (edit mode).
-  const [showDelete, setShowDelete] = useState(false);
+  // Reassign-on-remove state (edit mode).
   const [replacementId, setReplacementId] = useState("");
   const [isPending, startTransition] = useTransition();
 
@@ -152,7 +151,6 @@ export function CoachManager({
     setMode(null);
     setAddResult(null);
     setSheetMessage(null);
-    setShowDelete(false);
     setReplacementId("");
   }
 
@@ -172,7 +170,6 @@ export function CoachManager({
     setEditId(c.id);
     setEditActive(c.active);
     setPhotoUrl(c.photoUrl);
-    setShowDelete(false);
     setReplacementId("");
     setSheetMessage(null);
     setMode("edit");
@@ -586,64 +583,42 @@ export function CoachManager({
               {editActive ? "Pause coach" : "Unpause coach"}
             </Button>
 
-            {!showDelete ? (
-              <button
-                onClick={() => setShowDelete(true)}
-                disabled={uploadingPhoto}
-                className="text-sm text-err hover:underline disabled:opacity-50"
+            <div className="space-y-3 rounded-[10px] border border-err/40 bg-err/5 p-3">
+              <p className="text-sm text-fg-2">
+                Removing turns their login back into a normal client account. Optionally hand
+                their upcoming classes to another coach — otherwise those sessions become
+                unassigned.
+              </p>
+              <Select
+                label="Give their upcoming classes to"
+                value={replacementId}
+                onChange={(e) => setReplacementId(e.target.value)}
               >
-                Remove coach…
-              </button>
-            ) : (
-              <div className="space-y-3 rounded-[10px] border border-err/40 bg-err/5 p-3">
-                <p className="text-sm text-fg-2">
-                  Removing turns their login back into a normal client account. Optionally hand
-                  their upcoming classes to another coach — otherwise those sessions become
-                  unassigned.
-                </p>
-                <Select
-                  label="Give their upcoming classes to"
-                  value={replacementId}
-                  onChange={(e) => setReplacementId(e.target.value)}
-                >
-                  <option value="">Leave unassigned</option>
-                  {coaches
-                    .filter((c) => c.id !== editId && c.active)
-                    .map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}
-                      </option>
-                    ))}
-                </Select>
-                <div className="flex gap-2">
-                  <Button
-                    variant="destructive"
-                    disabled={isPending}
-                    className="flex-1"
-                    onClick={() => {
-                      const to = coaches.find((c) => c.id === replacementId)?.name;
-                      const msg = to
-                        ? `Remove this coach and move their upcoming classes to ${to}?`
-                        : "Remove this coach? Their upcoming classes will be left unassigned.";
-                      if (!window.confirm(msg)) return;
-                      submitDelete();
-                    }}
-                  >
-                    {isPending ? <Spinner /> : "Remove coach"}
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    disabled={isPending}
-                    onClick={() => {
-                      setShowDelete(false);
-                      setReplacementId("");
-                    }}
-                  >
-                    Cancel
-                  </Button>
-                </div>
-              </div>
-            )}
+                <option value="">Leave unassigned</option>
+                {coaches
+                  .filter((c) => c.id !== editId && c.active)
+                  .map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+              </Select>
+              <Button
+                variant="destructive"
+                disabled={isPending || uploadingPhoto}
+                className="w-full"
+                onClick={() => {
+                  const to = coaches.find((c) => c.id === replacementId)?.name;
+                  const msg = to
+                    ? `Remove this coach and move their upcoming classes to ${to}?`
+                    : "Remove this coach? Their upcoming classes will be left unassigned.";
+                  if (!window.confirm(msg)) return;
+                  submitDelete();
+                }}
+              >
+                {isPending ? <Spinner /> : "Remove coach"}
+              </Button>
+            </div>
           </section>
 
           {sheetMessage && <p className="text-sm text-err">{sheetMessage}</p>}

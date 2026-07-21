@@ -1,12 +1,17 @@
 // Turns an admin-uploaded headshot into a standardized coach portrait using
 // Gemini's image model ("Nano Banana") via the shared Vertex auth. Keeps the
 // public /coaches roster visually consistent: every portrait matches the house
-// style — near-black studio background, dramatic warm side-lighting,
-// head-and-shoulders, 4:5. An existing portrait is passed as a style reference
-// so the model copies the real look rather than guessing from words alone.
+// style — near-black studio background, warm directional key light,
+// head-and-shoulders, black tee, 4:5.
+//
+// IMPORTANT — identity first. We deliberately DO NOT pass an existing coach's
+// portrait as a style reference: giving the model a second human face makes it
+// blend the two people, so a new coach came out looking like someone else (and
+// worse across gender). Instead the source photo is the ONLY face the model
+// sees, and the house look is described entirely in words below — reverse
+// engineered from the real roster. The task is framed as a relight/restage of
+// the same person, not a "re-create," so the face is preserved.
 
-import { promises as fs } from "fs";
-import path from "path";
 import { getVertexToken, vertexUrl } from "@/lib/vertex";
 
 // The image model is not served from asia-south1 (the bot's text region), so it
@@ -14,41 +19,50 @@ import { getVertexToken, vertexUrl } from "@/lib/vertex";
 const IMAGE_MODEL = process.env.VERTEX_IMAGE_MODEL ?? "gemini-2.5-flash-image";
 const IMAGE_LOCATION = process.env.VERTEX_IMAGE_LOCATION ?? "us-central1";
 
-// An existing house portrait used to anchor background, lighting and framing.
-// Shipped to the serverless bundle via next.config outputFileTracingIncludes.
-const REFERENCE_IMAGE = "public/images/coach-samir.jpg";
+// Reverse-engineered from the real coach portraits. Two blocks: an emphatic
+// identity lock (so the output is unmistakably the same person), then the house
+// style spec (background, lighting, wardrobe, framing).
+const IDENTITY_PROMPT = [
+  "You are RETOUCHING and RE-LIGHTING the single photograph provided — not",
+  "generating a new person. The output must be unmistakably the SAME individual",
+  "as the photo: a real, specific person whose likeness must be preserved with",
+  "perfect fidelity.",
+  "Keep exactly the same face shape, bone structure, jawline, cheekbones, nose,",
+  "lips, eyes and eye colour, eyebrows, forehead, ears, skin tone and complexion,",
+  "any moles/marks/freckles, age, gender, facial hair (or clean-shaven face),",
+  "and the same hairline, hair length, colour and texture.",
+  "Do NOT beautify, slim, smooth, de-age, change gender, straighten hair, add or",
+  "remove facial hair, or alter any facial feature or proportion. If the person",
+  "wears glasses, a bindi, a turban, a hijab, a piercing or any other personal",
+  "feature, keep it. Preserve their natural skin texture — real pores and detail,",
+  "never a plastic or airbrushed look.",
+  "Keep their head at roughly the same angle as the source; you may gently square",
+  "the shoulders to the camera, but never invent facial detail that isn't visible",
+  "in the source.",
+].join(" ");
 
 const HOUSE_STYLE_PROMPT = [
-  "Re-create this coach as a professional studio portrait in EXACTLY the same",
-  "style, lighting and framing as the reference portrait.",
-  "Keep the coach's face, likeness, skin tone, facial hair, hairstyle and",
-  "identity precisely the same as the source photo — do not turn them into a",
-  "different person.",
-  "Match the reference: a plain, near-black charcoal studio background with a",
-  "soft darker vignette; dramatic, warm directional key light from the upper",
-  "left at roughly 45 degrees so one side of the face is brightly lit and the",
-  "other falls into soft shadow (Rembrandt lighting); high contrast, moody and",
-  "cinematic.",
-  "Head-and-shoulders crop, subject centred and facing the camera, wearing a",
-  "plain black athletic t-shirt.",
-  "Sharp focus, photorealistic, high quality. Vertical 4:5 aspect ratio.",
-  "No text, no logos, no props, no borders.",
+  "Now restage this exact person as a professional studio portrait in the house style:",
+  "Background: a seamless matte studio backdrop in near-black charcoal, with a",
+  "soft, subtle glow of slightly lighter grey directly behind the head, deepening",
+  "to near-black at the edges (a gentle vignette). No seams, texture, props, text or logos.",
+  "Lighting: a single warm, gently amber key light placed high and to the camera's",
+  "left, about 45 degrees, giving Rembrandt-style modelling — the near cheek",
+  "brightly lit, light falling off softly across the face so the far side sinks",
+  "into deep but detailed shadow. Add clear catchlights in the eyes and a faint,",
+  "cooler rim light grazing the shadow-side edge of the hair and shoulder to",
+  "separate the subject from the dark background.",
+  "Mood: high contrast, moody, cinematic, editorial — warm highlights against a",
+  "cool near-black background.",
+  "Wardrobe: replace their top with a plain black athletic crew-neck t-shirt.",
+  "Framing: a tight head-and-shoulders crop, subject centred and facing the",
+  "camera, a little headroom above the hair, cropped around mid-chest.",
+  "Lens: sharp focus on the eyes, shallow depth of field, ~85mm portrait look,",
+  "photorealistic and high quality.",
+  "Vertical 4:5 aspect ratio. No text, no logos, no props, no borders, no watermark.",
 ].join(" ");
 
 export type Portrait = { bytes: Buffer; mimeType: string };
-
-let _ref: { mimeType: string; data: string } | null | undefined;
-async function referencePart(): Promise<{ inlineData: { mimeType: string; data: string } } | null> {
-  if (_ref === undefined) {
-    try {
-      const buf = await fs.readFile(path.join(process.cwd(), REFERENCE_IMAGE));
-      _ref = { mimeType: "image/jpeg", data: buf.toString("base64") };
-    } catch {
-      _ref = null; // Not on disk (e.g. traced out) — fall back to the prompt.
-    }
-  }
-  return _ref ? { inlineData: _ref } : null;
-}
 
 /**
  * Generate a standardized portrait from a source image. Throws on failure so
@@ -59,18 +73,17 @@ export async function standardizeCoachPortrait(
   mimeType: string
 ): Promise<Portrait> {
   const token = await getVertexToken();
-  const ref = await referencePart();
 
+  // Source photo first and alone (the only face), then the instructions. Order
+  // matters: leading with the person anchors identity before we describe the look.
   const parts: Array<
     { text: string } | { inlineData: { mimeType: string; data: string } }
-  > = [];
-  if (ref) {
-    parts.push({ text: "REFERENCE portrait — copy its background, lighting and framing exactly:" });
-    parts.push(ref);
-    parts.push({ text: "SOURCE photo of the coach — keep this person's face and identity:" });
-  }
-  parts.push({ inlineData: { mimeType, data: source.toString("base64") } });
-  parts.push({ text: HOUSE_STYLE_PROMPT });
+  > = [
+    { text: "Photograph of the coach to restyle — this exact person:" },
+    { inlineData: { mimeType, data: source.toString("base64") } },
+    { text: IDENTITY_PROMPT },
+    { text: HOUSE_STYLE_PROMPT },
+  ];
 
   const body = JSON.stringify({
     contents: [{ role: "user", parts }],

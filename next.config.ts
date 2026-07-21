@@ -1,11 +1,6 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  // Ship the reference portrait so the coach-photo generator can read it at
-  // runtime on the /admin/coaches server (Vercel traces only imported files).
-  outputFileTracingIncludes: {
-    "/admin/coaches": ["./public/images/coach-samir.jpg"],
-  },
   images: {
     remotePatterns: [
       // Coach portraits uploaded to Supabase Storage (public bucket).
