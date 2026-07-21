@@ -48,6 +48,7 @@ export type ClassRow = {
   venueId: string | null;
   venueName: string | null;
   isSchool: boolean; // held at a school — not bookable online
+  coachName: string | null; // coach on the next scheduled session, if any
 };
 
 export type Coach = { id: string; name: string };

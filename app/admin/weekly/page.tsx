@@ -38,21 +38,26 @@ export default async function AdminWeeklyPage() {
         .order("created_at", { ascending: false }),
     ]);
 
-  // Each class's canonical slot time = its next scheduled session's wall time.
+  // Each class's canonical slot time = its next scheduled session's wall time,
+  // and the coach we show is whoever is on that same next session.
   const classIds = (classes ?? []).map((c) => c.id);
   const { data: nextSessions } = classIds.length
     ? await supabase
         .from("class_sessions")
-        .select("class_id,starts_at")
+        .select("class_id,starts_at,coaches(profiles!inner(full_name))")
         .in("class_id", classIds)
         .eq("status", "scheduled")
         .gt("starts_at", new Date().toISOString())
         .order("starts_at")
-    : { data: [] as { class_id: string; starts_at: string }[] };
+    : { data: [] as { class_id: string; starts_at: string; coaches: unknown }[] };
 
-  const nextByClass = new Map<string, string>();
+  const nextByClass = new Map<string, { starts_at: string; coachName: string | null }>();
   for (const s of nextSessions ?? []) {
-    if (!nextByClass.has(s.class_id)) nextByClass.set(s.class_id, s.starts_at);
+    if (nextByClass.has(s.class_id)) continue;
+    const coachName =
+      (s.coaches as unknown as { profiles: { full_name: string } } | null)?.profiles?.full_name ??
+      null;
+    nextByClass.set(s.class_id, { starts_at: s.starts_at, coachName });
   }
 
   const classRows: ClassRow[] = (classes ?? []).map((c) => {
@@ -65,12 +70,13 @@ export default async function AdminWeeklyPage() {
       capacity: c.capacity,
       duration: c.duration_minutes,
       weekday: c.recurrence_rule?.match(/BYDAY=(..)/)?.[1] ?? "MO",
-      time: next ? utcToAcademyWall(new Date(next)).time : "18:30",
+      time: next ? utcToAcademyWall(new Date(next.starts_at)).time : "18:30",
       active: c.active,
       endsOn: c.ends_on,
       venueId: c.venue_id,
       venueName: (c.venues as unknown as { name: string } | null)?.name ?? null,
       isSchool: c.is_school,
+      coachName: next?.coachName ?? null,
     };
   });
 

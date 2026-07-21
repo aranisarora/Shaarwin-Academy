@@ -1,8 +1,9 @@
 "use client";
 
-// The Weekly classes tab: every repeating class in one list — group, school
-// and the button to create more. Tap a class to change it for every week;
-// one-week-only changes happen on that session in the Schedule tab.
+// The Weekly classes tab: every repeating class, grouped under the venue it
+// runs at. Each venue is a card; the classes beneath it read coach · day ·
+// time. Tap a class to change it for every week; one-week-only changes happen
+// on that session in the Schedule tab.
 
 import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
@@ -25,6 +26,16 @@ import {
 
 const WEEKDAY_ORDER = WEEKDAYS.map(([code]) => code) as string[];
 
+/** "18:30" + 60 → "7:30 pm" — the class's finish time for the day/time line. */
+function endTime12h(time: string, durationMinutes: number): string {
+  const [h, m] = time.split(":").map(Number);
+  if (!Number.isFinite(h)) return time;
+  const total = h * 60 + (m || 0) + durationMinutes;
+  const eh = Math.floor(total / 60) % 24;
+  const em = total % 60;
+  return time12h(`${eh}:${String(em).padStart(2, "0")}`);
+}
+
 export function AdminWeeklyClasses({
   classes,
   coaches,
@@ -44,11 +55,10 @@ export function AdminWeeklyClasses({
   const [message, setMessage] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
-  // Filters — location (venue), day, level and status. Options are drawn from
-  // the classes that actually exist so we never show an empty bucket.
+  // Filters — location (venue), day and status. Options are drawn from the
+  // classes that actually exist so we never show an empty bucket.
   const [venueFilter, setVenueFilter] = useState("all");
   const [dayFilter, setDayFilter] = useState("all");
-  const [levelFilter, setLevelFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("active");
 
   const venueOptions = useMemo(
@@ -65,24 +75,43 @@ export function AdminWeeklyClasses({
       ),
     [classes]
   );
-  const levelOptions = useMemo(
-    () => [...new Set(classes.map((c) => c.level))].sort((a, b) => a.localeCompare(b)),
-    [classes]
-  );
 
   const filteredClasses = useMemo(
     () =>
       classes.filter((c) => {
         if (venueFilter !== "all" && (c.venueName ?? "") !== venueFilter) return false;
         if (dayFilter !== "all" && c.weekday !== dayFilter) return false;
-        if (levelFilter !== "all" && c.level !== levelFilter) return false;
         if (statusFilter === "active" && !c.active) return false;
         if (statusFilter === "paused" && (c.active || c.endsOn)) return false;
         if (statusFilter === "ended" && (c.active || !c.endsOn)) return false;
         return true;
       }),
-    [classes, venueFilter, dayFilter, levelFilter, statusFilter]
+    [classes, venueFilter, dayFilter, statusFilter]
   );
+
+  // Group the filtered classes under their venue. Within each venue the
+  // classes are sorted by time (then day) so the card reads top-to-bottom in
+  // slot order; venues themselves are listed alphabetically, "No venue" last.
+  const venueGroups = useMemo(() => {
+    const byVenue = new Map<string, ClassRow[]>();
+    for (const c of filteredClasses) {
+      const key = c.venueName ?? "";
+      (byVenue.get(key) ?? byVenue.set(key, []).get(key)!).push(c);
+    }
+    return [...byVenue.entries()]
+      .map(([venue, rows]) => ({
+        venue,
+        rows: rows.sort((a, b) =>
+          a.time.localeCompare(b.time) ||
+          WEEKDAY_ORDER.indexOf(a.weekday) - WEEKDAY_ORDER.indexOf(b.weekday)
+        ),
+      }))
+      .sort((a, b) => {
+        if (!a.venue) return 1;
+        if (!b.venue) return -1;
+        return a.venue.localeCompare(b.venue);
+      });
+  }, [filteredClasses]);
 
   return (
     <div className="space-y-4">
@@ -125,7 +154,7 @@ export function AdminWeeklyClasses({
       </div>
 
       {classes.length > 0 && (
-        <div className="grid grid-cols-2 gap-2 pt-1 sm:grid-cols-4">
+        <div className="grid grid-cols-1 gap-2 pt-1 sm:grid-cols-3">
           <Select
             aria-label="Filter by location"
             value={venueFilter}
@@ -151,18 +180,6 @@ export function AdminWeeklyClasses({
             ))}
           </Select>
           <Select
-            aria-label="Filter by level"
-            value={levelFilter}
-            onChange={(e) => setLevelFilter(e.target.value)}
-          >
-            <option value="all">Any level</option>
-            {levelOptions.map((l) => (
-              <option key={l} value={l}>
-                {l}
-              </option>
-            ))}
-          </Select>
-          <Select
             aria-label="Filter by status"
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}
@@ -175,29 +192,44 @@ export function AdminWeeklyClasses({
         </div>
       )}
 
-      {filteredClasses.map((c) => (
-        <button
-          key={c.id}
-          onClick={() => {
-            setMessage(null);
-            setEditingClass(c);
-          }}
-          className="flex w-full items-center justify-between gap-3 rounded-[12px] border border-line bg-surface-2 px-4 py-3 text-left hover:border-ember"
+      {venueGroups.map((group) => (
+        <div
+          key={group.venue || "no-venue"}
+          className="overflow-hidden rounded-[14px] border border-line bg-surface-2"
         >
-          <span>
-            <span className="block font-medium">
-              {c.title} · {c.venueName ?? "No venue"}
+          <div className="flex items-baseline justify-between gap-3 border-b border-line px-4 py-3">
+            <span className="font-semibold">{group.venue || "No venue"}</span>
+            <span className="shrink-0 text-sm text-fg-2">
+              {group.rows.length} class{group.rows.length === 1 ? "" : "es"}
             </span>
-            <span className="block text-sm text-fg-2">
-              {WEEKDAY_NAME[c.weekday] ?? "One-off"}s {time12h(c.time)} ·{" "}
-              {c.duration} min · up to {c.capacity} players
-            </span>
-          </span>
-          <span className="flex flex-col items-end gap-1.5">
-            <Badge>{c.isSchool ? "School" : c.level}</Badge>
-            {!c.active && <Badge tone="err">{c.endsOn ? "ended — tap to restore" : "paused"}</Badge>}
-          </span>
-        </button>
+          </div>
+          <div className="divide-y divide-line">
+            {group.rows.map((c) => (
+              <button
+                key={c.id}
+                onClick={() => {
+                  setMessage(null);
+                  setEditingClass(c);
+                }}
+                className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left hover:bg-surface"
+              >
+                <span>
+                  <span className="block font-medium">{c.coachName ?? "No coach yet"}</span>
+                  <span className="block text-sm text-fg-2">
+                    {WEEKDAY_NAME[c.weekday] ?? "One-off"}s · {time12h(c.time)} –{" "}
+                    {endTime12h(c.time, c.duration)}
+                  </span>
+                </span>
+                <span className="flex shrink-0 flex-col items-end gap-1.5">
+                  {c.isSchool && <Badge>School</Badge>}
+                  {!c.active && (
+                    <Badge tone="err">{c.endsOn ? "ended — tap to restore" : "paused"}</Badge>
+                  )}
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
       ))}
       {classes.length === 0 && (
         <p className="rounded-[12px] border border-line bg-surface-2 p-4 text-sm text-fg-2">

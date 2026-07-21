@@ -243,6 +243,7 @@ export default async function AdminCalendarPage({
       venueId: c.venue_id,
       venueName: (c.venues as unknown as { name: string } | null)?.name ?? null,
       isSchool: c.is_school,
+      coachName: null, // not surfaced on the schedule calendar — sessions carry their own coach
     };
   });
 
