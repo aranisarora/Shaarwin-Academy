@@ -1,9 +1,9 @@
 "use client";
 
 // The Weekly classes tab: every repeating class, grouped under the venue it
-// runs at. Each venue is a card; the classes beneath it read coach · day ·
-// time. Tap a class to change it for every week; one-week-only changes happen
-// on that session in the Schedule tab.
+// runs at and then by day within that venue. Each venue is a card; under a
+// day sub-heading the classes read coach · time. Tap a class to change it for
+// every week; one-week-only changes happen on that session in the Schedule tab.
 
 import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
@@ -89,9 +89,10 @@ export function AdminWeeklyClasses({
     [classes, venueFilter, dayFilter, statusFilter]
   );
 
-  // Group the filtered classes under their venue. Within each venue the
-  // classes are sorted by time (then day) so the card reads top-to-bottom in
-  // slot order; venues themselves are listed alphabetically, "No venue" last.
+  // Group the filtered classes under their venue, then by day within that
+  // venue. Days run Mon→Sun; classes under each day are sorted by time so the
+  // card reads top-to-bottom in slot order. Venues themselves are listed
+  // alphabetically, "No venue" last.
   const venueGroups = useMemo(() => {
     const byVenue = new Map<string, ClassRow[]>();
     for (const c of filteredClasses) {
@@ -99,13 +100,21 @@ export function AdminWeeklyClasses({
       (byVenue.get(key) ?? byVenue.set(key, []).get(key)!).push(c);
     }
     return [...byVenue.entries()]
-      .map(([venue, rows]) => ({
-        venue,
-        rows: rows.sort((a, b) =>
-          a.time.localeCompare(b.time) ||
-          WEEKDAY_ORDER.indexOf(a.weekday) - WEEKDAY_ORDER.indexOf(b.weekday)
-        ),
-      }))
+      .map(([venue, rows]) => {
+        const byDay = new Map<string, ClassRow[]>();
+        for (const c of rows) {
+          (byDay.get(c.weekday) ?? byDay.set(c.weekday, []).get(c.weekday)!).push(c);
+        }
+        const days = [...byDay.entries()]
+          .map(([weekday, dayRows]) => ({
+            weekday,
+            rows: dayRows.sort((a, b) => a.time.localeCompare(b.time)),
+          }))
+          .sort(
+            (a, b) => WEEKDAY_ORDER.indexOf(a.weekday) - WEEKDAY_ORDER.indexOf(b.weekday)
+          );
+        return { venue, count: rows.length, days };
+      })
       .sort((a, b) => {
         if (!a.venue) return 1;
         if (!b.venue) return -1;
@@ -200,33 +209,39 @@ export function AdminWeeklyClasses({
           <div className="flex items-baseline justify-between gap-3 border-b border-line px-4 py-3">
             <span className="font-semibold">{group.venue || "No venue"}</span>
             <span className="shrink-0 text-sm text-fg-2">
-              {group.rows.length} class{group.rows.length === 1 ? "" : "es"}
+              {group.count} class{group.count === 1 ? "" : "es"}
             </span>
           </div>
           <div className="divide-y divide-line">
-            {group.rows.map((c) => (
-              <button
-                key={c.id}
-                onClick={() => {
-                  setMessage(null);
-                  setEditingClass(c);
-                }}
-                className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left hover:bg-surface"
-              >
-                <span>
-                  <span className="block font-medium">{c.coachName ?? "No coach yet"}</span>
-                  <span className="block text-sm text-fg-2">
-                    {WEEKDAY_NAME[c.weekday] ?? "One-off"}s · {time12h(c.time)} –{" "}
-                    {endTime12h(c.time, c.duration)}
-                  </span>
-                </span>
-                <span className="flex shrink-0 flex-col items-end gap-1.5">
-                  {c.isSchool && <Badge>School</Badge>}
-                  {!c.active && (
-                    <Badge tone="err">{c.endsOn ? "ended — tap to restore" : "paused"}</Badge>
-                  )}
-                </span>
-              </button>
+            {group.days.map((day) => (
+              <div key={day.weekday} className="px-4 py-3">
+                <p className="label mb-1.5">{WEEKDAY_NAME[day.weekday] ?? "One-off"}</p>
+                <div className="-mx-2">
+                  {day.rows.map((c) => (
+                    <button
+                      key={c.id}
+                      onClick={() => {
+                        setMessage(null);
+                        setEditingClass(c);
+                      }}
+                      className="flex w-full items-center justify-between gap-3 rounded-[10px] px-2 py-2 text-left hover:bg-surface"
+                    >
+                      <span>
+                        <span className="block font-medium">{c.coachName ?? "No coach yet"}</span>
+                        <span className="block text-sm text-fg-2">
+                          {time12h(c.time)} – {endTime12h(c.time, c.duration)}
+                        </span>
+                      </span>
+                      <span className="flex shrink-0 flex-col items-end gap-1.5">
+                        {c.isSchool && <Badge>School</Badge>}
+                        {!c.active && (
+                          <Badge tone="err">{c.endsOn ? "ended — tap to restore" : "paused"}</Badge>
+                        )}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
             ))}
           </div>
         </div>
