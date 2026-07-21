@@ -122,6 +122,17 @@ export function AdminWeeklyClasses({
       });
   }, [filteredClasses]);
 
+  // Which venue cards are collapsed. Empty set = every venue open by default;
+  // tapping a venue header folds just that one away.
+  const [collapsedVenues, setCollapsedVenues] = useState<Set<string>>(new Set());
+  const toggleVenue = (key: string) =>
+    setCollapsedVenues((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between gap-2">
@@ -201,17 +212,34 @@ export function AdminWeeklyClasses({
         </div>
       )}
 
-      {venueGroups.map((group) => (
+      {venueGroups.map((group) => {
+        const key = group.venue || "no-venue";
+        const open = !collapsedVenues.has(key);
+        return (
         <div
-          key={group.venue || "no-venue"}
+          key={key}
           className="overflow-hidden rounded-[14px] border border-line bg-surface-2"
         >
-          <div className="flex items-baseline justify-between gap-3 border-b border-line px-4 py-3">
-            <span className="font-semibold">{group.venue || "No venue"}</span>
+          <button
+            type="button"
+            aria-expanded={open}
+            onClick={() => toggleVenue(key)}
+            className="flex w-full items-baseline justify-between gap-3 border-b border-line px-4 py-3 text-left hover:bg-surface"
+          >
+            <span className="flex items-baseline gap-2">
+              <span
+                className={`text-fg-2 transition-transform ${open ? "rotate-90" : ""}`}
+                aria-hidden
+              >
+                ›
+              </span>
+              <span className="font-semibold">{group.venue || "No venue"}</span>
+            </span>
             <span className="shrink-0 text-sm text-fg-2">
               {group.count} class{group.count === 1 ? "" : "es"}
             </span>
-          </div>
+          </button>
+          {open && (
           <div className="divide-y divide-line">
             {group.days.map((day) => (
               <div key={day.weekday} className="px-4 py-3">
@@ -244,8 +272,10 @@ export function AdminWeeklyClasses({
               </div>
             ))}
           </div>
+          )}
         </div>
-      ))}
+        );
+      })}
       {classes.length === 0 && (
         <p className="rounded-[12px] border border-line bg-surface-2 p-4 text-sm text-fg-2">
           No weekly classes yet — tap “Create a class”.
