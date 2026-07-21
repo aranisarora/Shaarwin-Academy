@@ -1,5 +1,14 @@
 import { createClient } from "@/lib/supabase/server";
-import { STATIC_COACHES, type StaticCoach } from "@/lib/coaches-static";
+
+/** A coach as shown on the public /coaches page — sourced entirely from the DB. */
+export type PublicCoach = {
+  slug: string;
+  name: string;
+  image: string;
+  bio: string;
+  quote?: string;
+  credentials?: string[];
+};
 
 export type Plan = {
   id: string;
@@ -105,34 +114,29 @@ export async function getUpcomingSessions(days = 14): Promise<SessionRow[]> {
   return data ?? [];
 }
 
-/** DB coaches merged over the static roster (DB bio/level wins; portraits static). */
-export async function getCoaches(): Promise<StaticCoach[]> {
+/** The public coaching roster — active coaches, straight from the DB. */
+export async function getCoaches(): Promise<PublicCoach[]> {
   const supabase = await createClient();
   const { data } = await supabase
     .from("coaches")
-    .select("id,bio,active,profiles!inner(full_name,avatar_url)")
-    .eq("active", true);
+    .select("id,bio,quote,credentials,photo_url,profiles!inner(full_name)")
+    .eq("active", true)
+    .order("tier", { ascending: false });
 
-  if (!data || data.length === 0) return STATIC_COACHES;
+  if (!data) return [];
 
-  const bySlug = new Map(STATIC_COACHES.map((c) => [c.slug, { ...c }]));
-  for (const row of data) {
-    const profile = row.profiles as unknown as { full_name: string; avatar_url: string | null };
-    const slug = profile.full_name.toLowerCase().split(" ")[0];
-    const existing = bySlug.get(slug);
-    if (existing) {
-      existing.bio = row.bio ?? existing.bio;
-    } else {
-      bySlug.set(slug, {
-        slug,
-        name: profile.full_name,
-        level: "",
-        bio: row.bio ?? "",
-        image: profile.avatar_url ?? "/images/empty-ink.jpg",
-      });
-    }
-  }
-  return [...bySlug.values()];
+  return data.map((row) => {
+    const profile = row.profiles as unknown as { full_name: string };
+    const firstName = profile.full_name.toLowerCase().split(" ")[0];
+    return {
+      slug: firstName || row.id,
+      name: profile.full_name,
+      image: row.photo_url ?? "/images/empty-ink.jpg",
+      bio: row.bio ?? "",
+      quote: row.quote ?? undefined,
+      credentials: (row.credentials as string[] | null) ?? undefined,
+    };
+  });
 }
 
 /** `pence` holds paise (minor unit of INR). ₹1,800,000 paise → "₹18,000". */

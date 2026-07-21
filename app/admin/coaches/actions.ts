@@ -6,6 +6,7 @@ import { requireFounder } from "@/lib/founder";
 import {
   addCoachCore,
   decideTimeOffCore,
+  deleteCoachCore,
   deletePendingCoachCore,
   promoteToCoachCore,
   saveCoachCore,
@@ -14,6 +15,7 @@ import {
   type CoachDetails,
   type CoachInput,
 } from "@/lib/admin-ops";
+import { standardizeCoachPortrait } from "@/lib/coach-photo";
 
 type Result = { ok: boolean; error?: string };
 
@@ -62,6 +64,76 @@ export async function saveCoach(input: CoachInput): Promise<Result> {
   if (!result.ok) return result;
   revalidatePath("/admin/coaches");
   return { ok: true };
+}
+
+export async function deleteCoach(
+  coachId: string,
+  replacementCoachId: string
+): Promise<Result & { changed?: number; skipped?: number }> {
+  const { supabase, founder } = await requireFounder();
+  if (!founder) return { ok: false, error: "Founder only." };
+  const result = await deleteCoachCore(supabase, founder.id, coachId, replacementCoachId);
+  if (!result.ok) return result;
+  revalidatePath("/admin/coaches");
+  revalidatePath("/admin/schedule");
+  revalidatePath("/coaches");
+  return result;
+}
+
+/**
+ * Upload a headshot, restyle it into the house portrait format via Gemini, and
+ * save it as the coach's public photo. Falls back to the original upload if the
+ * generation step fails, so the admin always ends up with a working image.
+ */
+export async function generateCoachPhoto(
+  coachId: string,
+  formData: FormData
+): Promise<Result & { photoUrl?: string }> {
+  const { supabase, founder } = await requireFounder();
+  if (!founder) return { ok: false, error: "Founder only." };
+
+  const file = formData.get("photo");
+  if (!(file instanceof File) || file.size === 0) {
+    return { ok: false, error: "Choose an image to upload." };
+  }
+  if (!file.type.startsWith("image/")) {
+    return { ok: false, error: "That file isn't an image." };
+  }
+
+  const source = Buffer.from(await file.arrayBuffer());
+  let bytes: Buffer = source;
+  let mimeType = file.type;
+  try {
+    const portrait = await standardizeCoachPortrait(source, file.type);
+    bytes = portrait.bytes;
+    mimeType = portrait.mimeType;
+  } catch (e) {
+    // Non-fatal: keep the original upload so the admin still gets a photo.
+    console.warn("coach photo: generation failed, storing original —", e);
+  }
+
+  const ext = mimeType === "image/jpeg" ? "jpg" : mimeType === "image/webp" ? "webp" : "png";
+  const path = `${coachId}.${ext}`;
+  const { error: upErr } = await supabase.storage
+    .from("coach-photos")
+    .upload(path, new Blob([new Uint8Array(bytes)], { type: mimeType }), {
+      contentType: mimeType,
+      upsert: true,
+    });
+  if (upErr) return { ok: false, error: "Couldn't save the image." };
+
+  const { data: pub } = supabase.storage.from("coach-photos").getPublicUrl(path);
+  const photoUrl = `${pub.publicUrl}?v=${Date.now()}`;
+
+  const { error: saveErr } = await supabase
+    .from("coaches")
+    .update({ photo_url: photoUrl })
+    .eq("id", coachId);
+  if (saveErr) return { ok: false, error: "Couldn't save the coach's photo." };
+
+  revalidatePath("/admin/coaches");
+  revalidatePath("/coaches");
+  return { ok: true, photoUrl };
 }
 
 export async function setCoachActive(coachId: string, active: boolean): Promise<Result> {

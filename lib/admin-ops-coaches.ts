@@ -3,6 +3,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { normalizePhone } from "@/lib/whatsapp/phone";
+import { reassignSessionCore } from "@/lib/admin-ops-calendar";
 import type { OpResult } from "@/lib/admin-ops-types";
 
 const BENGALURU = { lat: 12.9716, lng: 77.5946 };
@@ -84,6 +85,9 @@ export type CoachInput = {
   // Optional identity fields — when present, the coach's profile is updated too.
   fullName?: string;
   phone?: string;
+  // Optional public-profile fields shown on /coaches — when present, saved too.
+  quote?: string;
+  credentials?: string[];
 };
 
 export async function saveCoachCore(
@@ -97,17 +101,19 @@ export async function saveCoachCore(
   if (input.fullName != null && !input.fullName.trim()) {
     return { ok: false, error: "Name can't be empty." };
   }
-  const { error } = await supabase
-    .from("coaches")
-    .update({
-      bio: input.bio || null,
-      travel_radius_km: input.travelRadiusKm,
-      base_address: input.baseAddress || null,
-      base_lat: input.baseLat,
-      base_lng: input.baseLng,
-      tier: input.tier,
-    })
-    .eq("id", input.id);
+  const patch: Record<string, unknown> = {
+    bio: input.bio || null,
+    travel_radius_km: input.travelRadiusKm,
+    base_address: input.baseAddress || null,
+    base_lat: input.baseLat,
+    base_lng: input.baseLng,
+    tier: input.tier,
+  };
+  if (input.quote !== undefined) patch.quote = input.quote.trim() || null;
+  if (input.credentials !== undefined) {
+    patch.credentials = input.credentials.map((c) => c.trim()).filter(Boolean);
+  }
+  const { error } = await supabase.from("coaches").update(patch).eq("id", input.id);
   if (error) return { ok: false, error: "Couldn't save the coach." };
 
   if (input.fullName != null || input.phone != null) {
@@ -262,6 +268,77 @@ export async function deletePendingCoachCore(
     entity_id: id,
   });
   return { ok: true };
+}
+
+/**
+ * Remove a coach from the roster after handing their upcoming sessions to a
+ * replacement. Every future scheduled session they own is reassigned (the
+ * engine notifies the old coach, new coach and booked clients); private-series
+ * preferences pointing at them are repointed; then the coach row is deleted
+ * (cascading their assignments/availability/time-off) and their login is
+ * demoted back to a client account so it — and its history — survives.
+ *
+ * Caveat: class_sessions.coach_id → coaches is ON DELETE SET NULL, so past
+ * completed sessions lose the record of who taught them. That is inherent to
+ * taking a coach off the roster; the account itself is preserved.
+ */
+export async function deleteCoachCore(
+  supabase: SupabaseClient,
+  founderId: string,
+  coachId: string,
+  replacementCoachId: string
+): Promise<OpResult & { changed?: number; skipped?: number }> {
+  if (replacementCoachId === coachId) {
+    return { ok: false, error: "Pick a different coach to take over their classes." };
+  }
+
+  const { data: replacement } = await supabase
+    .from("coaches")
+    .select("id,active")
+    .eq("id", replacementCoachId)
+    .maybeSingle();
+  if (!replacement) return { ok: false, error: "That replacement coach wasn't found." };
+  if (!replacement.active) return { ok: false, error: "The replacement coach is paused." };
+
+  // Reassign every upcoming scheduled session this coach owns. force=true so
+  // the handover is never blocked by fit rules; lock=true so the engine won't
+  // silently reassign it elsewhere afterwards.
+  const { data: sessions } = await supabase
+    .from("class_sessions")
+    .select("id")
+    .eq("coach_id", coachId)
+    .eq("status", "scheduled")
+    .gt("starts_at", new Date().toISOString());
+
+  let changed = 0;
+  let skipped = 0;
+  for (const s of sessions ?? []) {
+    const r = await reassignSessionCore(supabase, founderId, s.id, replacementCoachId, true, true);
+    if (r.ok) changed += 1;
+    else skipped += 1;
+  }
+
+  // Repoint recurring-private preferences so future bookings don't ask for a
+  // coach who no longer exists.
+  await supabase
+    .from("private_booking_series")
+    .update({ preferred_coach: replacementCoachId })
+    .eq("preferred_coach", coachId);
+
+  // Drop the coach row (cascades assignments/availability/time-off) and demote
+  // the login back to a client.
+  const { error: delErr } = await supabase.from("coaches").delete().eq("id", coachId);
+  if (delErr) return { ok: false, error: "Couldn't remove the coach." };
+  await supabase.from("profiles").update({ role: "client" }).eq("id", coachId);
+
+  await supabase.from("audit_log").insert({
+    actor_id: founderId,
+    action: "coach.delete",
+    entity: "coaches",
+    entity_id: coachId,
+    meta: { reassigned_to: replacementCoachId, changed, skipped },
+  });
+  return { ok: true, changed, skipped };
 }
 
 /** Pause = stop new assignments; existing sessions stay until reassigned. */

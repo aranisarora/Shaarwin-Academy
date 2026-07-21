@@ -12,6 +12,11 @@ export const metadata: Metadata = {
 
 async function CoachGrid() {
   const coaches = await getCoaches();
+  if (coaches.length === 0) {
+    return (
+      <p className="text-smoke">The coaching team is being updated — check back soon.</p>
+    );
+  }
   return (
     <div className="grid grid-cols-2 gap-x-4 gap-y-10 sm:grid-cols-3 lg:grid-cols-4">
       {coaches.map((coach) => (

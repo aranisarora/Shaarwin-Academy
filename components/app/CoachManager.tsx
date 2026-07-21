@@ -11,7 +11,9 @@ import { AddressSearch, type GeocodeHit } from "@/components/app/AddressSearch";
 import { LocationPinMap } from "@/components/app/LocationPinMap";
 import {
   addCoach,
+  deleteCoach,
   deletePendingCoach,
+  generateCoachPhoto,
   saveCoach,
   savePendingCoach,
   setCoachActive,
@@ -24,6 +26,9 @@ export type CoachRow = {
   email: string;
   phone: string;
   bio: string;
+  quote: string;
+  credentials: string[];
+  photoUrl: string;
   travelRadiusKm: number;
   baseAddress: string;
   baseLat: number;
@@ -50,6 +55,10 @@ type Form = {
   email: string;
   phone: string;
   bio: string;
+  // Public-profile fields (edit mode only). credentials is edited as a
+  // comma-separated string and split on save.
+  quote: string;
+  credentials: string;
   tier: number;
   travelRadiusKm: number;
   baseAddress: string;
@@ -62,6 +71,8 @@ const EMPTY_FORM: Form = {
   email: "",
   phone: "",
   bio: "",
+  quote: "",
+  credentials: "",
   tier: 1,
   travelRadiusKm: 10,
   baseAddress: "",
@@ -75,6 +86,8 @@ function toForm(c: CoachRow | PendingCoachRow): Form {
     email: c.email,
     phone: c.phone,
     bio: c.bio,
+    quote: "quote" in c ? c.quote : "",
+    credentials: "credentials" in c ? c.credentials.join(", ") : "",
     tier: c.tier,
     travelRadiusKm: c.travelRadiusKm,
     baseAddress: c.baseAddress,
@@ -103,6 +116,12 @@ export function CoachManager({
   const [addResult, setAddResult] = useState<{ pending: boolean; name: string } | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [sheetMessage, setSheetMessage] = useState<string | null>(null);
+  // Photo preview + generation state (edit mode).
+  const [photoUrl, setPhotoUrl] = useState("");
+  const [uploadingPhoto, setUploadingPhoto] = useState(false);
+  // Delete + reassign state (edit mode).
+  const [showDelete, setShowDelete] = useState(false);
+  const [replacementId, setReplacementId] = useState("");
   const [isPending, startTransition] = useTransition();
 
   const patch = (p: Partial<Form>) => setForm((f) => ({ ...f, ...p }));
@@ -127,6 +146,8 @@ export function CoachManager({
     setMode(null);
     setAddResult(null);
     setSheetMessage(null);
+    setShowDelete(false);
+    setReplacementId("");
   }
 
   function openAdd() {
@@ -144,6 +165,9 @@ export function CoachManager({
     setAddrSelected(c.baseAddress.length > 0);
     setEditId(c.id);
     setEditActive(c.active);
+    setPhotoUrl(c.photoUrl);
+    setShowDelete(false);
+    setReplacementId("");
     setSheetMessage(null);
     setMode("edit");
   }
@@ -194,6 +218,8 @@ export function CoachManager({
       const r = await saveCoach({
         id: editId,
         bio: form.bio,
+        quote: form.quote,
+        credentials: form.credentials.split(",").map((c) => c.trim()).filter(Boolean),
         travelRadiusKm: Number(form.travelRadiusKm),
         baseAddress: form.baseAddress,
         baseLat: Number(form.baseLat),
@@ -244,6 +270,39 @@ export function CoachManager({
         close();
       } else {
         setSheetMessage(r.error ?? "Failed.");
+      }
+    });
+  }
+
+  async function uploadPhoto(file: File) {
+    if (!editId) return;
+    setUploadingPhoto(true);
+    setSheetMessage(null);
+    try {
+      const fd = new FormData();
+      fd.set("photo", file);
+      const r = await generateCoachPhoto(editId, fd);
+      if (r.ok && r.photoUrl) setPhotoUrl(r.photoUrl);
+      else setSheetMessage(r.error ?? "Couldn't update the photo.");
+    } finally {
+      setUploadingPhoto(false);
+    }
+  }
+
+  function submitDelete() {
+    if (!editId || !replacementId) return;
+    startTransition(async () => {
+      const r = await deleteCoach(editId, replacementId);
+      if (r.ok) {
+        const moved = r.changed ?? 0;
+        const left = r.skipped ?? 0;
+        setMessage(
+          `Coach removed. ${moved} upcoming session${moved === 1 ? "" : "s"} reassigned` +
+            (left ? `, ${left} couldn't be moved — check the schedule.` : ".")
+        );
+        close();
+      } else {
+        setSheetMessage(r.error ?? "Couldn't remove the coach.");
       }
     });
   }
@@ -354,7 +413,62 @@ export function CoachManager({
       {/* ── Edit coach ── */}
       <Sheet open={mode === "edit"} onClose={close} title={form.name}>
         <div className="space-y-4">
+          {/* Public photo — upload restyles it into the house portrait format. */}
+          <div>
+            <p className="label mb-2">Public photo</p>
+            <div className="flex items-center gap-4">
+              <div className="relative aspect-[4/5] w-24 shrink-0 overflow-hidden rounded-[10px] border border-line bg-surface-2">
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  src={photoUrl || "/images/empty-ink.jpg"}
+                  alt="Coach portrait"
+                  className="h-full w-full object-cover"
+                />
+                {uploadingPhoto && (
+                  <div className="absolute inset-0 grid place-items-center bg-bg/60">
+                    <Spinner />
+                  </div>
+                )}
+              </div>
+              <div className="space-y-1.5">
+                <label className="inline-block cursor-pointer text-sm text-ember hover:underline">
+                  {uploadingPhoto ? "Standardizing…" : "Upload & standardize photo"}
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    disabled={uploadingPhoto}
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      if (f) uploadPhoto(f);
+                      e.target.value = "";
+                    }}
+                  />
+                </label>
+                <p className="text-xs text-fg-2">
+                  We restyle any headshot into the house portrait format automatically.
+                </p>
+              </div>
+            </div>
+          </div>
+
           <DetailFields form={form} onChange={patch} emailMode="readonly" addrQuery={addrQuery} addrSelected={addrSelected} onAddrQueryChange={changeAddrQuery} onAddrSelect={pickAddress} />
+
+          <Input
+            label="Quote"
+            hint="Shown in italics on the public coaches page."
+            value={form.quote}
+            onChange={(e) => patch({ quote: e.target.value })}
+            placeholder="Their coaching philosophy in a line"
+          />
+          <Input
+            label="Credentials"
+            hint="Comma-separated pills, e.g. 7+ years coaching, ITTF certified."
+            value={form.credentials}
+            onChange={(e) => patch({ credentials: e.target.value })}
+            placeholder="7+ years coaching, ITTF certified"
+          />
+
           <Button onClick={submitEdit} disabled={isPending} className="w-full">
             {isPending ? <Spinner /> : "Save coach"}
           </Button>
@@ -381,6 +495,63 @@ export function CoachManager({
           >
             {editActive ? "Pause coach" : "Unpause coach"}
           </Button>
+
+          {/* Delete + hand their classes to a replacement. */}
+          <div className="border-t border-line pt-4">
+            {!showDelete ? (
+              <button
+                onClick={() => setShowDelete(true)}
+                className="text-sm text-err hover:underline"
+              >
+                Delete coach & reassign their classes
+              </button>
+            ) : (
+              <div className="space-y-3">
+                <p className="text-sm text-fg-2">
+                  Their upcoming sessions move to the coach you pick, and their login becomes a
+                  normal client account. This can’t be undone.
+                </p>
+                <Select
+                  label="Hand their classes to"
+                  value={replacementId}
+                  onChange={(e) => setReplacementId(e.target.value)}
+                >
+                  <option value="">Choose a coach…</option>
+                  {coaches
+                    .filter((c) => c.id !== editId && c.active)
+                    .map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                </Select>
+                <div className="flex gap-2">
+                  <Button
+                    variant="destructive"
+                    disabled={isPending || !replacementId}
+                    className="flex-1"
+                    onClick={() => {
+                      if (!window.confirm("Delete this coach and reassign their classes?")) return;
+                      submitDelete();
+                    }}
+                  >
+                    {isPending ? <Spinner /> : "Delete & reassign"}
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    disabled={isPending}
+                    onClick={() => {
+                      setShowDelete(false);
+                      setReplacementId("");
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
+
           {sheetMessage && <p className="text-sm text-err">{sheetMessage}</p>}
         </div>
       </Sheet>

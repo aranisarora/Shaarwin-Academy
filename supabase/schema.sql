@@ -180,7 +180,10 @@ create table public.coaches (
   dbs_checked boolean default false not null,
   tier smallint default 1 not null,
   active boolean default true not null,
-  created_at timestamptz default now() not null
+  created_at timestamptz default now() not null,
+  photo_url text,
+  quote text,
+  credentials text[] default '{}'::text[] not null
 );
 
 create table public.coach_invites (

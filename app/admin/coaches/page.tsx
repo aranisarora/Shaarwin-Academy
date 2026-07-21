@@ -16,7 +16,7 @@ export default async function AdminCoachesPage() {
     supabase
       .from("coaches")
       .select(
-        "id,bio,travel_radius_km,base_address,base_lat,base_lng,tier,active,profiles!inner(full_name,email,phone)"
+        "id,bio,quote,credentials,photo_url,travel_radius_km,base_address,base_lat,base_lng,tier,active,profiles!inner(full_name,email,phone)"
       )
       .order("active", { ascending: false })
       .order("tier", { ascending: false }),
@@ -43,6 +43,9 @@ export default async function AdminCoachesPage() {
       email: profile.email,
       phone: profile.phone ?? "",
       bio: c.bio ?? "",
+      quote: (c as unknown as { quote: string | null }).quote ?? "",
+      credentials: (c as unknown as { credentials: string[] | null }).credentials ?? [],
+      photoUrl: (c as unknown as { photo_url: string | null }).photo_url ?? "",
       travelRadiusKm: Number(c.travel_radius_km),
       baseAddress: c.base_address ?? "",
       baseLat: Number(c.base_lat),
