@@ -286,43 +286,48 @@ export async function deleteCoachCore(
   supabase: SupabaseClient,
   founderId: string,
   coachId: string,
-  replacementCoachId: string
+  replacementCoachId?: string | null
 ): Promise<OpResult & { changed?: number; skipped?: number }> {
-  if (replacementCoachId === coachId) {
+  // Reassignment is optional. When a replacement is given, hand every upcoming
+  // session to them; otherwise the coach is simply removed and their upcoming
+  // sessions become unassigned (the FK is ON DELETE SET NULL).
+  const replacement = replacementCoachId || null;
+  if (replacement === coachId) {
     return { ok: false, error: "Pick a different coach to take over their classes." };
   }
 
-  const { data: replacement } = await supabase
-    .from("coaches")
-    .select("id,active")
-    .eq("id", replacementCoachId)
-    .maybeSingle();
-  if (!replacement) return { ok: false, error: "That replacement coach wasn't found." };
-  if (!replacement.active) return { ok: false, error: "The replacement coach is paused." };
-
-  // Reassign every upcoming scheduled session this coach owns. force=true so
-  // the handover is never blocked by fit rules; lock=true so the engine won't
-  // silently reassign it elsewhere afterwards.
-  const { data: sessions } = await supabase
-    .from("class_sessions")
-    .select("id")
-    .eq("coach_id", coachId)
-    .eq("status", "scheduled")
-    .gt("starts_at", new Date().toISOString());
-
   let changed = 0;
   let skipped = 0;
-  for (const s of sessions ?? []) {
-    const r = await reassignSessionCore(supabase, founderId, s.id, replacementCoachId, true, true);
-    if (r.ok) changed += 1;
-    else skipped += 1;
+  if (replacement) {
+    const { data: rep } = await supabase
+      .from("coaches")
+      .select("id,active")
+      .eq("id", replacement)
+      .maybeSingle();
+    if (!rep) return { ok: false, error: "That replacement coach wasn't found." };
+    if (!rep.active) return { ok: false, error: "The replacement coach is paused." };
+
+    // force=true so the handover is never blocked by fit rules; lock=true so
+    // the engine won't silently reassign it elsewhere afterwards.
+    const { data: sessions } = await supabase
+      .from("class_sessions")
+      .select("id")
+      .eq("coach_id", coachId)
+      .eq("status", "scheduled")
+      .gt("starts_at", new Date().toISOString());
+
+    for (const s of sessions ?? []) {
+      const r = await reassignSessionCore(supabase, founderId, s.id, replacement, true, true);
+      if (r.ok) changed += 1;
+      else skipped += 1;
+    }
   }
 
-  // Repoint recurring-private preferences so future bookings don't ask for a
-  // coach who no longer exists.
+  // Repoint (or clear) recurring-private preferences so future bookings don't
+  // ask for a coach who no longer exists.
   await supabase
     .from("private_booking_series")
-    .update({ preferred_coach: replacementCoachId })
+    .update({ preferred_coach: replacement })
     .eq("preferred_coach", coachId);
 
   // Drop the coach row (cascades assignments/availability/time-off) and demote
@@ -336,7 +341,7 @@ export async function deleteCoachCore(
     action: "coach.delete",
     entity: "coaches",
     entity_id: coachId,
-    meta: { reassigned_to: replacementCoachId, changed, skipped },
+    meta: { reassigned_to: replacement, changed, skipped },
   });
   return { ok: true, changed, skipped };
 }

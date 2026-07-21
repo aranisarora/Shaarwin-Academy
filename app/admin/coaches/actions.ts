@@ -68,7 +68,7 @@ export async function saveCoach(input: CoachInput): Promise<Result> {
 
 export async function deleteCoach(
   coachId: string,
-  replacementCoachId: string
+  replacementCoachId?: string | null
 ): Promise<Result & { changed?: number; skipped?: number }> {
   const { supabase, founder } = await requireFounder();
   if (!founder) return { ok: false, error: "Founder only." };

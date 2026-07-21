@@ -143,6 +143,12 @@ export function CoachManager({
   }
 
   function close() {
+    // Don't let the panel close mid-generation — the preview would be lost and
+    // a late result could land on the next coach you open.
+    if (uploadingPhoto) {
+      setSheetMessage("Hang on — still standardizing the photo.");
+      return;
+    }
     setMode(null);
     setAddResult(null);
     setSheetMessage(null);
@@ -275,13 +281,16 @@ export function CoachManager({
   }
 
   async function uploadPhoto(file: File) {
-    if (!editId) return;
+    const id = editId;
+    if (!id) return;
     setUploadingPhoto(true);
     setSheetMessage(null);
     try {
       const fd = new FormData();
       fd.set("photo", file);
-      const r = await generateCoachPhoto(editId, fd);
+      const r = await generateCoachPhoto(id, fd);
+      // Ignore a late result if we've since moved to a different coach.
+      if (id !== editId) return;
       if (r.ok && r.photoUrl) setPhotoUrl(r.photoUrl);
       else setSheetMessage(r.error ?? "Couldn't update the photo.");
     } finally {
@@ -290,15 +299,19 @@ export function CoachManager({
   }
 
   function submitDelete() {
-    if (!editId || !replacementId) return;
+    if (!editId) return;
     startTransition(async () => {
+      // Empty replacement = remove without handing classes over; their upcoming
+      // sessions simply become unassigned.
       const r = await deleteCoach(editId, replacementId);
       if (r.ok) {
         const moved = r.changed ?? 0;
         const left = r.skipped ?? 0;
         setMessage(
-          `Coach removed. ${moved} upcoming session${moved === 1 ? "" : "s"} reassigned` +
-            (left ? `, ${left} couldn't be moved — check the schedule.` : ".")
+          replacementId
+            ? `Coach removed. ${moved} upcoming session${moved === 1 ? "" : "s"} reassigned` +
+                (left ? `, ${left} couldn't be moved — check the schedule.` : ".")
+            : "Coach removed. Their upcoming sessions are now unassigned — reassign them from the schedule."
         );
         close();
       } else {
@@ -412,10 +425,19 @@ export function CoachManager({
 
       {/* ── Edit coach ── */}
       <Sheet open={mode === "edit"} onClose={close} title={form.name}>
-        <div className="space-y-4">
-          {/* Public photo — upload restyles it into the house portrait format. */}
-          <div>
-            <p className="label mb-2">Public photo</p>
+        <div className="space-y-7">
+          <div className="flex items-center gap-2">
+            <Badge tone={editActive ? "ok" : "err"}>{editActive ? "working" : "paused"}</Badge>
+            <span className="text-sm text-fg-2">{form.email}</span>
+          </div>
+
+          {/* ── What clients see on the website ── */}
+          <section className="space-y-4">
+            <div>
+              <p className="label">Public profile</p>
+              <p className="text-xs text-fg-2">Shown on the coaches page of the website.</p>
+            </div>
+
             <div className="flex items-center gap-4">
               <div className="relative aspect-[4/5] w-24 shrink-0 overflow-hidden rounded-[10px] border border-line bg-surface-2">
                 {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -431,8 +453,10 @@ export function CoachManager({
                 )}
               </div>
               <div className="space-y-1.5">
-                <label className="inline-block cursor-pointer text-sm text-ember hover:underline">
-                  {uploadingPhoto ? "Standardizing…" : "Upload & standardize photo"}
+                <label
+                  className={`inline-block text-sm ${uploadingPhoto ? "text-fg-2" : "cursor-pointer text-ember hover:underline"}`}
+                >
+                  {uploadingPhoto ? "Standardizing…" : photoUrl ? "Replace photo" : "Upload photo"}
                   <input
                     type="file"
                     accept="image/*"
@@ -446,77 +470,143 @@ export function CoachManager({
                   />
                 </label>
                 <p className="text-xs text-fg-2">
-                  We restyle any headshot into the house portrait format automatically.
+                  Any headshot is auto-restyled to match the other coach portraits.
                 </p>
               </div>
             </div>
-          </div>
 
-          <DetailFields form={form} onChange={patch} emailMode="readonly" addrQuery={addrQuery} addrSelected={addrSelected} onAddrQueryChange={changeAddrQuery} onAddrSelect={pickAddress} />
+            <Input
+              label="Bio"
+              value={form.bio}
+              onChange={(e) => patch({ bio: e.target.value })}
+              placeholder="A line or two shown to clients"
+            />
+            <Input
+              label="Quote"
+              hint="Shown in italics under their bio."
+              value={form.quote}
+              onChange={(e) => patch({ quote: e.target.value })}
+              placeholder="Their coaching philosophy in a line"
+            />
+            <Input
+              label="Credentials"
+              hint="Comma-separated pills, e.g. 7+ years coaching, ITTF certified."
+              value={form.credentials}
+              onChange={(e) => patch({ credentials: e.target.value })}
+              placeholder="7+ years coaching, ITTF certified"
+            />
+          </section>
 
-          <Input
-            label="Quote"
-            hint="Shown in italics on the public coaches page."
-            value={form.quote}
-            onChange={(e) => patch({ quote: e.target.value })}
-            placeholder="Their coaching philosophy in a line"
-          />
-          <Input
-            label="Credentials"
-            hint="Comma-separated pills, e.g. 7+ years coaching, ITTF certified."
-            value={form.credentials}
-            onChange={(e) => patch({ credentials: e.target.value })}
-            placeholder="7+ years coaching, ITTF certified"
-          />
+          {/* ── Internal: reaching them + matching them to sessions ── */}
+          <section className="space-y-4">
+            <div>
+              <p className="label">Contact & assignment</p>
+              <p className="text-xs text-fg-2">Used to reach them and match sessions. Not public.</p>
+            </div>
 
-          <Button onClick={submitEdit} disabled={isPending} className="w-full">
-            {isPending ? <Spinner /> : "Save coach"}
+            <Input
+              label="Full name"
+              value={form.name}
+              onChange={(e) => patch({ name: e.target.value })}
+              placeholder="Coach's name"
+            />
+            <Input
+              label="Phone"
+              hint="Lets them use the WhatsApp assistant from this number."
+              value={form.phone}
+              onChange={(e) => patch({ phone: e.target.value })}
+              placeholder="+91…"
+            />
+            <AddressSearch
+              label="Base location"
+              placeholder="e.g. Indiranagar, Bengaluru"
+              query={addrQuery}
+              selected={addrSelected}
+              onQueryChange={changeAddrQuery}
+              onSelect={pickAddress}
+            />
+            {addrSelected && (
+              <div>
+                <p className="label mb-2">Drag the pin to fine-tune their base</p>
+                <LocationPinMap
+                  lat={form.baseLat}
+                  lng={form.baseLng}
+                  onMove={(lat, lng) => patch({ baseLat: lat, baseLng: lng })}
+                />
+              </div>
+            )}
+            <Input
+              label="Travel radius (km)"
+              type="number"
+              min={1}
+              hint="Coaches further away score lower but are never blocked."
+              value={form.travelRadiusKm}
+              onChange={(e) => patch({ travelRadiusKm: Number(e.target.value) })}
+            />
+            <Select
+              label="Seniority"
+              hint="When two coaches fit equally, the more senior one is picked."
+              value={form.tier}
+              onChange={(e) => patch({ tier: Number(e.target.value) })}
+            >
+              <option value={1}>Junior</option>
+              <option value={2}>Senior</option>
+              <option value={3}>Head coach</option>
+            </Select>
+          </section>
+
+          <Button onClick={submitEdit} disabled={isPending || uploadingPhoto} className="w-full">
+            {isPending ? <Spinner /> : "Save changes"}
           </Button>
-          <Button
-            variant={editActive ? "destructive" : "ghost"}
-            disabled={isPending}
-            className="w-full"
-            onClick={() => {
-              if (!editId) return;
-              const msg = editActive
-                ? "Pause this coach? They stop getting new sessions. Sessions already on their calendar stay until you reassign them."
-                : "Put this coach back to work?";
-              if (!window.confirm(msg)) return;
-              startTransition(async () => {
-                const r = await setCoachActive(editId, !editActive);
-                if (r.ok) {
-                  setMessage(editActive ? "Coach paused." : "Coach is back.");
-                  close();
-                } else {
-                  setSheetMessage(r.error ?? "Failed.");
-                }
-              });
-            }}
-          >
-            {editActive ? "Pause coach" : "Unpause coach"}
-          </Button>
 
-          {/* Delete + hand their classes to a replacement. */}
-          <div className="border-t border-line pt-4">
+          {/* ── Lifecycle actions ── */}
+          <section className="space-y-3 border-t border-line pt-5">
+            <p className="label">Manage</p>
+            <Button
+              variant="ghost"
+              disabled={isPending || uploadingPhoto}
+              className="w-full"
+              onClick={() => {
+                if (!editId) return;
+                const msg = editActive
+                  ? "Pause this coach? They stop getting new sessions. Sessions already on their calendar stay until you reassign them."
+                  : "Put this coach back to work?";
+                if (!window.confirm(msg)) return;
+                startTransition(async () => {
+                  const r = await setCoachActive(editId, !editActive);
+                  if (r.ok) {
+                    setMessage(editActive ? "Coach paused." : "Coach is back.");
+                    close();
+                  } else {
+                    setSheetMessage(r.error ?? "Failed.");
+                  }
+                });
+              }}
+            >
+              {editActive ? "Pause coach" : "Unpause coach"}
+            </Button>
+
             {!showDelete ? (
               <button
                 onClick={() => setShowDelete(true)}
-                className="text-sm text-err hover:underline"
+                disabled={uploadingPhoto}
+                className="text-sm text-err hover:underline disabled:opacity-50"
               >
-                Delete coach & reassign their classes
+                Remove coach…
               </button>
             ) : (
-              <div className="space-y-3">
+              <div className="space-y-3 rounded-[10px] border border-err/40 bg-err/5 p-3">
                 <p className="text-sm text-fg-2">
-                  Their upcoming sessions move to the coach you pick, and their login becomes a
-                  normal client account. This can’t be undone.
+                  Removing turns their login back into a normal client account. Optionally hand
+                  their upcoming classes to another coach — otherwise those sessions become
+                  unassigned.
                 </p>
                 <Select
-                  label="Hand their classes to"
+                  label="Give their upcoming classes to"
                   value={replacementId}
                   onChange={(e) => setReplacementId(e.target.value)}
                 >
-                  <option value="">Choose a coach…</option>
+                  <option value="">Leave unassigned</option>
                   {coaches
                     .filter((c) => c.id !== editId && c.active)
                     .map((c) => (
@@ -528,14 +618,18 @@ export function CoachManager({
                 <div className="flex gap-2">
                   <Button
                     variant="destructive"
-                    disabled={isPending || !replacementId}
+                    disabled={isPending}
                     className="flex-1"
                     onClick={() => {
-                      if (!window.confirm("Delete this coach and reassign their classes?")) return;
+                      const to = coaches.find((c) => c.id === replacementId)?.name;
+                      const msg = to
+                        ? `Remove this coach and move their upcoming classes to ${to}?`
+                        : "Remove this coach? Their upcoming classes will be left unassigned.";
+                      if (!window.confirm(msg)) return;
                       submitDelete();
                     }}
                   >
-                    {isPending ? <Spinner /> : "Delete & reassign"}
+                    {isPending ? <Spinner /> : "Remove coach"}
                   </Button>
                   <Button
                     variant="ghost"
@@ -550,7 +644,7 @@ export function CoachManager({
                 </div>
               </div>
             )}
-          </div>
+          </section>
 
           {sheetMessage && <p className="text-sm text-err">{sheetMessage}</p>}
         </div>
