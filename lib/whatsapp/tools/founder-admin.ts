@@ -441,8 +441,6 @@ const addCoach: WaTool = {
       email: { type: "string" },
       phone: { type: "string" },
       bio: { type: "string" },
-      tier: { type: "number", description: "1 Junior | 2 Senior | 3 Head coach" },
-      travel_radius_km: { type: "number" },
       base_address: { type: "string" },
       base_lat: { type: "number" },
       base_lng: { type: "number" },
@@ -455,8 +453,6 @@ const addCoach: WaTool = {
       email: String(input.email ?? ""),
       phone: input.phone != null ? String(input.phone) : "",
       bio: input.bio != null ? String(input.bio) : "",
-      tier: input.tier != null ? Number(input.tier) : 1,
-      travelRadiusKm: input.travel_radius_km != null ? Number(input.travel_radius_km) : 10,
       baseAddress: input.base_address != null ? String(input.base_address) : "",
       baseLat: input.base_lat != null ? Number(input.base_lat) : 12.9716,
       baseLng: input.base_lng != null ? Number(input.base_lng) : 77.5946,
@@ -483,31 +479,26 @@ const updateCoach: WaTool = {
       full_name: { type: "string" },
       phone: { type: "string" },
       bio: { type: "string" },
-      travel_radius_km: { type: "number" },
       base_address: { type: "string" },
       base_lat: { type: "number" },
       base_lng: { type: "number" },
-      tier: { type: "number" },
     },
     required: ["coach_id"],
   },
   run: async (input, ctx) => {
     const { data: cur } = await ctx.supabase!
       .from("coaches")
-      .select("bio,travel_radius_km,base_address,base_lat,base_lng,tier")
+      .select("bio,base_address,base_lat,base_lng")
       .eq("id", input.coach_id)
       .maybeSingle();
     if (!cur) return fail("Coach not found.");
     const result = await saveCoachCore(ctx.supabase!, ctx.profile!.id, {
       id: String(input.coach_id),
       bio: input.bio != null ? String(input.bio) : (cur.bio ?? ""),
-      travelRadiusKm:
-        input.travel_radius_km != null ? Number(input.travel_radius_km) : cur.travel_radius_km,
       baseAddress:
         input.base_address != null ? String(input.base_address) : (cur.base_address ?? ""),
       baseLat: input.base_lat != null ? Number(input.base_lat) : Number(cur.base_lat),
       baseLng: input.base_lng != null ? Number(input.base_lng) : Number(cur.base_lng),
-      tier: input.tier != null ? Number(input.tier) : cur.tier,
       ...(input.full_name != null ? { fullName: String(input.full_name) } : {}),
       ...(input.phone != null ? { phone: String(input.phone) } : {}),
     });

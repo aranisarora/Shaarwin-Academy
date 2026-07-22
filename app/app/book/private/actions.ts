@@ -3,37 +3,21 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getSubscriptionSummary } from "@/lib/billing";
+import { isWithinBengaluru } from "@/lib/coverage";
 import type { StructuredAddress } from "@/lib/address";
 
 function isFunctionMissing(code: string | undefined): boolean {
   return code === "PGRST202" || code === "42883";
 }
 
-const KM = 111.32; // deg → km approximation for coverage checks
-
-type CoachLite = {
-  id: string;
-  base_lat: number;
-  base_lng: number;
-  travel_radius_km: number;
-};
-
-async function coachesCovering(lat: number, lng: number): Promise<CoachLite[]> {
+async function activeCoachIds(): Promise<string[]> {
   const supabase = await createClient();
-  const { data } = await supabase
-    .from("coaches")
-    .select("id,base_lat,base_lng,travel_radius_km")
-    .eq("active", true);
-  return (data ?? []).filter((c) => {
-    const dLat = (c.base_lat - lat) * KM;
-    const dLng = (c.base_lng - lng) * KM * Math.cos((lat * Math.PI) / 180);
-    return Math.sqrt(dLat * dLat + dLng * dLng) <= Number(c.travel_radius_km);
-  });
+  const { data } = await supabase.from("coaches").select("id").eq("active", true);
+  return (data ?? []).map((c) => c.id);
 }
 
 export async function checkCoverage(lat: number, lng: number) {
-  const covering = await coachesCovering(lat, lng);
-  return { covered: covering.length > 0 };
+  return { covered: isWithinBengaluru(lat, lng) };
 }
 
 export async function recordAreaInterest(email: string, postcode: string, lat: number, lng: number) {
@@ -60,13 +44,15 @@ export async function getSlots(
   if (!error && data) return data as Slot[];
   if (error && !isFunctionMissing(error.code)) return [];
 
-  // Fallback without the engine RPC: coach availability windows within radius.
-  const covering = await coachesCovering(lat, lng);
-  if (covering.length === 0) return [];
+  // Fallback without the engine RPC: all active coaches' availability windows,
+  // provided the address is within our Bengaluru service area.
+  if (!isWithinBengaluru(lat, lng)) return [];
+  const coachIds = await activeCoachIds();
+  if (coachIds.length === 0) return [];
   const { data: availability } = await supabase
     .from("coach_availability")
     .select("coach_id,weekday,start_time,end_time")
-    .in("coach_id", covering.map((c) => c.id));
+    .in("coach_id", coachIds);
   if (!availability || availability.length === 0) return [];
 
   const slots: Slot[] = [];

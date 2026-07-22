@@ -174,11 +174,9 @@ create table public.coaches (
   bio text,
   base_lat float8 not null,
   base_lng float8 not null,
-  travel_radius_km numeric(5,1) default 10 not null,
   base_address text,
   max_teachable_level skill_level default 'advanced'::skill_level not null,
   dbs_checked boolean default false not null,
-  tier smallint default 1 not null,
   active boolean default true not null,
   created_at timestamptz default now() not null,
   photo_url text,
@@ -192,9 +190,7 @@ create table public.coach_invites (
   full_name text,
   phone text,
   bio text,
-  tier smallint default 1 not null,
   max_teachable_level skill_level default 'advanced'::skill_level not null,
-  travel_radius_km numeric(5,1) default 10 not null,
   dbs_checked boolean default false not null,
   base_address text,
   base_lat float8,
@@ -1753,7 +1749,6 @@ begin
   with candidate_coaches as (
     select c.* from coaches c
     where c.active
-      and haversine_km(p_lat, p_lng, c.base_lat, c.base_lng) <= c.travel_radius_km
   ),
   slots as (
     select generate_series(
@@ -1904,15 +1899,14 @@ begin
     on conflict (id) do nothing;
 
     insert into coaches (
-      id, bio, base_lat, base_lng, base_address, travel_radius_km, tier, active
+      id, bio, base_lat, base_lng, base_address, active
     )
     values (
       new.id, v_invite.bio,
       coalesce(v_invite.base_lat, 12.9716),
       coalesce(v_invite.base_lng, 77.5946),
       v_invite.base_address,
-      v_invite.travel_radius_km,
-      v_invite.tier, true
+      true
     )
     on conflict (id) do nothing;
 
@@ -2043,15 +2037,14 @@ begin
   update profiles set role = 'coach' where id = p_user;
 
   insert into coaches (
-    id, bio, base_lat, base_lng, base_address, travel_radius_km, tier, active
+    id, bio, base_lat, base_lng, base_address, active
   )
   values (
     p_user, v_invite.bio,
     coalesce(v_invite.base_lat, 12.9716),
     coalesce(v_invite.base_lng, 77.5946),
     v_invite.base_address,
-    v_invite.travel_radius_km,
-    v_invite.tier, true
+    true
   )
   on conflict (id) do nothing;
 
@@ -2211,7 +2204,7 @@ declare
 begin
   select coalesce(
     (select value from settings where key = 'assignment_weights'),
-    '{"continuity":35,"proximity":25,"load":20,"adjacency":15,"seniority":5}'::jsonb
+    '{"continuity":35,"proximity":25,"load":20,"adjacency":15}'::jsonb
   ) into v_weights;
 
   select * into v_session from class_sessions where id = p_session;
@@ -2260,8 +2253,7 @@ begin
           and abs(extract(epoch from (s.starts_at - v_session.ends_at))) <= 7200
           and (c2.venue_id is not distinct from v_class.venue_id
                or (v2.lat is not null and haversine_km(v_lat, v_lng, v2.lat, v2.lng) <= 3))
-      ))::int as adjacency,
-      c.tier
+      ))::int as adjacency
     from pool c
   ),
   norm as (
@@ -2269,9 +2261,7 @@ begin
       case when max(dist) over () = min(dist) over () then 1.0
            else 1.0 - (dist - min(dist) over ()) / nullif(max(dist) over () - min(dist) over (), 0) end as proximity_n,
       case when max(load_hours) over () = min(load_hours) over () then 1.0
-           else 1.0 - (load_hours - min(load_hours) over ()) / nullif(max(load_hours) over () - min(load_hours) over (), 0) end as load_n,
-      case when max(tier) over () = min(tier) over () then 1.0
-           else (tier - min(tier) over ())::numeric / nullif(max(tier) over () - min(tier) over (), 0) end as seniority_n
+           else 1.0 - (load_hours - min(load_hours) over ()) / nullif(max(load_hours) over () - min(load_hours) over (), 0) end as load_n
     from metrics
   )
   select
@@ -2281,11 +2271,10 @@ begin
       + (v_weights->>'proximity')::numeric * n.proximity_n
       + (v_weights->>'load')::numeric * n.load_n
       + (v_weights->>'adjacency')::numeric * n.adjacency
-      + (v_weights->>'seniority')::numeric * n.seniority_n
       + case when p_preferred is not null and n.id = p_preferred then 40 else 0 end
     )::numeric, 2) as score
   from norm n
-  order by score desc, n.load_hours asc, n.tier desc, n.id asc;
+  order by score desc, n.load_hours asc, n.id asc;
 end;
 $function$;
 
@@ -2713,7 +2702,7 @@ begin
     on conflict (id) do nothing;
 
     insert into coaches (
-      id, bio, base_lat, base_lng, base_address, travel_radius_km, tier, active
+      id, bio, base_lat, base_lng, base_address, active
     )
     values (
       new.id,
@@ -2721,8 +2710,6 @@ begin
       coalesce(v_invite.base_lat, 12.9716),
       coalesce(v_invite.base_lng, 77.5946),
       v_invite.base_address,
-      v_invite.travel_radius_km,
-      v_invite.tier,
       true
     )
     on conflict (id) do nothing;

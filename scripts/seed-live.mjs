@@ -105,9 +105,9 @@ await upsert("profiles", [
 
 // ── coaches (attempt signups; tolerate email rate limits) ───────────────────
 const coachSpecs = [
-  { tag: "coach-samir", name: "Samir", bio: "Former state number one. Calm, technical, relentless about footwork.", lat: 12.9352, lng: 77.6902, radius: 12, level: "elite", dbs: true, tier: 3 },
-  { tag: "coach-nandan", name: "Nandan", bio: "Attack-first coach. Loves teaching the third-ball game.", lat: 12.911, lng: 77.667, radius: 15, level: "advanced", dbs: true, tier: 2 },
-  { tag: "coach-sunil", name: "Sunil", bio: "Junior development specialist — patient and precise.", lat: 12.929, lng: 77.6014, radius: 8, level: "advanced", dbs: false, tier: 1 },
+  { tag: "coach-samir", name: "Samir", bio: "Former state number one. Calm, technical, relentless about footwork.", lat: 12.9352, lng: 77.6902, level: "elite", dbs: true },
+  { tag: "coach-nandan", name: "Nandan", bio: "Attack-first coach. Loves teaching the third-ball game.", lat: 12.911, lng: 77.667, level: "advanced", dbs: true },
+  { tag: "coach-sunil", name: "Sunil", bio: "Junior development specialist — patient and precise.", lat: 12.929, lng: 77.6014, level: "advanced", dbs: false },
 ];
 
 const coachIds = [];
@@ -124,7 +124,7 @@ for (const spec of coachSpecs) {
     { id, role: "coach", full_name: spec.name, email: `${SEED_EMAIL_BASE}+${spec.tag}@${SEED_EMAIL_DOMAIN}`, avatar_url: `/images/coach-${spec.name.toLowerCase()}.jpg` },
   ]);
   await upsert("coaches", [
-    { id, bio: spec.bio, base_lat: spec.lat, base_lng: spec.lng, travel_radius_km: spec.radius, max_teachable_level: spec.level, dbs_checked: spec.dbs, tier: spec.tier },
+    { id, bio: spec.bio, base_lat: spec.lat, base_lng: spec.lng, max_teachable_level: spec.level, dbs_checked: spec.dbs },
   ]);
   const avail = [];
   for (let wd = 0; wd <= 5; wd++)
@@ -164,7 +164,7 @@ await upsert("products", [
 await upsert(
   "settings",
   [
-    { key: "assignment_weights", value: { continuity: 35, proximity: 25, load: 20, adjacency: 15, seniority: 5 } },
+    { key: "assignment_weights", value: { continuity: 35, proximity: 25, load: 20, adjacency: 15 } },
     { key: "cancellation_window_hours", value: 24 },
     { key: "booking_cutoff_minutes", value: 60 },
     { key: "travel_buffer_minutes", value: 30 },

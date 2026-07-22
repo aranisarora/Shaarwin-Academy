@@ -18,7 +18,7 @@ import {
   type Slot,
 } from "@/app/app/book/private/actions";
 
-type Coach = { id: string; name: string; lat: number; lng: number; radiusKm: number };
+type Coach = { id: string; name: string; lat: number; lng: number };
 
 export type PrivatePlanLimits = {
   /** Weekly cap; null = legacy minutes-only (one-off booking). */
@@ -218,13 +218,9 @@ export function PrivateWizard({
     });
   }
 
-  const coveringCoaches = pin
-    ? coaches.filter((c) => {
-        const dLat = (c.lat - pin.lat) * 111.32;
-        const dLng = (c.lng - pin.lng) * 111.32 * Math.cos((pin.lat * Math.PI) / 180);
-        return Math.sqrt(dLat * dLat + dLng * dLng) <= c.radiusKm;
-      })
-    : [];
+  // Every active coach serves Bengaluru, so once the address is inside our
+  // coverage area they're all candidates for the preferred-coach picker.
+  const coveringCoaches = covered ? coaches : [];
 
   // Minutes are the entitlement — without enough for even one session, the
   // wizard can't finish, so point at the membership page up front.

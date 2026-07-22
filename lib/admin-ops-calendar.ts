@@ -66,7 +66,6 @@ export async function reassignSessionCore(
         time_off: "they're on approved time off",
         unavailable: "the slot is outside their availability hours",
         overlap: "they'd clash with another session (incl. travel buffer)",
-        out_of_radius: "the address is outside their travel radius",
         level_too_high: "the class level is above what they teach",
         dbs_required: "a junior is booked and they have no DBS check",
       };

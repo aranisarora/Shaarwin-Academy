@@ -19,7 +19,7 @@ export default async function PrivateBookingPage({
     supabase.from("players").select("id,full_name").eq("client_id", user.id),
     supabase
       .from("coaches")
-      .select("id,base_lat,base_lng,travel_radius_km,profiles!inner(full_name)")
+      .select("id,base_lat,base_lng,profiles!inner(full_name)")
       .eq("active", true),
   ]);
 
@@ -28,7 +28,6 @@ export default async function PrivateBookingPage({
     name: (c.profiles as unknown as { full_name: string }).full_name,
     lat: c.base_lat,
     lng: c.base_lng,
-    radiusKm: Number(c.travel_radius_km),
   }));
 
   const privatePlan = summary.privatePlan?.active

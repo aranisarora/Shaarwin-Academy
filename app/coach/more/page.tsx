@@ -17,7 +17,7 @@ export default async function CoachMorePage() {
     await Promise.all([
       supabase
         .from("coaches")
-        .select("bio,base_lat,base_lng,travel_radius_km,base_address")
+        .select("bio,base_lat,base_lng,base_address")
         .eq("id", coachId)
         .maybeSingle(),
       supabase
@@ -42,7 +42,6 @@ export default async function CoachMorePage() {
           bio={coach?.bio ?? ""}
           baseLat={coach?.base_lat ?? 12.9716}
           baseLng={coach?.base_lng ?? 77.5946}
-          radiusKm={Number(coach?.travel_radius_km ?? 10)}
           baseAddress={coach?.base_address ?? ""}
         />
         <AvailabilityEditor windows={windows ?? []} timeOff={timeOff ?? []} />

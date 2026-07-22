@@ -324,13 +324,13 @@ const listClients: WaTool = {
 
 const listCoaches: WaTool = {
   name: "list_coaches",
-  description: "All coaches with tier, level, radius and active flag (coach_id values included).",
+  description: "All coaches with base address and active flag (coach_id values included).",
   input_schema: { type: "object", properties: {} },
   run: async (_input, ctx) => {
     const supabase = ctx.supabase!;
     const { data: coaches } = await supabase
       .from("coaches")
-      .select("id,tier,travel_radius_km,base_address,active");
+      .select("id,base_address,active");
     const ids = (coaches ?? []).map((c) => c.id);
     const names = new Map<string, string>();
     if (ids.length) {
@@ -341,8 +341,6 @@ const listCoaches: WaTool = {
       (coaches ?? []).map((c) => ({
         coach_id: c.id,
         name: names.get(c.id) ?? "?",
-        tier: c.tier,
-        radius_km: c.travel_radius_km,
         base_address: c.base_address,
         active: c.active,
       }))

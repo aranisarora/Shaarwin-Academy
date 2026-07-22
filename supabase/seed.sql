@@ -25,10 +25,10 @@ insert into profiles (id, role, full_name, email) values
   ('00000000-0000-4000-8000-000000000022', 'client', 'Priya Shah', 'client-b@sharwin.example')
 on conflict (id) do update set role = excluded.role, full_name = excluded.full_name;
 
-insert into coaches (id, bio, base_lat, base_lng, travel_radius_km, max_teachable_level, dbs_checked, tier) values
-  ('00000000-0000-4000-8000-000000000011', 'Former state number one. Calm, technical, relentless about footwork.', 12.9352, 77.6902, 12, 'elite', true, 3),
-  ('00000000-0000-4000-8000-000000000012', 'Attack-first coach. Loves teaching the third-ball game.', 12.9110, 77.6670, 15, 'advanced', true, 2),
-  ('00000000-0000-4000-8000-000000000013', 'Junior development specialist — patient and precise.', 12.9290, 77.6014, 8, 'advanced', false, 1)
+insert into coaches (id, bio, base_lat, base_lng, max_teachable_level, dbs_checked) values
+  ('00000000-0000-4000-8000-000000000011', 'Former state number one. Calm, technical, relentless about footwork.', 12.9352, 77.6902, 'elite', true),
+  ('00000000-0000-4000-8000-000000000012', 'Attack-first coach. Loves teaching the third-ball game.', 12.9110, 77.6670, 'advanced', true),
+  ('00000000-0000-4000-8000-000000000013', 'Junior development specialist — patient and precise.', 12.9290, 77.6014, 'advanced', false)
 on conflict (id) do nothing;
 
 -- weekly availability: Mon–Sat, mornings through evenings (earliest batch 08:00)
@@ -107,7 +107,7 @@ select public.generate_class_sessions(4);
 
 -- settings
 insert into settings (key, value) values
-  ('assignment_weights', '{"continuity":35,"proximity":25,"load":20,"adjacency":15,"seniority":5}'),
+  ('assignment_weights', '{"continuity":35,"proximity":25,"load":20,"adjacency":15}'),
   ('cancellation_window_hours', '24'),
   ('booking_cutoff_minutes', '60'),
   ('travel_buffer_minutes', '30'),

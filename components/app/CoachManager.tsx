@@ -29,11 +29,9 @@ export type CoachRow = {
   quote: string;
   credentials: string[];
   photoUrl: string;
-  travelRadiusKm: number;
   baseAddress: string;
   baseLat: number;
   baseLng: number;
-  tier: number;
   active: boolean;
 };
 
@@ -43,11 +41,9 @@ export type PendingCoachRow = {
   email: string;
   phone: string;
   bio: string;
-  travelRadiusKm: number;
   baseAddress: string;
   baseLat: number;
   baseLng: number;
-  tier: number;
 };
 
 type Form = {
@@ -59,8 +55,6 @@ type Form = {
   // comma-separated string and split on save.
   quote: string;
   credentials: string;
-  tier: number;
-  travelRadiusKm: number;
   baseAddress: string;
   baseLat: number;
   baseLng: number;
@@ -73,8 +67,6 @@ const EMPTY_FORM: Form = {
   bio: "",
   quote: "",
   credentials: "",
-  tier: 1,
-  travelRadiusKm: 10,
   baseAddress: "",
   baseLat: 12.9716,
   baseLng: 77.5946,
@@ -88,8 +80,6 @@ function toForm(c: CoachRow | PendingCoachRow): Form {
     bio: c.bio,
     quote: "quote" in c ? c.quote : "",
     credentials: "credentials" in c ? c.credentials.join(", ") : "",
-    tier: c.tier,
-    travelRadiusKm: c.travelRadiusKm,
     baseAddress: c.baseAddress,
     baseLat: c.baseLat,
     baseLng: c.baseLng,
@@ -201,8 +191,6 @@ export function CoachManager({
         email: form.email,
         phone: form.phone,
         bio: form.bio,
-        tier: Number(form.tier),
-        travelRadiusKm: Number(form.travelRadiusKm),
         baseAddress: form.baseAddress,
         baseLat: Number(form.baseLat),
         baseLng: Number(form.baseLng),
@@ -223,11 +211,9 @@ export function CoachManager({
         bio: form.bio,
         quote: form.quote,
         credentials: form.credentials.split(",").map((c) => c.trim()).filter(Boolean),
-        travelRadiusKm: Number(form.travelRadiusKm),
         baseAddress: form.baseAddress,
         baseLat: Number(form.baseLat),
         baseLng: Number(form.baseLng),
-        tier: Number(form.tier),
         fullName: form.name,
         phone: form.phone,
       });
@@ -248,8 +234,6 @@ export function CoachManager({
         email: form.email,
         phone: form.phone,
         bio: form.bio,
-        tier: Number(form.tier),
-        travelRadiusKm: Number(form.travelRadiusKm),
         baseAddress: form.baseAddress,
         baseLat: Number(form.baseLat),
         baseLng: Number(form.baseLng),
@@ -331,9 +315,7 @@ export function CoachManager({
             <div className="flex items-center justify-between gap-3">
               <button onClick={() => openEdit(c)} className="text-left hover:text-ember">
                 <p className="font-medium">{c.name}</p>
-                <p className="text-sm text-fg-2">
-                  {c.email} · travels up to {c.travelRadiusKm} km
-                </p>
+                <p className="text-sm text-fg-2">{c.email}</p>
               </button>
               <div className="flex flex-col items-end gap-1.5">
                 <Badge tone={c.active ? "ok" : "err"}>{c.active ? "working" : "paused"}</Badge>
@@ -532,24 +514,6 @@ export function CoachManager({
                 />
               </div>
             )}
-            <Input
-              label="Travel radius (km)"
-              type="number"
-              min={1}
-              hint="Coaches further away score lower but are never blocked."
-              value={form.travelRadiusKm}
-              onChange={(e) => patch({ travelRadiusKm: Number(e.target.value) })}
-            />
-            <Select
-              label="Seniority"
-              hint="When two coaches fit equally, the more senior one is picked."
-              value={form.tier}
-              onChange={(e) => patch({ tier: Number(e.target.value) })}
-            >
-              <option value={1}>Junior</option>
-              <option value={2}>Senior</option>
-              <option value={3}>Head coach</option>
-            </Select>
           </section>
 
           <Button onClick={submitEdit} disabled={isPending || uploadingPhoto} className="w-full">
@@ -716,24 +680,6 @@ function DetailFields({
           />
         </div>
       )}
-      <Input
-        label="Travel radius (km)"
-        type="number"
-        min={1}
-        hint="Coaches further away score lower but are never blocked."
-        value={form.travelRadiusKm}
-        onChange={(e) => onChange({ travelRadiusKm: Number(e.target.value) })}
-      />
-      <Select
-        label="Seniority"
-        hint="When two coaches fit equally, the more senior one is picked."
-        value={form.tier}
-        onChange={(e) => onChange({ tier: Number(e.target.value) })}
-      >
-        <option value={1}>Junior</option>
-        <option value={2}>Senior</option>
-        <option value={3}>Head coach</option>
-      </Select>
     </>
   );
 }

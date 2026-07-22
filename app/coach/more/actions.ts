@@ -128,7 +128,6 @@ export async function saveCoachProfile(input: {
   bio: string;
   baseLat: number;
   baseLng: number;
-  radiusKm: number;
   baseAddress?: string | null;
 }): Promise<{ ok: boolean; error?: string }> {
   const supabase = await createClient();
@@ -136,9 +135,6 @@ export async function saveCoachProfile(input: {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return { ok: false, error: "Sign in first." };
-  if (!Number.isFinite(input.radiusKm) || input.radiusKm < 1 || input.radiusKm > 50) {
-    return { ok: false, error: "Radius must be between 1 and 50 km." };
-  }
 
   const { error } = await supabase
     .from("coaches")
@@ -146,7 +142,6 @@ export async function saveCoachProfile(input: {
       bio: input.bio.trim() || null,
       base_lat: input.baseLat,
       base_lng: input.baseLng,
-      travel_radius_km: input.radiusKm,
       // Only overwrite the label when the coach picked a fresh address.
       ...(input.baseAddress !== undefined
         ? { base_address: input.baseAddress?.trim() || null }

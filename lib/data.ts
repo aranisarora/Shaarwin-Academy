@@ -121,7 +121,7 @@ export async function getCoaches(): Promise<PublicCoach[]> {
     .from("coaches")
     .select("id,bio,quote,credentials,photo_url,profiles!inner(full_name)")
     .eq("active", true)
-    .order("tier", { ascending: false });
+    .order("created_at");
 
   if (!data) return [];
 

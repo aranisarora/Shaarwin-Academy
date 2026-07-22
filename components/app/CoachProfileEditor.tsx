@@ -2,7 +2,6 @@
 
 import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/Button";
-import { Input } from "@/components/ui/Input";
 import { Spinner } from "@/components/ui/Spinner";
 import { AddressSearch, type GeocodeHit } from "@/components/app/AddressSearch";
 import { LocationPinMap } from "@/components/app/LocationPinMap";
@@ -13,17 +12,15 @@ export function CoachProfileEditor({
   bio,
   baseLat,
   baseLng,
-  radiusKm,
   baseAddress,
 }: {
   fullName: string;
   bio: string;
   baseLat: number;
   baseLng: number;
-  radiusKm: number;
   baseAddress: string;
 }) {
-  const [form, setForm] = useState({ bio, baseLat, baseLng, radiusKm, baseAddress });
+  const [form, setForm] = useState({ bio, baseLat, baseLng, baseAddress });
   const [addressQuery, setAddressQuery] = useState(baseAddress);
   const [addressSelected, setAddressSelected] = useState(baseAddress.length > 0);
   const [message, setMessage] = useState<string | null>(null);
@@ -78,14 +75,6 @@ export function CoachProfileEditor({
           zoom={11}
           onMove={(lat, lng) => setForm((f) => ({ ...f, baseLat: lat, baseLng: lng }))}
           className="mb-3 h-56 overflow-hidden rounded-[12px] border border-line"
-        />
-        <Input
-          label="Travel radius (km)"
-          type="number"
-          min={1}
-          max={50}
-          value={form.radiusKm}
-          onChange={(e) => setForm({ ...form, radiusKm: Number(e.target.value) })}
         />
       </div>
 

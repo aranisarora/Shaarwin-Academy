@@ -16,8 +16,6 @@ export type CoachDetails = {
   email: string;
   phone: string;
   bio: string;
-  tier: number;
-  travelRadiusKm: number;
   baseAddress: string;
   baseLat: number;
   baseLng: number;
@@ -48,8 +46,6 @@ export async function promoteToCoachCore(
     id: profileId,
     base_lat: BENGALURU.lat,
     base_lng: BENGALURU.lng,
-    travel_radius_km: 10,
-    tier: 1,
     active: true,
   });
   if (coachErr) {
@@ -77,11 +73,9 @@ export async function promoteToCoachCore(
 export type CoachInput = {
   id: string;
   bio: string;
-  travelRadiusKm: number;
   baseAddress: string;
   baseLat: number;
   baseLng: number;
-  tier: number;
   // Optional identity fields — when present, the coach's profile is updated too.
   fullName?: string;
   phone?: string;
@@ -95,19 +89,14 @@ export async function saveCoachCore(
   founderId: string,
   input: CoachInput
 ): Promise<OpResult> {
-  if (!Number.isFinite(input.travelRadiusKm) || input.travelRadiusKm <= 0) {
-    return { ok: false, error: "Travel distance must be a positive number." };
-  }
   if (input.fullName != null && !input.fullName.trim()) {
     return { ok: false, error: "Name can't be empty." };
   }
   const patch: Record<string, unknown> = {
     bio: input.bio || null,
-    travel_radius_km: input.travelRadiusKm,
     base_address: input.baseAddress || null,
     base_lat: input.baseLat,
     base_lng: input.baseLng,
-    tier: input.tier,
   };
   if (input.quote !== undefined) patch.quote = input.quote.trim() || null;
   if (input.credentials !== undefined) {
@@ -150,9 +139,6 @@ export async function addCoachCore(
   const email = d.email.trim().toLowerCase();
   if (!EMAIL_RE.test(email)) return { ok: false, error: "That email doesn't look valid." };
   if (!d.fullName.trim()) return { ok: false, error: "Enter the coach's name." };
-  if (!Number.isFinite(d.travelRadiusKm) || d.travelRadiusKm <= 0) {
-    return { ok: false, error: "Travel distance must be a positive number." };
-  }
   const phone = d.phone.trim() ? normalizePhone(d.phone) : null;
 
   // Already an account? Promote (if needed) and apply the entered details.
@@ -170,11 +156,9 @@ export async function addCoachCore(
     const saved = await saveCoachCore(supabase, founderId, {
       id: existing.id,
       bio: d.bio,
-      travelRadiusKm: d.travelRadiusKm,
       baseAddress: d.baseAddress,
       baseLat: d.baseLat,
       baseLng: d.baseLng,
-      tier: d.tier,
       fullName: d.fullName,
       phone: d.phone,
     });
@@ -189,8 +173,6 @@ export async function addCoachCore(
       full_name: d.fullName.trim(),
       phone,
       bio: d.bio || null,
-      tier: d.tier,
-      travel_radius_km: d.travelRadiusKm,
       base_address: d.baseAddress || null,
       base_lat: d.baseLat || null,
       base_lng: d.baseLng || null,
@@ -220,9 +202,6 @@ export async function savePendingCoachCore(
   const email = d.email.trim().toLowerCase();
   if (!EMAIL_RE.test(email)) return { ok: false, error: "That email doesn't look valid." };
   if (!d.fullName.trim()) return { ok: false, error: "Enter the coach's name." };
-  if (!Number.isFinite(d.travelRadiusKm) || d.travelRadiusKm <= 0) {
-    return { ok: false, error: "Travel distance must be a positive number." };
-  }
   const phone = d.phone.trim() ? normalizePhone(d.phone) : null;
   const { error } = await supabase
     .from("coach_invites")
@@ -231,8 +210,6 @@ export async function savePendingCoachCore(
       full_name: d.fullName.trim(),
       phone,
       bio: d.bio || null,
-      tier: d.tier,
-      travel_radius_km: d.travelRadiusKm,
       base_address: d.baseAddress || null,
       base_lat: d.baseLat || null,
       base_lng: d.baseLng || null,
