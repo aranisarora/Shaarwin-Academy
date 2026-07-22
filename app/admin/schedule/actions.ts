@@ -8,6 +8,7 @@ import type { SessionRow } from "@/components/app/admin-calendar-types";
 import {
   assignPrivateSessionClientCore,
   cancelFuturePrivateSessionsCore,
+  createOneOffClassCore,
   createOneOffSessionCore,
   createPrivateSessionCore,
   deleteGroupClassCore,
@@ -21,6 +22,7 @@ import {
   topUpSessionsCore,
   updateGroupClassCore,
   type ClassUpdate,
+  type NewOneOffClass,
   type PrivateSessionInput,
 } from "@/lib/admin-ops";
 
@@ -153,6 +155,17 @@ export async function topUpSessions(): Promise<Result & { created?: number }> {
 }
 
 // ── Adding to the calendar ───────────────────────────────────────────────────
+
+/** A brand-new one-off group/school class — sessions only on the picked dates,
+ * never topped up. */
+export async function createOneOffClass(input: NewOneOffClass): Promise<Result> {
+  const { supabase, founder } = await requireFounder();
+  if (!founder) return { ok: false, error: "Founder only." };
+  const result = await createOneOffClassCore(supabase, founder.id, input);
+  if (!result.ok) return result;
+  refresh();
+  return { ok: true };
+}
 
 export async function createOneOffSession(
   classId: string,

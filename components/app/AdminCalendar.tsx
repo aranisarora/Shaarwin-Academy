@@ -18,7 +18,6 @@ import {
   fmtWhen,
   sessionTimeStatus,
   wallDate,
-  type ClassRow,
   type ClientOption,
   type Coach,
   type InviteOption,
@@ -60,7 +59,6 @@ function classTypeLine(s: SessionRow): string {
 export function AdminCalendar({
   sessions,
   coaches,
-  classes,
   venues,
   clients,
   invites,
@@ -68,7 +66,6 @@ export function AdminCalendar({
 }: {
   sessions: SessionRow[];
   coaches: Coach[];
-  classes: ClassRow[];
   venues: Venue[];
   clients: ClientOption[];
   invites: InviteOption[];
@@ -135,7 +132,6 @@ export function AdminCalendar({
     return { unassigned, byCoach };
   }, [filtered, coaches]);
 
-  const activeClasses = classes.filter((c) => c.active);
   const today = wallDate(new Date().toISOString());
   const filtersActive =
     coachFilter !== "all" ||
@@ -362,7 +358,6 @@ export function AdminCalendar({
             setAdding(false);
             onRefresh?.();
           }}
-          classes={activeClasses}
           coaches={coaches}
           venues={venues}
           clients={clients}

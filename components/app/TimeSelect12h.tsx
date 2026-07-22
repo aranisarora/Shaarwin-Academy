@@ -20,10 +20,12 @@ export function TimeSelect12h({
   value,
   onChange,
 }: {
-  label: string;
+  /** Omit to render the pickers bare — the caller provides its own label. */
+  label?: string;
   value: string; // "HH:MM" 24h
   onChange: (next: string) => void;
 }) {
+  const aria = label || "Time";
   const { h24, minute } = parse(value);
   const period: "am" | "pm" = h24 >= 12 ? "pm" : "am";
   const h12 = h24 % 12 === 0 ? 12 : h24 % 12;
@@ -43,10 +45,10 @@ export function TimeSelect12h({
 
   return (
     <div className="flex flex-col gap-1.5">
-      <span className="label">{label}</span>
+      {label && <span className="label">{label}</span>}
       <div className="grid grid-cols-3 gap-2">
         <select
-          aria-label={`${label} — hour`}
+          aria-label={`${aria} — hour`}
           className={selectClass}
           value={h12}
           onChange={(e) => emit(Number(e.target.value), minute, period)}
@@ -58,7 +60,7 @@ export function TimeSelect12h({
           ))}
         </select>
         <select
-          aria-label={`${label} — minutes`}
+          aria-label={`${aria} — minutes`}
           className={selectClass}
           value={minute}
           onChange={(e) => emit(h12, Number(e.target.value), period)}
@@ -70,7 +72,7 @@ export function TimeSelect12h({
           ))}
         </select>
         <select
-          aria-label={`${label} — am or pm`}
+          aria-label={`${aria} — am or pm`}
           className={selectClass}
           value={period}
           onChange={(e) => emit(h12, minute, e.target.value as "am" | "pm")}

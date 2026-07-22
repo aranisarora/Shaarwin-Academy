@@ -20,6 +20,7 @@ export default async function AdminWeeklyPage() {
           "id,title,description,skill_level,capacity,duration_minutes,recurrence_rule,active,ends_on,venue_id,is_school,venues(name)"
         )
         .eq("class_type", "group")
+        .not("recurrence_rule", "is", null)
         .order("title"),
       supabase
         .from("coaches")

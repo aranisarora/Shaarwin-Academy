@@ -6,6 +6,7 @@
 
 import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
+import { TimeSelect12h } from "./TimeSelect12h";
 import { WEEKDAY_NAME } from "./admin-calendar-types";
 import type { Venue } from "./admin-calendar-types";
 
@@ -46,6 +47,53 @@ export function time12h(time: string): string {
 export function generateClassTitle(weekday: string, time: string, venueName?: string): string {
   const day = WEEKDAY_NAME[weekday] ?? weekday;
   return venueName ? `${day} ${time12h(time)} · ${venueName}` : `${day} ${time12h(time)}`;
+}
+
+/** One time picker per selected item (a weekday code or an ISO date) — used
+ * wherever a multi-select needs a distinct time for each pick. `onRemove`
+ * adds a ✕ per row; omit it when the caller has its own toggle (day chips). */
+export function ItemTimesList({
+  items,
+  labelOf,
+  times,
+  onSetTime,
+  onRemove,
+}: {
+  items: string[];
+  labelOf: (item: string) => string;
+  times: Record<string, string>;
+  onSetTime: (item: string, time: string) => void;
+  onRemove?: (item: string) => void;
+}) {
+  if (items.length === 0) return null;
+  return (
+    <div className="space-y-2">
+      {items.map((item) => (
+        <div
+          key={item}
+          className="flex items-center gap-3 rounded-[12px] border border-line bg-surface-2 px-3 py-2.5"
+        >
+          <span className="w-24 shrink-0 text-sm font-medium">{labelOf(item)}</span>
+          <div className="flex-1">
+            <TimeSelect12h
+              value={times[item] ?? "18:30"}
+              onChange={(t) => onSetTime(item, t)}
+            />
+          </div>
+          {onRemove && (
+            <button
+              type="button"
+              onClick={() => onRemove(item)}
+              className="text-fg-2 hover:text-err"
+              aria-label={`Remove ${labelOf(item)}`}
+            >
+              ✕
+            </button>
+          )}
+        </div>
+      ))}
+    </div>
+  );
 }
 
 /** Venue, spots and length — everything about a class except its weekly slot

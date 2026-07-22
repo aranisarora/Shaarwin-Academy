@@ -3,7 +3,7 @@
 // (founder policies) is the enforcement layer regardless of entry point.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { academyOffsetMinutes } from "@/lib/academy-time";
+import { academyOffsetMinutes, academyWallToUtc } from "@/lib/academy-time";
 import type { OpResult } from "@/lib/admin-ops-types";
 
 // OpResult lives in a leaf module (admin-ops-types) so the domain cores can
@@ -97,6 +97,86 @@ export async function createGroupClassCore(
     entity: "classes",
     entity_id: cls.id,
     meta: { sessions: sessions.length },
+  });
+
+  return { ok: true };
+}
+
+export type NewOneOffClass = {
+  title: string;
+  description: string;
+  skillLevel: string;
+  capacity: number;
+  durationMinutes: number;
+  venueId: string;
+  /** Each occurrence becomes one session — academy wall-clock date + time. */
+  occurrences: { date: string; time: string }[];
+  coachId?: string;
+  isSchool?: boolean;
+};
+
+/**
+ * A one-off class: same shape as a weekly group class but with no recurrence
+ * rule, so the session top-up generator never extends it and it stays off the
+ * Weekly classes tab. One session is created per occurrence, each at its own
+ * date and time.
+ */
+export async function createOneOffClassCore(
+  supabase: SupabaseClient,
+  founderId: string,
+  input: NewOneOffClass
+): Promise<OpResult> {
+  if (input.occurrences.length === 0) return { ok: false, error: "Pick at least one date." };
+  const starts = input.occurrences.map((o) => academyWallToUtc(o.date, o.time));
+  if (starts.some((s) => !(s > new Date())))
+    return { ok: false, error: "Pick times in the future." };
+
+  const startsOn = input.occurrences.map((o) => o.date).sort()[0];
+  const { data: cls, error } = await supabase
+    .from("classes")
+    .insert({
+      class_type: "group",
+      is_school: input.isSchool ?? false,
+      title: input.title,
+      description: input.description || null,
+      skill_level: input.skillLevel,
+      capacity: input.capacity,
+      duration_minutes: input.durationMinutes,
+      venue_id: input.venueId,
+      recurrence_rule: null,
+      starts_on: startsOn,
+      created_by: founderId,
+    })
+    .select("id")
+    .single();
+  if (error || !cls) return { ok: false, error: "Couldn't create the class." };
+
+  const { error: sessErr } = await supabase.from("class_sessions").insert(
+    starts.map((start) => ({
+      class_id: cls.id,
+      coach_id: input.coachId || null,
+      starts_at: start.toISOString(),
+      ends_at: new Date(start.getTime() + input.durationMinutes * 60000).toISOString(),
+    }))
+  );
+  if (sessErr) {
+    // No sessions means nothing on the calendar — remove the empty class shell.
+    await supabase.from("classes").delete().eq("id", cls.id);
+    return {
+      ok: false,
+      error: sessErr.message.includes("coach_no_overlap")
+        ? "That coach is already busy then — pick another coach or leave it on automatic."
+        : "Couldn't add the sessions.",
+    };
+  }
+  if (!input.coachId) await supabase.rpc("assign_unassigned_sessions");
+
+  await supabase.from("audit_log").insert({
+    actor_id: founderId,
+    action: "class.create",
+    entity: "classes",
+    entity_id: cls.id,
+    meta: { one_off: true, sessions: starts.length },
   });
 
   return { ok: true };

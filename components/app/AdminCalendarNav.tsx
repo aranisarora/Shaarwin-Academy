@@ -5,7 +5,6 @@ import { fetchWeekSessions } from "@/app/admin/schedule/actions";
 import { shiftWallDate } from "@/lib/academy-time";
 import { AdminCalendar } from "./AdminCalendar";
 import type {
-  ClassRow,
   ClientOption,
   Coach,
   InviteOption,
@@ -23,7 +22,6 @@ export function AdminCalendarNav({
   initialRangeLabel,
   nextByClass,
   coaches,
-  classes,
   venues,
   clients,
   invites,
@@ -37,7 +35,6 @@ export function AdminCalendarNav({
   initialRangeLabel: string;
   nextByClass: Record<string, string>;
   coaches: Coach[];
-  classes: ClassRow[];
   venues: Venue[];
   clients: ClientOption[];
   invites: InviteOption[];
@@ -115,7 +112,6 @@ export function AdminCalendarNav({
       <AdminCalendar
         sessions={sessions}
         coaches={coaches}
-        classes={classes}
         venues={venues}
         clients={clients}
         invites={invites}

@@ -311,7 +311,6 @@ export function AdminWeeklyClasses({
             setCreating(false);
             router.refresh();
           }}
-          classes={classes.filter((c) => c.active)}
           coaches={coaches}
           venues={venues}
           clients={clients}

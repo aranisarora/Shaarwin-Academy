@@ -9,7 +9,6 @@ import {
 import { AdminShell } from "@/components/app/AdminShell";
 import { AdminCalendarNav } from "@/components/app/AdminCalendarNav";
 import type {
-  ClassRow,
   ClientOption,
   InviteOption,
   SessionRow,
@@ -227,26 +226,6 @@ export default async function AdminCalendarPage({
     name: (c.profiles as unknown as { full_name: string }).full_name,
   }));
 
-  const classRows: ClassRow[] = (classes ?? []).map((c) => {
-    const next = nextByClass.get(c.id);
-    return {
-      id: c.id,
-      title: c.title,
-      description: c.description ?? "",
-      level: c.skill_level,
-      capacity: c.capacity,
-      duration: c.duration_minutes,
-      weekday: c.recurrence_rule?.match(/BYDAY=(..)/)?.[1] ?? "MO",
-      time: next ? utcToAcademyWall(new Date(next)).time : "18:30",
-      active: c.active,
-      endsOn: c.ends_on,
-      venueId: c.venue_id,
-      venueName: (c.venues as unknown as { name: string } | null)?.name ?? null,
-      isSchool: c.is_school,
-      coachName: null, // not surfaced on the schedule calendar — sessions carry their own coach
-    };
-  });
-
   const clientRows: ClientOption[] = (clients ?? []).map((c) => ({
     id: c.id,
     name: c.full_name,
@@ -283,7 +262,6 @@ export default async function AdminCalendarPage({
         initialRangeLabel={rangeLabel}
         nextByClass={nextByClassObj}
         coaches={coachList}
-        classes={classRows}
         venues={venues ?? []}
         clients={clientRows}
         invites={inviteRows}
