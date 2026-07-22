@@ -32,7 +32,14 @@ export const metadata: Metadata = {
       "ITTF-certified coaching at your society, school, college or office. Play faster. Think faster.",
     url: siteUrl,
     siteName: "Sharwin Table Tennis Academy",
-    images: [{ url: "/images/og-card.jpg", width: 1920, height: 1005 }],
+    images: [
+      {
+        url: "/images/og-logo.jpg",
+        width: 1200,
+        height: 630,
+        alt: "Sharwin Table Tennis Academy",
+      },
+    ],
     locale: "en_GB",
     type: "website",
   },
