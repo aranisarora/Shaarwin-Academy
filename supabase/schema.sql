@@ -743,14 +743,14 @@ begin
            jsonb_build_object('booking_id', v_booking.id, 'session_id', p_session, 'url', '/app/schedule'),
            now());
       end if;
-      -- reminders always (each fires at its own session time)
+      -- one consolidated reminder ~3h before start (P11 delivers)
       insert into notifications (user_id, type, title, body, data, scheduled_for) values
-        (p_client, 'reminder_24h', 'Tomorrow', v_class.title,
-         jsonb_build_object('booking_id', v_booking.id, 'session_id', p_session, 'url', '/app/schedule'),
-         v_session.starts_at - interval '24 hours'),
-        (p_client, 'reminder_2h', 'Later today', v_class.title,
-         jsonb_build_object('booking_id', v_booking.id, 'session_id', p_session, 'url', '/app/schedule'),
-         v_session.starts_at - interval '2 hours');
+        (p_client, 'reminder_upcoming', 'Later today', v_class.title,
+         jsonb_build_object('booking_id', v_booking.id, 'session_id', p_session,
+           'class_title', v_class.title,
+           'time_str', to_char(v_session.starts_at at time zone v_tz, 'FMHH12:MI am'),
+           'url', '/app/schedule'),
+         v_session.starts_at - interval '3 hours');
       return 'confirmed';
     else
       select coalesce(max(waitlist_position), 0) + 1 into v_position
@@ -1111,18 +1111,18 @@ begin
     values (p_session, v_client, p_player, 'confirmed')
     returning * into v_booking;
 
-    -- confirmation + reminders (P11 delivers)
+    -- confirmation + one consolidated reminder ~3h before start (P11 delivers)
     insert into notifications (user_id, type, title, body, data, scheduled_for) values
       (v_client, 'booking_confirmed', 'Booked.',
        to_char(v_session.starts_at at time zone 'Asia/Kolkata', 'Dy DD Mon, FMHH12:MI am') || ' — ' || v_class.title,
        jsonb_build_object('booking_id', v_booking.id, 'session_id', p_session, 'url', '/app/schedule'),
        now()),
-      (v_client, 'reminder_24h', 'Tomorrow', v_class.title,
-       jsonb_build_object('booking_id', v_booking.id, 'session_id', p_session, 'url', '/app/schedule'),
-       v_session.starts_at - interval '24 hours'),
-      (v_client, 'reminder_2h', 'Later today', v_class.title,
-       jsonb_build_object('booking_id', v_booking.id, 'session_id', p_session, 'url', '/app/schedule'),
-       v_session.starts_at - interval '2 hours');
+      (v_client, 'reminder_upcoming', 'Later today', v_class.title,
+       jsonb_build_object('booking_id', v_booking.id, 'session_id', p_session,
+         'class_title', v_class.title,
+         'time_str', to_char(v_session.starts_at at time zone 'Asia/Kolkata', 'FMHH12:MI am'),
+         'url', '/app/schedule'),
+       v_session.starts_at - interval '3 hours');
   else
     select coalesce(max(waitlist_position), 0) + 1 into v_position
     from bookings where session_id = p_session and status = 'waitlisted';
@@ -1231,7 +1231,7 @@ begin
   delete from notifications
   where status = 'pending'
     and (data->>'booking_id')::uuid = p_booking
-    and type in ('reminder_24h', 'reminder_2h');
+    and type in ('reminder_24h', 'reminder_2h', 'reminder_upcoming');
 end;
 $function$;
 
@@ -1370,7 +1370,7 @@ begin
 
     delete from notifications where status = 'pending'
       and (data->>'booking_id')::uuid = r.id
-      and type in ('reminder_24h','reminder_2h');
+      and type in ('reminder_24h','reminder_2h','reminder_upcoming');
   end loop;
 
   update booking_series set active = false, cancelled_at = now() where id = p_series;
@@ -1984,6 +1984,63 @@ begin
 end;
 $function$;
 
+CREATE OR REPLACE FUNCTION public.claim_waitlist_spot(p_booking uuid)
+ RETURNS text
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare
+  v_client uuid := auth.uid();
+  v_booking bookings%rowtype;
+  v_session class_sessions%rowtype;
+  v_class classes%rowtype;
+  v_capacity int;
+  v_confirmed int;
+begin
+  select * into v_booking from bookings where id = p_booking for update;
+  if not found or (v_booking.client_id <> v_client and not is_founder()) then
+    raise exception 'booking_not_found';
+  end if;
+  if v_booking.status <> 'waitlisted' then
+    raise exception 'not_waitlisted';
+  end if;
+
+  select * into v_session from class_sessions where id = v_booking.session_id for update;
+  if v_session.status <> 'scheduled'
+     or v_session.starts_at <= now() + make_interval(mins => get_setting_int('booking_cutoff_minutes', 60)) then
+    raise exception 'session_not_bookable';
+  end if;
+  select * into v_class from classes where id = v_session.class_id;
+
+  v_capacity := coalesce(v_session.capacity_override, v_class.capacity);
+  select count(*) into v_confirmed from bookings
+  where session_id = v_booking.session_id and status = 'confirmed';
+  if v_confirmed >= v_capacity then
+    raise exception 'spot_gone';
+  end if;
+
+  update bookings
+  set status = 'confirmed', waitlist_position = null
+  where id = p_booking;
+
+  -- Confirmation + the single upcoming reminder, mirroring book_session.
+  insert into notifications (user_id, type, title, body, data, scheduled_for) values
+    (v_booking.client_id, 'booking_confirmed', 'Booked.',
+     to_char(v_session.starts_at at time zone 'Asia/Kolkata', 'Dy DD Mon, FMHH12:MI am') || ' — ' || v_class.title,
+     jsonb_build_object('booking_id', v_booking.id, 'session_id', v_booking.session_id, 'url', '/app/schedule'),
+     now()),
+    (v_booking.client_id, 'reminder_upcoming', 'Later today', v_class.title,
+     jsonb_build_object('booking_id', v_booking.id, 'session_id', v_booking.session_id,
+       'class_title', v_class.title,
+       'time_str', to_char(v_session.starts_at at time zone 'Asia/Kolkata', 'FMHH12:MI am'),
+       'url', '/app/schedule'),
+     v_session.starts_at - interval '3 hours');
+
+  return 'confirmed';
+end;
+$function$;
+
 CREATE OR REPLACE FUNCTION public.claim_client_invite()
  RETURNS trigger
  LANGUAGE plpgsql
@@ -2450,17 +2507,17 @@ begin
      to_char(v_target.starts_at at time zone 'Asia/Kolkata', 'Dy DD Mon FMHH12:MI am'),
      jsonb_build_object('booking_id', v_new.id, 'url', '/app/schedule'));
 
-  -- fresh reminders; sweep old ones
+  -- fresh reminder; sweep old ones (keep legacy types for in-flight rows)
   delete from notifications where status = 'pending'
     and (data->>'booking_id')::uuid = p_booking
-    and type in ('reminder_24h', 'reminder_2h');
+    and type in ('reminder_24h', 'reminder_2h', 'reminder_upcoming');
   insert into notifications (user_id, type, title, body, data, scheduled_for) values
-    (v_client, 'reminder_24h', 'Tomorrow', v_target_class.title,
-     jsonb_build_object('booking_id', v_new.id, 'url', '/app/schedule'),
-     v_target.starts_at - interval '24 hours'),
-    (v_client, 'reminder_2h', 'Later today', v_target_class.title,
-     jsonb_build_object('booking_id', v_new.id, 'url', '/app/schedule'),
-     v_target.starts_at - interval '2 hours');
+    (v_client, 'reminder_upcoming', 'Later today', v_target_class.title,
+     jsonb_build_object('booking_id', v_new.id, 'session_id', p_target_session,
+       'class_title', v_target_class.title,
+       'time_str', to_char(v_target.starts_at at time zone 'Asia/Kolkata', 'FMHH12:MI am'),
+       'url', '/app/schedule'),
+     v_target.starts_at - interval '3 hours');
 
   return v_new;
 end;

@@ -201,19 +201,22 @@ export async function bookSession(
     },
     {
       user_id: user.id,
-      type: "reminder_24h",
-      title: "Tomorrow",
-      body: cls.title,
-      data: { booking_id: booking.id, url: "/app/schedule" },
-      scheduled_for: new Date(new Date(session.starts_at).getTime() - 24 * 3600000).toISOString(),
-    },
-    {
-      user_id: user.id,
-      type: "reminder_2h",
+      type: "reminder_upcoming",
       title: "Later today",
       body: cls.title,
-      data: { booking_id: booking.id, url: "/app/schedule" },
-      scheduled_for: new Date(new Date(session.starts_at).getTime() - 2 * 3600000).toISOString(),
+      data: {
+        booking_id: booking.id,
+        session_id: sessionId,
+        class_title: cls.title,
+        time_str: new Intl.DateTimeFormat("en-GB", {
+          hour: "numeric",
+          minute: "2-digit",
+          hour12: true,
+          timeZone: "Asia/Kolkata",
+        }).format(new Date(session.starts_at)),
+        url: "/app/schedule",
+      },
+      scheduled_for: new Date(new Date(session.starts_at).getTime() - 3 * 3600000).toISOString(),
     },
   ]);
 
