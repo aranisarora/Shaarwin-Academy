@@ -70,7 +70,7 @@ export function StudentNotes({
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
           rows={3}
-          placeholder="What should other coaches know? Progress, behaviour, injuries, allergies…"
+          placeholder="Progress, focus areas, wins — the family reads this too."
           className="w-full rounded-[8px] border border-line bg-surface-2 p-3.5 text-base"
         />
         <div className="mt-2 flex items-center gap-3">
@@ -78,7 +78,7 @@ export function StudentNotes({
             Save note
           </Button>
           <span className="text-xs text-fg-2">
-            Visible to all coaches and the founder.
+            Visible to the player&apos;s family, all coaches, and the founder.
           </span>
         </div>
         {message && <p className="mt-2 text-sm text-fg-2">{message}</p>}

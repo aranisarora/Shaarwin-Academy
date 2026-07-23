@@ -11,7 +11,7 @@ export default async function ProfilePage() {
   const [{ data: players }, { data: addr }] = await Promise.all([
     supabase
       .from("players")
-      .select("id,full_name,date_of_birth,skill_level")
+      .select("id,full_name,date_of_birth")
       .eq("client_id", user.id)
       .order("created_at"),
     supabase

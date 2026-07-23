@@ -43,7 +43,6 @@ export async function saveProfile(input: {
 export async function addPlayer(input: {
   fullName: string;
   dateOfBirth: string;
-  skillLevel: string;
 }): Promise<Result> {
   const supabase = await createClient();
   const {
@@ -52,11 +51,12 @@ export async function addPlayer(input: {
   if (!user) return { ok: false, error: "Sign in first." };
   if (!input.fullName.trim()) return { ok: false, error: "Name can't be empty." };
 
+  // skill_level takes the DB default ('beginner') — mastery supersedes it on
+  // every client surface now.
   const { error } = await supabase.from("players").insert({
     client_id: user.id,
     full_name: input.fullName.trim(),
     date_of_birth: input.dateOfBirth || null,
-    skill_level: input.skillLevel,
   });
   if (error) return { ok: false, error: "Couldn't add the player." };
   revalidatePath("/app/profile");

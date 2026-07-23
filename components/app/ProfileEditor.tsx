@@ -5,7 +5,6 @@ import Link from "next/link";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
-import { Select } from "@/components/ui/Select";
 import { Spinner } from "@/components/ui/Spinner";
 import { enablePush, type PushState } from "@/lib/push";
 import { AddressForm } from "@/components/app/AddressForm";
@@ -20,7 +19,6 @@ type Player = {
   id: string;
   full_name: string;
   date_of_birth: string | null;
-  skill_level: string;
 };
 
 export function ProfileEditor({
@@ -44,7 +42,7 @@ export function ProfileEditor({
   const [address, setAddress] = useState<StructuredAddress>(() =>
     fromDetails(profile.addressDetails, { address: profile.defaultAddress })
   );
-  const [newPlayer, setNewPlayer] = useState({ fullName: "", dateOfBirth: "", skillLevel: "beginner" });
+  const [newPlayer, setNewPlayer] = useState({ fullName: "", dateOfBirth: "" });
   const [pushState, setPushState] = useState<PushState | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
@@ -134,9 +132,8 @@ export function ProfileEditor({
               <Link href={`/app/players/${p.id}`} className="min-w-0 flex-1">
                 <p className="font-medium">{p.full_name}</p>
                 <p className="text-xs text-fg-2">
-                  {p.skill_level}
-                  {p.date_of_birth ? ` · born ${new Date(p.date_of_birth).getFullYear()}` : ""}
-                  {" · attendance & notes →"}
+                  {p.date_of_birth ? `Born ${new Date(p.date_of_birth).getFullYear()} · ` : ""}
+                  attendance &amp; notes →
                 </p>
               </Link>
               <button
@@ -173,21 +170,13 @@ export function ProfileEditor({
               onChange={(e) => setNewPlayer({ ...newPlayer, dateOfBirth: e.target.value })}
             />
           </div>
-          <Select
-            value={newPlayer.skillLevel}
-            onChange={(e) => setNewPlayer({ ...newPlayer, skillLevel: e.target.value })}
-          >
-            {["beginner", "intermediate", "advanced", "elite"].map((l) => (
-              <option key={l} value={l}>{l}</option>
-            ))}
-          </Select>
           <Button
             variant="ghost"
             disabled={pending || !newPlayer.fullName}
             onClick={() =>
               startTransition(async () => {
                 const r = await addPlayer(newPlayer);
-                if (r.ok) setNewPlayer({ fullName: "", dateOfBirth: "", skillLevel: "beginner" });
+                if (r.ok) setNewPlayer({ fullName: "", dateOfBirth: "" });
                 else setMessage(r.error ?? null);
               })
             }

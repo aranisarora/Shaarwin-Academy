@@ -12,10 +12,7 @@ type PlayerInput = {
   id?: string;
   fullName: string;
   dateOfBirth: string;
-  skillLevel: string;
 };
-
-const SKILL_LEVELS = ["beginner", "intermediate", "advanced", "elite"];
 
 /** Monotonic step bump; a no-op once onboarding is complete or already past. */
 async function bumpStep(
@@ -70,10 +67,12 @@ export async function savePlayers(input: {
   }
 
   for (const p of players) {
+    // skill_level is intentionally omitted: new inserts take the DB default
+    // ('beginner'); updates must not touch it so coach/admin-set values survive
+    // a re-onboarding edit. Mastery has replaced skill_level on client surfaces.
     const row = {
       full_name: p.fullName,
       date_of_birth: p.dateOfBirth || null,
-      skill_level: SKILL_LEVELS.includes(p.skillLevel) ? p.skillLevel : "beginner",
     };
     const { error } = p.id
       ? await supabase

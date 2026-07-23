@@ -3,11 +3,8 @@
 import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
-import { Select } from "@/components/ui/Select";
 import { Spinner } from "@/components/ui/Spinner";
 import { savePlayers } from "@/app/app/onboarding/actions";
-
-const SKILL_LEVELS = ["beginner", "intermediate", "advanced", "elite"];
 
 type Mode = "me" | "kids" | "both";
 
@@ -21,7 +18,6 @@ export type ExistingPlayer = {
   id: string;
   full_name: string;
   date_of_birth: string | null;
-  skill_level: string;
 };
 
 type Row = {
@@ -29,17 +25,15 @@ type Row = {
   fullName: string;
   /** 4-digit year; stored as Jan 1 of that year in players.date_of_birth. */
   yearOfBirth: string;
-  skillLevel: string;
 };
 
-const blankRow = (): Row => ({ fullName: "", yearOfBirth: "", skillLevel: "beginner" });
+const blankRow = (): Row => ({ fullName: "", yearOfBirth: "" });
 
 function toRow(p: ExistingPlayer): Row {
   return {
     id: p.id,
     fullName: p.full_name,
     yearOfBirth: p.date_of_birth ? p.date_of_birth.slice(0, 4) : "",
-    skillLevel: p.skill_level,
   };
 }
 
@@ -75,9 +69,7 @@ export function PlayersStep({
     existingOthers.length === 0 ? null : selfExisting ? "both" : "kids"
   );
   const [self, setSelf] = useState<Row>(
-    selfExisting
-      ? toRow(selfExisting)
-      : { fullName: profileName, yearOfBirth: "", skillLevel: "beginner" }
+    selfExisting ? toRow(selfExisting) : { fullName: profileName, yearOfBirth: "" }
   );
   const [others, setOthers] = useState<Row[]>(existingOthers);
   const [error, setError] = useState<string | null>(null);
@@ -150,16 +142,6 @@ export function PlayersStep({
             value={self.yearOfBirth}
             onChange={(e) => setSelf({ ...self, yearOfBirth: e.target.value })}
           />
-          <Select
-            label="Skill level"
-            hint="Best guess is fine — coaches adjust."
-            value={self.skillLevel}
-            onChange={(e) => setSelf({ ...self, skillLevel: e.target.value })}
-          >
-            {SKILL_LEVELS.map((l) => (
-              <option key={l} value={l}>{l}</option>
-            ))}
-          </Select>
         </div>
       )}
 
@@ -194,16 +176,6 @@ export function PlayersStep({
               value={row.yearOfBirth}
               onChange={(e) => updateOther(i, { yearOfBirth: e.target.value })}
             />
-            <Select
-              label="Skill level"
-              hint="Best guess is fine — coaches adjust."
-              value={row.skillLevel}
-              onChange={(e) => updateOther(i, { skillLevel: e.target.value })}
-            >
-              {SKILL_LEVELS.map((l) => (
-                <option key={l} value={l}>{l}</option>
-              ))}
-            </Select>
           </div>
         ))}
 
