@@ -10,6 +10,10 @@ export const metadata: Metadata = {
   description: "Meet the Sharwin Table Tennis Academy coaching team.",
 };
 
+// Static + revalidated hourly; the roster (getCoaches) is itself cache-tagged, so
+// this serves from the edge and refreshes when a coach is edited in admin.
+export const revalidate = 3600;
+
 async function CoachGrid() {
   const coaches = await getCoaches();
   if (coaches.length === 0) {

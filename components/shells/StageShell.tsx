@@ -1,7 +1,6 @@
 import Image from "next/image";
 import Link from "next/link";
 import { StageHeader } from "./StageHeader";
-import { hasAuthSession } from "@/lib/auth";
 import logo from "@/public/images/logo.png";
 
 const footerCols = [
@@ -31,12 +30,10 @@ const footerCols = [
 ];
 
 /** Ink marketing shell: transparent header gaining ink+hairline on scroll, footer. */
-export async function StageShell({ children }: { children: React.ReactNode }) {
-  const signedIn = await hasAuthSession();
-
+export function StageShell({ children }: { children: React.ReactNode }) {
   return (
     <div data-mood="stage" className="flex min-h-dvh flex-col bg-surface text-fg">
-      <StageHeader signedIn={signedIn} />
+      <StageHeader />
       <main className="flex-1">{children}</main>
       <footer className="border-t border-line">
         <div className="mx-auto grid max-w-6xl gap-10 px-6 py-14 sm:grid-cols-2 lg:grid-cols-4">
@@ -75,10 +72,7 @@ export async function StageShell({ children }: { children: React.ReactNode }) {
             <div key={col.title}>
               <p className="label mb-4">{col.title}</p>
               <ul className="space-y-2.5">
-                {(col.title === "Account" && signedIn
-                  ? [{ href: "/app", label: "Member app" }]
-                  : col.links
-                ).map((l) => (
+                {col.links.map((l) => (
                   <li key={l.href}>
                     <Link
                       href={l.href}

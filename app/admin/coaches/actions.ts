@@ -1,6 +1,6 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidatePath, revalidateTag } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { requireFounder } from "@/lib/founder";
 import {
@@ -25,6 +25,7 @@ export async function promoteToCoach(profileId: string): Promise<Result> {
   const result = await promoteToCoachCore(supabase, founder.id, profileId);
   if (!result.ok) return result;
   revalidatePath("/admin/coaches");
+  revalidateTag("coaches", "max");
   return { ok: true };
 }
 
@@ -36,6 +37,7 @@ export async function addCoach(
   const result = await addCoachCore(supabase, founder.id, details);
   if (!result.ok) return result;
   revalidatePath("/admin/coaches");
+  revalidateTag("coaches", "max");
   return { ok: true, pending: result.pending };
 }
 
@@ -45,6 +47,7 @@ export async function savePendingCoach(id: string, details: CoachDetails): Promi
   const result = await savePendingCoachCore(supabase, founder.id, id, details);
   if (!result.ok) return result;
   revalidatePath("/admin/coaches");
+  revalidateTag("coaches", "max");
   return { ok: true };
 }
 
@@ -54,6 +57,7 @@ export async function deletePendingCoach(id: string): Promise<Result> {
   const result = await deletePendingCoachCore(supabase, founder.id, id);
   if (!result.ok) return result;
   revalidatePath("/admin/coaches");
+  revalidateTag("coaches", "max");
   return { ok: true };
 }
 
@@ -63,6 +67,7 @@ export async function saveCoach(input: CoachInput): Promise<Result> {
   const result = await saveCoachCore(supabase, founder.id, input);
   if (!result.ok) return result;
   revalidatePath("/admin/coaches");
+  revalidateTag("coaches", "max");
   return { ok: true };
 }
 
@@ -75,6 +80,7 @@ export async function deleteCoach(
   const result = await deleteCoachCore(supabase, founder.id, coachId, replacementCoachId);
   if (!result.ok) return result;
   revalidatePath("/admin/coaches");
+  revalidateTag("coaches", "max");
   revalidatePath("/admin/schedule");
   revalidatePath("/coaches");
   return result;
@@ -132,6 +138,7 @@ export async function generateCoachPhoto(
   if (saveErr) return { ok: false, error: "Couldn't save the coach's photo." };
 
   revalidatePath("/admin/coaches");
+  revalidateTag("coaches", "max");
   revalidatePath("/coaches");
   return { ok: true, photoUrl };
 }
@@ -142,6 +149,7 @@ export async function setCoachActive(coachId: string, active: boolean): Promise<
   const result = await setCoachActiveCore(supabase, founder.id, coachId, active);
   if (!result.ok) return result;
   revalidatePath("/admin/coaches");
+  revalidateTag("coaches", "max");
   revalidatePath("/admin/schedule");
   return { ok: true };
 }
@@ -167,6 +175,7 @@ export async function decideTimeOff(
   if (!result.ok) return result;
 
   revalidatePath("/admin/coaches");
+  revalidateTag("coaches", "max");
   revalidatePath("/admin");
   return { ok: true };
 }

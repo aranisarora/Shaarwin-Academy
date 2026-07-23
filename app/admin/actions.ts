@@ -1,6 +1,6 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidatePath, revalidateTag } from "next/cache";
 import { requireFounder } from "@/lib/founder";
 import {
   adjustCreditsCore,
@@ -28,6 +28,7 @@ export async function createGroupClass(input: NewClass): Promise<Result> {
 
   revalidatePath("/admin/schedule");
   revalidatePath("/admin/weekly");
+  revalidateTag("classes", "max");
   return { ok: true };
 }
 
@@ -38,6 +39,7 @@ export async function setClassActive(classId: string, active: boolean): Promise<
   if (!result.ok) return result;
   revalidatePath("/admin/schedule");
   revalidatePath("/admin/weekly");
+  revalidateTag("classes", "max");
   return { ok: true };
 }
 
@@ -61,6 +63,7 @@ export async function saveVenue(input: VenueInput): Promise<Result> {
   const result = await saveVenueCore(supabase, founder.id, input);
   if (!result.ok) return result;
   revalidatePath("/admin/venues");
+  revalidateTag("venues", "max");
   return { ok: true };
 }
 
@@ -70,6 +73,7 @@ export async function setVenueActive(venueId: string, active: boolean): Promise<
   const result = await setVenueActiveCore(supabase, founder.id, venueId, active);
   if (!result.ok) return result;
   revalidatePath("/admin/venues");
+  revalidateTag("venues", "max");
   return { ok: true };
 }
 
@@ -79,6 +83,7 @@ export async function deleteVenue(venueId: string): Promise<Result> {
   const result = await deleteVenueCore(supabase, founder.id, venueId);
   if (!result.ok) return result;
   revalidatePath("/admin/venues");
+  revalidateTag("venues", "max");
   return { ok: true };
 }
 

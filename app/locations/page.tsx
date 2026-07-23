@@ -20,6 +20,11 @@ export const metadata: Metadata = {
     "Sharwin Table Tennis Academy venues across Bengaluru with weekly group schedules.",
 };
 
+// ISR: static shell served from the edge, regenerated every 10 min to keep the
+// "next session" times fresh. Underlying reads (getVenues/getGroupClasses/
+// getUpcomingSessions) are cache-tagged, so admin edits also refresh it.
+export const revalidate = 600;
+
 // Waits on Supabase inside a <Suspense> boundary so the page header and CTAs
 // paint immediately while the venue list + map stream in.
 async function VenuesSection() {

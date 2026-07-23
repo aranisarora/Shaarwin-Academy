@@ -1,4 +1,18 @@
-import { createClient } from "@/lib/supabase/server";
+import { unstable_cache } from "next/cache";
+import { createClient as createPublicClient } from "@supabase/supabase-js";
+
+/**
+ * Cookie-less anon client for public reference data. `unstable_cache` callbacks
+ * can't read cookies (a dynamic data source), and this data is public-read, so
+ * the cached readers below use a plain anon client instead of the SSR one.
+ */
+function publicClient() {
+  return createPublicClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    { auth: { persistSession: false, autoRefreshToken: false } }
+  );
+}
 
 /** A coach as shown on the public /coaches page — sourced entirely from the DB. */
 export type PublicCoach = {
@@ -60,84 +74,110 @@ export type SessionRow = {
   capacity_override: number | null;
 };
 
-export async function getPlans(): Promise<Plan[]> {
-  const supabase = await createClient();
-  const { data } = await supabase
-    .from("plans")
-    .select("id,name,description,price_pence,group_sessions_per_week,private_minutes_per_cycle")
-    .eq("active", true)
-    .order("price_pence");
-  return data ?? [];
-}
+export const getPlans = unstable_cache(
+  async (): Promise<Plan[]> => {
+    const supabase = publicClient();
+    const { data } = await supabase
+      .from("plans")
+      .select("id,name,description,price_pence,group_sessions_per_week,private_minutes_per_cycle")
+      .eq("active", true)
+      .order("price_pence");
+    return data ?? [];
+  },
+  ["reference:plans"],
+  { revalidate: 3600, tags: ["plans"] }
+);
 
-export async function getProducts(): Promise<Product[]> {
-  const supabase = await createClient();
-  const { data } = await supabase
-    .from("products")
-    .select("id,name,description,kind,price_pence,member_price_pence,grants_minutes,duration_minutes")
-    .eq("active", true)
-    .order("price_pence");
-  return data ?? [];
-}
+export const getProducts = unstable_cache(
+  async (): Promise<Product[]> => {
+    const supabase = publicClient();
+    const { data } = await supabase
+      .from("products")
+      .select("id,name,description,kind,price_pence,member_price_pence,grants_minutes,duration_minutes")
+      .eq("active", true)
+      .order("price_pence");
+    return data ?? [];
+  },
+  ["reference:products"],
+  { revalidate: 3600, tags: ["products"] }
+);
 
-export async function getVenues(): Promise<Venue[]> {
-  const supabase = await createClient();
-  const { data } = await supabase
-    .from("venues")
-    .select("id,name,address,postcode,lat,lng,photo_url")
-    .eq("active", true)
-    .order("name");
-  return data ?? [];
-}
+export const getVenues = unstable_cache(
+  async (): Promise<Venue[]> => {
+    const supabase = publicClient();
+    const { data } = await supabase
+      .from("venues")
+      .select("id,name,address,postcode,lat,lng,photo_url")
+      .eq("active", true)
+      .order("name");
+    return data ?? [];
+  },
+  ["reference:venues"],
+  { revalidate: 3600, tags: ["venues"] }
+);
 
-export async function getGroupClasses(): Promise<ClassRow[]> {
-  const supabase = await createClient();
-  const { data } = await supabase
-    .from("classes")
-    .select("id,title,description,skill_level,capacity,duration_minutes,venue_id")
-    .eq("active", true)
-    .eq("class_type", "group")
-    .order("title");
-  return data ?? [];
-}
+export const getGroupClasses = unstable_cache(
+  async (): Promise<ClassRow[]> => {
+    const supabase = publicClient();
+    const { data } = await supabase
+      .from("classes")
+      .select("id,title,description,skill_level,capacity,duration_minutes,venue_id")
+      .eq("active", true)
+      .eq("class_type", "group")
+      .order("title");
+    return data ?? [];
+  },
+  ["reference:group-classes"],
+  { revalidate: 3600, tags: ["classes"] }
+);
 
-export async function getUpcomingSessions(days = 14): Promise<SessionRow[]> {
-  const supabase = await createClient();
-  const until = new Date(Date.now() + days * 86400000).toISOString();
-  const { data } = await supabase
-    .from("class_sessions")
-    .select("id,class_id,coach_id,starts_at,ends_at,status,capacity_override")
-    .eq("status", "scheduled")
-    .gt("starts_at", new Date().toISOString())
-    .lt("starts_at", until)
-    .order("starts_at");
-  return data ?? [];
-}
+// Time-windowed, so cached briefly (10 min) rather than the hour used for the
+// near-static reference data. Only powers the public /locations page.
+export const getUpcomingSessions = unstable_cache(
+  async (days = 14): Promise<SessionRow[]> => {
+    const supabase = publicClient();
+    const until = new Date(Date.now() + days * 86400000).toISOString();
+    const { data } = await supabase
+      .from("class_sessions")
+      .select("id,class_id,coach_id,starts_at,ends_at,status,capacity_override")
+      .eq("status", "scheduled")
+      .gt("starts_at", new Date().toISOString())
+      .lt("starts_at", until)
+      .order("starts_at");
+    return data ?? [];
+  },
+  ["reference:upcoming-sessions"],
+  { revalidate: 600, tags: ["classes"] }
+);
 
 /** The public coaching roster — active coaches, straight from the DB. */
-export async function getCoaches(): Promise<PublicCoach[]> {
-  const supabase = await createClient();
-  const { data } = await supabase
-    .from("coaches")
-    .select("id,bio,quote,credentials,photo_url,profiles!inner(full_name)")
-    .eq("active", true)
-    .order("created_at");
+export const getCoaches = unstable_cache(
+  async (): Promise<PublicCoach[]> => {
+    const supabase = publicClient();
+    const { data } = await supabase
+      .from("coaches")
+      .select("id,bio,quote,credentials,photo_url,profiles!inner(full_name)")
+      .eq("active", true)
+      .order("created_at");
 
-  if (!data) return [];
+    if (!data) return [];
 
-  return data.map((row) => {
-    const profile = row.profiles as unknown as { full_name: string };
-    const firstName = profile.full_name.toLowerCase().split(" ")[0];
-    return {
-      slug: firstName || row.id,
-      name: profile.full_name,
-      image: row.photo_url ?? "/images/empty-ink.jpg",
-      bio: row.bio ?? "",
-      quote: row.quote ?? undefined,
-      credentials: (row.credentials as string[] | null) ?? undefined,
-    };
-  });
-}
+    return data.map((row) => {
+      const profile = row.profiles as unknown as { full_name: string };
+      const firstName = profile.full_name.toLowerCase().split(" ")[0];
+      return {
+        slug: firstName || row.id,
+        name: profile.full_name,
+        image: row.photo_url ?? "/images/empty-ink.jpg",
+        bio: row.bio ?? "",
+        quote: row.quote ?? undefined,
+        credentials: (row.credentials as string[] | null) ?? undefined,
+      };
+    });
+  },
+  ["reference:coaches"],
+  { revalidate: 3600, tags: ["coaches"] }
+);
 
 /** `pence` holds paise (minor unit of INR). ₹1,800,000 paise → "₹18,000". */
 export { formatPrice } from "./format";

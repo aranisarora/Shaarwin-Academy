@@ -16,7 +16,7 @@ import { JoinTeam } from "@/components/marketing/JoinTeam";
 import { ContactSection } from "@/components/marketing/ContactSection";
 import { Skeleton } from "@/components/ui/Skeleton";
 import { getVenues, getCoaches } from "@/lib/data";
-import { hasAuthSession } from "@/lib/auth";
+import { AuthCta } from "@/components/marketing/AuthCta";
 
 import heroServe from "@/public/images/hero-serve.jpg";
 import heroServeMobile from "@/public/images/hero-serve-mobile.jpg";
@@ -103,12 +103,12 @@ function CoachesGridSkeleton() {
   );
 }
 
-export default async function LandingPage() {
-  // The WhatsApp companion needs a linked account to be useful, so it lives
-  // inside the app. Signed-in visitors go straight there; everyone else is
-  // pointed at sign-up first rather than a dead-end chat.
-  const signedIn = await hasAuthSession();
+// Marketing homepage: static + revalidated hourly so India visitors get it from
+// the edge PoP near them instead of a dynamic render in Tokyo. The auth-aware CTA
+// lives in the AuthCta client island so the page body stays static.
+export const revalidate = 3600;
 
+export default function LandingPage() {
   return (
     <StageShell>
       {/* HERO — art-directed swap: 16:9 desktop, 4:5 mobile */}
@@ -162,17 +162,10 @@ export default async function LandingPage() {
             </Reveal>
             <Reveal delay={360}>
               <div className="mt-8 flex flex-wrap gap-3">
-                {signedIn ? (
-                  <ButtonLink href="/app" size="lg">
-                    <span aria-hidden className="h-2 w-2 rounded-full bg-ivory" />
-                    Book a class
-                  </ButtonLink>
-                ) : (
-                  <ButtonLink href="/signup" size="lg">
-                    <span aria-hidden className="h-2 w-2 rounded-full bg-ivory" />
-                    Book a class
-                  </ButtonLink>
-                )}
+                <AuthCta signedInHref="/app" signedOutHref="/signup" size="lg">
+                  <span aria-hidden className="h-2 w-2 rounded-full bg-ivory" />
+                  Book a class
+                </AuthCta>
                 <ButtonLink href="/locations" variant="ghost" size="lg">
                   See locations
                 </ButtonLink>
@@ -478,9 +471,13 @@ export default async function LandingPage() {
 
       {/* Sticky bottom CTA — phones only */}
       <div className="pb-safe fixed inset-x-0 bottom-0 z-30 border-t border-line bg-ink/95 p-3 backdrop-blur sm:hidden">
-        <ButtonLink href={signedIn ? "/app" : "/signup"} className="w-full">
-          {signedIn ? "Open your app" : "Find a class"}
-        </ButtonLink>
+        <AuthCta
+          signedInHref="/app"
+          signedOutHref="/signup"
+          signedInLabel="Open your app"
+          signedOutLabel="Find a class"
+          className="w-full"
+        />
       </div>
     </StageShell>
   );

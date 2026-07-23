@@ -1,6 +1,6 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidatePath, revalidateTag } from "next/cache";
 import { requireFounder } from "@/lib/founder";
 import { academyWallToUtc, utcToAcademyWall } from "@/lib/academy-time";
 import { fromDetails, type StructuredAddress } from "@/lib/address";
@@ -32,6 +32,8 @@ function refresh() {
   revalidatePath("/admin/schedule");
   revalidatePath("/admin/weekly");
   revalidatePath("/admin");
+  // Group-class edits (title/active/etc.) feed the cached public `getGroupClasses`.
+  revalidateTag("classes", "max");
 }
 
 // ── One session ("just this session") ────────────────────────────────────────
