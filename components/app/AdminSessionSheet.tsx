@@ -7,6 +7,7 @@
 import Link from "next/link";
 import { useEffect, useState, useTransition } from "react";
 import { Sheet } from "@/components/ui/Sheet";
+import { ActionSection } from "@/components/ui/ActionSection";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
@@ -45,6 +46,53 @@ import {
 
 type Scope = "session" | "class";
 
+/** A destructive action that confirms in-sheet instead of via window.confirm —
+ * native confirm dialogs look broken on a PWA and truncate copy on small
+ * screens. First tap arms it (shows the prompt + two buttons); "Keep" backs
+ * out, the confirm button runs it. */
+function ConfirmAction({
+  label,
+  confirmLabel,
+  prompt,
+  onConfirm,
+  pending,
+  variant = "destructive",
+}: {
+  label: string;
+  confirmLabel: string;
+  prompt: string;
+  onConfirm: () => void;
+  pending: boolean;
+  variant?: "destructive" | "ghost";
+}) {
+  const [armed, setArmed] = useState(false);
+  if (!armed) {
+    return (
+      <Button
+        variant={variant}
+        className="w-full"
+        disabled={pending}
+        onClick={() => setArmed(true)}
+      >
+        {label}
+      </Button>
+    );
+  }
+  return (
+    <div className="space-y-2 rounded-[8px] border border-line p-3">
+      <p className="text-sm text-fg-2">{prompt}</p>
+      <div className="grid grid-cols-2 gap-2">
+        <Button variant="ghost" disabled={pending} onClick={() => setArmed(false)}>
+          Keep
+        </Button>
+        <Button variant="destructive" disabled={pending} onClick={onConfirm}>
+          {pending ? <Spinner /> : confirmLabel}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 export function AdminSessionSheet({
   session,
   coaches,
@@ -80,6 +128,9 @@ export function AdminSessionSheet({
   const [scope, setScope] = useState<Scope>("session");
   const [target, setTarget] = useState(session.coachId ?? "");
   const [lock, setLock] = useState(false);
+  // When the ranking rules reject a coach, we surface an in-sheet override
+  // prompt (not window.confirm) holding the reason; confirming forces it.
+  const [coachOverride, setCoachOverride] = useState<string | null>(null);
   const [ranked, setRanked] = useState<
     { coachId: string; name: string; score: number }[] | null
   >(null);
@@ -170,20 +221,25 @@ export function AdminSessionSheet({
 
   function applyCoach() {
     if (!session || !target) return;
+    setCoachOverride(null);
     startTransition(async () => {
-      let r = await reassignSession(session.id, target, lock);
+      const r = await reassignSession(session.id, target, lock);
       if (!r.ok && r.code === "filter_failed") {
-        // The rules say no — but the founder can override. A hard time clash
-        // is still blocked by the database either way.
-        const goAhead = window.confirm(
-          `${r.error ?? "That coach doesn't fit the rules."}\n\nAssign them anyway?`
-        );
-        if (!goAhead) {
-          errMsg(r.error ?? "Failed.");
-          return;
-        }
-        r = await reassignSession(session.id, target, lock, true);
+        // The rules say no — but the founder can override. A hard time clash is
+        // still blocked by the database either way. Ask in-sheet, not native.
+        setCoachOverride(r.error ?? "That coach doesn't fit the rules.");
+        return;
       }
+      if (r.ok) okMsg("Coach changed — everyone affected has been told.");
+      else errMsg(r.error ?? "Failed.");
+    });
+  }
+
+  function applyCoachOverride() {
+    if (!session || !target) return;
+    startTransition(async () => {
+      const r = await reassignSession(session.id, target, lock, true);
+      setCoachOverride(null);
       if (r.ok) okMsg("Coach changed — everyone affected has been told.");
       else errMsg(r.error ?? "Failed.");
     });
@@ -339,7 +395,8 @@ export function AdminSessionSheet({
           </div>
         </div>
       ) : (
-        <div className="space-y-6">
+        <div className="space-y-4">
+          {/* ── Header block: the facts a founder checks courtside ── */}
           <div>
             <p className="tnum font-display text-3xl">{fmtWhen(session.starts_at)}</p>
             <p className="mt-1 text-fg-2">
@@ -391,77 +448,26 @@ export function AdminSessionSheet({
             )}
           </div>
 
-          {/* ── School class: add a pupil ── */}
-          {session.isSchool && (
-            <div className="space-y-3 rounded-[12px] border border-line p-4">
-              <div>
-                <p className="label">Players</p>
-                <p className="mt-1 text-sm text-fg-2">
-                  School pupils aren&apos;t booked online — add whoever attends. The coach can
-                  also add them from the session.
-                </p>
-              </div>
-              {rosterList}
-              {schoolAdding ? (
-                <>
-                  <Input
-                    label="Player name"
-                    value={schoolName}
-                    onChange={(e) => setSchoolName(e.target.value)}
-                    autoFocus
-                  />
-                  <Input
-                    label="Grade"
-                    type="number"
-                    min={1}
-                    max={13}
-                    hint="Their school grade — used to work out their age."
-                    value={schoolGrade}
-                    onChange={(e) => setSchoolGrade(e.target.value)}
-                  />
-                  <div className="flex gap-2">
-                    <Button onClick={addPupil} disabled={pending}>
-                      {pending ? <Spinner /> : "Add player"}
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      disabled={pending}
-                      onClick={() => {
-                        setSchoolAdding(false);
-                        setSchoolName("");
-                        setSchoolGrade("");
-                      }}
-                    >
-                      Cancel
-                    </Button>
-                  </div>
-                </>
-              ) : (
-                <Button variant="ghost" onClick={() => setSchoolAdding(true)} className="w-full">
-                  + Add player
-                </Button>
+          {/* ── Roster (always visible): who's booked and who showed ── */}
+          <div className="space-y-3 rounded-[12px] border border-line p-4">
+            <p className="label">
+              Players{" "}
+              {roster !== null && (
+                <span className="tnum text-fg-2">
+                  {roster.length}/{session.capacity}
+                </span>
               )}
-            </div>
-          )}
+            </p>
+            {rosterList}
+          </div>
 
-          {/* ── Players + attendance (school classes show this in their own box) ── */}
-          {!session.isSchool && (
-            <div className="space-y-3 rounded-[12px] border border-line p-4">
-              <p className="label">Players</p>
-              {rosterList}
-            </div>
-          )}
-
-          {/* ── Assign a client (open private slot only) ── */}
+          {/* ── Assign a client — the reason an open private slot needs you ── */}
           {isOpenPrivate && (
-            <div className="space-y-3 rounded-[12px] border border-ember p-4">
-              <div>
-                <p className="label">Assign a client</p>
-                <p className="mt-1 text-sm text-fg-2">
-                  This slot is held with no client yet. Pick one to book them in — their
-                  minutes are debited when you do.
-                </p>
-              </div>
+            <ActionSection label="Assign a client" tone="ember" defaultOpen>
+              <p className="text-sm text-fg-2">
+                This slot is held with no client yet. Pick one to book them in — their
+                minutes are debited when you do.
+              </p>
               <Select
                 label="Client"
                 value={assignClientId}
@@ -508,12 +514,65 @@ export function AdminSessionSheet({
               <Button onClick={assign} disabled={pending || !assignClientId} className="w-full">
                 {pending ? <Spinner /> : "Assign client"}
               </Button>
-            </div>
+            </ActionSection>
           )}
 
-          {/* ── Coach (always per-session) ── */}
-          <div className="space-y-3 rounded-[12px] border border-line p-4">
-            <p className="label">Coach</p>
+          {/* ── School class: add a walk-in pupil ── */}
+          {session.isSchool && (
+            <ActionSection label="Add a player" defaultOpen={roster !== null && roster.length === 0}>
+              <p className="text-sm text-fg-2">
+                School pupils aren&apos;t booked online — add whoever attends. The coach can
+                also add them from the session.
+              </p>
+              {schoolAdding ? (
+                <>
+                  <Input
+                    label="Player name"
+                    value={schoolName}
+                    onChange={(e) => setSchoolName(e.target.value)}
+                    autoFocus
+                  />
+                  <Input
+                    label="Grade"
+                    type="number"
+                    min={1}
+                    max={13}
+                    hint="Their school grade — used to work out their age."
+                    value={schoolGrade}
+                    onChange={(e) => setSchoolGrade(e.target.value)}
+                  />
+                  <div className="flex gap-2">
+                    <Button onClick={addPupil} disabled={pending}>
+                      {pending ? <Spinner /> : "Add player"}
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      disabled={pending}
+                      onClick={() => {
+                        setSchoolAdding(false);
+                        setSchoolName("");
+                        setSchoolGrade("");
+                      }}
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                </>
+              ) : (
+                <Button variant="ghost" onClick={() => setSchoolAdding(true)} className="w-full">
+                  + Add player
+                </Button>
+              )}
+            </ActionSection>
+          )}
+
+          {/* ── Change coach ── */}
+          <ActionSection
+            label="Change coach"
+            summary={session.coachId ? undefined : "No coach yet"}
+            tone={session.coachId ? "neutral" : "ember"}
+            defaultOpen={!session.coachId}
+          >
             {ranked === null ? (
               <div className="flex justify-center py-3">
                 <Spinner />
@@ -560,14 +619,31 @@ export function AdminSessionSheet({
               />
               Keep this coach — don&apos;t swap them automatically
             </label>
-            <Button onClick={applyCoach} disabled={pending || !target} className="w-full">
-              {pending ? <Spinner /> : "Change coach"}
-            </Button>
-          </div>
+            {coachOverride ? (
+              <div className="space-y-2 rounded-[8px] border border-err p-3">
+                <p className="text-sm text-fg-2">{coachOverride} Assign them anyway?</p>
+                <div className="grid grid-cols-2 gap-2">
+                  <Button
+                    variant="ghost"
+                    disabled={pending}
+                    onClick={() => setCoachOverride(null)}
+                  >
+                    Keep
+                  </Button>
+                  <Button disabled={pending} onClick={applyCoachOverride}>
+                    {pending ? <Spinner /> : "Assign anyway"}
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <Button onClick={applyCoach} disabled={pending || !target} className="w-full">
+                {pending ? <Spinner /> : "Change coach"}
+              </Button>
+            )}
+          </ActionSection>
 
-          {/* ── Everything else: one form, scoped on save ── */}
-          <div className="space-y-4 rounded-[12px] border border-line p-4">
-            <p className="label">{session.isPrivate ? "Move this class" : "Edit"}</p>
+          {/* ── Move / edit — one form, scoped on save ── */}
+          <ActionSection label={session.isPrivate ? "Move this class" : "Move / edit"}>
             <div className="grid grid-cols-2 gap-3">
               <Input
                 label="Day"
@@ -609,67 +685,47 @@ export function AdminSessionSheet({
             >
               {pending ? <Spinner /> : "Save changes"}
             </Button>
-          </div>
+          </ActionSection>
 
-          <details className="group space-y-2 [&_summary]:list-none">
-            <summary className="cursor-pointer text-center text-sm text-fg-2 underline-offset-4 hover:underline">
-              More actions ▾
-            </summary>
-            <div className="space-y-2 pt-2">
-            <Button
-              variant="destructive"
-              disabled={pending}
-              className="w-full"
-              onClick={() => {
-                if (
-                  !window.confirm(
-                    "Cancel this session? Everyone booked gets a message, and private lessons get their minutes back."
-                  )
-                )
-                  return;
+          {/* ── More: the rare, destructive actions — confirmed in-sheet ── */}
+          <ActionSection label="More">
+            <ConfirmAction
+              label="Cancel this session"
+              confirmLabel="Cancel it"
+              prompt="Cancel this session? Everyone booked gets a message, and private lessons get their minutes back."
+              pending={pending}
+              onConfirm={() =>
                 startTransition(async () => {
                   const r = await cancelSession(session.id, "cancelled by academy");
                   if (r.ok) okMsg("Cancelled — everyone booked has been told.");
                   else errMsg(r.error ?? "Cancel failed.");
-                });
-              }}
-            >
-              Cancel this session
-            </Button>
+                })
+              }
+            />
             {!session.isPrivate && (
-              <button
-                disabled={pending}
-                className="w-full text-center text-sm text-err underline-offset-4 hover:underline"
-                onClick={() => {
-                  if (
-                    !window.confirm(
-                      `End ${session.title} completely? All upcoming weeks are cancelled and everyone booked gets a message. Past sessions stay in the history — and you can restore the class later from the weekly classes list.`
-                    )
-                  )
-                    return;
+              <ConfirmAction
+                label="End this class — remove every week"
+                confirmLabel="End the class"
+                prompt={`End ${session.title} completely? All upcoming weeks are cancelled and everyone booked gets a message. Past sessions stay in the history — and you can restore the class later from the weekly classes list.`}
+                pending={pending}
+                onConfirm={() =>
                   startTransition(async () => {
                     const r = await endGroupClass(session.classId);
                     if (r.ok) {
                       okMsg("Class ended — everyone affected has been told.");
                       onClose();
                     } else errMsg(r.error ?? "Failed.");
-                  });
-                }}
-              >
-                End this class — remove every week
-              </button>
+                  })
+                }
+              />
             )}
             {session.isPrivate && session.privateClientId && (
-              <button
-                disabled={pending}
-                className="w-full text-center text-sm text-err underline-offset-4 hover:underline"
-                onClick={() => {
-                  if (
-                    !window.confirm(
-                      `Cancel all upcoming private sessions for ${session.playerName ?? "this client"}? Their minutes will be returned and they'll be notified.`
-                    )
-                  )
-                    return;
+              <ConfirmAction
+                label="Cancel all upcoming sessions for this client"
+                confirmLabel="Cancel them all"
+                prompt={`Cancel all upcoming private sessions for ${session.playerName ?? "this client"}? Their minutes will be returned and they'll be notified.`}
+                pending={pending}
+                onConfirm={() =>
                   startTransition(async () => {
                     const r = await cancelAllFuturePrivateSessions(session.id);
                     if (r.ok) {
@@ -680,14 +736,12 @@ export function AdminSessionSheet({
                       else setMessage({ text: "No upcoming sessions found." });
                       onClose();
                     } else errMsg(r.error ?? "Failed.");
-                  });
-                }}
-              >
-                Cancel all upcoming sessions for this client
-              </button>
+                  })
+                }
+              />
             )}
-            </div>
-          </details>
+          </ActionSection>
+
           {message &&
             (message.ok ? (
               <ActionResult>{message.text}</ActionResult>
