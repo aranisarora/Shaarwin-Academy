@@ -18,12 +18,15 @@ export function PeopleTabs({
   plans,
   pending,
   players,
+  focusClientId = null,
 }: {
   initialView: View;
   clients: ComponentProps<typeof ClientManager>["clients"];
   plans: ComponentProps<typeof ClientManager>["plans"];
   pending: PendingClientRow[];
   players: ComponentProps<typeof PlayerManager>["players"];
+  /** Deep-link from Today's "Payment past due" alert — focus this client row. */
+  focusClientId?: string | null;
 }) {
   const [view, setView] = useState<View>(initialView);
   const router = useRouter();
@@ -56,7 +59,12 @@ export function PeopleTabs({
         {tabBtn("clients", "Account holders", clients.length)}
       </div>
       {view === "clients" ? (
-        <ClientManager clients={clients} plans={plans} pending={pending} />
+        <ClientManager
+          clients={clients}
+          plans={plans}
+          pending={pending}
+          focusClientId={focusClientId}
+        />
       ) : (
         <PlayerManager players={players} />
       )}

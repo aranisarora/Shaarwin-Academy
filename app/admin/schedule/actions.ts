@@ -27,6 +27,30 @@ import {
   type PrivateSessionInput,
 } from "@/lib/admin-ops";
 
+// ── WhatsApp/notify manifest ─────────────────────────────────────────────────
+// The founder migrated from a world where he *watched* each message send. So
+// every success line in the UI must say whether a WhatsApp actually went out —
+// he should never wonder if he still has to message people himself. Tag any new
+// action here, and word its ✓ line to match (silent → plain "Saved.";
+// notifying → "…everyone booked / the coach / the client has been told").
+//
+//   reassignSession .................. notifies the coach(es) (old + new)
+//   moveSession ...................... notifies everyone booked + the coach
+//   setSessionCapacity ............... notifies nobody
+//   updateGroupClass ................. notifies everyone booked *iff* the slot moves
+//   endGroupClass .................... notifies everyone booked (sessions cancelled)
+//   restoreGroupClass ................ notifies nobody
+//   cancelAllFuturePrivateSessions ... notifies the client
+//   reassignClassCoach ............... notifies the coach(es)
+//   deleteGroupClass ................. notifies nobody (only unbooked classes delete)
+//   topUpSessions .................... notifies nobody
+//   createOneOffClass ................ notifies nobody (nothing booked yet)
+//   createOneOffSession .............. notifies nobody
+//   addSchoolPlayer .................. notifies nobody
+//   createPrivateSession ............. notifies the client
+//   assignPrivateSessionClient ....... notifies the client
+//   createPrivateSessionForInvite .... notifies the client
+// (cancelSession lives in app/admin/actions.ts: notifies everyone booked + coach.)
 type Result = { ok: boolean; error?: string; code?: string };
 
 function refresh() {

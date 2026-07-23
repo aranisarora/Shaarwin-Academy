@@ -10,10 +10,10 @@ export const metadata: Metadata = { title: "Players" };
 export default async function AdminPlayersPage({
   searchParams,
 }: {
-  searchParams: Promise<{ view?: string }>;
+  searchParams: Promise<{ view?: string; client?: string }>;
 }) {
   const { supabase } = await requireUser("/admin/players");
-  const { view } = await searchParams;
+  const { view, client: focusClient } = await searchParams;
   const { data: clients } = await supabase
     .from("profiles")
     .select("id,full_name,email,phone,disputed,deleted_at,created_at,approval_status")
@@ -182,11 +182,12 @@ export default async function AdminPlayersPage({
     <AdminShell title="Players">
       <div className="mx-auto max-w-3xl">
         <PeopleTabs
-          initialView={view === "clients" ? "clients" : "players"}
+          initialView={view === "clients" || focusClient ? "clients" : "players"}
           clients={rows}
           plans={plans ?? []}
           pending={pendingRows}
           players={playerRows}
+          focusClientId={focusClient ?? null}
         />
       </div>
     </AdminShell>

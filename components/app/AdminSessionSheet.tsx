@@ -27,6 +27,7 @@ import {
 import { cancelSession, getRankedCoaches } from "@/app/admin/actions";
 import { viewAsCoach } from "@/app/coach/preview-actions";
 import { AddressDisplay } from "@/components/app/AddressDisplay";
+import { ActionResult } from "@/components/app/ActionResult";
 import { ClassDetailFields, generateClassTitle, type ClassFormState } from "./ClassFields";
 import { TimeSelect12h } from "./TimeSelect12h";
 import {
@@ -82,8 +83,13 @@ export function AdminSessionSheet({
   const [ranked, setRanked] = useState<
     { coachId: string; name: string; score: number }[] | null
   >(null);
-  const [message, setMessage] = useState<string | null>(null);
+  // `ok` marks a success outcome — rendered as a green ✓ ActionResult whose copy
+  // already says whether WhatsApp went out (see the notify manifest in
+  // app/admin/schedule/actions.ts). Errors/validations stay neutral.
+  const [message, setMessage] = useState<{ text: string; ok?: boolean } | null>(null);
   const [pending, startTransition] = useTransition();
+  const okMsg = (text: string) => setMessage({ text, ok: true });
+  const errMsg = (text: string) => setMessage({ text });
 
   // Open private slot (created without a client): pick one to fill it.
   const isOpenPrivate = session.isPrivate && !session.privateClientId;
@@ -100,7 +106,7 @@ export function AdminSessionSheet({
   function addPupil() {
     const name = schoolName.trim();
     if (name === "") {
-      setMessage("Enter the player's name.");
+      errMsg("Enter the player's name.");
       return;
     }
     const grade = schoolGrade.trim() === "" ? null : Number(schoolGrade);
@@ -111,9 +117,9 @@ export function AdminSessionSheet({
         setSchoolName("");
         setSchoolGrade("");
         setSchoolAdding(false);
-        setMessage(`${name} added to the class.`);
+        okMsg(`${name} added to the class.`);
         getSessionRoster(session.id).then(setRoster);
-      } else setMessage(r.error ?? "Couldn't add the player.");
+      } else errMsg(r.error ?? "Couldn't add the player.");
     });
   }
 
@@ -128,9 +134,9 @@ export function AdminSessionSheet({
         assignOverride
       );
       if (r.ok) {
-        setMessage("Client assigned — the session is on their schedule and their minutes were debited.");
+        okMsg("Client assigned — the session is on their schedule and their minutes were debited.");
         onClose();
-      } else setMessage(r.error ?? "Couldn't assign the client.");
+      } else errMsg(r.error ?? "Couldn't assign the client.");
     });
   }
 
@@ -173,14 +179,13 @@ export function AdminSessionSheet({
           `${r.error ?? "That coach doesn't fit the rules."}\n\nAssign them anyway?`
         );
         if (!goAhead) {
-          setMessage(r.error ?? "Failed.");
+          errMsg(r.error ?? "Failed.");
           return;
         }
         r = await reassignSession(session.id, target, lock, true);
       }
-      setMessage(
-        r.ok ? "Coach changed — everyone affected has been told." : (r.error ?? "Failed.")
-      );
+      if (r.ok) okMsg("Coach changed — everyone affected has been told.");
+      else errMsg(r.error ?? "Failed.");
     });
   }
 
@@ -191,7 +196,7 @@ export function AdminSessionSheet({
         if (slotChanged) {
           const r = await moveSession(session.id, date, form.time);
           if (!r.ok) {
-            setMessage(r.error ?? "Move failed.");
+            errMsg(r.error ?? "Move failed.");
             setStep("edit");
             return;
           }
@@ -199,12 +204,18 @@ export function AdminSessionSheet({
         if (spotsChanged) {
           const r = await setSessionCapacity(session.id, form.capacity);
           if (!r.ok) {
-            setMessage(r.error ?? "Couldn't update the spots.");
+            errMsg(r.error ?? "Couldn't update the spots.");
             setStep("edit");
             return;
           }
         }
-        setMessage("Saved — just this session changed. Everyone booked has been told.");
+        // A capacity-only change notifies nobody; a slot move tells everyone
+        // booked. Word the ✓ for whichever actually happened.
+        okMsg(
+          slotChanged
+            ? "Saved — just this session changed. Everyone booked has been told."
+            : "Saved — just this session changed."
+        );
       } else {
         // Only fields the founder deliberately edited feed the class update —
         // this session may be a one-off on a different day, or carry a spots
@@ -220,11 +231,9 @@ export function AdminSessionSheet({
           weekday: dateChanged ? weekdayOfDate(date) : session.classWeekday,
           time: timeChanged ? form.time : session.classTime,
         });
-        setMessage(
-          r.ok
-            ? "Saved for every week — upcoming sessions moved and everyone booked was told."
-            : (r.error ?? "Couldn't save the class.")
-        );
+        if (r.ok)
+          okMsg("Saved for every week — upcoming sessions moved and everyone booked was told.");
+        else errMsg(r.error ?? "Couldn't save the class.");
       }
       setStep("edit");
     });
@@ -362,7 +371,7 @@ export function AdminSessionSheet({
                     // server action, so a soft router.push would re-render /coach
                     // from the client cache without it. A full load re-reads it.
                     if (ok) window.location.assign("/coach");
-                    else setMessage("Preview unavailable — only founders can view as coach.");
+                    else errMsg("Preview unavailable — only founders can view as coach.");
                   })
                 }
                 disabled={pending}
@@ -589,11 +598,8 @@ export function AdminSessionSheet({
                   // Private sessions are one-offs — nothing to scope.
                   startTransition(async () => {
                     const r = await moveSession(session.id, date, form.time);
-                    setMessage(
-                      r.ok
-                        ? "Session moved — everyone booked has been told."
-                        : (r.error ?? "Move failed.")
-                    );
+                    if (r.ok) okMsg("Session moved — everyone booked has been told.");
+                    else errMsg(r.error ?? "Move failed.");
                   });
                 } else {
                   setScope(classChanged ? "class" : "session");
@@ -623,11 +629,8 @@ export function AdminSessionSheet({
                   return;
                 startTransition(async () => {
                   const r = await cancelSession(session.id, "cancelled by academy");
-                  setMessage(
-                    r.ok
-                      ? "Cancelled — everyone booked has been told."
-                      : (r.error ?? "Cancel failed.")
-                  );
+                  if (r.ok) okMsg("Cancelled — everyone booked has been told.");
+                  else errMsg(r.error ?? "Cancel failed.");
                 });
               }}
             >
@@ -647,9 +650,9 @@ export function AdminSessionSheet({
                   startTransition(async () => {
                     const r = await endGroupClass(session.classId);
                     if (r.ok) {
-                      setMessage("Class ended — everyone affected has been told.");
+                      okMsg("Class ended — everyone affected has been told.");
                       onClose();
-                    } else setMessage(r.error ?? "Failed.");
+                    } else errMsg(r.error ?? "Failed.");
                   });
                 }}
               >
@@ -670,13 +673,13 @@ export function AdminSessionSheet({
                   startTransition(async () => {
                     const r = await cancelAllFuturePrivateSessions(session.id);
                     if (r.ok) {
-                      setMessage(
-                        r.cancelled
-                          ? `Cancelled ${r.cancelled} upcoming session${r.cancelled === 1 ? "" : "s"} — minutes returned.`
-                          : "No upcoming sessions found."
-                      );
+                      if (r.cancelled)
+                        okMsg(
+                          `Cancelled ${r.cancelled} upcoming session${r.cancelled === 1 ? "" : "s"} — minutes returned and the client was told.`
+                        );
+                      else setMessage({ text: "No upcoming sessions found." });
                       onClose();
-                    } else setMessage(r.error ?? "Failed.");
+                    } else errMsg(r.error ?? "Failed.");
                   });
                 }}
               >
@@ -685,7 +688,12 @@ export function AdminSessionSheet({
             )}
             </div>
           </details>
-          {message && <p className="text-sm text-fg-2">{message}</p>}
+          {message &&
+            (message.ok ? (
+              <ActionResult>{message.text}</ActionResult>
+            ) : (
+              <p className="text-sm text-fg-2">{message.text}</p>
+            ))}
         </div>
       )}
     </Sheet>

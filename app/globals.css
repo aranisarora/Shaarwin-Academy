@@ -1,6 +1,20 @@
 @import "tailwindcss";
 
 /* ── Court Noir tokens — the ONLY place hex values live ─────────────────── */
+/*
+ * Semantic colour contract (enforced by convention — keep it true):
+ *   • --err  (red)   = "you must act now". Unassigned sessions, payment
+ *                      overdue, destructive confirms. Nothing else, ever —
+ *                      an all-clear screen shows no red.
+ *   • --ember        = brand + emphasis: live-now ring, private-class stripe,
+ *                      primary buttons, active tab. Never means "error".
+ *   • --ok  (green)  = confirmed / done (✓ Saved, Arrived, active plan).
+ *   • neutral (line/fg-2) = information, no action implied.
+ * Ember carries two visual meanings on a card (live ring + private stripe) but
+ * they never collide as *badges*: if a live badge and a private badge would
+ * both want ember, the live one keeps it and private falls back to neutral
+ * (the left-stripe already carries "private"). See ClassCard.tsx.
+ */
 :root {
   --ink: #0b0c0f;
   --ink-2: #14161b;
@@ -203,6 +217,14 @@ body {
 /* Safe-area for BottomTabBar */
 .pb-safe {
   padding-bottom: max(env(safe-area-inset-bottom), 0px);
+}
+
+/* Deep-link landing ring — a "needs your attention" row on Today scrolls the
+ * exact item into view and pulses this ring so the founder sees what to fix. */
+.deep-focus-ring {
+  border-radius: 12px;
+  box-shadow: 0 0 0 2px var(--ember);
+  transition: box-shadow 300ms ease-out;
 }
 
 .mapboxgl-ctrl-logo { opacity: 0.4; }

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { requireUser } from "@/lib/auth";
 import { AdminShell } from "@/components/app/AdminShell";
+import { DeepLinkFocus } from "@/components/app/DeepLinkFocus";
 import { TimeOffDecision } from "@/components/app/TimeOffDecision";
 import {
   CoachManager,
@@ -10,8 +11,14 @@ import {
 
 export const metadata: Metadata = { title: "Coaches" };
 
-export default async function AdminCoachesPage() {
+export default async function AdminCoachesPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ coach?: string }>;
+}) {
   const { supabase } = await requireUser("/admin/coaches");
+  // Deep-link from Today's "Time off — …" alert: focus that coach's request.
+  const { coach: focusCoach } = await searchParams;
   const [{ data: coaches }, { data: pendingTimeOff }, { data: invites }] = await Promise.all([
     supabase
       .from("coaches")
@@ -66,21 +73,23 @@ export default async function AdminCoachesPage() {
 
   return (
     <AdminShell title="Coaches">
+      <DeepLinkFocus targetId={focusCoach ? `coach-${focusCoach}` : null} />
       <div className="mx-auto max-w-3xl space-y-8">
         {(pendingTimeOff ?? []).length > 0 && (
           <div>
             <p className="label mb-3">Time off — waiting on you</p>
             <div className="space-y-2">
               {(pendingTimeOff ?? []).map((t) => (
-                <TimeOffDecision
-                  key={t.id}
-                  id={t.id}
-                  coachName={
-                    (t.profiles as unknown as { full_name: string } | null)?.full_name ?? "Coach"
-                  }
-                  range={`${new Date(t.starts_at).toLocaleDateString("en-GB")} – ${new Date(t.ends_at).toLocaleDateString("en-GB")}`}
-                  reason={t.reason}
-                />
+                <div key={t.id} id={`coach-${t.coach_id}`}>
+                  <TimeOffDecision
+                    id={t.id}
+                    coachName={
+                      (t.profiles as unknown as { full_name: string } | null)?.full_name ?? "Coach"
+                    }
+                    range={`${new Date(t.starts_at).toLocaleDateString("en-GB")} – ${new Date(t.ends_at).toLocaleDateString("en-GB")}`}
+                    reason={t.reason}
+                  />
+                </div>
               ))}
             </div>
           </div>

@@ -31,18 +31,27 @@ export function StudioShell({
           <Image src={logo} alt="Sharwin Table Tennis Academy" className="h-16 w-auto" />
         </Link>
         <nav aria-label="Primary" className="flex flex-1 flex-col gap-1 px-3">
-          {tabs.map((t) => (
-            <div key={t.href}>
-              <Link
-                href={t.href}
-                className="flex min-h-11 items-center gap-3 rounded-[8px] px-3 text-sm font-medium text-fg-2 transition-colors hover:bg-surface hover:text-fg"
-              >
-                <span aria-hidden>{t.icon}</span>
-                {t.label}
-              </Link>
-              {t.railChildren}
-            </div>
-          ))}
+          {tabs.map((t, i) => {
+            // A group header renders once, above the first tab that carries it.
+            const showHeader = t.group && t.group !== tabs[i - 1]?.group;
+            return (
+              <div key={t.href}>
+                {showHeader && (
+                  <p className="label px-3 pb-1 pt-4 text-fg-2">{t.group}</p>
+                )}
+                <Link
+                  href={t.href}
+                  className="flex min-h-11 items-center gap-3 rounded-[8px] px-3 text-sm font-medium text-fg-2 transition-colors hover:bg-surface hover:text-fg"
+                >
+                  <span aria-hidden className="text-fg-2">
+                    {t.icon}
+                  </span>
+                  {t.label}
+                </Link>
+                {t.railChildren}
+              </div>
+            );
+          })}
         </nav>
       </aside>
       <div className="flex min-w-0 flex-1 flex-col">

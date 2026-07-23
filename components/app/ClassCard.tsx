@@ -15,6 +15,7 @@
 //   • ember ring        = happening right now (live)
 //   • greyed out        = finished / ended / paused
 
+import Link from "next/link";
 import { Badge } from "@/components/ui/Badge";
 import { time12h } from "./ClassFields";
 import {
@@ -76,15 +77,19 @@ const cardBase =
   "w-full rounded-[8px] border px-3 py-2 text-left text-sm hover:border-ember";
 
 /** A single session on the Schedule. `showDay` prepends the weekday+date (used
- * in the ungrouped "no coach yet" box, which isn't under a day header). */
+ * in the ungrouped "no coach yet" box, which isn't under a day header). Pass
+ * `href` instead of `onClick` to render the same card as a deep-link (Today
+ * reuses it this way to open the exact session on the Schedule). */
 export function SessionCard({
   session,
   showDay = false,
   onClick,
+  href,
 }: {
   session: SessionRow;
   showDay?: boolean;
-  onClick: () => void;
+  onClick?: () => void;
+  href?: string;
 }) {
   const status = sessionTimeStatus(session.starts_at, session.ends_at);
   const tone =
@@ -97,8 +102,8 @@ export function SessionCard({
           : session.isPrivate
             ? "border-line border-l-[3px] border-l-ember bg-surface-2"
             : "border-line bg-surface-2";
-  return (
-    <button onClick={onClick} className={`${cardBase} ${tone}`}>
+  const inner = (
+    <>
       <p className="font-semibold">{session.venueName ?? "Location TBC"}</p>
       <p className="tnum text-fg-2">
         {showDay ? fmtWhen(session.starts_at) : clockTime(session.starts_at)} –{" "}
@@ -106,6 +111,18 @@ export function SessionCard({
       </p>
       <p className="text-xs text-fg-2">{sessionTypeLine(session)}</p>
       <SessionBadges session={session} />
+    </>
+  );
+  if (href) {
+    return (
+      <Link href={href} className={`block ${cardBase} ${tone}`}>
+        {inner}
+      </Link>
+    );
+  }
+  return (
+    <button onClick={onClick} className={`${cardBase} ${tone}`}>
+      {inner}
     </button>
   );
 }

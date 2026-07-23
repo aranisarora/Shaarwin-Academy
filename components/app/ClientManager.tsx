@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import Link from "next/link";
+import { DeepLinkFocus } from "@/components/app/DeepLinkFocus";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
@@ -71,10 +72,13 @@ export function ClientManager({
   clients,
   plans,
   pending: pendingInvites,
+  focusClientId = null,
 }: {
   clients: ClientRow[];
   plans: { id: string; name: string }[];
   pending: PendingClientRow[];
+  /** Deep-link from Today's "Payment past due" alert — ring this client row. */
+  focusClientId?: string | null;
 }) {
   const [search, setSearch] = useState("");
   const [showArchived, setShowArchived] = useState(false);
@@ -188,6 +192,7 @@ export function ClientManager({
 
   return (
     <div className="space-y-4">
+      <DeepLinkFocus targetId={focusClientId ? `client-${focusClientId}` : null} />
       <div className="flex items-center justify-between gap-3">
         <p className="text-sm text-fg-2">
           Clients sign themselves up on the website — everyone appears here automatically.
@@ -244,7 +249,7 @@ export function ClientManager({
 
       <ul className="divide-y divide-line rounded-[12px] border border-line bg-surface-2">
         {filtered.map((c) => (
-          <li key={c.id}>
+          <li key={c.id} id={`client-${c.id}`}>
             <button
               onClick={() => open(c)}
               className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left hover:bg-surface"

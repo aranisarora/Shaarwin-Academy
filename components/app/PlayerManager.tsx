@@ -208,7 +208,11 @@ export function PlayerManager({ players }: { players: PlayerRow[] }) {
           </li>
         ))}
         {filtered.length === 0 && (
-          <li className="px-4 py-6 text-center text-sm text-fg-2">No matches.</li>
+          <li className="px-4 py-6 text-center text-sm text-fg-2">
+            {players.length === 0
+              ? "Players appear here as clients add them, or when you enrol a school pupil. Nothing to do yet."
+              : "No matches."}
+          </li>
         )}
       </ul>
 

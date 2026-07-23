@@ -176,7 +176,7 @@ export function BookBrowser({
           <p className="mb-4 text-sm text-fg-2">
             Pick a weekly slot — booking holds your place{" "}
             <span className="text-fg">every week</span>. You can switch to a
-            one-off when you book.
+            one-time class when you book.
           </p>
         ) : (
           <p className="mb-4 text-sm text-fg-2">

@@ -7,6 +7,10 @@ export type TabItem = {
   href: string;
   label: string;
   icon?: React.ReactNode;
+  /** Optional section header shown above this tab in the desktop rail only
+   * (visual grouping — no route change). Consecutive tabs sharing a group
+   * render one header; an undefined group renders no header. */
+  group?: string;
   /** Nested shortcuts rendered indented under this tab in the desktop rail only. */
   railChildren?: React.ReactNode;
 };

@@ -5,7 +5,6 @@
 // Calendar-style. The repeating classes that generate these sessions live in
 // the Weekly classes tab; here you only add one-offs.
 
-import Link from "next/link";
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { Select } from "@/components/ui/Select";
@@ -187,14 +186,6 @@ export function AdminCalendar({
           Add a one-time class
         </Button>
       </div>
-
-      <p className="text-sm text-fg-2">
-        Repeating classes are created and edited in the{" "}
-        <Link href="/admin/weekly" className="text-fg underline underline-offset-4">
-          Weekly classes
-        </Link>{" "}
-        tab.
-      </p>
 
       {sessions.length > 0 && (
         <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">

@@ -9,7 +9,7 @@ const pages: Record<string, { title: string; body: string[] }> = {
       "Memberships are billed monthly in advance and renew automatically until cancelled. Cancelling stops the next renewal; access continues to the end of the paid month. Single classes and private sessions can also be bought one at a time without a membership.",
       "Every child's first group class is free — one trial per player. The discounted intro private session is a promotional offer, limited to one per child.",
       "Group sessions may be cancelled or rescheduled by you up to 24 hours before the start without using your allowance. Inside 24 hours, the session counts as used.",
-      "Private coaching minutes are granted each month with a Private plan; unused minutes roll over for one further month before expiring. Minutes bought as one-off sessions follow the same rules. Minutes are debited when a session is booked and refunded for cancellations made more than 24 hours ahead.",
+      "Private coaching minutes are granted each month with a Private plan; unused minutes roll over for one further month before expiring. Minutes bought as one-time sessions follow the same rules. Minutes are debited when a session is booked and refunded for cancellations made more than 24 hours ahead.",
       "We may cancel sessions for venue closures or coach illness. When we cancel, your session or minutes are always returned in full.",
       "Sharwin Table Tennis Academy, No. 594, 4th Cross, 7th Ward, Gundappa Beedi, Dommasandra, Bengaluru, Karnataka 562125. Reg. No. 38/DOM/CE/0013/2026. Questions: stalin@sharwinacademy.com or WhatsApp +91 84314 35758.",
     ],

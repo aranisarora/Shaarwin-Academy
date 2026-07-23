@@ -194,7 +194,7 @@ function mapPrivateBookingError(message: string): string {
   if (message.includes("private_weekly_cap"))
     return "You've reached your plan's weekly private sessions — pick a slot in another week.";
   if (message.includes("recurring_needs_private_plan"))
-    return "Weekly slots need a private coaching plan — you can still book one-off sessions.";
+    return "Weekly slots need a private coaching plan — you can still book one-time sessions.";
   if (message.includes("lead_time_24h"))
     return "Private sessions need at least 24 hours' notice.";
   return "Request didn't go through. Try again.";

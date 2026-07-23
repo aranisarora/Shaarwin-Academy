@@ -1,23 +1,38 @@
 import { StudioShell } from "@/components/shells/StudioShell";
+import {
+  CalendarIcon,
+  CoachIcon,
+  DotsIcon,
+  GearIcon,
+  HomeIcon,
+  MapPinIcon,
+  PeopleIcon,
+  ReceiptIcon,
+  RepeatIcon,
+  StarIcon,
+} from "@/components/ui/icons";
 
-// Desktop sidebar shows all sections directly. The mobile bottom bar fits 5,
-// so it shows Inbox/Schedule/Players/Coaches and a "More" tab (→ /admin/more)
-// whose hub page lists the sections that don't fit (Weekly, Skills, Venues,
-// Billing, Settings), keeping every section reachable on mobile.
+// Desktop rail groups the sections by frequency of use (daily loop → people →
+// setup) so it reads like the founder's mental model, not a flat list of tables.
+// The mobile bottom bar fits 5: Today · Schedule · Weekly · Players · More.
+// Coaches lives in More — his coach interactions (approvals, covers) surface as
+// deep-links on Today — so Weekly (where classes are created) keeps a bar slot
+// during the migration phase when he needs it most.
 const tabs = [
-  { href: "/admin", label: "Inbox", icon: "●" },
-  { href: "/admin/schedule", label: "Schedule", icon: "▦" },
-  { href: "/admin/weekly", label: "Weekly classes", icon: "↻" },
-  { href: "/admin/players", label: "Players", icon: "◉" },
-  { href: "/admin/coaches", label: "Coaches", icon: "◎" },
-  { href: "/admin/skills", label: "Skills", icon: "★" },
-  { href: "/admin/venues", label: "Venues", icon: "▲" },
-  { href: "/admin/billing", label: "Billing", icon: "£" },
-  { href: "/admin/settings", label: "Settings", icon: "≡" },
+  { href: "/admin", label: "Today", icon: <HomeIcon /> },
+  { href: "/admin/schedule", label: "Schedule", icon: <CalendarIcon /> },
+  { href: "/admin/weekly", label: "Weekly classes", icon: <RepeatIcon /> },
+  { href: "/admin/players", label: "Players", icon: <PeopleIcon />, group: "People" },
+  { href: "/admin/coaches", label: "Coaches", icon: <CoachIcon />, group: "People" },
+  { href: "/admin/skills", label: "Skills", icon: <StarIcon />, group: "Setup" },
+  { href: "/admin/venues", label: "Venues", icon: <MapPinIcon />, group: "Setup" },
+  { href: "/admin/billing", label: "Billing", icon: <ReceiptIcon />, group: "Setup" },
+  { href: "/admin/settings", label: "Settings", icon: <GearIcon />, group: "Setup" },
 ];
 
-const mobileMore = { href: "/admin/more", label: "More", icon: "≡" };
-const mobileTabs = [tabs[0], tabs[1], tabs[3], tabs[4], mobileMore];
+const mobileMore = { href: "/admin/more", label: "More", icon: <DotsIcon /> };
+// Today · Schedule · Weekly · Players · More
+const mobileTabs = [tabs[0], tabs[1], tabs[2], tabs[3], mobileMore];
 
 export function AdminShell({
   title,

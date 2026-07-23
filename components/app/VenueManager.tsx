@@ -77,9 +77,18 @@ export function VenueManager({ venues }: { venues: Venue[] }) {
       </div>
       {message && <p className="text-sm text-fg-2">{message}</p>}
 
-      <ul className="divide-y divide-line rounded-[12px] border border-line bg-surface-2">
-        {venues.map((v) => (
-          <li key={v.id} className="flex items-center justify-between gap-3 px-4 py-3">
+      {venues.length === 0 ? (
+        <div className="rounded-[12px] border border-line bg-surface-2 p-4 text-sm text-fg-2">
+          <p className="font-medium text-fg">Add the places you coach at.</p>
+          <p className="mt-1">
+            Each venue&apos;s name and map pin show up on class cards and directions.
+            Tap &ldquo;New venue&rdquo; to add your first one.
+          </p>
+        </div>
+      ) : (
+        <ul className="divide-y divide-line rounded-[12px] border border-line bg-surface-2">
+          {venues.map((v) => (
+            <li key={v.id} className="flex items-center justify-between gap-3 px-4 py-3">
             <button onClick={() => openEdit(v)} className="text-left hover:text-ember">
               <p className="font-medium">{v.name}</p>
               <p className="text-sm text-fg-2">
@@ -102,9 +111,10 @@ export function VenueManager({ venues }: { venues: Venue[] }) {
                 {v.active ? "Hide venue" : "Show venue"}
               </button>
             </div>
-          </li>
-        ))}
-      </ul>
+            </li>
+          ))}
+        </ul>
+      )}
 
       <Sheet
         open={editing !== null}

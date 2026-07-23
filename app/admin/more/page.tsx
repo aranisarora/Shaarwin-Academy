@@ -8,9 +8,9 @@ export const metadata: Metadata = { title: "More" };
 
 const items = [
   {
-    href: "/admin/weekly",
-    label: "Weekly classes",
-    hint: "Recurring classes & create a class",
+    href: "/admin/coaches",
+    label: "Coaches",
+    hint: "Profiles, availability & time off",
   },
   {
     href: "/admin/skills",

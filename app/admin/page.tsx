@@ -1,61 +1,81 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { requireUser } from "@/lib/auth";
+import { academyToday, utcToAcademyWall } from "@/lib/academy-time";
 import { AdminShell } from "@/components/app/AdminShell";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
+import { SessionCard } from "@/components/app/ClassCard";
 import { WhatsAppAssistantCard } from "@/components/app/WhatsAppAssistantCard";
+import { fetchWeekSessions } from "@/app/admin/schedule/actions";
 
-export const metadata: Metadata = { title: "Admin" };
+export const metadata: Metadata = { title: "Today" };
 
-export default async function AdminDashboardPage() {
+export default async function AdminTodayPage() {
   const { supabase } = await requireUser("/admin");
   const now = new Date();
   const weekAhead = new Date(now.getTime() + 7 * 86400000);
+  const today = academyToday();
 
-  const [subs, invoices, sessionsWeek, unassigned, pastDue, timeOff, issues] =
-    await Promise.all([
-      supabase
-        .from("subscriptions")
-        .select("id", { count: "exact", head: true })
-        .in("status", ["active", "trialing"]),
-      supabase
-        .from("invoices")
-        .select("amount_pence")
-        .eq("status", "paid")
-        .gte("paid_at", new Date(now.getTime() - 30 * 86400000).toISOString()),
-      supabase
-        .from("class_sessions")
-        .select("id", { count: "exact", head: true })
-        .eq("status", "scheduled")
-        .gte("starts_at", now.toISOString())
-        .lt("starts_at", weekAhead.toISOString()),
-      supabase
-        .from("class_sessions")
-        .select("id,starts_at,classes(title)")
-        .is("coach_id", null)
-        .eq("status", "scheduled")
-        .gte("starts_at", now.toISOString())
-        .order("starts_at")
-        .limit(10),
-      supabase
-        .from("subscriptions")
-        .select("id,client_id,profiles!subscriptions_client_id_fkey(full_name)")
-        .eq("status", "past_due")
-        .limit(10),
-      supabase
-        .from("coach_time_off")
-        .select("id,coach_id,starts_at,ends_at,reason,profiles!coach_time_off_coach_id_fkey(full_name)")
-        .eq("status", "pending")
-        .limit(10),
-      supabase
-        .from("notifications")
-        .select("id,title,body,created_at,data")
-        .in("type", ["session_issue", "private_request_parked"])
-        .is("read_at", null)
-        .order("created_at", { ascending: false })
-        .limit(10),
-    ]);
+  const [
+    week,
+    subs,
+    invoices,
+    sessionsWeek,
+    unassigned,
+    pastDue,
+    timeOff,
+    issues,
+  ] = await Promise.all([
+    // Reuse the Schedule's exact session shape (venue resolution, private-client
+    // names, badges) — the empty nextByClass is fine, Today shows real times.
+    fetchWeekSessions(today, {}),
+    supabase
+      .from("subscriptions")
+      .select("id", { count: "exact", head: true })
+      .in("status", ["active", "trialing"]),
+    supabase
+      .from("invoices")
+      .select("amount_pence")
+      .eq("status", "paid")
+      .gte("paid_at", new Date(now.getTime() - 30 * 86400000).toISOString()),
+    supabase
+      .from("class_sessions")
+      .select("id", { count: "exact", head: true })
+      .eq("status", "scheduled")
+      .gte("starts_at", now.toISOString())
+      .lt("starts_at", weekAhead.toISOString()),
+    supabase
+      .from("class_sessions")
+      .select("id,starts_at,classes(title)")
+      .is("coach_id", null)
+      .eq("status", "scheduled")
+      .gte("starts_at", now.toISOString())
+      .order("starts_at")
+      .limit(10),
+    supabase
+      .from("subscriptions")
+      .select("id,client_id,profiles!subscriptions_client_id_fkey(full_name)")
+      .eq("status", "past_due")
+      .limit(10),
+    supabase
+      .from("coach_time_off")
+      .select("id,coach_id,starts_at,ends_at,reason,profiles!coach_time_off_coach_id_fkey(full_name)")
+      .eq("status", "pending")
+      .limit(10),
+    supabase
+      .from("notifications")
+      .select("id,title,body,created_at,data")
+      .in("type", ["session_issue", "private_request_parked"])
+      .is("read_at", null)
+      .order("created_at", { ascending: false })
+      .limit(10),
+  ]);
+
+  // Only today's sessions (the week fetch is IST-midnight anchored on today).
+  const todaySessions = week.sessions.filter(
+    (s) => utcToAcademyWall(new Date(s.starts_at)).date === today
+  );
 
   const revenue = (invoices.data ?? []).reduce((s, r) => s + r.amount_pence, 0);
   const exceptions =
@@ -65,27 +85,32 @@ export default async function AdminDashboardPage() {
     (issues.data?.length ?? 0);
 
   return (
-    <AdminShell title="Dashboard">
+    <AdminShell title="Today">
       <div className="mx-auto max-w-4xl space-y-8">
-        <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-          {[
-            ["Active members", String(subs.count ?? 0)],
-            ["Revenue (30 days)", `₹${(revenue / 100).toLocaleString("en-IN")}`],
-            ["Classes this week", String(sessionsWeek.count ?? 0)],
-            ["Needs you", String(exceptions)],
-          ].map(([labelText, value]) => (
-            <Card key={labelText}>
-              <Card.Content className="p-4">
-                <p className="label mb-1">{labelText}</p>
-                <p className="font-display tnum text-3xl">{value}</p>
+        {/* ── Section 1: today's classes — the courtside glance ── */}
+        <section>
+          <h2 className="label mb-3">Today&apos;s classes</h2>
+          {todaySessions.length === 0 ? (
+            <Card>
+              <Card.Content>
+                <p className="text-fg-2">No classes today.</p>
               </Card.Content>
             </Card>
-          ))}
-        </div>
+          ) : (
+            <div className="grid gap-2 sm:grid-cols-2">
+              {todaySessions.map((s) => (
+                <SessionCard
+                  key={s.id}
+                  session={s}
+                  href={`/admin/schedule?session=${s.id}`}
+                />
+              ))}
+            </div>
+          )}
+        </section>
 
-        <WhatsAppAssistantCard />
-
-        <div>
+        {/* ── Section 2: needs your attention — every row opens the item ── */}
+        <section>
           <h2 className="label mb-3">Needs your attention</h2>
           {exceptions === 0 ? (
             <Card>
@@ -101,7 +126,7 @@ export default async function AdminDashboardPage() {
               {(unassigned.data ?? []).map((s) => (
                 <Link
                   key={s.id}
-                  href="/admin/schedule"
+                  href={`/admin/schedule?session=${s.id}&date=${utcToAcademyWall(new Date(s.starts_at)).date}`}
                   className="flex items-center justify-between rounded-[12px] border border-err bg-surface-2 px-4 py-3 hover:bg-surface"
                 >
                   <div>
@@ -127,7 +152,7 @@ export default async function AdminDashboardPage() {
               {(timeOff.data ?? []).map((t) => (
                 <Link
                   key={t.id}
-                  href="/admin/coaches"
+                  href={`/admin/coaches?coach=${t.coach_id}`}
                   className="flex items-center justify-between rounded-[12px] border border-line bg-surface-2 px-4 py-3 hover:bg-surface"
                 >
                   <div>
@@ -147,8 +172,8 @@ export default async function AdminDashboardPage() {
               {(pastDue.data ?? []).map((s) => (
                 <Link
                   key={s.id}
-                  href="/admin/players"
-                  className="flex items-center justify-between rounded-[12px] border border-line bg-surface-2 px-4 py-3 hover:bg-surface"
+                  href={`/admin/players?view=clients&client=${s.client_id}`}
+                  className="flex items-center justify-between rounded-[12px] border border-err bg-surface-2 px-4 py-3 hover:bg-surface"
                 >
                   <p className="font-medium">
                     Payment past due —{" "}
@@ -172,7 +197,34 @@ export default async function AdminDashboardPage() {
               ))}
             </div>
           )}
-        </div>
+        </section>
+
+        {/* ── Section 3: the numbers, demoted to one glanceable strip ── */}
+        <Link
+          href="/admin/billing"
+          className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-[12px] border border-line bg-surface-2 px-4 py-3 text-sm text-fg-2 hover:bg-surface"
+        >
+          <span>
+            <span className="tnum font-medium text-fg">{subs.count ?? 0}</span> members
+          </span>
+          <span aria-hidden>·</span>
+          <span>
+            <span className="tnum font-medium text-fg">
+              ₹{(revenue / 100).toLocaleString("en-IN")}
+            </span>{" "}
+            this month
+          </span>
+          <span aria-hidden>·</span>
+          <span>
+            <span className="tnum font-medium text-fg">{sessionsWeek.count ?? 0}</span>{" "}
+            classes this week
+          </span>
+          <span aria-hidden className="ml-auto text-fg-2">
+            →
+          </span>
+        </Link>
+
+        <WhatsAppAssistantCard />
       </div>
     </AdminShell>
   );
