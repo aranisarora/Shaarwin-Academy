@@ -46,12 +46,14 @@ export type Profile = {
 /**
  * Server-side auth guard. Redirects to /login when signed out.
  * Provisions the profile + player rows if the DB trigger hasn't (belt & braces).
+ *
+ * Uses the request-cached `getCurrentUser` so the auth-server round-trip is
+ * shared with any other caller in the same render (e.g. shell chrome like
+ * PlayerRailLinks) instead of each one re-verifying the token independently.
  */
 export async function requireUser(nextPath: string) {
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await getCurrentUser();
 
   if (!user) redirect(`/login?next=${encodeURIComponent(nextPath)}`);
 
