@@ -398,6 +398,39 @@ create table public.subscriptions (
   razorpay_subscription_id text
 );
 
+create table public.skill_categories (
+  id uuid default gen_random_uuid() not null primary key,
+  name text not null,
+  sort_order smallint default 0 not null,
+  created_at timestamptz default now() not null
+);
+
+create table public.skills (
+  id uuid default gen_random_uuid() not null primary key,
+  category_id uuid not null references public.skill_categories(id) on delete cascade,
+  name text not null,
+  active boolean default true not null,
+  sort_order smallint default 0 not null,
+  created_by uuid references public.profiles(id) on delete set null,
+  created_at timestamptz default now() not null
+);
+
+create table public.skill_assessments (
+  id uuid default gen_random_uuid() not null primary key,
+  player_id uuid not null references public.players(id) on delete cascade,
+  coach_id uuid not null references public.profiles(id) on delete cascade,
+  session_id uuid references public.class_sessions(id) on delete set null,
+  created_at timestamptz default now() not null
+);
+
+create table public.skill_ratings (
+  id uuid default gen_random_uuid() not null primary key,
+  assessment_id uuid not null references public.skill_assessments(id) on delete cascade,
+  skill_id uuid not null references public.skills(id) on delete cascade,
+  rating smallint not null check (rating between 1 and 5),
+  unique (assessment_id, skill_id)
+);
+
 create table public.venues (
   id uuid default gen_random_uuid() not null,
   name text not null,
@@ -600,6 +633,12 @@ CREATE INDEX private_class_details_client_id_idx ON public.private_class_details
 CREATE INDEX private_class_details_player_id_idx ON public.private_class_details USING btree (player_id);
 CREATE INDEX coach_assignments_coach_id_idx ON public.coach_assignments USING btree (coach_id);
 CREATE INDEX student_notes_author_id_idx ON public.student_notes USING btree (author_id);
+CREATE INDEX skills_category_idx ON public.skills USING btree (category_id);
+CREATE UNIQUE INDEX skill_assessments_once_per_session ON public.skill_assessments USING btree (player_id, session_id, coach_id) WHERE (session_id IS NOT NULL);
+CREATE INDEX skill_assessments_player_created_idx ON public.skill_assessments USING btree (player_id, created_at DESC);
+CREATE INDEX skill_assessments_coach_idx ON public.skill_assessments USING btree (coach_id);
+CREATE INDEX skill_assessments_session_idx ON public.skill_assessments USING btree (session_id);
+CREATE INDEX skill_ratings_skill_idx ON public.skill_ratings USING btree (skill_id);
 
 -- ── Functions ────────────────────────────────────────────────────────────────
 
@@ -3203,9 +3242,80 @@ begin
 end;
 $function$;
 
+CREATE OR REPLACE FUNCTION public.get_players_mastery(p_players uuid[])
+ RETURNS TABLE(player_id uuid, mastery integer)
+ LANGUAGE sql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+  with authorized as (
+    select pl.id from players pl
+    where pl.id = any(p_players)
+      and (
+        is_founder()
+        or (is_coach() and coach_has_player(pl.id))
+        or pl.client_id = auth.uid()
+      )
+  ),
+  n_skills as (select count(*)::int as n from skills where active),
+  latest as (
+    select distinct on (a.player_id, r.skill_id)
+           a.player_id, r.skill_id, r.rating
+      from skill_ratings r
+      join skill_assessments a on a.id = r.assessment_id
+      join skills s on s.id = r.skill_id and s.active
+     order by a.player_id, r.skill_id, a.created_at desc
+  )
+  select au.id,
+         case when (select n from n_skills) = 0 then 0
+              else round(100.0 * coalesce(sum(l.rating), 0)
+                         / (5 * (select n from n_skills)))::int
+         end
+    from authorized au
+    left join latest l on l.player_id = au.id
+   group by au.id;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.get_pending_assessments(p_coach uuid DEFAULT auth.uid())
+ RETURNS TABLE(player_id uuid, player_name text, session_id uuid, class_title text, session_ended_at timestamp with time zone)
+ LANGUAGE plpgsql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+begin
+  if p_coach <> auth.uid() and not is_founder() then
+    raise exception 'not_authorised';
+  end if;
+  return query
+    select b.player_id, pl.full_name, s.id, c.title, s.ends_at
+      from bookings b
+      join class_sessions s on s.id = b.session_id
+      join classes c on c.id = s.class_id
+      join players pl on pl.id = b.player_id
+     where s.coach_id = p_coach
+       and b.status = 'attended'
+       and s.ends_at < now()
+       and s.ends_at > now() - interval '7 days'
+       and not exists (
+         select 1 from skill_assessments a
+          where a.player_id = b.player_id
+            and a.session_id = s.id
+            and a.coach_id = p_coach
+       )
+     order by s.ends_at asc, pl.full_name;
+end;
+$function$;
+
 -- ── View ─────────────────────────────────────────────────────────────────────
 CREATE OR REPLACE VIEW public.coach_client_view AS
   SELECT id, full_name, avatar_url FROM profiles p;
+
+CREATE VIEW public.latest_skill_ratings WITH (security_invoker='true') AS
+  SELECT DISTINCT ON (a.player_id, r.skill_id)
+         a.player_id, r.skill_id, r.rating, a.coach_id, a.created_at
+    FROM skill_ratings r
+    JOIN skill_assessments a ON a.id = r.assessment_id
+   ORDER BY a.player_id, r.skill_id, a.created_at DESC;
 
 -- ── Triggers ─────────────────────────────────────────────────────────────────
 CREATE TRIGGER trg_private_class_details_after_delete AFTER DELETE ON public.private_class_details FOR EACH ROW EXECUTE FUNCTION _delete_class_on_private_details_delete();
@@ -3250,6 +3360,10 @@ alter table public.private_credit_ledger enable row level security;
 alter table public.profiles enable row level security;
 alter table public.push_subscriptions enable row level security;
 alter table public.settings enable row level security;
+alter table public.skill_categories enable row level security;
+alter table public.skills enable row level security;
+alter table public.skill_assessments enable row level security;
+alter table public.skill_ratings enable row level security;
 alter table public.student_notes enable row level security;
 alter table public.subscriptions enable row level security;
 alter table public.venues enable row level security;
@@ -3320,3 +3434,15 @@ CREATE POLICY "own subscriptions" ON public.subscriptions AS PERMISSIVE FOR SELE
 CREATE POLICY "founder writes venues" ON public.venues AS PERMISSIVE FOR ALL TO public USING (( SELECT is_founder() AS is_founder));
 CREATE POLICY "public reads active venues" ON public.venues AS PERMISSIVE FOR SELECT TO public USING (((active = true) OR ( SELECT is_founder() AS is_founder)));
 CREATE POLICY "founder reads webhook events" ON public.webhook_events AS PERMISSIVE FOR SELECT TO public USING (( SELECT is_founder() AS is_founder));
+CREATE POLICY "staff reads categories" ON public.skill_categories AS PERMISSIVE FOR SELECT TO public USING ((( SELECT is_coach() AS is_coach) OR ( SELECT is_founder() AS is_founder)));
+CREATE POLICY "founder manages categories" ON public.skill_categories AS PERMISSIVE FOR ALL TO public USING (( SELECT is_founder() AS is_founder)) WITH CHECK (( SELECT is_founder() AS is_founder));
+CREATE POLICY "staff reads skills" ON public.skills AS PERMISSIVE FOR SELECT TO public USING ((( SELECT is_coach() AS is_coach) OR ( SELECT is_founder() AS is_founder)));
+CREATE POLICY "staff adds skills" ON public.skills AS PERMISSIVE FOR INSERT TO public WITH CHECK ((( SELECT is_coach() AS is_coach) OR ( SELECT is_founder() AS is_founder)));
+CREATE POLICY "staff updates skills" ON public.skills AS PERMISSIVE FOR UPDATE TO public USING ((( SELECT is_coach() AS is_coach) OR ( SELECT is_founder() AS is_founder)));
+CREATE POLICY "founder deletes skills" ON public.skills AS PERMISSIVE FOR DELETE TO public USING (( SELECT is_founder() AS is_founder));
+CREATE POLICY "staff reads assessments" ON public.skill_assessments AS PERMISSIVE FOR SELECT TO public USING ((( SELECT is_coach() AS is_coach) OR ( SELECT is_founder() AS is_founder)));
+CREATE POLICY "author writes assessments" ON public.skill_assessments AS PERMISSIVE FOR INSERT TO public WITH CHECK (((coach_id = ( SELECT auth.uid() AS uid)) AND (( SELECT is_coach() AS is_coach) OR ( SELECT is_founder() AS is_founder))));
+CREATE POLICY "founder deletes assessments" ON public.skill_assessments AS PERMISSIVE FOR DELETE TO public USING (( SELECT is_founder() AS is_founder));
+CREATE POLICY "staff reads ratings" ON public.skill_ratings AS PERMISSIVE FOR SELECT TO public USING ((( SELECT is_coach() AS is_coach) OR ( SELECT is_founder() AS is_founder)));
+CREATE POLICY "author writes ratings" ON public.skill_ratings AS PERMISSIVE FOR INSERT TO public WITH CHECK ((EXISTS ( SELECT 1 FROM skill_assessments a WHERE ((a.id = skill_ratings.assessment_id) AND (a.coach_id = ( SELECT auth.uid() AS uid))))));
+CREATE POLICY "founder deletes ratings" ON public.skill_ratings AS PERMISSIVE FOR DELETE TO public USING (( SELECT is_founder() AS is_founder));
