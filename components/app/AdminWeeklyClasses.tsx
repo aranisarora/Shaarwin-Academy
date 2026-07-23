@@ -259,9 +259,13 @@ export function AdminWeeklyClasses({
         );
       })}
       {classes.length === 0 && (
-        <p className="rounded-[12px] border border-line bg-surface-2 p-4 text-sm text-fg-2">
-          No weekly classes yet — tap “Create a class”.
-        </p>
+        <div className="rounded-[12px] border border-line bg-surface-2 p-4 text-sm text-fg-2">
+          <p className="font-medium text-fg">Add each class you run — day, time, place.</p>
+          <p className="mt-1">
+            We&apos;ll build the weekly schedule and handle bookings, reminders and
+            reschedules from there. Tap &ldquo;Create a class&rdquo; to start.
+          </p>
+        </div>
       )}
       {classes.length > 0 && filteredClasses.length === 0 && (
         <p className="rounded-[12px] border border-line bg-surface-2 p-4 text-sm text-fg-2">

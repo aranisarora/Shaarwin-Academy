@@ -184,7 +184,7 @@ export function AdminCalendar({
             setMessage(null);
           }}
         >
-          Add a one-off session
+          Add a one-time class
         </Button>
       </div>
 

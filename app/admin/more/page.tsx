@@ -25,7 +25,7 @@ const items = [
   {
     href: "/admin/billing",
     label: "Billing",
-    hint: "Invoices, dunning & payments",
+    hint: "Invoices, overdue payments & billing",
   },
   {
     href: "/admin/settings",

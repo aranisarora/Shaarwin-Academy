@@ -66,7 +66,7 @@ export default async function AdminBillingPage() {
 
         {dunning.length > 0 && (
           <div>
-            <p className="label mb-3">Dunning — payment past due</p>
+            <p className="label mb-3">Payment overdue</p>
             <ul className="divide-y divide-line rounded-[12px] border border-err bg-surface-2">
               {dunning.map((s) => {
                 const profile = s.profiles as unknown as { full_name: string; email: string } | null;

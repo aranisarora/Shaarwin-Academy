@@ -71,8 +71,8 @@ export default async function AdminDashboardPage() {
           {[
             ["Active members", String(subs.count ?? 0)],
             ["Revenue (30 days)", `₹${(revenue / 100).toLocaleString("en-IN")}`],
-            ["Sessions this week", String(sessionsWeek.count ?? 0)],
-            ["Exceptions", String(exceptions)],
+            ["Classes this week", String(sessionsWeek.count ?? 0)],
+            ["Needs you", String(exceptions)],
           ].map(([labelText, value]) => (
             <Card key={labelText}>
               <Card.Content className="p-4">
@@ -86,12 +86,13 @@ export default async function AdminDashboardPage() {
         <WhatsAppAssistantCard />
 
         <div>
-          <h2 className="label mb-3">Exceptions inbox</h2>
+          <h2 className="label mb-3">Needs your attention</h2>
           {exceptions === 0 ? (
             <Card>
               <Card.Content>
                 <p className="text-fg-2">
-                  Empty inbox — the business runs itself today.
+                  Nothing needs you — reminders, bookings and reschedules are handled
+                  automatically.
                 </p>
               </Card.Content>
             </Card>
@@ -153,7 +154,7 @@ export default async function AdminDashboardPage() {
                     Payment past due —{" "}
                     {(s.profiles as unknown as { full_name: string } | null)?.full_name}
                   </p>
-                  <Badge tone="err">Dunning</Badge>
+                  <Badge tone="err">Payment overdue</Badge>
                 </Link>
               ))}
               {(issues.data ?? []).map((n) => (

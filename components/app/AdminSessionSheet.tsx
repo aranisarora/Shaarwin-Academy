@@ -281,7 +281,9 @@ export function AdminSessionSheet({
                 onChange={() => setScope("session")}
               />
               <span>
-                <span className="block font-medium">Just this session</span>
+                <span className="block font-medium">
+                  Just this {WEEKDAY_NAME[weekdayOfDate(wallDate(session.starts_at))] ?? "day"}
+                </span>
                 <span className="block text-sm text-fg-2">
                   Only {fmtWhen(session.starts_at)} changes. Other weeks stay as they are.
                 </span>
@@ -302,9 +304,11 @@ export function AdminSessionSheet({
                 onChange={() => setScope("class")}
               />
               <span>
-                <span className="block font-medium">Every week — the whole class</span>
+                <span className="block font-medium">
+                  Every {WEEKDAY_NAME[session.classWeekday] ?? "week"} — the whole class
+                </span>
                 <span className="block text-sm text-fg-2">
-                  All upcoming sessions of {session.title} change. Everyone booked gets a
+                  All upcoming weeks of {session.title} change. Everyone booked gets a
                   message automatically.
                 </span>
               </span>
@@ -554,7 +558,7 @@ export function AdminSessionSheet({
 
           {/* ── Everything else: one form, scoped on save ── */}
           <div className="space-y-4 rounded-[12px] border border-line p-4">
-            <p className="label">{session.isPrivate ? "Move this session" : "Edit"}</p>
+            <p className="label">{session.isPrivate ? "Move this class" : "Edit"}</p>
             <div className="grid grid-cols-2 gap-3">
               <Input
                 label="Day"
@@ -601,7 +605,11 @@ export function AdminSessionSheet({
             </Button>
           </div>
 
-          <div className="space-y-2">
+          <details className="group space-y-2 [&_summary]:list-none">
+            <summary className="cursor-pointer text-center text-sm text-fg-2 underline-offset-4 hover:underline">
+              More actions ▾
+            </summary>
+            <div className="space-y-2 pt-2">
             <Button
               variant="destructive"
               disabled={pending}
@@ -675,7 +683,8 @@ export function AdminSessionSheet({
                 Cancel all upcoming sessions for this client
               </button>
             )}
-          </div>
+            </div>
+          </details>
           {message && <p className="text-sm text-fg-2">{message}</p>}
         </div>
       )}

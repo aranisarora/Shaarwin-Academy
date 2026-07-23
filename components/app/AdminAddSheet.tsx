@@ -30,6 +30,7 @@ import {
   type ClassFormState,
 } from "./ClassFields";
 import { TimeSelect12h } from "./TimeSelect12h";
+import { ActionResult } from "./ActionResult";
 import {
   WEEKDAYS,
   WEEKDAY_NAME,
@@ -183,7 +184,29 @@ export function AdminAddSheet({
 
   // ── Shared ──────────────────────────────────────────────────────────────────
   const [message, setMessage] = useState<string | null>(null);
+  // Set on a successful add — shows the confirmation + "Add another like this"
+  // so migrating a whole timetable is a handful of taps per class, not a full
+  // form each time. Closing (Done) is what tells the parent to refresh.
+  const [success, setSuccess] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+
+  // Keep the setup (venue, type, coach, length, spots) and clear only the
+  // day/time (and client, for privates) so the next class is a few taps.
+  function addAnother() {
+    setSuccess(null);
+    setMessage(null);
+    if (mode === "weekly" || mode === "school") {
+      setWeekdays([]);
+      setDayTimes({});
+      setDates([]);
+      setDateTimes({});
+      setDateKey((k) => k + 1);
+    } else {
+      setPriv((p) => ({ ...p, clientId: "", playerId: "", date: "", startFrom: "" }));
+      setPrivWeekdays([]);
+      setPrivDayTimes({});
+    }
+  }
 
   const isInvite = priv.clientId.startsWith("invite:");
   // "open" → hold a private slot with no client, to be assigned later.
@@ -240,7 +263,7 @@ export function AdminAddSheet({
       const t = time12h(dateTimes[dates[0]] ?? lastTime);
       return venueName ? `${fmtDateTag(dates[0])} ${t} · ${venueName}` : `${fmtDateTag(dates[0])} ${t}`;
     }
-    return venueName ? `${venueName} · one-off` : "One-off class";
+    return venueName ? `${venueName} · one-time` : "One-time class";
   }
 
   function submit() {
@@ -264,10 +287,10 @@ export function AdminAddSheet({
             setMessage(r.error ?? "Couldn't add the class.");
             return;
           }
-          onDone(
+          setSuccess(
             dates.length > 1
-              ? `One-off ${isSchool ? "school class" : "class"} added — ${dates.length} sessions on the schedule.`
-              : `One-off ${isSchool ? "school class" : "class"} added to the schedule.`
+              ? `One-time ${isSchool ? "school class" : "class"} added — ${dates.length} on the schedule.`
+              : `One-time ${isSchool ? "school class" : "class"} added to the schedule.`
           );
         } else {
           for (const day of weekdays) {
@@ -286,7 +309,7 @@ export function AdminAddSheet({
           }
           const dayNames = weekdays.map((d) => WEEKDAY_NAME[d] ?? d).join(", ");
           const noun = isSchool ? "school class" : "class";
-          onDone(
+          setSuccess(
             weekdays.length > 1
               ? `${weekdays.length} ${noun}es published — ${dayNames}.`
               : `${isSchool ? "School class" : "Class"} published — the next 8 weeks of sessions are on the schedule.`
@@ -320,7 +343,7 @@ export function AdminAddSheet({
             recurWeeks: 1,
           });
           if (r.ok) {
-            onDone("Open private slot added — assign a client to it any time.");
+            setSuccess("Open private slot added — assign a client to it any time.");
           } else setMessage(r.error ?? "Couldn't add the slot.");
         } else if (priv.recurring) {
           // Recurring: one series per selected weekday at that day's own time,
@@ -351,7 +374,7 @@ export function AdminAddSheet({
           }
           const totalSessions = privWeekdays.length * priv.recurWeeks;
           const dayNames = privWeekdays.map((d) => WEEKDAY_NAME[d] ?? d).join(", ");
-          onDone(
+          setSuccess(
             isInvite
               ? `Account created and ${totalSessions} private sessions booked (${dayNames}) — waiting when they sign in.`
               : `${totalSessions} private sessions booked (${dayNames}) — the client has been told.`
@@ -367,7 +390,7 @@ export function AdminAddSheet({
                 playerId: priv.playerId || undefined,
               });
           if (r.ok) {
-            onDone(
+            setSuccess(
               isInvite
                 ? "Account created and private session booked — it'll be waiting when they sign in."
                 : "Private session booked — the client has been told."
@@ -414,8 +437,23 @@ export function AdminAddSheet({
     <Sheet
       open
       onClose={onClose}
-      title={variant === "oneoff" ? "Add a one-off session" : "Create a class"}
+      title={variant === "oneoff" ? "Add a one-time class" : "Create a class"}
     >
+      {success ? (
+        <div className="space-y-5">
+          <ActionResult>{success}</ActionResult>
+          <div className="grid grid-cols-2 gap-2">
+            <Button variant="ghost" onClick={addAnother}>
+              Add another like this
+            </Button>
+            <Button onClick={() => onDone(success)}>Done</Button>
+          </div>
+          <p className="text-sm text-fg-2">
+            &ldquo;Add another&rdquo; keeps the venue, type and length — just pick the next
+            day and time.
+          </p>
+        </div>
+      ) : (
       <div className="space-y-5">
         {/* Mode tabs */}
         <div className="grid grid-cols-3 gap-2">
@@ -448,7 +486,7 @@ export function AdminAddSheet({
             )}
             {variant === "oneoff" && (
               <p className="rounded-[12px] border border-line bg-surface-2 px-4 py-3 text-sm text-fg-2">
-                A one-off class appears on the schedule only on the dates you pick — it never
+                A one-time class appears on the schedule only on the dates you pick — it never
                 repeats. Repeating classes live in the Weekly classes tab.
               </p>
             )}
@@ -804,6 +842,7 @@ export function AdminAddSheet({
 
         {message && <p className="text-sm text-err">{message}</p>}
       </div>
+      )}
     </Sheet>
   );
 }
