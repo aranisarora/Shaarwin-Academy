@@ -5,9 +5,11 @@
 // Calendar-style. The repeating classes that generate these sessions live in
 // the Weekly classes tab; here you only add one-offs.
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/Button";
-import { Select } from "@/components/ui/Select";
+import { FilterBar, type FilterDef } from "@/components/ui/FilterBar";
+import { Fab } from "@/components/ui/Fab";
+import { ActionResult } from "./ActionResult";
 import { AdminSessionSheet } from "./AdminSessionSheet";
 import { AdminAddSheet } from "./AdminAddSheet";
 import { SessionCard } from "./ClassCard";
@@ -139,44 +141,106 @@ export function AdminCalendar({
     ? []
     : lanes.byCoach.filter(({ rows }) => rows.length === 0).map(({ coach }) => coach);
 
+  const coachNameById = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const c of coaches) m.set(c.id, c.name);
+    return m;
+  }, [coaches]);
+  const coachNameOf = (s: SessionRow) => (s.coachId ? coachNameById.get(s.coachId) ?? null : null);
+
+  // Success toasts from Add auto-clear so they never reserve layout space.
+  useEffect(() => {
+    if (!message) return;
+    const t = setTimeout(() => setMessage(null), 5000);
+    return () => clearTimeout(t);
+  }, [message]);
+
+  const openSession = (session: SessionRow) => {
+    setMessage(null);
+    setSelected(session);
+  };
+
   // Card look + border language live in the shared ClassCard; here we only wire
   // the tap. Under a day header the card shows just the time; the ungrouped
   // "no coach" box carries the full weekday + date via showDay.
   const Block = ({ session, showDay = false }: { session: SessionRow; showDay?: boolean }) => (
-    <SessionCard
-      session={session}
-      showDay={showDay}
-      onClick={() => {
-        setMessage(null);
-        setSelected(session);
-      }}
-    />
+    <SessionCard session={session} showDay={showDay} onClick={() => openSession(session)} />
   );
 
-  const DayGroups = ({ rows }: { rows: SessionRow[] }) => (
-    <div className="space-y-3">
-      {groupByDay(rows, today).map((day) => (
-        <div key={day.key}>
-          <p
-            className={`mb-2 text-xs font-medium ${day.isToday ? "text-ember" : "text-fg-2"}`}
-          >
-            {day.label}
-            {day.isToday ? " · Today" : ""}
-          </p>
-          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-            {day.rows.map((s) => (
-              <Block key={s.id} session={s} />
-            ))}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
+  const filterDefs: FilterDef[] = [
+    {
+      key: "coach",
+      aria: "Filter by coach",
+      label: "All coaches",
+      value: coachFilter,
+      defaultValue: "all",
+      onChange: setCoachFilter,
+      options: [
+        { value: "all", label: "All coaches" },
+        { value: "none", label: "No coach yet" },
+        ...coaches.map((c) => ({ value: c.id, label: c.name })),
+      ],
+    },
+    {
+      key: "day",
+      aria: "Filter by day",
+      label: "Any day",
+      value: dayFilter,
+      defaultValue: "all",
+      onChange: setDayFilter,
+      options: [
+        { value: "all", label: "Any day" },
+        ...dayOptions.map(([key, label]) => ({ value: key, label })),
+      ],
+    },
+    {
+      key: "venue",
+      aria: "Filter by venue",
+      label: "All venues",
+      value: venueFilter,
+      defaultValue: "all",
+      onChange: setVenueFilter,
+      options: [
+        { value: "all", label: "All venues" },
+        ...venueOptions.map((v) => ({ value: v, label: v })),
+      ],
+    },
+    {
+      key: "client",
+      aria: "Filter by client",
+      label: "All clients",
+      value: clientFilter,
+      defaultValue: "all",
+      onChange: setClientFilter,
+      options: [
+        { value: "all", label: "All clients" },
+        ...clientOptions.map((c) => ({ value: c, label: c })),
+      ],
+    },
+    {
+      key: "type",
+      aria: "Filter by class type",
+      label: "All types",
+      value: typeFilter,
+      defaultValue: "all",
+      onChange: setTypeFilter,
+      options: [
+        { value: "all", label: "All class types" },
+        { value: "group", label: "Group" },
+        { value: "private", label: "Private" },
+        { value: "school", label: "School" },
+      ],
+    },
+  ];
+
+  // Day-first grouping for the phone: chronological days, Today open, the rest
+  // collapsed to a header + count. Coach moves onto each card (line 3).
+  const dayGroups = useMemo(() => groupByDay(filtered, today), [filtered, today]);
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between gap-2">
-        {message ? <p className="text-sm text-fg-2">{message}</p> : <span />}
+    <div className="space-y-5">
+      {/* Desktop keeps the inline "Add" button; the phone gets a FAB (below). */}
+      <div className="hidden justify-end lg:flex">
         <Button
           onClick={() => {
             setAdding(true);
@@ -187,69 +251,7 @@ export function AdminCalendar({
         </Button>
       </div>
 
-      {sessions.length > 0 && (
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
-          <Select
-            aria-label="Filter by coach"
-            value={coachFilter}
-            onChange={(e) => setCoachFilter(e.target.value)}
-          >
-            <option value="all">All coaches</option>
-            <option value="none">No coach yet</option>
-            {coaches.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </Select>
-          <Select
-            aria-label="Filter by day"
-            value={dayFilter}
-            onChange={(e) => setDayFilter(e.target.value)}
-          >
-            <option value="all">Any day</option>
-            {dayOptions.map(([key, label]) => (
-              <option key={key} value={key}>
-                {label}
-              </option>
-            ))}
-          </Select>
-          <Select
-            aria-label="Filter by venue"
-            value={venueFilter}
-            onChange={(e) => setVenueFilter(e.target.value)}
-          >
-            <option value="all">All venues</option>
-            {venueOptions.map((v) => (
-              <option key={v} value={v}>
-                {v}
-              </option>
-            ))}
-          </Select>
-          <Select
-            aria-label="Filter by client"
-            value={clientFilter}
-            onChange={(e) => setClientFilter(e.target.value)}
-          >
-            <option value="all">All clients</option>
-            {clientOptions.map((c) => (
-              <option key={c} value={c}>
-                {c}
-              </option>
-            ))}
-          </Select>
-          <Select
-            aria-label="Filter by class type"
-            value={typeFilter}
-            onChange={(e) => setTypeFilter(e.target.value)}
-          >
-            <option value="all">All class types</option>
-            <option value="group">Group</option>
-            <option value="private">Private</option>
-            <option value="school">School</option>
-          </Select>
-        </div>
-      )}
+      {sessions.length > 0 && <FilterBar filters={filterDefs} />}
 
       {sessions.length > 0 && filtered.length === 0 && (
         <p className="rounded-[12px] border border-line bg-surface-2 p-4 text-sm text-fg-2">
@@ -257,6 +259,7 @@ export function AdminCalendar({
         </p>
       )}
 
+      {/* The red "No coach yet" bucket pins to the very top in both layouts. */}
       {lanes.unassigned.length > 0 && (
         <div className="rounded-[12px] border border-err p-4">
           <p className="label mb-3 !text-err">No coach yet — tap to fix</p>
@@ -268,28 +271,94 @@ export function AdminCalendar({
         </div>
       )}
 
-      {lanes.byCoach
-        .filter(({ rows }) => rows.length > 0)
-        .map(({ coach, rows }) => (
-          <div key={coach.id} className="space-y-3">
-            <p className="border-b border-line pb-1.5 text-base font-semibold text-fg">
-              {coach.name}
-            </p>
-            <DayGroups rows={rows} />
-          </div>
+      {/* ── Phone: day-first. Today expanded, other days collapsed. ── */}
+      <div className="space-y-2 lg:hidden">
+        {dayGroups.map((day) => (
+          <details
+            key={day.key}
+            open={day.isToday}
+            className="overflow-hidden rounded-[12px] border border-line bg-surface-2 [&_summary]:list-none"
+          >
+            <summary className="flex cursor-pointer items-center justify-between gap-3 px-4 py-3">
+              <span className={`font-semibold ${day.isToday ? "text-ember" : "text-fg"}`}>
+                {day.label}
+                {day.isToday ? " · Today" : ""}
+              </span>
+              <span className="tnum shrink-0 text-sm text-fg-2">
+                {day.rows.length} class{day.rows.length === 1 ? "" : "es"}
+              </span>
+            </summary>
+            <div className="grid gap-2 border-t border-line p-3">
+              {day.rows.map((s) => (
+                <SessionCard
+                  key={s.id}
+                  session={s}
+                  coachName={coachNameOf(s)}
+                  onClick={() => openSession(s)}
+                />
+              ))}
+            </div>
+          </details>
         ))}
+      </div>
 
-      {emptyCoaches.length > 0 && (
-        <p className="text-sm text-fg-2">
-          No sessions this week:{" "}
-          <span className="text-fg">{emptyCoaches.map((c) => c.name).join(", ")}</span>.
-        </p>
-      )}
+      {/* ── Desktop: one lane per coach, days grouped inside. ── */}
+      <div className="hidden space-y-6 lg:block">
+        {lanes.byCoach
+          .filter(({ rows }) => rows.length > 0)
+          .map(({ coach, rows }) => (
+            <div key={coach.id} className="space-y-3">
+              <p className="border-b border-line pb-1.5 text-base font-semibold text-fg">
+                {coach.name}
+              </p>
+              <div className="space-y-3">
+                {groupByDay(rows, today).map((day) => (
+                  <div key={day.key}>
+                    <p
+                      className={`mb-2 text-xs font-medium ${day.isToday ? "text-ember" : "text-fg-2"}`}
+                    >
+                      {day.label}
+                      {day.isToday ? " · Today" : ""}
+                    </p>
+                    <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                      {day.rows.map((s) => (
+                        <Block key={s.id} session={s} />
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+
+        {emptyCoaches.length > 0 && (
+          <p className="text-sm text-fg-2">
+            No sessions this week:{" "}
+            <span className="text-fg">{emptyCoaches.map((c) => c.name).join(", ")}</span>.
+          </p>
+        )}
+      </div>
 
       {coaches.length === 0 && (
         <p className="rounded-[12px] border border-line bg-surface-2 p-4 text-sm text-fg-2">
           No coaches yet — add one from the Coaches tab first.
         </p>
+      )}
+
+      {/* Phone: the primary add action as a floating button above the tab bar. */}
+      <Fab
+        label="Add a one-time class"
+        onClick={() => {
+          setAdding(true);
+          setMessage(null);
+        }}
+      />
+
+      {/* Transient success line as a bottom toast — no reserved layout space. */}
+      {message && (
+        <div className="fixed inset-x-4 bottom-[calc(env(safe-area-inset-bottom)+4.75rem)] z-40 mx-auto max-w-md lg:bottom-6">
+          <ActionResult>{message}</ActionResult>
+        </div>
       )}
 
       {selected && (

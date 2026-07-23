@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState, useTransition } from "react";
+import { useCallback, useRef, useState, useTransition } from "react";
 import { fetchWeekSessions } from "@/app/admin/schedule/actions";
 import { shiftWallDate } from "@/lib/academy-time";
 import { AdminCalendar } from "./AdminCalendar";
@@ -12,8 +12,8 @@ import type {
   Venue,
 } from "./admin-calendar-types";
 
-const navBtn =
-  "rounded-[8px] border border-line px-4 py-2 text-sm hover:border-ember hover:text-ember disabled:opacity-50 disabled:cursor-not-allowed";
+const arrowBtn =
+  "flex h-11 w-11 shrink-0 items-center justify-center rounded-[8px] border border-line text-fg-2 hover:border-ember hover:text-ember disabled:cursor-not-allowed disabled:opacity-50";
 
 export function AdminCalendarNav({
   initialAnchor,
@@ -46,6 +46,7 @@ export function AdminCalendarNav({
   const [sessions, setSessions] = useState(initialSessions);
   const [rangeLabel, setRangeLabel] = useState(initialRangeLabel);
   const [isPending, startTransition] = useTransition();
+  const dateRef = useRef<HTMLInputElement>(null);
 
   const navigate = (newAnchor: string) => {
     startTransition(async () => {
@@ -74,23 +75,41 @@ export function AdminCalendarNav({
 
   return (
     <>
-      <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-        <div className="flex flex-wrap items-center gap-2">
+      {/* Compact one-row pager, sticky beneath the app header so the week you're
+          looking at never scrolls away. The centre label opens a date picker;
+          "Today" appears only when you're off the current week. */}
+      <div className="sticky top-14 z-20 -mx-5 mb-4 flex items-center gap-2 border-b border-line bg-surface/90 px-5 py-1.5 backdrop-blur lg:top-0">
+        <button
+          onClick={() => navigate(shiftWallDate(anchor, -7))}
+          disabled={isPending}
+          aria-label="Earlier week"
+          className={arrowBtn}
+        >
+          ‹
+        </button>
+        <div className="relative min-w-0 flex-1">
           <button
-            onClick={() => navigate(shiftWallDate(anchor, -7))}
+            type="button"
+            onClick={() => {
+              const el = dateRef.current;
+              if (!el) return;
+              // showPicker() is the reliable way to open the native calendar
+              // from a custom trigger; fall back to focus where unsupported.
+              if (typeof el.showPicker === "function") el.showPicker();
+              else el.focus();
+            }}
             disabled={isPending}
-            className={navBtn}
+            className="tnum flex w-full items-center justify-center gap-1.5 truncate rounded-[8px] px-2 py-2 text-sm font-medium hover:text-ember disabled:opacity-50"
           >
-            ← Earlier
-          </button>
-          <button
-            onClick={() => navigate(shiftWallDate(anchor, 7))}
-            disabled={isPending}
-            className={navBtn}
-          >
-            Later →
+            {rangeLabel}
+            {isThisWeek ? " (this week)" : ""}
+            {isPending ? " …" : ""}
+            <span aria-hidden className="text-xs text-fg-2">
+              ▾
+            </span>
           </button>
           <input
+            ref={dateRef}
             type="date"
             aria-label="Jump to a date"
             value={anchor}
@@ -98,19 +117,27 @@ export function AdminCalendarNav({
               if (e.target.value) navigate(e.target.value);
             }}
             disabled={isPending}
-            className="rounded-[8px] border border-line bg-surface-2 px-3 py-2 text-sm text-fg hover:border-ember focus:border-ember focus:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+            className="pointer-events-none absolute inset-x-0 bottom-0 h-0 w-full opacity-0"
+            tabIndex={-1}
           />
-          {!isThisWeek && (
-            <button onClick={() => navigate(today)} disabled={isPending} className={navBtn}>
-              This week
-            </button>
-          )}
         </div>
-        <p className="tnum text-sm text-fg-2">
-          {rangeLabel}
-          {isThisWeek ? " (this week)" : ""}
-          {isPending ? " …" : ""}
-        </p>
+        {!isThisWeek && (
+          <button
+            onClick={() => navigate(today)}
+            disabled={isPending}
+            className="shrink-0 rounded-[8px] px-2 py-2 text-sm font-medium text-ember hover:underline disabled:opacity-50"
+          >
+            Today
+          </button>
+        )}
+        <button
+          onClick={() => navigate(shiftWallDate(anchor, 7))}
+          disabled={isPending}
+          aria-label="Later week"
+          className={arrowBtn}
+        >
+          ›
+        </button>
       </div>
       <AdminCalendar
         sessions={sessions}

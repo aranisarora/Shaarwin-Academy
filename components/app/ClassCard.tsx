@@ -83,11 +83,15 @@ const cardBase =
 export function SessionCard({
   session,
   showDay = false,
+  coachName,
   onClick,
   href,
 }: {
   session: SessionRow;
   showDay?: boolean;
+  /** Day-first mobile layout groups by day, not coach — so the coach moves onto
+   * the card. Omitted in the desktop coach-lane view, where it's redundant. */
+  coachName?: string | null;
   onClick?: () => void;
   href?: string;
 }) {
@@ -109,7 +113,12 @@ export function SessionCard({
         {showDay ? fmtWhen(session.starts_at) : clockTime(session.starts_at)} –{" "}
         {clockTime(session.ends_at)}
       </p>
-      <p className="text-xs text-fg-2">{sessionTypeLine(session)}</p>
+      <p className="text-xs text-fg-2">
+        {sessionTypeLine(session)}
+        {coachName !== undefined && (
+          <> · {coachName ?? <span className="text-err">No coach yet</span>}</>
+        )}
+      </p>
       <SessionBadges session={session} />
     </>
   );
