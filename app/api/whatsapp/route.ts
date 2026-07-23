@@ -151,10 +151,11 @@ async function handleInbound(
     return;
   }
 
-  // Coaches: a class action (a tap, or the typed words the reminder invites)
-  // runs the same RPC as the app with no LLM. Returns null when the message
-  // isn't a recognised action, so ordinary chat falls through to the assistant.
-  if (profile.role === "coach") {
+  // Deterministic interactive replies. A coach tap/word or a client button runs
+  // the same RPC as the app with no LLM; the handler gates by role and only acts
+  // on real taps for clients. Returns null when the message isn't a recognised
+  // action, so ordinary chat falls through to the assistant.
+  if (profile.role === "coach" || profile.role === "client") {
     const reply = await handleInteractiveReply({
       admin,
       supabase,
