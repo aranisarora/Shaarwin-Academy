@@ -10,6 +10,7 @@ import { ButtonLink } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { WhatsAppAssistantCard } from "@/components/app/WhatsAppAssistantCard";
 import { AddressDisplay } from "@/components/app/AddressDisplay";
+import { getMasteryMap, masteryLabel } from "@/lib/mastery";
 
 export const metadata: Metadata = { title: "Home" };
 
@@ -20,11 +21,15 @@ export default async function AppHomePage() {
     getMyBookings(supabase, user.id),
     supabase
       .from("players")
-      .select("id,full_name,skill_level")
+      .select("id,full_name")
       .eq("client_id", user.id)
       .order("created_at"),
   ]);
   const players = playersRes.data ?? [];
+  const masteryMap = await getMasteryMap(
+    supabase,
+    players.map((p) => p.id)
+  );
 
   const upcoming = bookings.filter(
     (b) =>
@@ -79,6 +84,7 @@ export default async function AppHomePage() {
             <ul className="grid gap-3 sm:grid-cols-2">
               {players.map((p) => {
                 const playerNext = upcoming.find((b) => b.playerId === p.id);
+                const mastery = masteryMap.get(p.id) ?? 0;
                 return (
                   <li key={p.id}>
                     <Link
@@ -90,6 +96,9 @@ export default async function AppHomePage() {
                         {playerNext
                           ? `Next: ${formatSessionDate(playerNext.session.starts_at)}`
                           : "Nothing booked"}
+                      </p>
+                      <p className="tnum mt-1 text-sm text-fg-2">
+                        Mastery {mastery}% · {masteryLabel(mastery)}
                       </p>
                       <p className="mt-1 text-xs text-ember">Progress &amp; notes →</p>
                     </Link>

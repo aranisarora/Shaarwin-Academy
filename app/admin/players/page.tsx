@@ -3,6 +3,7 @@ import { requireUser } from "@/lib/auth";
 import { AdminShell } from "@/components/app/AdminShell";
 import { type PendingClientRow } from "@/components/app/ClientManager";
 import { PeopleTabs } from "@/components/app/PeopleTabs";
+import { getMasteryMap } from "@/lib/mastery";
 
 export const metadata: Metadata = { title: "Players" };
 
@@ -127,6 +128,11 @@ export default async function AdminPlayersPage({
   // The Players view — every household player, joined with their account
   // holder's contact details. Archived clients' players stay hidden, matching
   // the default client list.
+  const masteryMap = await getMasteryMap(supabase, [
+    ...(players ?? []).map((p) => p.id),
+    ...(schoolPlayers ?? []).map((p) => p.id),
+  ]);
+
   const clientById = new Map((clients ?? []).map((c) => [c.id, c]));
   const householdRows = (players ?? [])
     .filter((p) => {
@@ -139,6 +145,7 @@ export default async function AdminPlayersPage({
         id: p.id,
         name: p.full_name,
         skillLevel: p.skill_level,
+        mastery: masteryMap.get(p.id) ?? 0,
         dateOfBirth: (p.date_of_birth as string | null) ?? null,
         notes: (p.notes as string | null) ?? null,
         createdAt: p.created_at as string,
@@ -155,6 +162,7 @@ export default async function AdminPlayersPage({
     id: p.id,
     name: p.full_name,
     skillLevel: p.skill_level,
+    mastery: masteryMap.get(p.id) ?? 0,
     dateOfBirth: (p.date_of_birth as string | null) ?? null,
     notes: (p.notes as string | null) ?? null,
     createdAt: p.created_at as string,

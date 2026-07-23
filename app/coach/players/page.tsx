@@ -5,6 +5,7 @@ import { effectiveCoachId } from "@/lib/coach-preview";
 import { CoachShell } from "@/components/app/CoachShell";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Badge } from "@/components/ui/Badge";
+import { getMasteryMap, masteryLabel } from "@/lib/mastery";
 
 export const metadata: Metadata = { title: "Players" };
 
@@ -15,21 +16,20 @@ export default async function CoachPlayersPage() {
   // Players the coach actually coaches — via bookings on own sessions (RLS-safe).
   const { data: rows } = await supabase
     .from("bookings")
-    .select("player_id,status,players(full_name,skill_level),class_sessions!inner(coach_id)")
+    .select("player_id,status,players(full_name),class_sessions!inner(coach_id)")
     .eq("class_sessions.coach_id", coachId)
     .in("status", ["confirmed", "attended", "no_show"]);
 
   const unique = new Map<
     string,
-    { id: string; name: string; level: string; sessions: number; attended: number; noShows: number }
+    { id: string; name: string; sessions: number; attended: number; noShows: number }
   >();
   for (const row of rows ?? []) {
-    const player = row.players as unknown as { full_name: string; skill_level: string } | null;
+    const player = row.players as unknown as { full_name: string } | null;
     if (!player) continue;
     const entry = unique.get(row.player_id) ?? {
       id: row.player_id,
       name: player.full_name,
-      level: player.skill_level,
       sessions: 0,
       attended: 0,
       noShows: 0,
@@ -40,7 +40,10 @@ export default async function CoachPlayersPage() {
     unique.set(row.player_id, entry);
   }
 
-  const players = [...unique.values()].sort((a, b) => b.sessions - a.sessions);
+  const masteryMap = await getMasteryMap(supabase, [...unique.keys()]);
+  const players = [...unique.values()]
+    .map((p) => ({ ...p, mastery: masteryMap.get(p.id) ?? 0 }))
+    .sort((a, b) => b.sessions - a.sessions);
 
   return (
     <CoachShell title="Players">
@@ -67,7 +70,8 @@ export default async function CoachPlayersPage() {
                     </p>
                   </div>
                   <div className="flex items-center gap-2">
-                    <Badge>{p.level}</Badge>
+                    <span className="tnum text-sm text-fg-2">{p.mastery}%</span>
+                    <Badge>{masteryLabel(p.mastery)}</Badge>
                     <span className="text-fg-2" aria-hidden>
                       ›
                     </span>

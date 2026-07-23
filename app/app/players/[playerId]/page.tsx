@@ -5,6 +5,7 @@ import { ClientShell } from "@/components/app/ClientShell";
 import { Badge } from "@/components/ui/Badge";
 import { StudentInsights } from "@/components/app/StudentInsights";
 import { getStudentInsights } from "@/lib/student-insights";
+import { getMasteryMap, masteryLabel } from "@/lib/mastery";
 import { ACADEMY_TZ } from "@/lib/academy-time";
 
 export const metadata: Metadata = { title: "Player" };
@@ -29,7 +30,7 @@ export default async function PlayerPage({
   // Scope to the parent's own household — a miss means it's not their player.
   const { data: player } = await supabase
     .from("players")
-    .select("id,full_name,skill_level")
+    .select("id,full_name")
     .eq("id", playerId)
     .eq("client_id", user.id)
     .maybeSingle();
@@ -37,10 +38,12 @@ export default async function PlayerPage({
 
   // Bookings RLS scopes insights to this parent's own bookings; the notes RPC
   // authorises the player's parent alongside coaches.
-  const [insights, { data: notes }] = await Promise.all([
+  const [insights, { data: notes }, masteryMap] = await Promise.all([
     getStudentInsights(supabase, playerId),
     supabase.rpc("get_player_notes", { p_player: playerId }),
+    getMasteryMap(supabase, [playerId]),
   ]);
+  const mastery = masteryMap.get(playerId) ?? 0;
 
   const noteRows =
     (notes as
@@ -52,7 +55,8 @@ export default async function PlayerPage({
       <div className="mx-auto max-w-2xl space-y-8">
         <div className="flex items-center gap-3">
           <p className="font-display text-3xl">{player.full_name}</p>
-          <Badge>{player.skill_level}</Badge>
+          <Badge tone="ember">{masteryLabel(mastery)}</Badge>
+          <span className="tnum text-sm text-fg-2">{mastery}% mastery</span>
         </div>
 
         <StudentInsights data={insights} />

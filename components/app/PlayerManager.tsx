@@ -5,11 +5,13 @@ import Link from "next/link";
 import { Badge } from "@/components/ui/Badge";
 import { Input } from "@/components/ui/Input";
 import { Sheet } from "@/components/ui/Sheet";
+import { masteryLabel } from "@/lib/mastery";
 
 type PlayerRow = {
   id: string;
   name: string;
   skillLevel: string;
+  mastery: number;
   dateOfBirth: string | null;
   notes: string | null;
   createdAt: string;
@@ -194,6 +196,7 @@ export function PlayerManager({ players }: { players: PlayerRow[] }) {
                 <p className="truncate text-sm text-fg-2">{clientSubline(p)}</p>
               </div>
               <div className="flex flex-col items-end gap-1">
+                <span className="tnum text-sm text-fg-2">{p.mastery}%</span>
                 <Badge tone={LEVEL_TONE[p.skillLevel]}>{levelLabel(p.skillLevel)}</Badge>
                 {p.dateOfBirth && (
                   <span className="tnum text-xs text-fg-2">
@@ -219,9 +222,13 @@ export function PlayerManager({ players }: { players: PlayerRow[] }) {
             <div className="flex items-center gap-3">
               <Avatar row={selected} size="lg" />
               <div>
-                <Badge tone={LEVEL_TONE[selected.skillLevel]}>
-                  {levelLabel(selected.skillLevel)}
-                </Badge>
+                <div className="flex items-center gap-2">
+                  <span className="tnum text-lg font-medium">{selected.mastery}%</span>
+                  <Badge tone="ember">{masteryLabel(selected.mastery)}</Badge>
+                  <Badge tone={LEVEL_TONE[selected.skillLevel]}>
+                    {levelLabel(selected.skillLevel)}
+                  </Badge>
+                </div>
                 {selected.dateOfBirth && (
                   <p className="tnum mt-1 text-sm text-fg-2">
                     {new Date(selected.dateOfBirth).toLocaleDateString("en-GB", {

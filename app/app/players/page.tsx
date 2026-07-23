@@ -8,6 +8,7 @@ import { ClientShell } from "@/components/app/ClientShell";
 import { Badge } from "@/components/ui/Badge";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ButtonLink } from "@/components/ui/Button";
+import { getMasteryMap, masteryLabel } from "@/lib/mastery";
 
 export const metadata: Metadata = { title: "Players" };
 
@@ -16,11 +17,15 @@ export default async function PlayersPage() {
   const [{ data: players }, bookings] = await Promise.all([
     supabase
       .from("players")
-      .select("id,full_name,skill_level")
+      .select("id,full_name")
       .eq("client_id", user.id)
       .order("created_at"),
     getMyBookings(supabase, user.id),
   ]);
+  const masteryMap = await getMasteryMap(
+    supabase,
+    (players ?? []).map((p) => p.id)
+  );
 
   const now = nowMs();
   const nextByPlayer = new Map<string, string>();
@@ -54,6 +59,7 @@ export default async function PlayersPage() {
               {(players ?? []).map((p) => {
                 const next = nextByPlayer.get(p.id);
                 const attended = attendedByPlayer.get(p.id) ?? 0;
+                const mastery = masteryMap.get(p.id) ?? 0;
                 return (
                   <li key={p.id}>
                     <Link
@@ -62,7 +68,10 @@ export default async function PlayersPage() {
                     >
                       <div className="flex items-center justify-between gap-3">
                         <p className="font-display text-2xl">{p.full_name}</p>
-                        <Badge>{p.skill_level}</Badge>
+                        <div className="flex items-center gap-2">
+                          <span className="tnum text-sm text-fg-2">{mastery}%</span>
+                          <Badge tone="ember">{masteryLabel(mastery)}</Badge>
+                        </div>
                       </div>
                       <p className="mt-2 text-sm text-fg-2">
                         {next
