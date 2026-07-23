@@ -2,14 +2,15 @@ import { StudioShell } from "@/components/shells/StudioShell";
 
 // Desktop sidebar shows all sections directly. The mobile bottom bar fits 5,
 // so it shows Inbox/Schedule/Players/Coaches and a "More" tab (→ /admin/more)
-// whose hub page lists the sections that don't fit (Weekly, Venues, Billing,
-// Settings), keeping every section reachable on mobile.
+// whose hub page lists the sections that don't fit (Weekly, Skills, Venues,
+// Billing, Settings), keeping every section reachable on mobile.
 const tabs = [
   { href: "/admin", label: "Inbox", icon: "●" },
   { href: "/admin/schedule", label: "Schedule", icon: "▦" },
   { href: "/admin/weekly", label: "Weekly classes", icon: "↻" },
   { href: "/admin/players", label: "Players", icon: "◉" },
   { href: "/admin/coaches", label: "Coaches", icon: "◎" },
+  { href: "/admin/skills", label: "Skills", icon: "★" },
   { href: "/admin/venues", label: "Venues", icon: "▲" },
   { href: "/admin/billing", label: "Billing", icon: "£" },
   { href: "/admin/settings", label: "Settings", icon: "≡" },

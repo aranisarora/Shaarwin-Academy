@@ -13,6 +13,11 @@ const items = [
     hint: "Recurring classes & create a class",
   },
   {
+    href: "/admin/skills",
+    label: "Skills",
+    hint: "Skill categories & rating metrics",
+  },
+  {
     href: "/admin/venues",
     label: "Venues",
     hint: "Locations & courts",

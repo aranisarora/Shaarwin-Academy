@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { requireUser } from "@/lib/auth";
 import { effectiveCoachId } from "@/lib/coach-preview";
 import { CoachShell } from "@/components/app/CoachShell";
@@ -46,6 +47,20 @@ export default async function CoachMorePage() {
         />
         <AvailabilityEditor windows={windows ?? []} timeOff={timeOff ?? []} />
         <WhatsAppAssistantCard />
+        <Link
+          href="/coach/skills"
+          className="flex items-center justify-between gap-3 rounded-[12px] border border-line bg-surface-2 px-5 py-4 transition-colors hover:text-ember"
+        >
+          <span>
+            <span className="block font-medium">Skills</span>
+            <span className="block text-sm text-fg-2">
+              Rating metrics for assessments
+            </span>
+          </span>
+          <span aria-hidden className="text-fg-2">
+            →
+          </span>
+        </Link>
         <InstallAppCard />
       </div>
     </CoachShell>
