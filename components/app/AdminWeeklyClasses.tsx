@@ -7,13 +7,12 @@
 
 import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
-import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Select } from "@/components/ui/Select";
 import { topUpSessions } from "@/app/admin/schedule/actions";
 import { AdminClassSheet } from "./AdminClassSheet";
 import { AdminAddSheet } from "./AdminAddSheet";
-import { time12h } from "./ClassFields";
+import { WeeklyClassCard } from "./ClassCard";
 import {
   WEEKDAY_NAME,
   WEEKDAYS,
@@ -26,31 +25,27 @@ import {
 
 const WEEKDAY_ORDER = WEEKDAYS.map(([code]) => code) as string[];
 
-/** "18:30" + 60 → "7:30 pm" — the class's finish time for the day/time line. */
-function endTime12h(time: string, durationMinutes: number): string {
-  const [h, m] = time.split(":").map(Number);
-  if (!Number.isFinite(h)) return time;
-  const total = h * 60 + (m || 0) + durationMinutes;
-  const eh = Math.floor(total / 60) % 24;
-  const em = total % 60;
-  return time12h(`${eh}:${String(em).padStart(2, "0")}`);
-}
-
 export function AdminWeeklyClasses({
   classes,
   coaches,
   venues,
   clients,
   invites,
+  openClassId = null,
 }: {
   classes: ClassRow[];
   coaches: Coach[];
   venues: Venue[];
   clients: ClientOption[];
   invites: InviteOption[];
+  // Deep-link from the Schedule tab ("edit the weekly class") — open this class
+  // straight away so the two tabs feel like one thing.
+  openClassId?: string | null;
 }) {
   const router = useRouter();
-  const [editingClass, setEditingClass] = useState<ClassRow | null>(null);
+  const [editingClass, setEditingClass] = useState<ClassRow | null>(
+    () => classes.find((c) => c.id === openClassId) ?? null
+  );
   const [creating, setCreating] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
@@ -244,29 +239,16 @@ export function AdminWeeklyClasses({
             {group.days.map((day) => (
               <div key={day.weekday} className="px-4 py-3">
                 <p className="label mb-1.5">{WEEKDAY_NAME[day.weekday] ?? "One-off"}</p>
-                <div className="-mx-2">
+                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                   {day.rows.map((c) => (
-                    <button
+                    <WeeklyClassCard
                       key={c.id}
+                      cls={c}
                       onClick={() => {
                         setMessage(null);
                         setEditingClass(c);
                       }}
-                      className="flex w-full items-center justify-between gap-3 rounded-[10px] px-2 py-2 text-left hover:bg-surface"
-                    >
-                      <span>
-                        <span className="block font-medium">{c.coachName ?? "No coach yet"}</span>
-                        <span className="block text-sm text-fg-2">
-                          {time12h(c.time)} – {endTime12h(c.time, c.duration)}
-                        </span>
-                      </span>
-                      <span className="flex shrink-0 flex-col items-end gap-1.5">
-                        {c.isSchool && <Badge>School</Badge>}
-                        {!c.active && (
-                          <Badge tone="err">{c.endsOn ? "ended — tap to restore" : "paused"}</Badge>
-                        )}
-                      </span>
-                    </button>
+                    />
                   ))}
                 </div>
               </div>

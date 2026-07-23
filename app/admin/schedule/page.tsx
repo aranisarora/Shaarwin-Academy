@@ -21,10 +21,10 @@ export const metadata: Metadata = { title: "Schedule" };
 export default async function AdminCalendarPage({
   searchParams,
 }: {
-  searchParams: Promise<{ date?: string; week?: string }>;
+  searchParams: Promise<{ date?: string; week?: string; session?: string }>;
 }) {
   const { supabase } = await requireUser("/admin/schedule");
-  const { date, week } = await searchParams;
+  const { date, week, session: openSessionId } = await searchParams;
 
   // The schedule shows a 7-day window starting on an anchor date. Prefer an
   // explicit ?date=, fall back to a legacy ?week= offset (old links / stored
@@ -218,6 +218,7 @@ export default async function AdminCalendarPage({
       classVenueId: cls.venue_id,
       classWeekday: cls.recurrence_rule?.match(/BYDAY=(..)/)?.[1] ?? "MO",
       classTime: classTime(cls.id, s.starts_at),
+      classRecurring: !!cls.recurrence_rule,
     };
   });
 
@@ -265,6 +266,7 @@ export default async function AdminCalendarPage({
         venues={venues ?? []}
         clients={clientRows}
         invites={inviteRows}
+        openSessionId={openSessionId ?? null}
       />
     </AdminShell>
   );

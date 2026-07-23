@@ -9,8 +9,13 @@ export const metadata: Metadata = { title: "Weekly classes" };
 
 // The repeating classes behind the schedule — create, edit, pause and end
 // them here. The Schedule tab shows the sessions they generate.
-export default async function AdminWeeklyPage() {
+export default async function AdminWeeklyPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ class?: string }>;
+}) {
   const { supabase } = await requireUser("/admin/weekly");
+  const { class: openClassId } = await searchParams;
 
   const [{ data: classes }, { data: coaches }, { data: venues }, { data: clients }, { data: invites }] =
     await Promise.all([
@@ -45,20 +50,50 @@ export default async function AdminWeeklyPage() {
   const { data: nextSessions } = classIds.length
     ? await supabase
         .from("class_sessions")
-        .select("class_id,starts_at,coaches(profiles!inner(full_name))")
+        .select("id,class_id,starts_at,coach_id,coaches(profiles!inner(full_name))")
         .in("class_id", classIds)
         .eq("status", "scheduled")
         .gt("starts_at", new Date().toISOString())
         .order("starts_at")
-    : { data: [] as { class_id: string; starts_at: string; coaches: unknown }[] };
+    : {
+        data: [] as {
+          id: string;
+          class_id: string;
+          starts_at: string;
+          coach_id: string | null;
+          coaches: unknown;
+        }[],
+      };
 
-  const nextByClass = new Map<string, { starts_at: string; coachName: string | null }>();
+  const nextByClass = new Map<
+    string,
+    { sessionId: string; starts_at: string; coachName: string | null; coachId: string | null }
+  >();
   for (const s of nextSessions ?? []) {
     if (nextByClass.has(s.class_id)) continue;
     const coachName =
       (s.coaches as unknown as { profiles: { full_name: string } } | null)?.profiles?.full_name ??
       null;
-    nextByClass.set(s.class_id, { starts_at: s.starts_at, coachName });
+    nextByClass.set(s.class_id, {
+      sessionId: s.id,
+      starts_at: s.starts_at,
+      coachName,
+      coachId: s.coach_id,
+    });
+  }
+
+  // How full each class's next session is — one grouped count over the next
+  // session of every class, so the card can show "6 of 10 booked".
+  const nextSessionIds = [...nextByClass.values()].map((n) => n.sessionId);
+  const bookedBySession = new Map<string, number>();
+  if (nextSessionIds.length) {
+    const { data: bookings } = await supabase
+      .from("bookings")
+      .select("session_id")
+      .in("session_id", nextSessionIds)
+      .in("status", ["confirmed", "attended"]);
+    for (const b of bookings ?? [])
+      bookedBySession.set(b.session_id, (bookedBySession.get(b.session_id) ?? 0) + 1);
   }
 
   const classRows: ClassRow[] = (classes ?? []).map((c) => {
@@ -78,6 +113,10 @@ export default async function AdminWeeklyPage() {
       venueName: (c.venues as unknown as { name: string } | null)?.name ?? null,
       isSchool: c.is_school,
       coachName: next?.coachName ?? null,
+      bookedCount: next ? (bookedBySession.get(next.sessionId) ?? 0) : 0,
+      nextSessionId: next?.sessionId ?? null,
+      nextSessionStart: next?.starts_at ?? null,
+      nextCoachId: next?.coachId ?? null,
     };
   });
 
@@ -109,6 +148,7 @@ export default async function AdminWeeklyPage() {
         venues={venues ?? []}
         clients={clientRows}
         invites={inviteRows}
+        openClassId={openClassId ?? null}
       />
     </AdminShell>
   );

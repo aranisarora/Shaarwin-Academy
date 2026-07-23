@@ -4,6 +4,7 @@
 // everything; on save a Google Calendar-style scope step asks whether the
 // change is for "just this session" or "every week" (the whole class).
 
+import Link from "next/link";
 import { useEffect, useState, useTransition } from "react";
 import { Sheet } from "@/components/ui/Sheet";
 import { Badge } from "@/components/ui/Badge";
@@ -34,6 +35,7 @@ import {
   wallDate,
   wallTime,
   weekdayOfDate,
+  WEEKDAY_NAME,
   type ClientOption,
   type Coach,
   type SessionRow,
@@ -364,6 +366,15 @@ export function AdminSessionSheet({
               >
                 View this coach&apos;s app →
               </button>
+            )}
+            {!session.isPrivate && session.classRecurring && (
+              <Link
+                href={`/admin/weekly?class=${session.classId}`}
+                className="mt-3 block text-sm text-fg-2 hover:text-ember hover:underline"
+              >
+                This repeats every {WEEKDAY_NAME[session.classWeekday] ?? "week"} — edit the
+                whole class →
+              </Link>
             )}
           </div>
 

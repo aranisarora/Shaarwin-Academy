@@ -32,6 +32,7 @@ export type SessionRow = {
   classVenueId: string | null;
   classWeekday: string; // MO..SU from the recurrence rule
   classTime: string; // HH:MM canonical slot (next session's wall time)
+  classRecurring: boolean; // has a recurrence rule — i.e. edited in Weekly classes
 };
 
 export type ClassRow = {
@@ -49,6 +50,15 @@ export type ClassRow = {
   venueName: string | null;
   isSchool: boolean; // held at a school — not bookable online
   coachName: string | null; // coach on the next scheduled session, if any
+  // How full the next upcoming session is — lets the founder scan for room at a
+  // glance, like reading his WhatsApp groups. bookedCount is players confirmed
+  // on that next session; capacity is the class default.
+  bookedCount: number;
+  // The next upcoming session — drives the class sheet's "Regulars" list, the
+  // "Open this week's session →" cross-link, and the view-as-coach shortcut.
+  nextSessionId: string | null;
+  nextSessionStart: string | null; // ISO
+  nextCoachId: string | null;
 };
 
 export type Coach = { id: string; name: string };

@@ -7,15 +7,13 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Select } from "@/components/ui/Select";
 import { AdminSessionSheet } from "./AdminSessionSheet";
 import { AdminAddSheet } from "./AdminAddSheet";
+import { SessionCard } from "./ClassCard";
 import {
-  clockTime,
   dayLabel,
-  fmtWhen,
   sessionTimeStatus,
   wallDate,
   type ClientOption,
@@ -50,12 +48,6 @@ function groupByDay(rows: SessionRow[], today: string): DayGroup[] {
   return groups;
 }
 
-/** "Private · Asha Rao" / "Group class" / "School class" — the card's third line. */
-function classTypeLine(s: SessionRow): string {
-  if (s.isPrivate) return `Private · ${s.playerName ?? "no client yet"}`;
-  return s.isSchool ? "School class" : "Group class";
-}
-
 export function AdminCalendar({
   sessions,
   coaches,
@@ -63,6 +55,7 @@ export function AdminCalendar({
   clients,
   invites,
   onRefresh,
+  openSessionId = null,
 }: {
   sessions: SessionRow[];
   coaches: Coach[];
@@ -70,8 +63,12 @@ export function AdminCalendar({
   clients: ClientOption[];
   invites: InviteOption[];
   onRefresh?: () => void;
+  // Deep-link from the Weekly classes tab — open this session on first render.
+  openSessionId?: string | null;
 }) {
-  const [selected, setSelected] = useState<SessionRow | null>(null);
+  const [selected, setSelected] = useState<SessionRow | null>(
+    () => sessions.find((s) => s.id === openSessionId) ?? null
+  );
   const [adding, setAdding] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -143,50 +140,19 @@ export function AdminCalendar({
     ? []
     : lanes.byCoach.filter(({ rows }) => rows.length === 0).map(({ coach }) => coach);
 
-  // Card anatomy, most important first: venue name, then start–end time, then
-  // the class type (private cards name the client). Colour codes status: a
-  // finished session is greyed out, one happening right now carries an ember
-  // ring and a live badge, and a session with no coach keeps its red border.
-  // Under a day header the card shows just the time; the ungrouped "no coach"
-  // box carries the full weekday + date instead.
-  const Block = ({ session, showDay = false }: { session: SessionRow; showDay?: boolean }) => {
-    const status = sessionTimeStatus(session.starts_at, session.ends_at);
-    const tone =
-      status === "completed"
-        ? "border-line bg-surface-2 opacity-55"
-        : !session.coachId
-          ? "border-err bg-surface-2"
-          : status === "in_progress"
-            ? "border-ember bg-surface-2 shadow-[0_0_0_1px_var(--ember)]"
-            : session.isPrivate
-              ? "border-line border-l-[3px] border-l-ember bg-surface-2"
-              : "border-line bg-surface-2";
-    return (
-      <button
-        onClick={() => {
-          setMessage(null);
-          setSelected(session);
-        }}
-        className={`w-full rounded-[8px] border px-3 py-2 text-left text-sm hover:border-ember ${tone}`}
-      >
-        <p className="font-semibold">{session.venueName ?? "Location TBC"}</p>
-        <p className="tnum text-fg-2">
-          {showDay ? fmtWhen(session.starts_at) : clockTime(session.starts_at)} –{" "}
-          {clockTime(session.ends_at)}
-        </p>
-        <p className="text-xs text-fg-2">{classTypeLine(session)}</p>
-        {(status !== "upcoming" || (session.coachId && session.coachArrivedAt)) && (
-          <span className="mt-1.5 inline-flex flex-wrap gap-1.5">
-            {status === "in_progress" && <Badge tone="ember">● In progress</Badge>}
-            {status === "completed" && <Badge>✓ Completed</Badge>}
-            {status !== "completed" && session.coachId && session.coachArrivedAt && (
-              <Badge tone="ok">✓ Arrived {clockTime(session.coachArrivedAt)}</Badge>
-            )}
-          </span>
-        )}
-      </button>
-    );
-  };
+  // Card look + border language live in the shared ClassCard; here we only wire
+  // the tap. Under a day header the card shows just the time; the ungrouped
+  // "no coach" box carries the full weekday + date via showDay.
+  const Block = ({ session, showDay = false }: { session: SessionRow; showDay?: boolean }) => (
+    <SessionCard
+      session={session}
+      showDay={showDay}
+      onClick={() => {
+        setMessage(null);
+        setSelected(session);
+      }}
+    />
+  );
 
   const DayGroups = ({ rows }: { rows: SessionRow[] }) => (
     <div className="space-y-3">

@@ -436,6 +436,7 @@ export async function fetchWeekSessions(
       classVenueId: cls.venue_id,
       classWeekday: cls.recurrence_rule?.match(/BYDAY=(..)/)?.[1] ?? "MO",
       classTime: classTime(cls.id, s.starts_at),
+      classRecurring: !!cls.recurrence_rule,
     };
   });
 

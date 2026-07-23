@@ -4,8 +4,10 @@
 // here applies to every week of the class (the calendar's session sheet is
 // where one-week-only changes happen).
 
-import { useState, useTransition } from "react";
+import Link from "next/link";
+import { useEffect, useState, useTransition } from "react";
 import { Sheet } from "@/components/ui/Sheet";
+import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Select } from "@/components/ui/Select";
 import { Spinner } from "@/components/ui/Spinner";
@@ -13,13 +15,26 @@ import { setClassActive } from "@/app/admin/actions";
 import {
   deleteGroupClass,
   endGroupClass,
+  getSessionRoster,
   reassignClassCoach,
   restoreGroupClass,
   updateGroupClass,
+  type RosterEntry,
 } from "@/app/admin/schedule/actions";
-import { ClassDetailFields, generateClassTitle, type ClassFormState } from "./ClassFields";
+import { viewAsCoach } from "@/app/coach/preview-actions";
+import { AddressDisplay } from "@/components/app/AddressDisplay";
+import { fromDetails } from "@/lib/address";
+import { ClassDetailFields, generateClassTitle, time12h, type ClassFormState } from "./ClassFields";
 import { TimeSelect12h } from "./TimeSelect12h";
-import { WEEKDAYS, type ClassRow, type Coach, type Venue } from "./admin-calendar-types";
+import {
+  fmtWhen,
+  wallDate,
+  WEEKDAY_NAME,
+  WEEKDAYS,
+  type ClassRow,
+  type Coach,
+  type Venue,
+} from "./admin-calendar-types";
 
 export function AdminClassSheet({
   cls,
@@ -59,6 +74,35 @@ export function AdminClassSheet({
 
   const ended = !cls.active && !!cls.endsOn;
 
+  // The founder thinks "who's in that class" — so the weekly panel shows the
+  // regulars booked on the next upcoming session (read-only; attendance is a
+  // per-session job that happens in the Schedule tab).
+  const [roster, setRoster] = useState<RosterEntry[] | null>(() =>
+    cls.nextSessionId ? null : []
+  );
+  useEffect(() => {
+    if (!cls.nextSessionId) return;
+    let alive = true;
+    getSessionRoster(cls.nextSessionId).then((r) => {
+      if (alive) setRoster(r);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [cls.nextSessionId]);
+
+  // Structured address for the venue this class runs at — same header the
+  // Schedule session sheet shows, so the two panels read the same.
+  const venue = venues.find((v) => v.id === cls.venueId) ?? null;
+  const address = venue
+    ? fromDetails(venue.address_details, {
+        address: venue.address,
+        postcode: venue.postcode,
+        lat: venue.lat,
+        lng: venue.lng,
+      })
+    : null;
+
   function applyCoach() {
     if (!coachTarget) return;
     startTransition(async () => {
@@ -88,6 +132,70 @@ export function AdminClassSheet({
   return (
     <Sheet open onClose={onClose} title="Edit class">
       <div className="space-y-4">
+        {/* ── Class header: where, when, how full — matches the session sheet ── */}
+        <div>
+          <p className="font-semibold">{cls.venueName ?? "No venue"}</p>
+          <p className="mt-0.5 text-fg-2">
+            Every {WEEKDAY_NAME[cls.weekday] ?? cls.weekday}, {time12h(cls.time)} ·{" "}
+            {cls.bookedCount} of {cls.capacity} booked
+          </p>
+          {address && (
+            <AddressDisplay address={address} audience="staff" className="mt-2" />
+          )}
+          <div className="mt-2 flex flex-wrap gap-2">
+            {cls.isSchool && <Badge tone="ember">School class</Badge>}
+            {!cls.active && (
+              <Badge tone="neutral">{cls.endsOn ? "Ended" : "Booking paused"}</Badge>
+            )}
+          </div>
+          {cls.nextSessionId && cls.nextSessionStart && (
+            <Link
+              href={`/admin/schedule?date=${wallDate(cls.nextSessionStart)}&session=${cls.nextSessionId}`}
+              className="mt-3 block text-sm text-ember hover:underline"
+            >
+              Open this week&apos;s session ({fmtWhen(cls.nextSessionStart)}) →
+            </Link>
+          )}
+          {cls.nextCoachId && (
+            <button
+              type="button"
+              onClick={() =>
+                startTransition(async () => {
+                  const ok = await viewAsCoach(cls.nextCoachId as string);
+                  if (ok) window.location.assign("/coach");
+                  else setMessage("Preview unavailable — only founders can view as coach.");
+                })
+              }
+              disabled={pending}
+              className="mt-2 block text-sm text-ember hover:underline disabled:opacity-50"
+            >
+              View this coach&apos;s app →
+            </button>
+          )}
+        </div>
+
+        {/* ── Regulars: who's booked on the next session (read-only) ── */}
+        <div className="space-y-2 rounded-[12px] border border-line p-4">
+          <p className="label">Regulars</p>
+          {roster === null ? (
+            <div className="flex justify-center py-2">
+              <Spinner />
+            </div>
+          ) : roster.length === 0 ? (
+            <p className="text-sm text-fg-2">
+              Nobody booked on the next session yet. Mark attendance from the Schedule tab.
+            </p>
+          ) : (
+            <ul className="space-y-1.5">
+              {roster.map((p) => (
+                <li key={p.id} className="text-sm">
+                  {p.name}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
         {ended && (
           <div className="space-y-3 rounded-[12px] border border-line bg-surface-2 p-4">
             <p className="text-sm text-fg-2">

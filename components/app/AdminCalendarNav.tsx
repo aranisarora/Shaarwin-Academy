@@ -25,6 +25,7 @@ export function AdminCalendarNav({
   venues,
   clients,
   invites,
+  openSessionId = null,
 }: {
   // The 7-day window starts on `initialAnchor` (a "YYYY-MM-DD" academy wall
   // date); `today` is the academy date at load, used to reset and to flag the
@@ -38,6 +39,8 @@ export function AdminCalendarNav({
   venues: Venue[];
   clients: ClientOption[];
   invites: InviteOption[];
+  // Deep-link from the Weekly classes tab ("Open this week's session →").
+  openSessionId?: string | null;
 }) {
   const [anchor, setAnchor] = useState(initialAnchor);
   const [sessions, setSessions] = useState(initialSessions);
@@ -116,6 +119,7 @@ export function AdminCalendarNav({
         clients={clients}
         invites={invites}
         onRefresh={refreshSessions}
+        openSessionId={openSessionId}
       />
     </>
   );
