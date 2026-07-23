@@ -15,7 +15,7 @@ export default async function CoachClientPage({
   params: Promise<{ playerId: string }>;
 }) {
   const { playerId } = await params;
-  const { supabase, profile } = await requireUser(`/coach/clients/${playerId}`);
+  const { supabase, profile } = await requireUser(`/coach/players/${playerId}`);
 
   // RLS limits `players` to the coach's own roster (founder sees all), so a miss
   // here means the coach doesn't teach this player.

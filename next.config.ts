@@ -25,6 +25,17 @@ const nextConfig: NextConfig = {
         destination: "https://sharwinacademy.com/:path*",
         permanent: true,
       },
+      {
+        // Coach "Clients" was renamed to "Players".
+        source: "/coach/clients/:path*",
+        destination: "/coach/players/:path*",
+        permanent: true,
+      },
+      {
+        source: "/coach/clients",
+        destination: "/coach/players",
+        permanent: true,
+      },
     ];
   },
 };

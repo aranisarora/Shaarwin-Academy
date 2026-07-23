@@ -6,10 +6,10 @@ import { CoachShell } from "@/components/app/CoachShell";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Badge } from "@/components/ui/Badge";
 
-export const metadata: Metadata = { title: "Clients" };
+export const metadata: Metadata = { title: "Players" };
 
-export default async function CoachClientsPage() {
-  const { supabase, user } = await requireUser("/coach/clients");
+export default async function CoachPlayersPage() {
+  const { supabase, user } = await requireUser("/coach/players");
   const coachId = await effectiveCoachId(user.id);
 
   // Players the coach actually coaches — via bookings on own sessions (RLS-safe).
@@ -43,7 +43,7 @@ export default async function CoachClientsPage() {
   const players = [...unique.values()].sort((a, b) => b.sessions - a.sessions);
 
   return (
-    <CoachShell title="Clients">
+    <CoachShell title="Players">
       <div className="mx-auto max-w-2xl">
         {players.length === 0 ? (
           <EmptyState
@@ -55,7 +55,7 @@ export default async function CoachClientsPage() {
             {players.map((p) => (
               <li key={p.id}>
                 <Link
-                  href={`/coach/clients/${p.id}`}
+                  href={`/coach/players/${p.id}`}
                   className="group flex items-center justify-between px-4 py-3 transition-colors"
                 >
                   <div>

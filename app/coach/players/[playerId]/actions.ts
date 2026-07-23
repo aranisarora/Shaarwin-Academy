@@ -26,7 +26,7 @@ export async function addStudentNote(
   });
   if (error) return { ok: false, error: "Couldn’t save the note." };
 
-  revalidatePath(`/coach/clients/${playerId}`);
+  revalidatePath(`/coach/players/${playerId}`);
   revalidatePath(`/admin/players/${playerId}`);
   return { ok: true };
 }
@@ -45,7 +45,7 @@ export async function deleteStudentNote(
   const { error } = await supabase.from("student_notes").delete().eq("id", noteId);
   if (error) return { ok: false, error: "Couldn’t delete the note." };
 
-  revalidatePath(`/coach/clients/${playerId}`);
+  revalidatePath(`/coach/players/${playerId}`);
   revalidatePath(`/admin/players/${playerId}`);
   return { ok: true };
 }

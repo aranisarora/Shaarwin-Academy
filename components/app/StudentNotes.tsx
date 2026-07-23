@@ -2,7 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/Button";
-import { addStudentNote } from "@/app/coach/clients/[playerId]/actions";
+import { addStudentNote } from "@/app/coach/players/[playerId]/actions";
 import { ACADEMY_TZ } from "@/lib/academy-time";
 
 type Note = {
