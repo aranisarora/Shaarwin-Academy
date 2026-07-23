@@ -4,6 +4,7 @@ import { revalidatePath, revalidateTag } from "next/cache";
 import { requireFounder } from "@/lib/founder";
 import { academyWallToUtc, utcToAcademyWall } from "@/lib/academy-time";
 import { fromDetails, type StructuredAddress } from "@/lib/address";
+import { makeVenueResolver } from "@/lib/venue-display";
 import type { SessionRow } from "@/components/app/admin-calendar-types";
 import {
   assignPrivateSessionClientCore,
@@ -348,15 +349,22 @@ export async function fetchWeekSessions(
   const from = academyWallToUtc(anchor, "00:00");
   const to = new Date(from.getTime() + 7 * 86400000);
 
-  const { data: rawSessions } = await supabase
-    .from("class_sessions")
-    .select(
-      "id,starts_at,ends_at,coach_id,coach_arrived_at,capacity_override,classes!inner(id,title,description,skill_level,capacity,duration_minutes,recurrence_rule,active,venue_id,class_type,is_school,venues(name,address,postcode,lat,lng,address_details),private_class_details(client_id,address,postcode,lat,lng,access_notes,address_details))"
-    )
-    .in("status", ["scheduled", "completed"])
-    .gte("starts_at", from.toISOString())
-    .lt("starts_at", to.toISOString())
-    .order("starts_at");
+  const [{ data: rawSessions }, { data: venues }] = await Promise.all([
+    supabase
+      .from("class_sessions")
+      .select(
+        "id,starts_at,ends_at,coach_id,coach_arrived_at,capacity_override,classes!inner(id,title,description,skill_level,capacity,duration_minutes,recurrence_rule,active,venue_id,class_type,is_school,venues(name,address,postcode,lat,lng,address_details),private_class_details(client_id,address,postcode,lat,lng,access_notes,address_details))"
+      )
+      .in("status", ["scheduled", "completed"])
+      .gte("starts_at", from.toISOString())
+      .lt("starts_at", to.toISOString())
+      .order("starts_at"),
+    supabase.from("venues").select("name,address,lat,lng"),
+  ]);
+
+  // Same venue-name resolution as the initial page load, so private cards show
+  // "La Palazzo" here too rather than a raw address after client-side nav.
+  const resolveVenueName = makeVenueResolver(venues ?? []);
 
   const privateClientIds = [
     ...new Set(
@@ -403,13 +411,7 @@ export async function fetchWeekSessions(
           })
         : null;
 
-    const privLocationName = priv
-      ? (priv.address_details?.name ??
-          (priv.address.includes(",")
-            ? priv.address.split(",")[0].trim()
-            : priv.address) ??
-          null)
-      : null;
+    const privLocationName = priv ? resolveVenueName(priv) : null;
 
     return {
       id: s.id,

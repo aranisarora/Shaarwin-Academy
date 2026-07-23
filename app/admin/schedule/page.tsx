@@ -14,6 +14,7 @@ import type {
   SessionRow,
 } from "@/components/app/admin-calendar-types";
 import { fromDetails, type StructuredAddress } from "@/lib/address";
+import { makeVenueResolver } from "@/lib/venue-display";
 
 export const metadata: Metadata = { title: "Schedule" };
 
@@ -168,22 +169,9 @@ export default async function AdminCalendarPage({
   for (const p of privProfiles ?? []) clientNameMap.set(p.id, p.full_name);
 
   // Private classes store a raw client address, but most point at a known
-  // venue — resolve to the venue's title (exact address match, else nearest
-  // venue within ~50m) so cards show "La Palazzo" rather than "47/1, Bengaluru…".
-  const venueByAddress = new Map<string, string>();
-  for (const v of venues ?? []) {
-    if (v.address) venueByAddress.set(v.address.trim(), v.name);
-  }
-  const venueNameNear = (lat: number | null, lng: number | null) => {
-    if (lat === null || lng === null) return null;
-    let best: { name: string; d: number } | null = null;
-    for (const v of venues ?? []) {
-      if (v.lat === null || v.lng === null) continue;
-      const d = Math.abs(v.lat - lat) + Math.abs(v.lng - lng);
-      if (d < 0.001 && (!best || d < best.d)) best = { name: v.name, d };
-    }
-    return best?.name ?? null;
-  };
+  // venue — resolve to the venue's title so cards show "La Palazzo" rather than
+  // "47/1, Bengaluru…". Shared with the session sheet + week refetch.
+  const resolveVenueName = makeVenueResolver(venues ?? []);
 
   const rows: SessionRow[] = (sessions ?? []).map((s) => {
     const cls = s.classes as unknown as ClsShape;
@@ -205,15 +193,7 @@ export default async function AdminCalendarPage({
           })
         : null;
 
-    const privLocationName = priv
-      ? (venueByAddress.get(priv.address?.trim() ?? "") ??
-          venueNameNear(priv.lat, priv.lng) ??
-          priv.address_details?.name ??
-          (priv.address.includes(",")
-            ? priv.address.split(",")[0].trim()
-            : priv.address) ??
-          null)
-      : null;
+    const privLocationName = priv ? resolveVenueName(priv) : null;
 
     return {
       id: s.id,
