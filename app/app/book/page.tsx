@@ -29,7 +29,7 @@ export default async function BookPage({
   ]);
 
   return (
-    <ClientShell title="Join group">
+    <ClientShell title="Book group class">
       <RealtimeRefresh tables={["bookings", "class_sessions"]} />
       {onboarding === "1" && <OnboardingBanner />}
       <BookBrowser

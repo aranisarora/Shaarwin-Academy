@@ -38,7 +38,7 @@ export default async function PrivateBookingPage({
     : null;
 
   return (
-    <ClientShell title="Private">
+    <ClientShell title="Book private class">
       {onboarding === "1" && <OnboardingBanner />}
       <PrivateWizard
         players={playersRes.data ?? []}

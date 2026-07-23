@@ -102,10 +102,10 @@ export default async function AppHomePage() {
 
         <div className="grid grid-cols-2 gap-3">
           <ButtonLink href="/app/book" size="lg" className="w-full">
-            Join group
+            Book group class
           </ButtonLink>
           <ButtonLink href="/app/book/private" size="lg" className="w-full">
-            Book private
+            Book private class
           </ButtonLink>
         </div>
 

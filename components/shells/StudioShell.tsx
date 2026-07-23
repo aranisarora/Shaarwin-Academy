@@ -32,14 +32,16 @@ export function StudioShell({
         </Link>
         <nav aria-label="Primary" className="flex flex-1 flex-col gap-1 px-3">
           {tabs.map((t) => (
-            <Link
-              key={t.href}
-              href={t.href}
-              className="flex min-h-11 items-center gap-3 rounded-[8px] px-3 text-sm font-medium text-fg-2 transition-colors hover:bg-surface hover:text-fg"
-            >
-              <span aria-hidden>{t.icon}</span>
-              {t.label}
-            </Link>
+            <div key={t.href}>
+              <Link
+                href={t.href}
+                className="flex min-h-11 items-center gap-3 rounded-[8px] px-3 text-sm font-medium text-fg-2 transition-colors hover:bg-surface hover:text-fg"
+              >
+                <span aria-hidden>{t.icon}</span>
+                {t.label}
+              </Link>
+              {t.railChildren}
+            </div>
           ))}
         </nav>
       </aside>

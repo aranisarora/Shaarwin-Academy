@@ -6,7 +6,9 @@ import { usePathname } from "next/navigation";
 export type TabItem = {
   href: string;
   label: string;
-  icon: React.ReactNode;
+  icon?: React.ReactNode;
+  /** Nested shortcuts rendered indented under this tab in the desktop rail only. */
+  railChildren?: React.ReactNode;
 };
 
 /** Fixed bottom tab bar — max 5 items, 44px+ targets, safe-area inset. */
