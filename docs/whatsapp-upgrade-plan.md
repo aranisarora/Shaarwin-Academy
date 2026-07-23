@@ -1,7 +1,10 @@
 # WhatsApp upgrade — implementation plan
 
-Status: planned, not implemented. Execute **after** `docs/skills-rework-plan.md`.
-This document is decision-complete: follow it as written. Written against commit `bad4852` on `main`.
+Status: **implemented** (code + DB). Remaining is the manual Twilio gate — run
+`npm run wa:provision`, wait for Meta approval, then set the `TWILIO_WA_*_SID`
+secrets on the `notify` edge function (see "Manual steps" below). Until then every
+message sends as text and typed replies still work. Operational reference:
+`docs/whatsapp-interactive.md`. Written against commit `bad4852` on `main`.
 
 ## Read first (non-negotiable)
 

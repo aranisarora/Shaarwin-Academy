@@ -30,12 +30,59 @@ const TWILIO_TEMPLATE_SID = Deno.env.get("TWILIO_WA_TEMPLATE_SID");
 // docs/whatsapp-interactive.md.
 const TWILIO_WA_COACH_REMINDER_SID = Deno.env.get("TWILIO_WA_COACH_REMINDER_SID");
 const TWILIO_WA_COACH_AFTERCLASS_SID = Deno.env.get("TWILIO_WA_COACH_AFTERCLASS_SID");
+// Client + coach + founder templates added in whatsapp-upgrade-plan Part 3. All
+// optional: until each SID is set the matching notification degrades to plain
+// text (and, for the client button flows, typed replies still reach the agent).
+const TWILIO_WA_CLIENT_REMINDER_SID = Deno.env.get("TWILIO_WA_CLIENT_REMINDER_SID");
+const TWILIO_WA_CLIENT_WAITLIST_SID = Deno.env.get("TWILIO_WA_CLIENT_WAITLIST_SID");
+const TWILIO_WA_CLIENT_PAYMENT_SID = Deno.env.get("TWILIO_WA_CLIENT_PAYMENT_SID");
+const TWILIO_WA_CLIENT_BOOKED_SID = Deno.env.get("TWILIO_WA_CLIENT_BOOKED_SID");
+const TWILIO_WA_COACH_PRIVATE_SID = Deno.env.get("TWILIO_WA_COACH_PRIVATE_SID");
+const TWILIO_WA_FOUNDER_DIGEST_SID = Deno.env.get("TWILIO_WA_FOUNDER_DIGEST_SID");
 const APP_URL = Deno.env.get("APP_URL") ?? "https://sharwinacademy.com";
 const WINDOW_MS = 24 * 60 * 60 * 1000;
 const IST = "Asia/Kolkata";
 
 // Types that ignore user prefs (always deliver).
 const TRANSACTIONAL = new Set(["payment_failed", "session_cancelled"]);
+
+// Founder ops-feed types that live in-app only (/admin). We never deliver these
+// over WhatsApp/email — the row is claimed (flipped to sent) and left for the
+// dashboard to render. The founder's WhatsApp is escalations + the daily digest
+// only. (whatsapp-upgrade-plan Part 1.)
+const FEED_ONLY = new Set([
+  "ops_booking",
+  "ops_cancellation",
+  "ops_attendance",
+  "ops_payment",
+  "ops_membership",
+  "ops_new_client",
+  "ops_new_coach",
+  "ops_player_added",
+  "ops_wa_linked",
+  "ops_credit_used",
+  "ops_coach_change",
+]);
+
+// Quiet hours: these non-time-critical types, when they come due inside IST
+// [21:30, 08:00), are pushed to the next 08:00 IST instead of pinging someone
+// overnight. Time-bound types (reminders, waitlist, arrivals, escalations) are
+// deliberately absent so they still fire. Kept separate from TRANSACTIONAL:
+// payment_failed bypasses *prefs* but is still deferred (nobody fixes a card at
+// 2am). (whatsapp-upgrade-plan Part 7.)
+const DEFERRABLE = new Set([
+  "booking_confirmed",
+  "booking_rescheduled",
+  "coach_assigned",
+  "coach_changed",
+  "role_changed",
+  "private_series_ended",
+  "private_minutes_low",
+  "payment_failed",
+  "ops_daily_digest",
+  "time_off_requested",
+  "time_off_decision",
+]);
 
 Deno.serve(async () => {
   const { data: due } = await supabase
@@ -57,14 +104,30 @@ Deno.serve(async () => {
   for (const row of rows) {
     const dedupeKey = `${row.user_id}:${row.type}:${row.data?.booking_id ?? row.data?.session_id ?? row.id}`;
     if (seen.has(dedupeKey)) {
-      await supabase
-        .from("notifications")
-        .update({ status: "sent", sent_at: new Date().toISOString() })
-        .eq("id", row.id)
-        .eq("status", "pending");
+      await markSent(row.id);
       continue;
     }
     seen.add(dedupeKey);
+
+    // Feed-only ops rows never leave the DB: claim and move on so the founder's
+    // WhatsApp stays quiet while /admin still renders them. (Part 1.)
+    if (FEED_ONLY.has(row.type)) {
+      await markSent(row.id);
+      continue;
+    }
+
+    // Quiet hours: defer non-urgent types that come due overnight. (Part 7.)
+    if (DEFERRABLE.has(row.type)) {
+      const deferTo = quietHoursDefer();
+      if (deferTo) {
+        await supabase
+          .from("notifications")
+          .update({ scheduled_for: deferTo })
+          .eq("id", row.id)
+          .eq("status", "pending");
+        continue;
+      }
+    }
 
     // Prefs: non-transactional types respect profiles.notification_prefs.
     if (!TRANSACTIONAL.has(row.type)) {
@@ -74,11 +137,7 @@ Deno.serve(async () => {
         .eq("id", row.user_id)
         .maybeSingle();
       if (profile?.notification_prefs?.[row.type] === false) {
-        await supabase
-          .from("notifications")
-          .update({ status: "sent", sent_at: new Date().toISOString() })
-          .eq("id", row.id)
-          .eq("status", "pending");
+        await markSent(row.id);
         continue;
       }
     }
@@ -110,6 +169,7 @@ Deno.serve(async () => {
   await safeSweep("before-class", sweepBeforeClass);
   await safeSweep("founder-escalations", sweepFounderEscalations);
   await safeSweep("after-class", sweepAfterClass);
+  await safeSweep("founder-digest", sweepFounderDigest);
 
   return new Response(JSON.stringify({ sent, failed }), {
     headers: { "Content-Type": "application/json" },
@@ -122,6 +182,46 @@ async function safeSweep(name: string, fn: () => Promise<void>) {
   } catch (err) {
     console.error(`notify: sweep ${name} failed`, err);
   }
+}
+
+/** Claim a row without delivering — flip pending → sent, idempotently. */
+async function markSent(id: string) {
+  await supabase
+    .from("notifications")
+    .update({ status: "sent", sent_at: new Date().toISOString() })
+    .eq("id", id)
+    .eq("status", "pending");
+}
+
+/**
+ * If "now" falls inside IST quiet hours [21:30, 08:00), returns the ISO instant
+ * of the next 08:00 IST; otherwise null. Used to hold deferrable notifications
+ * overnight. India has no DST, so a fixed +05:30 offset is safe. (Part 7.)
+ */
+function quietHoursDefer(): string | null {
+  const now = new Date();
+  const [hh, mm] = new Intl.DateTimeFormat("en-GB", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+    timeZone: IST,
+  })
+    .format(now)
+    .split(":")
+    .map(Number);
+  const mins = hh * 60 + mm;
+  const inQuiet = mins >= 21 * 60 + 30 || mins < 8 * 60;
+  if (!inQuiet) return null;
+
+  const istDate = new Intl.DateTimeFormat("en-CA", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    timeZone: IST,
+  }).format(now); // today's IST calendar date
+  const eightAm = new Date(`${istDate}T08:00:00+05:30`);
+  // Before 08:00 IST → today's 08:00; after 21:30 IST → tomorrow's 08:00.
+  return (mins >= 8 * 60 ? new Date(eightAm.getTime() + 86400000) : eightAm).toISOString();
 }
 
 // ---------------------------------------------------------------------------
@@ -333,6 +433,92 @@ async function sweepAfterClass() {
       },
     });
   }
+}
+
+// Ops feed types → singular/plural labels for the digest line. Order here is
+// the order they appear in the summary.
+const OPS_DIGEST_LABELS: Record<string, [string, string]> = {
+  ops_booking: ["booking", "bookings"],
+  ops_cancellation: ["cancellation", "cancellations"],
+  ops_attendance: ["attendance update", "attendance updates"],
+  ops_payment: ["payment", "payments"],
+  ops_membership: ["membership change", "membership changes"],
+  ops_new_client: ["new client", "new clients"],
+  ops_new_coach: ["new coach", "new coaches"],
+  ops_player_added: ["new player", "new players"],
+  ops_wa_linked: ["WhatsApp link", "WhatsApp links"],
+  ops_credit_used: ["credit used", "credits used"],
+  ops_coach_change: ["coach change", "coach changes"],
+};
+
+/**
+ * Founder daily digest — the ops feed is delivered in-app only (FEED_ONLY), so
+ * once per IST day at/after 21:00 IST we roll the day's activity into ONE line
+ * ("12 bookings · 2 cancellations · 1 new client") and send that. A day with no
+ * activity sends nothing. Single line on purpose: WhatsApp template variables
+ * reject newlines, and outside the service window this rides the digest
+ * template. (whatsapp-upgrade-plan Part 2.)
+ */
+async function sweepFounderDigest() {
+  const now = new Date();
+  const hour = Number(
+    new Intl.DateTimeFormat("en-GB", { hour: "2-digit", hour12: false, timeZone: IST }).format(now)
+  );
+  if (hour < 21) return;
+
+  const istDate = new Intl.DateTimeFormat("en-CA", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    timeZone: IST,
+  }).format(now); // today's IST date, YYYY-MM-DD
+  const dayStart = new Date(`${istDate}T00:00:00+05:30`).toISOString();
+  const dayEnd = new Date(`${istDate}T23:59:59+05:30`).toISOString();
+
+  const { data: founders } = await supabase.from("profiles").select("id").eq("role", "founder");
+  if (!founders?.length) return;
+
+  for (const f of founders) {
+    const { data: already } = await supabase
+      .from("notifications")
+      .select("id")
+      .eq("user_id", f.id)
+      .eq("type", "ops_daily_digest")
+      .eq("data->>date", istDate)
+      .limit(1);
+    if (already?.length) continue;
+
+    const { data: rows } = await supabase
+      .from("notifications")
+      .select("type")
+      .eq("user_id", f.id)
+      .in("type", [...FEED_ONLY])
+      .gte("created_at", dayStart)
+      .lte("created_at", dayEnd)
+      .limit(1000);
+    const line = summariseOps((rows ?? []).map((r) => r.type as string));
+    if (!line) continue; // nothing happened today → send nothing
+
+    await supabase.from("notifications").insert({
+      user_id: f.id,
+      type: "ops_daily_digest",
+      title: "Today at the academy",
+      body: line,
+      data: { date: istDate, summary: line, url: "/admin" },
+    });
+  }
+}
+
+/** Count ops rows by type and render the one-line summary (zeros omitted). */
+function summariseOps(types: string[]): string {
+  const counts = new Map<string, number>();
+  for (const t of types) counts.set(t, (counts.get(t) ?? 0) + 1);
+  const parts: string[] = [];
+  for (const [key, [one, many]] of Object.entries(OPS_DIGEST_LABELS)) {
+    const n = counts.get(key) ?? 0;
+    if (n > 0) parts.push(`${n} ${n === 1 ? one : many}`);
+  }
+  return parts.join(" · ");
 }
 
 /** True if a notification of `type` for this (session, user) already exists. */
@@ -565,7 +751,7 @@ async function deliverWhatsApp(
  * scripts/whatsapp/provision-templates.mjs.
  */
 function interactiveContentFor(
-  row: { type: string; data: Record<string, unknown> },
+  row: { type: string; title: string; body: string; data: Record<string, unknown> },
   firstName: string
 ): Record<string, string> | null {
   const d = row.data ?? {};
@@ -588,6 +774,72 @@ function interactiveContentFor(
         "1": String(d.class_title ?? "your class"),
         "2": String(d.next_sentence ?? ""),
         "3": `${APP_URL}${String(d.url ?? "/coach")}`,
+      }),
+    };
+  }
+  // Client: one consolidated reminder with "I'll be there / Can't make it".
+  if (row.type === "reminder_upcoming" && TWILIO_WA_CLIENT_REMINDER_SID) {
+    return {
+      ContentSid: TWILIO_WA_CLIENT_REMINDER_SID,
+      ContentVariables: JSON.stringify({
+        "1": firstName,
+        "2": String(d.class_title ?? "your session"),
+        "3": String(d.time_str ?? "later today"),
+      }),
+    };
+  }
+  // Client: waitlist spot with "Claim spot / Pass".
+  if (row.type === "waitlist_spot" && TWILIO_WA_CLIENT_WAITLIST_SID) {
+    return {
+      ContentSid: TWILIO_WA_CLIENT_WAITLIST_SID,
+      ContentVariables: JSON.stringify({
+        "1": firstName,
+        "2": String(d.class_title ?? "a class"),
+        "3": String(d.claim_minutes ?? 15),
+      }),
+    };
+  }
+  // Client: payment failed → CTA to fix payment (static URL).
+  if (row.type === "payment_failed" && TWILIO_WA_CLIENT_PAYMENT_SID) {
+    return {
+      ContentSid: TWILIO_WA_CLIENT_PAYMENT_SID,
+      ContentVariables: JSON.stringify({
+        "1": firstName,
+        "2": String(d.plan_name ?? "your membership"),
+      }),
+    };
+  }
+  // Client: booking confirmed → CTA to view schedule (static URL).
+  if (row.type === "booking_confirmed" && TWILIO_WA_CLIENT_BOOKED_SID) {
+    return {
+      ContentSid: TWILIO_WA_CLIENT_BOOKED_SID,
+      ContentVariables: JSON.stringify({
+        "1": firstName,
+        "2": String(row.body ?? "You're booked").replace(/\s+/g, " ").trim(),
+      }),
+    };
+  }
+  // Coach: new private session → CTA to the session page (dynamic URL suffix).
+  if (row.type === "new_private_session" && TWILIO_WA_COACH_PRIVATE_SID) {
+    const sessionId = String(d.session_id ?? "");
+    if (sessionId) {
+      return {
+        ContentSid: TWILIO_WA_COACH_PRIVATE_SID,
+        ContentVariables: JSON.stringify({
+          "1": firstName,
+          "2": String(row.body ?? "a new session").replace(/\s+/g, " ").trim(),
+          "3": sessionId,
+        }),
+      };
+    }
+  }
+  // Founder: daily digest → CTA to the dashboard (static URL).
+  if (row.type === "ops_daily_digest" && TWILIO_WA_FOUNDER_DIGEST_SID) {
+    return {
+      ContentSid: TWILIO_WA_FOUNDER_DIGEST_SID,
+      ContentVariables: JSON.stringify({
+        "1": String(d.date ?? ""),
+        "2": String(d.summary ?? row.body ?? "").replace(/\s+/g, " ").trim(),
       }),
     };
   }

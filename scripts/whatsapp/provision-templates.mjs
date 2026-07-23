@@ -1,19 +1,29 @@
 /**
- * Create (and submit for WhatsApp approval) the interactive Content templates
- * the academy sends coaches — the 1-hour-before class reminder with quick-reply
- * buttons, and the after-class summary. Idempotent: re-running reuses a template
- * that already exists with the same friendly_name.
+ * The single registry of every interactive/CTA Content template the academy
+ * sends over WhatsApp — coach class prompts, client reminders/waitlist/payment/
+ * booking messages, the coach private-session CTA and the founder daily digest.
+ * Creates each and submits it for WhatsApp approval as a UTILITY template.
+ * Idempotent: re-running reuses a template that already exists with the same
+ * friendly_name.
  *
- * The button `id`s here MUST stay in sync with lib/whatsapp/interactive.ts.
+ * The button `id`s here MUST stay in sync with lib/whatsapp/interactive.ts, and
+ * the variable order MUST match interactiveContentFor() in
+ * supabase/functions/notify/index.ts.
+ *
+ * WhatsApp template rules the definitions obey: no adjacent variables, no
+ * variable at the very start/end of a body, no emojis/formatting/newlines in
+ * button titles, no newlines in variable values at send time.
  *
  * Requires TWILIO_ACCOUNT_SID + TWILIO_AUTH_TOKEN in .env.local.
- * Usage: node scripts/whatsapp/provision-templates.mjs
+ * Usage: npm run wa:provision   (or: node scripts/whatsapp/provision-templates.mjs)
  *
  * After approval (check the Twilio Console → Messaging → Content Template
  * Builder), set the printed SIDs on the Supabase edge function:
  *   supabase secrets set \
- *     TWILIO_WA_COACH_REMINDER_SID=HX... \
- *     TWILIO_WA_COACH_AFTERCLASS_SID=HX...
+ *     TWILIO_WA_COACH_REMINDER_SID=HX... TWILIO_WA_COACH_AFTERCLASS_SID=HX... \
+ *     TWILIO_WA_CLIENT_REMINDER_SID=HX... TWILIO_WA_CLIENT_WAITLIST_SID=HX... \
+ *     TWILIO_WA_CLIENT_PAYMENT_SID=HX... TWILIO_WA_CLIENT_BOOKED_SID=HX... \
+ *     TWILIO_WA_COACH_PRIVATE_SID=HX... TWILIO_WA_FOUNDER_DIGEST_SID=HX...
  */
 import { readFileSync } from "node:fs";
 
@@ -31,6 +41,8 @@ if (!SID || !TOKEN) {
   process.exit(1);
 }
 const auth = "Basic " + Buffer.from(`${SID}:${TOKEN}`).toString("base64");
+// Base URL for CTA button deep links. Keep in sync with APP_URL on the worker.
+const APP_URL = (env.APP_URL || env.NEXT_PUBLIC_APP_URL || "https://sharwinacademy.com").replace(/\/$/, "");
 
 async function api(method, path, body) {
   const res = await fetch(`https://content.twilio.com${path}`, {
@@ -146,6 +158,124 @@ const TEMPLATES = [
         },
         "twilio/text": {
           body: "Great work finishing {{1}}! {{2}} Confirm attendance & add notes: {{3}} — thank you!",
+        },
+      },
+    },
+  },
+  {
+    key: "TWILIO_WA_CLIENT_REMINDER_SID",
+    approvalName: "client_session_reminder",
+    def: {
+      friendly_name: "client_session_reminder",
+      language: "en",
+      variables: { 1: "Priya", 2: "Beginners Batch", 3: "6:30 pm" },
+      types: {
+        "twilio/quick-reply": {
+          body: "Hi {{1}}! Reminder: {{2}} is on today at {{3}}. See you at the table!",
+          actions: [
+            { title: "I'll be there", id: "rem_yes" },
+            { title: "Can't make it", id: "rem_no" },
+          ],
+        },
+        "twilio/text": {
+          body: 'Hi {{1}}! Reminder: {{2}} is on today at {{3}}. Reply "yes" to confirm or "no" if you can\'t make it.',
+        },
+      },
+    },
+  },
+  {
+    key: "TWILIO_WA_CLIENT_WAITLIST_SID",
+    approvalName: "client_waitlist_spot",
+    def: {
+      friendly_name: "client_waitlist_spot",
+      language: "en",
+      variables: { 1: "Priya", 2: "Beginners Batch", 3: "15" },
+      types: {
+        "twilio/quick-reply": {
+          body: "Good news {{1}} — a spot just opened in {{2}}. First to claim it gets it (offer expires in {{3}} minutes).",
+          actions: [
+            { title: "Claim spot", id: "wl_claim" },
+            { title: "Pass", id: "wl_pass" },
+          ],
+        },
+        "twilio/text": {
+          body: 'Good news {{1}} — a spot just opened in {{2}}. Reply "claim" within {{3}} minutes to take it.',
+        },
+      },
+    },
+  },
+  {
+    key: "TWILIO_WA_CLIENT_PAYMENT_SID",
+    approvalName: "client_payment_issue",
+    def: {
+      friendly_name: "client_payment_issue",
+      language: "en",
+      variables: { 1: "Priya", 2: "your membership" },
+      types: {
+        "twilio/call-to-action": {
+          body: "Hi {{1}}, your last payment for {{2}} didn't go through. Please update your payment method to keep sessions running.",
+          actions: [{ type: "URL", title: "Fix payment", url: `${APP_URL}/app/billing` }],
+        },
+        "twilio/text": {
+          body: `Hi {{1}}, your last payment for {{2}} didn't go through. Update your payment method to keep sessions running: ${APP_URL}/app/billing`,
+        },
+      },
+    },
+  },
+  {
+    key: "TWILIO_WA_CLIENT_BOOKED_SID",
+    approvalName: "client_booking_confirmed",
+    def: {
+      friendly_name: "client_booking_confirmed",
+      language: "en",
+      variables: { 1: "Priya", 2: "Sat 12 Jul, 6:30 pm — Beginners Batch" },
+      types: {
+        "twilio/call-to-action": {
+          body: "You're booked, {{1}}! {{2}} — see it anytime on your schedule.",
+          actions: [{ type: "URL", title: "View schedule", url: `${APP_URL}/app/schedule` }],
+        },
+        "twilio/text": {
+          body: `You're booked, {{1}}! {{2}} — see it anytime on your schedule: ${APP_URL}/app/schedule`,
+        },
+      },
+    },
+  },
+  {
+    key: "TWILIO_WA_COACH_PRIVATE_SID",
+    approvalName: "coach_private_session",
+    def: {
+      friendly_name: "coach_private_session",
+      language: "en",
+      // {{3}} is the session id, appended to the CTA URL (Twilio allows one
+      // trailing variable on a CTA button URL).
+      variables: { 1: "Augustine", 2: "Sat 12 Jul, 6:30 pm — 21 MG Road", 3: "0000" },
+      types: {
+        "twilio/call-to-action": {
+          body: "New private session, {{1}}: {{2}}. Tap below for the address and details.",
+          actions: [
+            { type: "URL", title: "View session", url: `${APP_URL}/coach/session/{{3}}` },
+          ],
+        },
+        "twilio/text": {
+          body: `New private session, {{1}}: {{2}}. Details: ${APP_URL}/coach/session/{{3}}`,
+        },
+      },
+    },
+  },
+  {
+    key: "TWILIO_WA_FOUNDER_DIGEST_SID",
+    approvalName: "founder_daily_digest",
+    def: {
+      friendly_name: "founder_daily_digest",
+      language: "en",
+      variables: { 1: "2026-07-23", 2: "12 bookings · 2 cancellations · 1 new client" },
+      types: {
+        "twilio/call-to-action": {
+          body: "Today at the academy ({{1}}): {{2}}",
+          actions: [{ type: "URL", title: "Open dashboard", url: `${APP_URL}/admin` }],
+        },
+        "twilio/text": {
+          body: `Today at the academy ({{1}}): {{2}} — ${APP_URL}/admin`,
         },
       },
     },
