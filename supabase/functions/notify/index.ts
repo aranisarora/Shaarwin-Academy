@@ -39,12 +39,23 @@ const TWILIO_WA_CLIENT_PAYMENT_SID = Deno.env.get("TWILIO_WA_CLIENT_PAYMENT_SID"
 const TWILIO_WA_CLIENT_BOOKED_SID = Deno.env.get("TWILIO_WA_CLIENT_BOOKED_SID");
 const TWILIO_WA_COACH_PRIVATE_SID = Deno.env.get("TWILIO_WA_COACH_PRIVATE_SID");
 const TWILIO_WA_FOUNDER_DIGEST_SID = Deno.env.get("TWILIO_WA_FOUNDER_DIGEST_SID");
+// Signup-approval flow (new-user-approval-plan). Founder Approve/Deny buttons +
+// the client "you're approved" CTA. Optional until provisioned.
+const TWILIO_WA_FOUNDER_SIGNUP_SID = Deno.env.get("TWILIO_WA_FOUNDER_SIGNUP_SID");
+const TWILIO_WA_CLIENT_APPROVED_SID = Deno.env.get("TWILIO_WA_CLIENT_APPROVED_SID");
 const APP_URL = Deno.env.get("APP_URL") ?? "https://sharwinacademy.com";
 const WINDOW_MS = 24 * 60 * 60 * 1000;
 const IST = "Asia/Kolkata";
 
-// Types that ignore user prefs (always deliver).
-const TRANSACTIONAL = new Set(["payment_failed", "session_cancelled"]);
+// Types that ignore user prefs (always deliver). The signup-approval messages
+// are account-critical: the applicant is waiting on the pending screen, and the
+// founder needs to act — neither should be silenced by a pref toggle.
+const TRANSACTIONAL = new Set([
+  "payment_failed",
+  "session_cancelled",
+  "signup_request",
+  "signup_approved",
+]);
 
 // Founder ops-feed types that live in-app only (/admin). We never deliver these
 // over WhatsApp/email — the row is claimed (flipped to sent) and left for the
@@ -82,6 +93,9 @@ const DEFERRABLE = new Set([
   "ops_daily_digest",
   "time_off_requested",
   "time_off_decision",
+  // "You're approved" — nobody onboards at 2am, so hold it to 08:00 IST. The
+  // signup *request* is deliberately absent: the applicant is waiting live.
+  "signup_approved",
 ]);
 
 Deno.serve(async () => {
@@ -840,6 +854,27 @@ function interactiveContentFor(
       ContentVariables: JSON.stringify({
         "1": String(d.date ?? ""),
         "2": String(d.summary ?? row.body ?? "").replace(/\s+/g, " ").trim(),
+      }),
+    };
+  }
+  // Founder: new signup request with Approve / Deny buttons. The outbound SID is
+  // recorded on the row (shared path below) so a tap maps back to the applicant.
+  if (row.type === "signup_request" && TWILIO_WA_FOUNDER_SIGNUP_SID) {
+    return {
+      ContentSid: TWILIO_WA_FOUNDER_SIGNUP_SID,
+      ContentVariables: JSON.stringify({
+        "1": String(d.applicant_name ?? "Someone"),
+        "2": String(d.applicant_email ?? ""),
+        "3": String(d.applicant_phone ?? ""),
+      }),
+    };
+  }
+  // Client: "you're approved" → CTA into the app (static URL).
+  if (row.type === "signup_approved" && TWILIO_WA_CLIENT_APPROVED_SID) {
+    return {
+      ContentSid: TWILIO_WA_CLIENT_APPROVED_SID,
+      ContentVariables: JSON.stringify({
+        "1": String(d.first_name ?? firstName),
       }),
     };
   }

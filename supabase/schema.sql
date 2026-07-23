@@ -26,6 +26,7 @@ create type public.notification_channel as enum ('push', 'email', 'in_app');
 create type public.notification_status as enum ('pending', 'sent', 'failed');
 create type public.product_kind as enum ('group_dropin', 'private_oneoff', 'private_intro');
 create type public.session_status as enum ('scheduled', 'completed', 'cancelled');
+create type public.signup_approval_status as enum ('pending', 'approved', 'denied');
 create type public.skill_level as enum ('beginner', 'intermediate', 'advanced', 'elite', 'any');
 create type public.subscription_source as enum ('stripe', 'comp', 'razorpay');
 create type public.subscription_status as enum ('incomplete', 'trialing', 'active', 'past_due', 'canceled', 'paused');
@@ -363,7 +364,10 @@ create table public.profiles (
   onboarded_at timestamptz,
   -- multi-step onboarding progress: 0 players pending, 1 players saved,
   -- 2 phone confirmed (setup done; onboarded_at stamps completion)
-  onboarding_step smallint default 0 not null
+  onboarding_step smallint default 0 not null,
+  -- closed-membership gate: self-signups start 'pending' and wait for founder
+  -- approval; existing rows + founder-invited clients are 'approved'.
+  approval_status signup_approval_status default 'pending'::signup_approval_status not null
 );
 
 create table public.push_subscriptions (
@@ -1943,13 +1947,14 @@ begin
   limit 1;
 
   if found then
-    insert into profiles (id, role, full_name, email, phone)
+    insert into profiles (id, role, full_name, email, phone, approval_status)
     values (
       new.id,
       'coach',
       coalesce(nullif(v_invite.full_name, ''), v_name),
       new.email,
-      v_invite.phone
+      v_invite.phone,
+      'approved'
     )
     on conflict (id) do nothing;
 
@@ -1972,8 +1977,8 @@ begin
     return new;
   end if;
 
-  insert into profiles (id, role, full_name, email)
-  values (new.id, 'client', v_name, new.email)
+  insert into profiles (id, role, full_name, email, approval_status)
+  values (new.id, 'client', v_name, new.email, 'pending')
   on conflict (id) do nothing;
 
   insert into players (client_id, full_name)
@@ -2065,6 +2070,11 @@ begin
   if not found then
     return new;
   end if;
+
+  -- Founder-invited clients never see the approval gate.
+  update profiles
+  set approval_status = 'approved'
+  where id = new.id and approval_status <> 'approved';
 
   if coalesce(v_invite.full_name, '') <> '' then
     -- Only fill placeholders; never overwrite a name the client chose.
@@ -2263,6 +2273,159 @@ AS $function$
   select exists (
     select 1 from profiles where id = auth.uid() and role = 'founder'
   );
+$function$;
+
+CREATE OR REPLACE FUNCTION public.is_approved()
+ RETURNS boolean
+ LANGUAGE sql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+  select exists (
+    select 1 from profiles
+    where id = auth.uid() and approval_status = 'approved'
+  );
+$function$;
+
+-- The applicant's signup request: capture name + (E.164) phone, notify founders,
+-- idempotent so a typo'd phone can be corrected before the founder acts. A phone
+-- matching a founder pre-registration auto-approves via claim_client_invite and
+-- sends no founder request. (docs/new-user-approval-plan.md)
+CREATE OR REPLACE FUNCTION public.submit_signup_request(p_name text, p_phone text)
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare
+  v_uid uuid := auth.uid();
+  v_profile profiles%rowtype;
+  v_old_name text;
+  v_name text := nullif(btrim(p_name), '');
+  v_status public.signup_approval_status;
+begin
+  if v_uid is null then
+    return jsonb_build_object('status', 'error', 'error', 'not_authenticated');
+  end if;
+
+  select * into v_profile from profiles where id = v_uid;
+  if not found or v_profile.role <> 'client' then
+    return jsonb_build_object('status', 'error', 'error', 'not_client');
+  end if;
+  if v_profile.approval_status <> 'pending' then
+    return jsonb_build_object('status', v_profile.approval_status::text);
+  end if;
+
+  v_old_name := v_profile.full_name;
+
+  update profiles set full_name = coalesce(v_name, full_name) where id = v_uid;
+
+  if v_name is not null then
+    update players set full_name = v_name
+    where client_id = v_uid and full_name = v_old_name;
+  end if;
+
+  begin
+    update profiles set phone = p_phone where id = v_uid;
+  exception when unique_violation then
+    update profiles set full_name = v_old_name where id = v_uid;
+    return jsonb_build_object('status', 'error', 'error', 'phone_taken');
+  end;
+
+  select approval_status into v_status from profiles where id = v_uid;
+  if v_status = 'approved' then
+    return jsonb_build_object('status', 'approved');
+  end if;
+
+  update notifications
+  set title = 'New signup request',
+      body = coalesce(v_name, 'Someone') || ' (' || v_profile.email || ', ' || p_phone || ') wants access.',
+      data = jsonb_build_object(
+        'client_id', v_uid,
+        'applicant_name', coalesce(v_name, v_old_name),
+        'applicant_email', v_profile.email,
+        'applicant_phone', p_phone,
+        'url', '/admin/players?view=clients')
+  where type = 'signup_request'
+    and data->>'client_id' = v_uid::text
+    and status = 'pending';
+
+  if not found
+     and not exists (
+       select 1 from notifications
+       where type = 'signup_request' and data->>'client_id' = v_uid::text
+     ) then
+    perform notify_founders('signup_request', 'New signup request',
+      coalesce(v_name, 'Someone') || ' (' || v_profile.email || ', ' || p_phone || ') wants access.',
+      jsonb_build_object(
+        'client_id', v_uid,
+        'applicant_name', coalesce(v_name, v_old_name),
+        'applicant_email', v_profile.email,
+        'applicant_phone', p_phone,
+        'url', '/admin/players?view=clients'));
+  end if;
+
+  return jsonb_build_object('status', 'pending');
+end;
+$function$;
+
+-- The single approve/deny implementation shared by the admin action and the
+-- WhatsApp founder buttons. Idempotent: a second tap resolves to already_reviewed.
+CREATE OR REPLACE FUNCTION public.review_signup_request(p_client uuid, p_approve boolean, p_reviewer uuid default auth.uid())
+ RETURNS jsonb
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare
+  v_reviewer_role public.user_role;
+  v_profile profiles%rowtype;
+  v_first text;
+begin
+  select role into v_reviewer_role from profiles where id = p_reviewer;
+  if v_reviewer_role is distinct from 'founder' then
+    return jsonb_build_object('ok', false, 'error', 'not_founder');
+  end if;
+  if p_reviewer = auth.uid() and not is_founder() then
+    return jsonb_build_object('ok', false, 'error', 'not_founder');
+  end if;
+
+  select * into v_profile from profiles where id = p_client for update;
+  if not found then
+    return jsonb_build_object('ok', false, 'error', 'not_found');
+  end if;
+  if v_profile.approval_status <> 'pending' then
+    return jsonb_build_object('ok', false, 'error', 'already_reviewed',
+                              'status', v_profile.approval_status::text);
+  end if;
+
+  if p_approve then
+    update profiles set approval_status = 'approved' where id = p_client;
+
+    if v_profile.phone is not null then
+      delete from wa_links where user_id = p_client and phone <> v_profile.phone;
+      insert into wa_links (phone, user_id)
+      values (v_profile.phone, p_client)
+      on conflict (phone) do update set user_id = excluded.user_id, linked_at = now();
+    end if;
+
+    v_first := coalesce(nullif(split_part(btrim(v_profile.full_name), ' ', 1), ''), 'there');
+    insert into notifications (user_id, type, title, body, data)
+    values (p_client, 'signup_approved', 'You''re approved!',
+      'Welcome to Sharwin TTA — tap below to finish setting up your account.',
+      jsonb_build_object('first_name', v_first, 'url', '/app'));
+  else
+    update profiles set approval_status = 'denied' where id = p_client;
+  end if;
+
+  update notifications set read_at = now()
+  where type = 'signup_request'
+    and data->>'client_id' = p_client::text
+    and read_at is null;
+
+  return jsonb_build_object('ok', true,
+    'status', case when p_approve then 'approved' else 'denied' end);
+end;
 $function$;
 
 CREATE OR REPLACE FUNCTION public.private_minutes_balance(p_client uuid)

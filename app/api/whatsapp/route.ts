@@ -151,11 +151,12 @@ async function handleInbound(
     return;
   }
 
-  // Deterministic interactive replies. A coach tap/word or a client button runs
-  // the same RPC as the app with no LLM; the handler gates by role and only acts
-  // on real taps for clients. Returns null when the message isn't a recognised
-  // action, so ordinary chat falls through to the assistant.
-  if (profile.role === "coach" || profile.role === "client") {
+  // Deterministic interactive replies. A coach tap/word, a client button, or a
+  // founder Approve/Deny runs the same RPC as the app with no LLM; the handler
+  // gates by role and only acts on real taps for clients/founders. Returns null
+  // when the message isn't a recognised action, so ordinary chat falls through
+  // to the assistant.
+  if (profile.role === "coach" || profile.role === "client" || profile.role === "founder") {
     const reply = await handleInteractiveReply({
       admin,
       supabase,

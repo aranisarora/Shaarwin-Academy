@@ -16,6 +16,7 @@ import {
   updateClient,
   setClientBlocked,
   setClientArchived,
+  reviewSignupRequest,
 } from "@/app/admin/players/actions";
 
 export type PendingClientRow = {
@@ -33,6 +34,7 @@ type ClientRow = {
   phone: string | null;
   disputed: boolean;
   archived: boolean;
+  approvalStatus: "pending" | "approved" | "denied";
   createdAt: string;
   subStatus: string | null;
   planName: string | null;
@@ -95,6 +97,23 @@ export function ClientManager({
   const [pending, startTransition] = useTransition();
 
   const archivedCount = clients.filter((c) => c.archived).length;
+  // Closed-membership signup requests waiting on the founder: they've submitted
+  // the form (so we have a phone) but aren't approved yet. Phone-less pendings
+  // (signed up, never requested) are intentionally omitted — no action to take.
+  const requests = clients.filter(
+    (c) => c.approvalStatus === "pending" && c.phone && !c.archived
+  );
+
+  function review(clientId: string, approve: boolean) {
+    startTransition(async () => {
+      const r = await reviewSignupRequest(clientId, approve);
+      setMessage(r.ok ? (approve ? "Approved." : "Request denied.") : (r.error ?? "Failed."));
+      if (r.ok && selected?.id === clientId) {
+        setSelected({ ...selected, approvalStatus: approve ? "approved" : "denied" });
+      }
+    });
+  }
+
   const filtered = clients.filter(
     (c) =>
       (showArchived || !c.archived) &&
@@ -175,6 +194,37 @@ export function ClientManager({
         </p>
         <Button onClick={openAddInvite}>Add client</Button>
       </div>
+
+      {/* ── Signup requests awaiting approval ── */}
+      {requests.length > 0 && (
+        <div className="space-y-2">
+          <p className="label">Access requests</p>
+          <ul className="divide-y divide-line rounded-[12px] border border-ember/40 bg-surface-2">
+            {requests.map((c) => (
+              <li key={c.id} className="flex items-center justify-between gap-3 px-4 py-3">
+                <div className="min-w-0">
+                  <p className="truncate font-medium">{displayName(c)}</p>
+                  <p className="truncate text-sm text-fg-2">
+                    {!isPhoneOnly(c.email) ? `${c.email} · ` : ""}
+                    {c.phone}
+                  </p>
+                </div>
+                <div className="flex shrink-0 gap-2">
+                  <Button disabled={pending} onClick={() => review(c.id, true)}>
+                    Approve
+                  </Button>
+                  <Button variant="ghost" disabled={pending} onClick={() => review(c.id, false)}>
+                    Deny
+                  </Button>
+                </div>
+              </li>
+            ))}
+          </ul>
+          <p className="text-sm text-fg-2">
+            Approve to send them the onboarding link. Denied requests stay reversible below.
+          </p>
+        </div>
+      )}
       <Input
         placeholder="Search clients…"
         value={search}
@@ -202,6 +252,16 @@ export function ClientManager({
               <div>
                 <p className="font-medium">
                   {displayName(c)}
+                  {c.approvalStatus === "pending" && (
+                    <Badge className="ml-2" tone="ember">
+                      Pending
+                    </Badge>
+                  )}
+                  {c.approvalStatus === "denied" && (
+                    <Badge className="ml-2" tone="err">
+                      Denied
+                    </Badge>
+                  )}
                   {c.disputed && (
                     <Badge className="ml-2" tone="err">
                       Blocked
@@ -472,6 +532,36 @@ export function ClientManager({
                 {pending ? <Spinner /> : "Update minutes"}
               </Button>
             </div>
+
+            {selected.approvalStatus !== "approved" && (
+              <div className="space-y-3 rounded-[12px] border border-ember/40 p-4">
+                <p className="label">Membership access</p>
+                <p className="text-sm text-fg-2">
+                  {selected.approvalStatus === "pending"
+                    ? "This person is waiting for approval to access the academy."
+                    : "You denied this request. You can still approve them."}
+                </p>
+                <div className="flex gap-2">
+                  <Button
+                    disabled={pending}
+                    className="flex-1"
+                    onClick={() => review(selected.id, true)}
+                  >
+                    {pending ? <Spinner /> : selected.approvalStatus === "denied" ? "Approve anyway" : "Approve"}
+                  </Button>
+                  {selected.approvalStatus === "pending" && (
+                    <Button
+                      variant="ghost"
+                      disabled={pending}
+                      className="flex-1"
+                      onClick={() => review(selected.id, false)}
+                    >
+                      Deny
+                    </Button>
+                  )}
+                </div>
+              </div>
+            )}
 
             <div className="space-y-3 rounded-[12px] border border-line p-4">
               <p className="label">Account</p>

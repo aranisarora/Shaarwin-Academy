@@ -5,6 +5,7 @@
 //             after-class:    "All present" / "Some absent" (→ numbered reply)
 //   Client  — reminder:       "I'll be there" / "Can't make it"
 //             waitlist offer:  "Claim spot" / "Pass"
+//   Founder — signup request:  "Approve" / "Deny" (new-user-approval-plan)
 //
 // The templates themselves are sent by the notify edge function
 // (supabase/functions/notify) and provisioned by
@@ -24,6 +25,8 @@ export const WA_BUTTON = {
   REM_NO: "rem_no",
   WL_CLAIM: "wl_claim",
   WL_PASS: "wl_pass",
+  SU_APPROVE: "su_approve",
+  SU_DENY: "su_deny",
 } as const;
 
 type ButtonId = (typeof WA_BUTTON)[keyof typeof WA_BUTTON];
@@ -42,6 +45,12 @@ const CLIENT_IDS: ReadonlySet<string> = new Set([
   WA_BUTTON.WL_CLAIM,
   WA_BUTTON.WL_PASS,
 ]);
+const FOUNDER_IDS: ReadonlySet<string> = new Set([WA_BUTTON.SU_APPROVE, WA_BUTTON.SU_DENY]);
+
+const FOUNDER_TITLE_TO_ID: Record<string, ButtonId> = {
+  approve: WA_BUTTON.SU_APPROVE,
+  deny: WA_BUTTON.SU_DENY,
+};
 
 // Exact matches: a known payload id, or the button's exact title typed out.
 // Unambiguous — nobody types "all present ✅" in casual chat — so always honoured.
@@ -99,6 +108,7 @@ export async function handleInteractiveReply(opts: {
 }): Promise<string | null> {
   if (opts.profile.role === "coach") return handleCoachReply(opts);
   if (opts.profile.role === "client") return handleClientReply(opts);
+  if (opts.profile.role === "founder") return handleFounderReply(opts);
   return null;
 }
 
@@ -430,6 +440,87 @@ async function noteBySid(
     .eq("data->>twilio_sid", originalSid)
     .eq("user_id", userId)
     .gt("created_at", new Date(Date.now() - 2 * 86400000).toISOString())
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  return data ? { id: data.id as string, data: (data.data ?? {}) as Record<string, unknown> } : null;
+}
+
+// ---------------------------------------------------------------------------
+// Founder — closed-membership signup approvals
+// ---------------------------------------------------------------------------
+
+/**
+ * Approve / Deny a signup request from the founder's WhatsApp. Context comes
+ * ONLY from the replied-to message's Twilio SID → the signup_request
+ * notification → its data.client_id (the applicant). review_signup_request is
+ * the same RPC the admin app calls; the bot runs it on the founder's own minted
+ * session, so auth.uid() = founder and the RPC's founder guard passes.
+ */
+async function handleFounderReply(opts: {
+  admin: SupabaseClient;
+  supabase: SupabaseClient;
+  profile: Profile;
+  payload: string;
+  text: string;
+  originalSid: string;
+}): Promise<string | null> {
+  const { admin, supabase } = opts;
+  const action = resolveFounderExact(opts.payload, opts.text, opts.originalSid);
+  if (!action) return null; // typed free text → the assistant
+
+  const note = await noteBySidAnyUser(admin, opts.originalSid, "signup_request");
+  const clientId = note?.data?.client_id as string | undefined;
+  if (!clientId) {
+    return `Couldn't tell which request that was for — review it in the app: ${appUrl()}/admin/players?view=clients`;
+  }
+
+  const applicant =
+    (note?.data?.applicant_name as string | undefined)?.trim() || "the applicant";
+  const approve = action === WA_BUTTON.SU_APPROVE;
+  const { data, error } = await supabase.rpc("review_signup_request", {
+    p_client: clientId,
+    p_approve: approve,
+  });
+  if (error) {
+    return `Couldn't update that just now — try from the app: ${appUrl()}/admin/players?view=clients`;
+  }
+
+  const result = (data ?? {}) as { ok?: boolean; error?: string };
+  if (!result.ok) {
+    if (result.error === "already_reviewed") return "Already handled.";
+    return `Couldn't update that just now — try from the app: ${appUrl()}/admin/players?view=clients`;
+  }
+  return approve
+    ? `Approved ✅ — ${applicant} has been sent the onboarding link.`
+    : `Denied — they won't be notified.`;
+}
+
+// A tapped founder button id, or its exact title paired with the replied-to
+// message (so a stray "approve" in chat never acts). No loose matching.
+function resolveFounderExact(payload: string, text: string, originalSid: string): ButtonId | null {
+  const p = (payload || "").trim();
+  if (FOUNDER_IDS.has(p)) return p as ButtonId;
+  if (!originalSid) return null;
+  const t = (text || "").trim().toLowerCase();
+  const id = FOUNDER_TITLE_TO_ID[t];
+  return id && FOUNDER_IDS.has(id) ? id : null;
+}
+
+/** The notification whose outbound Twilio SID matches, of a given type, recent
+ *  — not scoped to a user (the founder acts on the applicant's request row). */
+async function noteBySidAnyUser(
+  admin: SupabaseClient,
+  originalSid: string,
+  type: string
+): Promise<{ id: string; data: Record<string, unknown> } | null> {
+  if (!originalSid) return null;
+  const { data } = await admin
+    .from("notifications")
+    .select("id,data")
+    .eq("data->>twilio_sid", originalSid)
+    .eq("type", type)
+    .gt("created_at", new Date(Date.now() - 7 * 86400000).toISOString())
     .order("created_at", { ascending: false })
     .limit(1)
     .maybeSingle();

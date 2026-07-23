@@ -94,17 +94,35 @@ Client button handling is **taps only** — a payload id, or an exact button tit
 paired with the replied-to message. No loose-word matching; any free text falls
 through to the assistant.
 
+## Founder messages
+
+### Signup approvals (`signup_request`)
+The academy is closed-membership: a new self-signup requests access (name +
+phone) and the founder gets an interactive message with **Approve** / **Deny**:
+- **Approve** (`su_approve`) → `review_signup_request(client, true)` — flips the
+  applicant to `approved`, links their phone for WhatsApp delivery, and queues
+  the applicant's "you're approved" CTA (`signup_approved`).
+- **Deny** (`su_deny`) → `review_signup_request(client, false)` — silent; the
+  applicant is never told (we don't tip off competitors). Reversible: the founder
+  can still approve later from `/admin/players?view=clients`.
+
+Context is resolved **only** from the replied-to message's Twilio SID → the
+`signup_request` row → its `data.client_id`. The RPC is idempotent (a second tap,
+or an admin+WhatsApp race, replies "Already handled."). Taps only, founder role
+only — typed free text still reaches the assistant. See
+`docs/new-user-approval-plan.md`.
+
 ## Where the logic lives
 
 - **Sending + scheduling:** `supabase/functions/notify/index.ts`. Sweeps create
   the notification rows; `deliverWhatsApp` → `interactiveContentFor()` picks the
   template by type and records the outbound Twilio SID on the row (so an inbound
   tap can be mapped back).
-- **Receiving taps:** `app/api/whatsapp/route.ts` routes coach **and** client
-  taps to `lib/whatsapp/interactive.ts`, which gates by role, resolves context
-  (coach: the recorded SID or the nearest session for the phase; client: the
-  recorded SID only) and runs the action. Anything unrecognised falls through to
-  the LLM assistant (`lib/whatsapp/agent.ts`), which is unchanged.
+- **Receiving taps:** `app/api/whatsapp/route.ts` routes coach, client **and**
+  founder taps to `lib/whatsapp/interactive.ts`, which gates by role, resolves
+  context (coach: the recorded SID or the nearest session for the phase; client
+  and founder: the recorded SID only) and runs the action. Anything unrecognised
+  falls through to the LLM assistant (`lib/whatsapp/agent.ts`), which is unchanged.
 - **Templates:** `scripts/whatsapp/provision-templates.mjs` is the single
   registry — it defines and submits every template. The button `id`s there,
   the ids in `lib/whatsapp/interactive.ts`, and the variable order in
@@ -127,6 +145,8 @@ emojis/formatting in button titles, no newlines in variable values.
 | `TWILIO_WA_CLIENT_BOOKED_SID` | `client_booking_confirmed` | call-to-action |
 | `TWILIO_WA_COACH_PRIVATE_SID` | `coach_private_session` | call-to-action |
 | `TWILIO_WA_FOUNDER_DIGEST_SID` | `founder_daily_digest` | call-to-action |
+| `TWILIO_WA_FOUNDER_SIGNUP_SID` | `founder_signup_request` | quick-reply |
+| `TWILIO_WA_CLIENT_APPROVED_SID` | `client_signup_approved` | call-to-action |
 
 Until each SID is set the matching message sends as plain text (buttons omitted)
 and typed replies still drive the same actions.
@@ -145,7 +165,8 @@ and typed replies still drive the same actions.
      TWILIO_WA_COACH_REMINDER_SID=HX... TWILIO_WA_COACH_AFTERCLASS_SID=HX... \
      TWILIO_WA_CLIENT_REMINDER_SID=HX... TWILIO_WA_CLIENT_WAITLIST_SID=HX... \
      TWILIO_WA_CLIENT_PAYMENT_SID=HX... TWILIO_WA_CLIENT_BOOKED_SID=HX... \
-     TWILIO_WA_COACH_PRIVATE_SID=HX... TWILIO_WA_FOUNDER_DIGEST_SID=HX...
+     TWILIO_WA_COACH_PRIVATE_SID=HX... TWILIO_WA_FOUNDER_DIGEST_SID=HX... \
+     TWILIO_WA_FOUNDER_SIGNUP_SID=HX... TWILIO_WA_CLIENT_APPROVED_SID=HX...
    ```
 5. Spot-check one live round-trip per button on a real phone.
 

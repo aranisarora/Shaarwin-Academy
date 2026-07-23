@@ -74,3 +74,29 @@ export async function setClientArchived(clientId: string, archived: boolean): Pr
   revalidatePath("/admin/players");
   return { ok: true };
 }
+
+/**
+ * Approve or deny a closed-membership signup request. The single approve/deny
+ * implementation lives in the review_signup_request RPC — the WhatsApp founder
+ * buttons call the same one. Deny is reversible (call again with approve=true).
+ */
+export async function reviewSignupRequest(
+  clientId: string,
+  approve: boolean
+): Promise<Result> {
+  const { supabase, founder } = await requireFounder();
+  if (!founder) return { ok: false, error: "Founder only." };
+  const { data, error } = await supabase.rpc("review_signup_request", {
+    p_client: clientId,
+    p_approve: approve,
+  });
+  if (error) return { ok: false, error: "Couldn't update that request." };
+  const result = (data ?? {}) as { ok?: boolean; error?: string };
+  if (!result.ok && result.error === "already_reviewed") {
+    revalidatePath("/admin/players");
+    return { ok: false, error: "Already handled." };
+  }
+  if (!result.ok) return { ok: false, error: "Couldn't update that request." };
+  revalidatePath("/admin/players");
+  return { ok: true };
+}

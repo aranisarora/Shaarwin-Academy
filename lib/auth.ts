@@ -41,6 +41,7 @@ export type Profile = {
   razorpay_customer_id: string | null;
   notification_prefs: Record<string, boolean>;
   onboarded_at: string | null;
+  approval_status: "pending" | "approved" | "denied";
 };
 
 /**
@@ -85,9 +86,22 @@ export async function requireUser(nextPath: string) {
       .maybeSingle());
   }
 
+  // Closed membership: a self-signup client who isn't approved yet is held at
+  // the pending screen (request form → waiting → approved) before any other
+  // /app page. Existing clients and founder-invited clients are 'approved', so
+  // they never see it. Coaches and founders are exempt from every branch below.
+  const p = profile as Profile;
+  if (
+    p.role === "client" &&
+    p.approval_status !== "approved" &&
+    nextPath.startsWith("/app") &&
+    nextPath !== "/app/pending"
+  ) {
+    redirect("/app/pending");
+  }
+
   // Clients who haven't completed household onboarding (including accounts
   // created before the flow existed) are routed there before any /app page.
-  const p = profile as Profile;
   if (
     p.role === "client" &&
     !p.onboarded_at &&

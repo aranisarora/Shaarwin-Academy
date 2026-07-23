@@ -16,7 +16,7 @@ export default async function AdminPlayersPage({
   const { view } = await searchParams;
   const { data: clients } = await supabase
     .from("profiles")
-    .select("id,full_name,email,phone,disputed,deleted_at,created_at")
+    .select("id,full_name,email,phone,disputed,deleted_at,created_at,approval_status")
     .eq("role", "client")
     .order("created_at", { ascending: false })
     .limit(200);
@@ -108,6 +108,7 @@ export default async function AdminPlayersPage({
     phone: c.phone,
     disputed: c.disputed,
     archived: c.deleted_at !== null,
+    approvalStatus: (c.approval_status ?? "approved") as "pending" | "approved" | "denied",
     createdAt: c.created_at,
     subStatus: subByClient.get(c.id)?.status ?? null,
     planName: subByClient.get(c.id)?.plan ?? null,

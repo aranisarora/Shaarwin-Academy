@@ -23,7 +23,8 @@
  *     TWILIO_WA_COACH_REMINDER_SID=HX... TWILIO_WA_COACH_AFTERCLASS_SID=HX... \
  *     TWILIO_WA_CLIENT_REMINDER_SID=HX... TWILIO_WA_CLIENT_WAITLIST_SID=HX... \
  *     TWILIO_WA_CLIENT_PAYMENT_SID=HX... TWILIO_WA_CLIENT_BOOKED_SID=HX... \
- *     TWILIO_WA_COACH_PRIVATE_SID=HX... TWILIO_WA_FOUNDER_DIGEST_SID=HX...
+ *     TWILIO_WA_COACH_PRIVATE_SID=HX... TWILIO_WA_FOUNDER_DIGEST_SID=HX... \
+ *     TWILIO_WA_FOUNDER_SIGNUP_SID=HX... TWILIO_WA_CLIENT_APPROVED_SID=HX...
  */
 import { readFileSync } from "node:fs";
 
@@ -276,6 +277,47 @@ const TEMPLATES = [
         },
         "twilio/text": {
           body: `Today at the academy ({{1}}): {{2}} — ${APP_URL}/admin`,
+        },
+      },
+    },
+  },
+  {
+    // Founder: a new closed-membership signup request with Approve / Deny.
+    key: "TWILIO_WA_FOUNDER_SIGNUP_SID",
+    approvalName: "founder_signup_request",
+    def: {
+      friendly_name: "founder_signup_request",
+      language: "en",
+      variables: { 1: "Priya Sharma", 2: "priya@example.com", 3: "+91 98123 45678" },
+      types: {
+        "twilio/quick-reply": {
+          body: "New signup request from {{1}} — email {{2}}, phone {{3}}. Approve access to the academy?",
+          actions: [
+            { title: "Approve", id: "su_approve" },
+            { title: "Deny", id: "su_deny" },
+          ],
+        },
+        "twilio/text": {
+          body: "New signup request from {{1}} — email {{2}}, phone {{3}}. Review it in the admin app to approve or deny.",
+        },
+      },
+    },
+  },
+  {
+    // Client: their membership request was approved → CTA into the app.
+    key: "TWILIO_WA_CLIENT_APPROVED_SID",
+    approvalName: "client_signup_approved",
+    def: {
+      friendly_name: "client_signup_approved",
+      language: "en",
+      variables: { 1: "Priya" },
+      types: {
+        "twilio/call-to-action": {
+          body: "Great news {{1}} — your Sharwin TTA membership request is approved. Tap below to set up your family and book your first session.",
+          actions: [{ type: "URL", title: "Open the app", url: `${APP_URL}/app` }],
+        },
+        "twilio/text": {
+          body: `Great news {{1}} — your Sharwin TTA membership request is approved. Set up your family and book your first session: ${APP_URL}/app`,
         },
       },
     },
