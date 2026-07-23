@@ -86,7 +86,7 @@ export default async function AdminTodayPage() {
 
   return (
     <AdminShell title="Today">
-      <div className="mx-auto max-w-4xl space-y-8">
+      <div className="mx-auto max-w-4xl space-y-6 lg:space-y-8">
         {/* ── Section 1: today's classes — the courtside glance ── */}
         <section>
           <h2 className="label mb-3">Today&apos;s classes</h2>

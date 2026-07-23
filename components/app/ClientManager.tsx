@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import Link from "next/link";
 import { DeepLinkFocus } from "@/components/app/DeepLinkFocus";
+import { ActionSection } from "@/components/ui/ActionSection";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
@@ -63,9 +64,22 @@ function displayName(c: { name: string; phone: string | null }): string {
   return c.phone ?? "New client";
 }
 
-function contactLine(c: { email: string; phone: string | null }): string {
-  if (!isPhoneOnly(c.email)) return c.email;
-  return c.phone ? `${c.phone} · WhatsApp` : "Signed up by phone";
+/** The single most urgent flag on a client row, in priority order — a slim row
+ * earns one badge, not five. Everything else lives inside the sheet. */
+function urgentBadge(c: ClientRow): { tone: "ember" | "err" | "neutral"; label: string } | null {
+  if (c.approvalStatus === "pending") return { tone: "ember", label: "Pending" };
+  if (c.approvalStatus === "denied") return { tone: "err", label: "Denied" };
+  if (c.disputed) return { tone: "err", label: "Blocked" };
+  if (c.subStatus === "past_due") return { tone: "err", label: "Past due" };
+  if (c.archived) return { tone: "neutral", label: "Archived" };
+  return null;
+}
+
+/** Line 2 of a client row: their plan, or that they have none. */
+function planLine(c: ClientRow): string {
+  if (c.planName) return c.planName;
+  if (c.subStatus) return c.subStatus;
+  return "No plan";
 }
 
 export function ClientManager({
@@ -194,10 +208,12 @@ export function ClientManager({
     <div className="space-y-4">
       <DeepLinkFocus targetId={focusClientId ? `client-${focusClientId}` : null} />
       <div className="flex items-center justify-between gap-3">
-        <p className="text-sm text-fg-2">
+        <p className="hidden text-sm text-fg-2 lg:block">
           Clients sign themselves up on the website — everyone appears here automatically.
         </p>
-        <Button onClick={openAddInvite}>Add client</Button>
+        <Button onClick={openAddInvite} className="max-lg:w-full">
+          Add client
+        </Button>
       </div>
 
       {/* ── Signup requests awaiting approval ── */}
@@ -235,6 +251,41 @@ export function ClientManager({
         value={search}
         onChange={(e) => setSearch(e.target.value)}
       />
+
+      {/* Slim rows: name + the one most-urgent badge, plan on line 2. The stats
+          (LTV, attendance, students) live in the sheet's summary line. */}
+      <ul className="divide-y divide-line rounded-[12px] border border-line bg-surface-2">
+        {filtered.map((c) => {
+          const badge = urgentBadge(c);
+          return (
+            <li key={c.id} id={`client-${c.id}`}>
+              <button
+                onClick={() => open(c)}
+                className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left hover:bg-surface"
+              >
+                <div className="min-w-0">
+                  <p className="flex items-center gap-2 font-medium">
+                    <span className="truncate">{displayName(c)}</span>
+                    {badge && (
+                      <Badge className="shrink-0" tone={badge.tone}>
+                        {badge.label}
+                      </Badge>
+                    )}
+                  </p>
+                  <p className="truncate text-sm text-fg-2">{planLine(c)}</p>
+                </div>
+                <span aria-hidden className="shrink-0 text-fg-2">
+                  ›
+                </span>
+              </button>
+            </li>
+          );
+        })}
+        {filtered.length === 0 && (
+          <li className="px-4 py-6 text-center text-sm text-fg-2">No matches.</li>
+        )}
+      </ul>
+
       {archivedCount > 0 && (
         <label className="flex items-center gap-2 text-sm text-fg-2">
           <input
@@ -246,62 +297,6 @@ export function ClientManager({
           Show archived ({archivedCount})
         </label>
       )}
-
-      <ul className="divide-y divide-line rounded-[12px] border border-line bg-surface-2">
-        {filtered.map((c) => (
-          <li key={c.id} id={`client-${c.id}`}>
-            <button
-              onClick={() => open(c)}
-              className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left hover:bg-surface"
-            >
-              <div>
-                <p className="font-medium">
-                  {displayName(c)}
-                  {c.approvalStatus === "pending" && (
-                    <Badge className="ml-2" tone="ember">
-                      Pending
-                    </Badge>
-                  )}
-                  {c.approvalStatus === "denied" && (
-                    <Badge className="ml-2" tone="err">
-                      Denied
-                    </Badge>
-                  )}
-                  {c.disputed && (
-                    <Badge className="ml-2" tone="err">
-                      Blocked
-                    </Badge>
-                  )}
-                  {c.archived && <Badge className="ml-2">Archived</Badge>}
-                </p>
-                <p className="text-sm text-fg-2">{contactLine(c)}</p>
-              </div>
-              <div className="flex flex-col items-end gap-1">
-                {c.subStatus ? (
-                  <Badge tone={c.subStatus === "past_due" ? "err" : "ok"}>
-                    {c.planName ?? c.subStatus}
-                  </Badge>
-                ) : (
-                  <Badge>no plan</Badge>
-                )}
-                <span className="tnum text-xs text-fg-2">
-                  paid £{(c.ltvPence / 100).toFixed(0)}
-                  {c.attendedCount > 0 && ` · ${c.attendedCount} attended`}
-                  {c.noShowCount > 0 && ` · ${c.noShowCount} no-shows`}
-                </span>
-                {c.students.length > 1 && (
-                  <span className="text-xs text-fg-2">
-                    {c.students.length} students
-                  </span>
-                )}
-              </div>
-            </button>
-          </li>
-        ))}
-        {filtered.length === 0 && (
-          <li className="px-4 py-6 text-center text-sm text-fg-2">No matches.</li>
-        )}
-      </ul>
 
       {/* ── Pre-registered clients waiting to sign up ── */}
       {pendingInvites.length > 0 && (
@@ -448,8 +443,36 @@ export function ClientManager({
               </p>
             </div>
 
-            <div className="space-y-3 rounded-[12px] border border-line p-4">
-              <p className="label">Contact details</p>
+            {selected.approvalStatus !== "approved" && (
+              <ActionSection label="Membership access" tone="ember" defaultOpen>
+                <p className="text-sm text-fg-2">
+                  {selected.approvalStatus === "pending"
+                    ? "This person is waiting for approval to access the academy."
+                    : "You denied this request. You can still approve them."}
+                </p>
+                <div className="flex gap-2">
+                  <Button
+                    disabled={pending}
+                    className="flex-1"
+                    onClick={() => review(selected.id, true)}
+                  >
+                    {pending ? <Spinner /> : selected.approvalStatus === "denied" ? "Approve anyway" : "Approve"}
+                  </Button>
+                  {selected.approvalStatus === "pending" && (
+                    <Button
+                      variant="ghost"
+                      disabled={pending}
+                      className="flex-1"
+                      onClick={() => review(selected.id, false)}
+                    >
+                      Deny
+                    </Button>
+                  )}
+                </div>
+              </ActionSection>
+            )}
+
+            <ActionSection label="Contact details">
               <Input label="Name" value={name} onChange={(e) => setName(e.target.value)} />
               <Input
                 label="Phone"
@@ -475,10 +498,9 @@ export function ClientManager({
               >
                 {pending ? <Spinner /> : "Save details"}
               </Button>
-            </div>
+            </ActionSection>
 
-            <div className="space-y-3 rounded-[12px] border border-line p-4">
-              <p className="label">Give a free plan</p>
+            <ActionSection label="Give a free plan">
               <Select
                 value={planId}
                 onChange={(e) => setPlanId(e.target.value)}
@@ -503,10 +525,9 @@ export function ClientManager({
               >
                 {pending ? <Spinner /> : "Give free plan"}
               </Button>
-            </div>
+            </ActionSection>
 
-            <div className="space-y-3 rounded-[12px] border border-line p-4">
-              <p className="label">Private-lesson minutes</p>
+            <ActionSection label="Private-lesson minutes">
               <div className="grid grid-cols-2 gap-2">
                 <Input
                   placeholder="+60 or -30"
@@ -536,40 +557,9 @@ export function ClientManager({
               >
                 {pending ? <Spinner /> : "Update minutes"}
               </Button>
-            </div>
+            </ActionSection>
 
-            {selected.approvalStatus !== "approved" && (
-              <div className="space-y-3 rounded-[12px] border border-ember/40 p-4">
-                <p className="label">Membership access</p>
-                <p className="text-sm text-fg-2">
-                  {selected.approvalStatus === "pending"
-                    ? "This person is waiting for approval to access the academy."
-                    : "You denied this request. You can still approve them."}
-                </p>
-                <div className="flex gap-2">
-                  <Button
-                    disabled={pending}
-                    className="flex-1"
-                    onClick={() => review(selected.id, true)}
-                  >
-                    {pending ? <Spinner /> : selected.approvalStatus === "denied" ? "Approve anyway" : "Approve"}
-                  </Button>
-                  {selected.approvalStatus === "pending" && (
-                    <Button
-                      variant="ghost"
-                      disabled={pending}
-                      className="flex-1"
-                      onClick={() => review(selected.id, false)}
-                    >
-                      Deny
-                    </Button>
-                  )}
-                </div>
-              </div>
-            )}
-
-            <div className="space-y-3 rounded-[12px] border border-line p-4">
-              <p className="label">Account</p>
+            <ActionSection label="Account">
               <Button
                 variant="ghost"
                 disabled={pending}
@@ -618,7 +608,7 @@ export function ClientManager({
               >
                 {selected.archived ? "Restore client" : "Archive client"}
               </Button>
-            </div>
+            </ActionSection>
 
             {message && <p className="text-sm text-fg-2">{message}</p>}
           </div>

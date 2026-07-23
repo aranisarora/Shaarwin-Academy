@@ -6,9 +6,11 @@
 // every week; one-week-only changes happen on that session in the Schedule tab.
 
 import { useRouter } from "next/navigation";
-import { useMemo, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { Button } from "@/components/ui/Button";
-import { Select } from "@/components/ui/Select";
+import { FilterBar, type FilterDef } from "@/components/ui/FilterBar";
+import { Fab } from "@/components/ui/Fab";
+import { Sheet } from "@/components/ui/Sheet";
 import { topUpSessions } from "@/app/admin/schedule/actions";
 import { AdminClassSheet } from "./AdminClassSheet";
 import { AdminAddSheet } from "./AdminAddSheet";
@@ -48,7 +50,30 @@ export function AdminWeeklyClasses({
   );
   const [creating, setCreating] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [overflowOpen, setOverflowOpen] = useState(false);
   const [pending, startTransition] = useTransition();
+
+  // Success/status lines show as a bottom toast that clears itself, so they
+  // never reserve layout space above the list.
+  useEffect(() => {
+    if (!message) return;
+    const t = setTimeout(() => setMessage(null), 5000);
+    return () => clearTimeout(t);
+  }, [message]);
+
+  function topUp() {
+    startTransition(async () => {
+      const r = await topUpSessions();
+      setMessage(
+        r.ok
+          ? r.created
+            ? `Added ${r.created} upcoming sessions.`
+            : "The schedule is already fully topped up."
+          : (r.error ?? "Failed.")
+      );
+      if (r.ok) router.refresh();
+    });
+  }
 
   // Filters — location (venue), day and status. Options are drawn from the
   // classes that actually exist so we never show an empty bucket.
@@ -117,22 +142,75 @@ export function AdminWeeklyClasses({
       });
   }, [filteredClasses]);
 
-  // Which venue cards are collapsed. Empty set = every venue open by default;
-  // tapping a venue header folds just that one away.
-  const [collapsedVenues, setCollapsedVenues] = useState<Set<string>>(new Set());
+  // On the phone the page opens one screen tall: only the first venue is
+  // expanded, the rest collapse to a header + count. `toggled` holds the venues
+  // the founder has flipped from their default (first-open, others-closed), so a
+  // tap always does the obvious thing. Desktop ignores this via CSS (lg:block).
+  const [toggled, setToggled] = useState<Set<string>>(new Set());
   const toggleVenue = (key: string) =>
-    setCollapsedVenues((prev) => {
+    setToggled((prev) => {
       const next = new Set(prev);
       if (next.has(key)) next.delete(key);
       else next.add(key);
       return next;
     });
 
+  const filterDefs: FilterDef[] = [
+    {
+      key: "venue",
+      aria: "Filter by location",
+      label: "All locations",
+      value: venueFilter,
+      defaultValue: "all",
+      onChange: setVenueFilter,
+      options: [
+        { value: "all", label: "All locations" },
+        ...venueOptions.map((v) => ({ value: v, label: v || "No venue" })),
+      ],
+    },
+    {
+      key: "day",
+      aria: "Filter by day",
+      label: "Any day",
+      value: dayFilter,
+      defaultValue: "all",
+      onChange: setDayFilter,
+      options: [
+        { value: "all", label: "Any day" },
+        ...dayOptions.map((d) => ({ value: d, label: WEEKDAY_NAME[d] ?? d })),
+      ],
+    },
+    {
+      key: "status",
+      aria: "Filter by status",
+      label: "Any status",
+      value: statusFilter,
+      defaultValue: "active",
+      onChange: setStatusFilter,
+      options: [
+        { value: "all", label: "All statuses" },
+        { value: "active", label: "Active" },
+        { value: "paused", label: "Paused" },
+        { value: "ended", label: "Ended" },
+      ],
+    },
+  ];
+
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between gap-2">
-        {message ? <p className="text-sm text-fg-2">{message}</p> : <span />}
+      {/* Desktop keeps the inline "Create a class" button; the ⋯ holds the rare
+          maintenance bits. On the phone, Create is a FAB (below). */}
+      <div className="flex items-center justify-end gap-2">
+        <button
+          type="button"
+          aria-label="More options"
+          onClick={() => setOverflowOpen(true)}
+          className="flex h-11 w-11 items-center justify-center rounded-[8px] border border-line text-lg text-fg-2 hover:border-ember hover:text-ember"
+        >
+          ⋯
+        </button>
         <Button
+          className="hidden lg:inline-flex"
           onClick={() => {
             setCreating(true);
             setMessage(null);
@@ -142,74 +220,12 @@ export function AdminWeeklyClasses({
         </Button>
       </div>
 
-      <div className="flex items-center justify-between gap-2">
-        <p className="text-sm text-fg-2">
-          Each class repeats every week and fills the Schedule tab. Tap one to change it —
-          for a one-week-only change, tap that session in the Schedule tab instead.
-        </p>
-        <button
-          disabled={pending}
-          className="shrink-0 text-sm text-fg-2 underline-offset-4 hover:underline"
-          onClick={() =>
-            startTransition(async () => {
-              const r = await topUpSessions();
-              setMessage(
-                r.ok
-                  ? r.created
-                    ? `Added ${r.created} upcoming sessions.`
-                    : "The schedule is already fully topped up."
-                  : (r.error ?? "Failed.")
-              );
-              if (r.ok) router.refresh();
-            })
-          }
-        >
-          {pending ? "Topping up…" : "Top up the next 8 weeks"}
-        </button>
-      </div>
+      {classes.length > 0 && <FilterBar filters={filterDefs} />}
 
-      {classes.length > 0 && (
-        <div className="grid grid-cols-1 gap-2 pt-1 sm:grid-cols-3">
-          <Select
-            aria-label="Filter by location"
-            value={venueFilter}
-            onChange={(e) => setVenueFilter(e.target.value)}
-          >
-            <option value="all">All locations</option>
-            {venueOptions.map((v) => (
-              <option key={v} value={v}>
-                {v || "No venue"}
-              </option>
-            ))}
-          </Select>
-          <Select
-            aria-label="Filter by day"
-            value={dayFilter}
-            onChange={(e) => setDayFilter(e.target.value)}
-          >
-            <option value="all">Any day</option>
-            {dayOptions.map((d) => (
-              <option key={d} value={d}>
-                {WEEKDAY_NAME[d] ?? d}
-              </option>
-            ))}
-          </Select>
-          <Select
-            aria-label="Filter by status"
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-          >
-            <option value="all">All statuses</option>
-            <option value="active">Active</option>
-            <option value="paused">Paused</option>
-            <option value="ended">Ended</option>
-          </Select>
-        </div>
-      )}
-
-      {venueGroups.map((group) => {
+      {venueGroups.map((group, i) => {
         const key = group.venue || "no-venue";
-        const open = !collapsedVenues.has(key);
+        // First venue open by default, others collapsed; a tap flips it.
+        const open = i === 0 ? !toggled.has(key) : toggled.has(key);
         return (
         <div
           key={key}
@@ -223,7 +239,7 @@ export function AdminWeeklyClasses({
           >
             <span className="flex items-baseline gap-2">
               <span
-                className={`text-fg-2 transition-transform ${open ? "rotate-90" : ""}`}
+                className={`text-fg-2 transition-transform lg:rotate-90 ${open ? "rotate-90" : ""}`}
                 aria-hidden
               >
                 ›
@@ -234,8 +250,7 @@ export function AdminWeeklyClasses({
               {group.count} class{group.count === 1 ? "" : "es"}
             </span>
           </button>
-          {open && (
-          <div className="divide-y divide-line">
+          <div className={`divide-y divide-line lg:block ${open ? "block" : "hidden"}`}>
             {group.days.map((day) => (
               <div key={day.weekday} className="px-4 py-3">
                 <p className="label mb-1.5">{WEEKDAY_NAME[day.weekday] ?? "One-off"}</p>
@@ -254,7 +269,6 @@ export function AdminWeeklyClasses({
               </div>
             ))}
           </div>
-          )}
         </div>
         );
       })}
@@ -271,6 +285,50 @@ export function AdminWeeklyClasses({
         <p className="rounded-[12px] border border-line bg-surface-2 p-4 text-sm text-fg-2">
           No classes match these filters.
         </p>
+      )}
+
+      {/* Phone: Create a class as a floating button above the tab bar. */}
+      <Fab
+        label="Create a class"
+        onClick={() => {
+          setCreating(true);
+          setMessage(null);
+        }}
+      />
+
+      {/* ⋯ overflow: the explainer + the rare "top up" maintenance action. */}
+      <Sheet open={overflowOpen} onClose={() => setOverflowOpen(false)} title="Weekly classes">
+        <div className="space-y-4">
+          <p className="text-sm text-fg-2">
+            Each class repeats every week and fills the Schedule tab. Tap one to change it —
+            for a one-week-only change, tap that session in the Schedule tab instead.
+          </p>
+          <div className="space-y-2 rounded-[12px] border border-line p-4">
+            <p className="label">Top up the next 8 weeks</p>
+            <p className="text-sm text-fg-2">
+              Extends every class&apos;s upcoming sessions so the schedule never runs dry. Runs
+              automatically — you rarely need this.
+            </p>
+            <Button
+              variant="ghost"
+              disabled={pending}
+              className="w-full"
+              onClick={() => {
+                topUp();
+                setOverflowOpen(false);
+              }}
+            >
+              {pending ? "Topping up…" : "Top up now"}
+            </Button>
+          </div>
+        </div>
+      </Sheet>
+
+      {/* Transient status line as a bottom toast — no reserved layout space. */}
+      {message && (
+        <div className="fixed inset-x-4 bottom-[calc(env(safe-area-inset-bottom)+4.75rem)] z-40 mx-auto max-w-md rounded-[12px] border border-line bg-surface-2 px-4 py-3 text-sm text-fg-2 shadow-[var(--shadow-sheet)] lg:bottom-6">
+          {message}
+        </div>
       )}
 
       {editingClass && (
