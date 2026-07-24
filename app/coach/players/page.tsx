@@ -1,11 +1,10 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import { requireUser } from "@/lib/auth";
 import { effectiveCoachId } from "@/lib/coach-preview";
 import { CoachShell } from "@/components/app/CoachShell";
 import { EmptyState } from "@/components/ui/EmptyState";
-import { Badge } from "@/components/ui/Badge";
-import { getMasteryMap, masteryLabel } from "@/lib/mastery";
+import { CoachPlayerList } from "@/components/app/CoachPlayerList";
+import { getMasteryMap } from "@/lib/mastery";
 
 export const metadata: Metadata = { title: "Players" };
 
@@ -54,32 +53,7 @@ export default async function CoachPlayersPage() {
             copy="Your players will appear here once sessions are booked."
           />
         ) : (
-          <ul className="divide-y divide-line rounded-[12px] border border-line bg-surface-2">
-            {players.map((p) => (
-              <li key={p.id}>
-                <Link
-                  href={`/coach/players/${p.id}`}
-                  className="group flex items-center justify-between px-4 py-3 transition-colors"
-                >
-                  <div>
-                    <p className="font-medium group-hover:text-ember">{p.name}</p>
-                    <p className="tnum text-xs text-fg-2">
-                      {p.sessions} session{p.sessions === 1 ? "" : "s"} with you
-                      {p.attended > 0 && ` · ${p.attended} attended`}
-                      {p.noShows > 0 && ` · ${p.noShows} no-shows`}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <span className="tnum text-sm text-fg-2">{p.mastery}%</span>
-                    <Badge>{masteryLabel(p.mastery)}</Badge>
-                    <span className="text-fg-2" aria-hidden>
-                      ›
-                    </span>
-                  </div>
-                </Link>
-              </li>
-            ))}
-          </ul>
+          <CoachPlayerList players={players} />
         )}
       </div>
     </CoachShell>
