@@ -19,7 +19,41 @@ export const SEED = {
   groupPlan1x: "00000000-0000-4000-8000-0000000000d4",
   groupPlan2x: "00000000-0000-4000-8000-0000000000d5",
   groupPlan3x: "00000000-0000-4000-8000-0000000000d6",
+  // a seeded group batch (Juniors — Lakefront, 0009) to hang ad-hoc sessions on
+  groupClass: "00000000-0000-4000-8000-0000000001f1",
 } as const;
+
+const IST_OFFSET_MIN = 330; // Asia/Kolkata is a fixed UTC+5:30 (no DST)
+
+/**
+ * Build `weeks` weekly group sessions on one class at a fixed IST wall-clock
+ * time and weekday — a self-contained recurring slot for series tests, so they
+ * don't depend on (or collide with) the seeded schedule. Returns the sessions
+ * earliest-first. Default 15:00 IST is a time no seeded batch uses.
+ */
+export async function createWeeklySlot(opts: {
+  weeks?: number;
+  classId?: string;
+  coachId?: string;
+  istHour?: number;
+  firstInDays?: number;
+} = {}): Promise<CreatedSession[]> {
+  const weeks = opts.weeks ?? 4;
+  const classId = opts.classId ?? SEED.groupClass;
+  // First occurrence `firstInDays` out, at istHour:00 IST == (istHour*60 - 330)
+  // minutes UTC (Kolkata is a fixed UTC+5:30).
+  const first = new Date();
+  first.setUTCDate(first.getUTCDate() + (opts.firstInDays ?? 3));
+  const utcMinutes = (opts.istHour ?? 15) * 60 - IST_OFFSET_MIN;
+  first.setUTCHours(Math.floor(utcMinutes / 60), utcMinutes % 60, 0, 0);
+
+  const sessions: CreatedSession[] = [];
+  for (let i = 0; i < weeks; i++) {
+    const startsAt = new Date(first.getTime() + i * 7 * 86_400_000);
+    sessions.push(await createGroupSession({ startsAt, classId, coachId: opts.coachId }));
+  }
+  return sessions;
+}
 
 // ── Time-travel helpers — assert scheduled_for by value, never by waiting ────
 export const minutesFromNow = (m: number) => new Date(Date.now() + m * 60_000);
@@ -217,47 +251,6 @@ export async function createGroupSession(opts: {
   }
 
   return { sessionId: session.id, classId, coachId, startsAt, endsAt };
-}
-
-/**
- * Pick the earliest seeded group session that sits on a genuinely recurring slot
- * (same class + weekday + wall-clock time, with `minOccurrences` future
- * occurrences). This deliberately skips ad-hoc one-off sessions other tests may
- * have inserted, so series tests get a real weekly slot to enrol into.
- */
-export async function pickRecurringGroupSession(
-  minOccurrences = 3
-): Promise<{ sessionId: string; classId: string; occurrences: number }> {
-  const db = admin();
-  const { data, error } = await db
-    .from("class_sessions")
-    .select("id, class_id, starts_at, classes!inner(class_type, timezone)")
-    .eq("status", "scheduled")
-    .eq("classes.class_type", "group")
-    .gt("starts_at", hoursFromNow(2).toISOString())
-    .order("starts_at");
-  if (error) throw new Error(`pickRecurringGroupSession: ${error.message}`);
-
-  const groups = new Map<string, { id: string; class_id: string }[]>();
-  for (const row of (data ?? []) as any[]) {
-    const tz = row.classes?.timezone || "Asia/Kolkata";
-    const slot = new Intl.DateTimeFormat("en-GB", {
-      timeZone: tz,
-      weekday: "short",
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: false,
-    }).format(new Date(row.starts_at));
-    const key = `${row.class_id}|${slot}`;
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key)!.push({ id: row.id, class_id: row.class_id });
-  }
-  for (const rows of groups.values()) {
-    if (rows.length >= minOccurrences) {
-      return { sessionId: rows[0].id, classId: rows[0].class_id, occurrences: rows.length };
-    }
-  }
-  throw new Error(`no seeded recurring slot with ≥${minOccurrences} future occurrences`);
 }
 
 /** Book a single session as the given client (real book_session RPC). */

@@ -3,9 +3,9 @@ import { admin } from "../../e2e/lib/supabase";
 import {
   createClient,
   createGroupSession,
+  createWeeklySlot,
   bookSession,
   bookSeries,
-  pickRecurringGroupSession,
   SEED,
   hoursFromNow,
 } from "../../e2e/lib/scenario";
@@ -60,17 +60,19 @@ describe("recurring series booking (0028 spam guard)", () => {
     // occurrence of a seeded weekly batch.
     const parent = await createClient({ children: 1, groupPlanId: SEED.groupPlan2x });
 
-    const slot = await pickRecurringGroupSession(3);
+    // A hermetic 4-week slot (15:00 IST — unused by the seed) so the assertion
+    // doesn't depend on the shared seeded schedule.
+    const slot = await createWeeklySlot({ weeks: 4 });
 
     const result = await bookSeries({
       email: parent.email,
-      sessionId: slot.sessionId,
+      sessionId: slot[0].sessionId,
       playerId: parent.playerIds[0],
       recurring: true,
     });
 
-    // Several occurrences enrolled across future weeks…
-    expect(result.confirmed).toBeGreaterThan(1);
+    // Every occurrence enrolled across the future weeks…
+    expect(result.confirmed).toBe(4);
 
     // …but the parent is told once, and founders see one ops entry — the whole
     // point of migration 0028.
