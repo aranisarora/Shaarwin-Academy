@@ -115,6 +115,25 @@ export function GearIcon({ className }: IconProps) {
   );
 }
 
+/** A tick — done / confirmed states. */
+export function CheckIcon({ className }: IconProps) {
+  return (
+    <svg {...base(className)}>
+      <path d="m5 12.5 4.5 4.5L19 6.5" />
+    </svg>
+  );
+}
+
+/** A padlock — a step that isn't unlocked yet. */
+export function LockIcon({ className }: IconProps) {
+  return (
+    <svg {...base(className)}>
+      <rect x="4.5" y="10.5" width="15" height="10" rx="2" />
+      <path d="M8 10.5V7.5a4 4 0 0 1 8 0v3" />
+    </svg>
+  );
+}
+
 /** More — three dots. */
 export function DotsIcon({ className }: IconProps) {
   return (

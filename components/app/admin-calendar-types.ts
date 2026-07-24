@@ -12,6 +12,8 @@ export type SessionRow = {
   ends_at: string;
   coachId: string | null;
   coachArrivedAt: string | null;
+  coachArrivalSource: string | null; // 'auto' | 'tap' | 'wa' — how arrival was marked
+  coachArrivalDistanceM: number | null; // metres from the venue at arrival, if known
   title: string;
   capacity: number; // effective for this session (override ?? class default)
   isPrivate: boolean;
@@ -150,4 +152,16 @@ export function clockTime(iso: string): string {
     minute: "2-digit",
     hour12: true,
   }).format(new Date(iso));
+}
+
+/** How a coach's arrival was captured, for the schedule sheet. */
+export function arrivalSourceLabel(source: string): string {
+  if (source === "auto") return "auto";
+  if (source === "wa") return "WhatsApp";
+  return "tap";
+}
+
+/** Distance to the venue at arrival — "40 m" under a km, else "3.2 km". */
+export function fmtDistance(metres: number): string {
+  return metres < 1000 ? `${metres} m` : `${(metres / 1000).toFixed(1)} km`;
 }

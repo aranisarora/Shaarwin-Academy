@@ -33,7 +33,9 @@ import { ActionResult } from "@/components/app/ActionResult";
 import { ClassDetailFields, generateClassTitle, type ClassFormState } from "./ClassFields";
 import { TimeSelect12h } from "./TimeSelect12h";
 import {
+  arrivalSourceLabel,
   clockTime,
+  fmtDistance,
   fmtWhen,
   wallDate,
   wallTime,
@@ -367,11 +369,26 @@ export function AdminSessionSheet({
               )}
               {session.coachId &&
                 (session.coachArrivedAt ? (
-                  <Badge tone="ok">✓ Coach arrived {clockTime(session.coachArrivedAt)}</Badge>
+                  <Badge tone="ok">Coach arrived {clockTime(session.coachArrivedAt)}</Badge>
                 ) : (
                   <Badge tone="neutral">Coach not arrived yet</Badge>
                 ))}
             </div>
+            {session.coachId &&
+              session.coachArrivedAt &&
+              (session.coachArrivalSource || session.coachArrivalDistanceM != null) && (
+                <p className="mt-1.5 text-sm text-fg-2">
+                  {session.coachArrivalSource && arrivalSourceLabel(session.coachArrivalSource)}
+                  {session.coachArrivalDistanceM != null && (
+                    <>
+                      {session.coachArrivalSource ? " · " : ""}
+                      <span className={session.coachArrivalDistanceM > 500 ? "text-err" : undefined}>
+                        {fmtDistance(session.coachArrivalDistanceM)}
+                      </span>
+                    </>
+                  )}
+                </p>
+              )}
             {session.coachId && (
               <button
                 type="button"

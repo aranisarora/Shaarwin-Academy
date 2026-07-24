@@ -123,7 +123,10 @@ export async function confirmComing(sessionId: string): Promise<Result> {
   return { ok: true };
 }
 
-export async function markArrived(sessionId: string): Promise<Result> {
+export async function markArrived(
+  sessionId: string,
+  opts?: { source?: "auto" | "tap"; distanceM?: number | null }
+): Promise<Result> {
   const supabase = await createClient();
   const {
     data: { user },
@@ -133,8 +136,28 @@ export async function markArrived(sessionId: string): Promise<Result> {
   const { error } = await supabase.rpc("coach_mark_arrival", {
     p_session: sessionId,
     p_late: false,
+    p_source: opts?.source ?? "tap",
+    p_distance_m: opts?.distanceM ?? null,
   });
   if (error) return { ok: false, error: "Couldn't send. Try again." };
+  revalidatePath(`/coach/session/${sessionId}`);
+  return { ok: true };
+}
+
+export async function undoArrival(sessionId: string): Promise<Result> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Sign in first." };
+
+  const { error } = await supabase.rpc("coach_undo_arrival", { p_session: sessionId });
+  if (error) {
+    if (error.message.includes("undo_window_passed")) {
+      return { ok: false, error: "Too late to undo — that's been sent." };
+    }
+    return { ok: false, error: "Couldn't undo. Try again." };
+  }
   revalidatePath(`/coach/session/${sessionId}`);
   return { ok: true };
 }

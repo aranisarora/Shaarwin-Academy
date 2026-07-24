@@ -5,6 +5,7 @@ import { getCoachSessions, type CoachSession } from "@/lib/coach-data";
 import { CoachShell } from "@/components/app/CoachShell";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { AutoOpenSession } from "@/components/app/AutoOpenSession";
+import { CoachActionSheet, type CoachAction } from "@/components/app/CoachActionSheet";
 import {
   CoachScheduleDays,
   type ScheduleDay,
@@ -35,6 +36,61 @@ function dayLabel(iso: string) {
 function classTypeLine(s: CoachSession): string {
   if (s.isPrivate) return s.playerName ?? "Private session";
   return "Group class";
+}
+
+type ActionRow = {
+  id: string;
+  starts_at: string;
+  ends_at: string;
+  coach_confirmed_at: string | null;
+  coach_arrived_at: string | null;
+  classes: unknown;
+};
+
+/** The one action to surface in the takeover sheet, or null. Rows are ordered by
+ *  starts_at, so `find` returns the soonest match. Arrive (in-window, unmarked)
+ *  outranks a coming-check (within 12h, neither confirmed nor arrived). */
+function pickCoachAction(
+  rows: ActionRow[],
+  now: number,
+  todayKey: string,
+  tomorrowKey: string
+): CoachAction | null {
+  const toAction = (r: ActionRow, phase: "confirm" | "arrive"): CoachAction => {
+    const cls = r.classes as {
+      title?: string;
+      venues?: { name: string; lat: number | null; lng: number | null } | { name: string; lat: number | null; lng: number | null }[] | null;
+      private_class_details?: { lat: number | null; lng: number | null } | { lat: number | null; lng: number | null }[] | null;
+    };
+    const venue = Array.isArray(cls.venues) ? cls.venues[0] : cls.venues;
+    const priv = Array.isArray(cls.private_class_details)
+      ? cls.private_class_details[0]
+      : cls.private_class_details;
+    const dk = dayLabel(r.starts_at);
+    const dayName = dk === todayKey ? "Today" : dk === tomorrowKey ? "Tomorrow" : dk;
+    return {
+      sessionId: r.id,
+      title: cls.title ?? "Session",
+      whenLabel: `${dayName} · ${fmtTime(r.starts_at)}`,
+      venueName: venue?.name ?? null,
+      phase,
+      venueLat: venue?.lat ?? priv?.lat ?? null,
+      venueLng: venue?.lng ?? priv?.lng ?? null,
+    };
+  };
+
+  const arrive = rows.find((r) => {
+    if (r.coach_arrived_at) return false;
+    const start = new Date(r.starts_at).getTime();
+    const end = new Date(r.ends_at).getTime();
+    return now >= start - 60 * 60000 && now <= end;
+  });
+  if (arrive) return toAction(arrive, "arrive");
+
+  const confirm = rows.find(
+    (r) => !r.coach_confirmed_at && !r.coach_arrived_at && new Date(r.starts_at).getTime() >= now
+  );
+  return confirm ? toAction(confirm, "confirm") : null;
 }
 
 export default async function CoachSchedulePage() {
@@ -115,9 +171,26 @@ export default async function CoachSchedulePage() {
     };
   });
 
+  // The single next action to surface as a takeover sheet: an "arrived?" for a
+  // session already in the window, else a "coming?" for one starting within 12h
+  // that the coach has neither confirmed nor arrived. Most-urgent first.
+  const { data: actRows } = await supabase
+    .from("class_sessions")
+    .select(
+      "id,starts_at,ends_at,coach_confirmed_at,coach_arrived_at,classes!inner(title,venues(name,lat,lng),private_class_details(address,lat,lng))"
+    )
+    .eq("coach_id", coachId)
+    .eq("status", "scheduled")
+    .gte("starts_at", new Date(now - 3 * 3600000).toISOString())
+    .lte("starts_at", new Date(now + 12 * 3600000).toISOString())
+    .order("starts_at", { ascending: true });
+
+  const coachAction = pickCoachAction(actRows ?? [], now, todayKey, tomorrowKey);
+
   return (
     <CoachShell title="Schedule">
       {liveSession && <AutoOpenSession sessionId={liveSession.id} />}
+      <CoachActionSheet action={coachAction} />
       {sessions.length === 0 ? (
         <div className="mx-auto max-w-2xl">
           <EmptyState

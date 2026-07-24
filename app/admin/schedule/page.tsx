@@ -54,7 +54,7 @@ export default async function AdminCalendarPage({
     supabase
       .from("class_sessions")
       .select(
-        "id,starts_at,ends_at,coach_id,coach_arrived_at,capacity_override,classes!inner(id,title,description,skill_level,capacity,duration_minutes,recurrence_rule,active,venue_id,class_type,is_school,venues(name,address,postcode,lat,lng,address_details),private_class_details(client_id,address,postcode,lat,lng,access_notes,address_details))"
+        "id,starts_at,ends_at,coach_id,coach_arrived_at,coach_arrival_source,coach_arrival_distance_m,capacity_override,classes!inner(id,title,description,skill_level,capacity,duration_minutes,recurrence_rule,active,venue_id,class_type,is_school,venues(name,address,postcode,lat,lng,address_details),private_class_details(client_id,address,postcode,lat,lng,access_notes,address_details))"
       )
       .in("status", ["scheduled", "completed"])
       .gte("starts_at", from.toISOString())
@@ -201,6 +201,8 @@ export default async function AdminCalendarPage({
       ends_at: s.ends_at,
       coachId: s.coach_id,
       coachArrivedAt: s.coach_arrived_at,
+      coachArrivalSource: s.coach_arrival_source,
+      coachArrivalDistanceM: s.coach_arrival_distance_m,
       title: cls.title,
       capacity: s.capacity_override ?? cls.capacity,
       isPrivate: cls.class_type === "private",
