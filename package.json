@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
+    "e2e": "playwright test",
     "wa:provision": "node scripts/whatsapp/provision-templates.mjs",
     "prepare": "git config core.hooksPath .githooks || exit 0"
   },
@@ -16,11 +17,12 @@
     "@supabase/supabase-js": "^2.110.0",
     "mapbox-gl": "^3.25.0",
     "next": "16.2.10",
-"react": "19.2.4",
+    "react": "19.2.4",
     "react-dom": "19.2.4",
     "resend": "^6.17.1"
   },
   "devDependencies": {
+    "@playwright/test": "^1.61.1",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
