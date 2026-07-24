@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
+import { useIsIos, useIsStandalone } from "./use-pwa";
 
 type BeforeInstallPromptEvent = Event & {
   prompt: () => Promise<void>;
@@ -17,25 +18,12 @@ type BeforeInstallPromptEvent = Event & {
  * Share → Add to Home Screen instructions.
  */
 export function InstallAppCard() {
+  const isIos = useIsIos();
+  const standalone = useIsStandalone();
   const [deferred, setDeferred] = useState<BeforeInstallPromptEvent | null>(null);
   const [installed, setInstalled] = useState(false);
-  const [standalone, setStandalone] = useState(false);
-  const [isIos, setIsIos] = useState(false);
 
   useEffect(() => {
-    const isStandalone =
-      window.matchMedia("(display-mode: standalone)").matches ||
-      // @ts-expect-error iOS Safari only
-      window.navigator.standalone === true;
-    setStandalone(isStandalone);
-    // navigator.userAgent is unreliable on modern iOS (Apple masks it).
-    // maxTouchPoints > 1 on a Mac platform is the standard iOS-on-iPad fallback.
-    const ua = navigator.userAgent;
-    const iosViaUA = /iphone|ipad|ipod/i.test(ua);
-    const iosViaTouch =
-      /Mac/.test(navigator.platform ?? "") && navigator.maxTouchPoints > 1;
-    setIsIos(iosViaUA || iosViaTouch);
-
     const onPrompt = (e: Event) => {
       e.preventDefault();
       setDeferred(e as BeforeInstallPromptEvent);

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { Button } from "@/components/ui/Button";
+import { useIsIos, useIsStandalone } from "@/components/app/use-pwa";
 
 type BeforeInstallPromptEvent = Event & {
   prompt: () => Promise<void>;
@@ -18,26 +19,15 @@ type BeforeInstallPromptEvent = Event & {
  * optional now that the phone number was captured mid-flow.
  */
 export function InstallStep({ whatsAppSlot }: { whatsAppSlot?: React.ReactNode }) {
+  const isIos = useIsIos();
+  const standalone = useIsStandalone();
   const [deferred, setDeferred] = useState<BeforeInstallPromptEvent | null>(null);
   const [installed, setInstalled] = useState(false);
-  const [standalone, setStandalone] = useState(false);
-  const [isIos, setIsIos] = useState(false);
 
   useEffect(() => {
     // This screen is the install moment — suppress the contextual post-booking
     // InstallPrompt so the user isn't asked twice.
     localStorage.setItem("sharwin_install_done", "1");
-
-    const isStandalone =
-      window.matchMedia("(display-mode: standalone)").matches ||
-      // @ts-expect-error iOS Safari only
-      window.navigator.standalone === true;
-    setStandalone(isStandalone);
-    const ua = navigator.userAgent;
-    const iosViaUA = /iphone|ipad|ipod/i.test(ua);
-    const iosViaTouch =
-      /Mac/.test(navigator.platform ?? "") && navigator.maxTouchPoints > 1;
-    setIsIos(iosViaUA || iosViaTouch);
 
     const onPrompt = (e: Event) => {
       e.preventDefault();

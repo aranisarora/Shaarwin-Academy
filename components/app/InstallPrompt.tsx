@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/Button";
+import { useIsIos, useIsStandalone, useLocalFlag } from "./use-pwa";
 
 type BeforeInstallPromptEvent = Event & {
   prompt: () => Promise<void>;
@@ -14,43 +15,31 @@ type BeforeInstallPromptEvent = Event & {
  * Share → Add to Home Screen instructions.
  */
 export function InstallPrompt() {
+  const isIos = useIsIos();
+  const standalone = useIsStandalone();
+  const installDone = useLocalFlag("sharwin_install_done");
   const [deferred, setDeferred] = useState<BeforeInstallPromptEvent | null>(null);
-  const [show, setShow] = useState(false);
-  const [isIos, setIsIos] = useState(false);
+  const [dismissed, setDismissed] = useState(false);
 
   useEffect(() => {
     if (localStorage.getItem("sharwin_install_done")) return;
-
-    const standalone =
-      window.matchMedia("(display-mode: standalone)").matches ||
-      // @ts-expect-error iOS Safari only
-      window.navigator.standalone === true;
-    if (standalone) return;
-
-    const ua = navigator.userAgent;
-    const iosViaUA = /iphone|ipad|ipod/i.test(ua);
-    const iosViaTouch =
-      /Mac/.test(navigator.platform ?? "") && navigator.maxTouchPoints > 1;
-    const ios = iosViaUA || iosViaTouch;
-    setIsIos(ios);
-    if (ios) {
-      setShow(true);
-      return;
-    }
-
-    // Non-iOS: only show after the user has made a booking (less intrusive).
+    // Non-iOS: only surface after the user has made a booking (less intrusive),
+    // and only once the browser fires beforeinstallprompt.
     const booked = localStorage.getItem("sharwin_has_booked") === "1";
     if (!booked) return;
 
     const onPrompt = (e: Event) => {
       e.preventDefault();
       setDeferred(e as BeforeInstallPromptEvent);
-      setShow(true);
     };
     window.addEventListener("beforeinstallprompt", onPrompt);
     return () => window.removeEventListener("beforeinstallprompt", onPrompt);
   }, []);
 
+  // iOS shows the Share instructions; other browsers wait for beforeinstallprompt
+  // (which only fires post-booking, gated above). Hidden once installed,
+  // dismissed, or already running standalone.
+  const show = !installDone && !dismissed && !standalone && (isIos || deferred !== null);
   if (!show) return null;
 
   return (
@@ -67,7 +56,7 @@ export function InstallPrompt() {
             onClick={async () => {
               await deferred.prompt();
               localStorage.setItem("sharwin_install_done", "1");
-              setShow(false);
+              setDismissed(true);
             }}
           >
             Install
@@ -77,7 +66,7 @@ export function InstallPrompt() {
           variant="ghost"
           onClick={() => {
             localStorage.setItem("sharwin_install_done", "1");
-            setShow(false);
+            setDismissed(true);
           }}
         >
           Not now

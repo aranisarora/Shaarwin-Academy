@@ -40,7 +40,6 @@ export function RescheduleSheet({
 }) {
   const [targets, setTargets] = useState<RescheduleTarget[] | null>(null);
   const [slots, setSlots] = useState<{ starts_at: string; coach_count: number }[] | null>(null);
-  const [isPrivate, setIsPrivate] = useState(false);
   const [picked, setPicked] = useState<string | null>(null);
   // For recurring bookings, hold the picked target until the user chooses scope.
   const [scopeTarget, setScopeTarget] = useState<RescheduleTarget | null>(null);
@@ -49,12 +48,17 @@ export function RescheduleSheet({
   const [success, setSuccess] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
+  const isPrivate = booking?.session.isPrivate ?? false;
   const isFree = booking
     ? new Date(booking.session.starts_at).getTime() - nowMs() >= 24 * 3600000
     : true;
 
-  useEffect(() => {
-    if (!booking) return;
+  // Opening a different booking resets all transient picks. Doing this during
+  // render (the React "adjust state when a prop changes" pattern) rather than in
+  // an effect avoids a wasted commit and the set-state-in-effect lint.
+  const [prevBookingId, setPrevBookingId] = useState(booking?.id);
+  if (booking?.id !== prevBookingId) {
+    setPrevBookingId(booking?.id);
     setTargets(null);
     setSlots(null);
     setPicked(null);
@@ -62,10 +66,12 @@ export function RescheduleSheet({
     setPreview(null);
     setError(null);
     setSuccess(null);
-    const isPriv = booking.session.isPrivate;
-    setIsPrivate(isPriv);
+  }
+
+  useEffect(() => {
+    if (!booking) return;
     startTransition(async () => {
-      if (isPriv) {
+      if (booking.session.isPrivate) {
         setSlots(await getPrivateRescheduleSlots(booking.session.id));
       } else {
         const r = await getRescheduleTargets(booking.id);
