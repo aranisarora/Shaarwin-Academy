@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
 import { Sheet } from "@/components/ui/Sheet";
 import { Spinner } from "@/components/ui/Spinner";
+import { ConfirmAction } from "@/components/ui/ConfirmAction";
 import { grantCompSubscription, adjustCredits } from "@/app/admin/actions";
 import {
   addClientInvite,
@@ -195,8 +196,6 @@ export function ClientManager({
 
   function removeInvite() {
     if (!inviteId) return;
-    if (!window.confirm("Remove this client? Their account won't connect when they sign up."))
-      return;
     startTransition(async () => {
       const r = await deletePendingClient(inviteId);
       if (r.ok) setInviteMode(null);
@@ -387,9 +386,13 @@ export function ClientManager({
               {pending ? <Spinner /> : inviteMode === "edit" ? "Save client" : "Add client"}
             </Button>
             {inviteMode === "edit" && (
-              <Button variant="destructive" disabled={pending} className="w-full" onClick={removeInvite}>
-                Remove client
-              </Button>
+              <ConfirmAction
+                label="Remove client"
+                confirmLabel="Remove"
+                prompt="Remove this client? Their account won't connect when they sign up."
+                pending={pending}
+                onConfirm={removeInvite}
+              />
             )}
             {inviteMessage && <p className="text-sm text-err">{inviteMessage}</p>}
           </div>
@@ -560,15 +563,18 @@ export function ClientManager({
             </ActionSection>
 
             <ActionSection label="Account">
-              <Button
+              <ConfirmAction
+                key={selected.disputed ? "blocked" : "open"}
                 variant="ghost"
-                disabled={pending}
-                className="w-full"
-                onClick={() => {
-                  const msg = selected.disputed
+                label={selected.disputed ? "Unblock bookings" : "Block bookings"}
+                confirmLabel={selected.disputed ? "Unblock" : "Block"}
+                prompt={
+                  selected.disputed
                     ? "Let this client book sessions again?"
-                    : "Block this client from booking? Use this for payment disputes. They can still sign in.";
-                  if (!window.confirm(msg)) return;
+                    : "Block this client from booking? Use this for payment disputes. They can still sign in."
+                }
+                pending={pending}
+                onConfirm={() =>
                   startTransition(async () => {
                     const r = await setClientBlocked(selected.id, !selected.disputed);
                     setMessage(
@@ -579,20 +585,20 @@ export function ClientManager({
                         : (r.error ?? "Failed.")
                     );
                     if (r.ok) setSelected({ ...selected, disputed: !selected.disputed });
-                  });
-                }}
-              >
-                {selected.disputed ? "Unblock bookings" : "Block bookings"}
-              </Button>
-              <Button
+                  })
+                }
+              />
+              <ConfirmAction
                 variant={selected.archived ? "ghost" : "destructive"}
-                disabled={pending}
-                className="w-full"
-                onClick={() => {
-                  const msg = selected.archived
+                label={selected.archived ? "Restore client" : "Archive client"}
+                confirmLabel={selected.archived ? "Restore" : "Archive"}
+                prompt={
+                  selected.archived
                     ? "Bring this client back to your list?"
-                    : "Archive this client? They disappear from your list but nothing is deleted — you can bring them back anytime.";
-                  if (!window.confirm(msg)) return;
+                    : "Archive this client? They disappear from your list but nothing is deleted — you can bring them back anytime."
+                }
+                pending={pending}
+                onConfirm={() =>
                   startTransition(async () => {
                     const r = await setClientArchived(selected.id, !selected.archived);
                     setMessage(
@@ -603,11 +609,9 @@ export function ClientManager({
                         : (r.error ?? "Failed.")
                     );
                     if (r.ok) setSelected(null);
-                  });
-                }}
-              >
-                {selected.archived ? "Restore client" : "Archive client"}
-              </Button>
+                  })
+                }
+              />
             </ActionSection>
 
             {message && <p className="text-sm text-fg-2">{message}</p>}

@@ -13,6 +13,7 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
 import { Spinner } from "@/components/ui/Spinner";
+import { ConfirmAction } from "@/components/ui/ConfirmAction";
 import {
   addSchoolPlayer,
   assignPrivateSessionClient,
@@ -45,53 +46,6 @@ import {
 } from "./admin-calendar-types";
 
 type Scope = "session" | "class";
-
-/** A destructive action that confirms in-sheet instead of via window.confirm —
- * native confirm dialogs look broken on a PWA and truncate copy on small
- * screens. First tap arms it (shows the prompt + two buttons); "Keep" backs
- * out, the confirm button runs it. */
-function ConfirmAction({
-  label,
-  confirmLabel,
-  prompt,
-  onConfirm,
-  pending,
-  variant = "destructive",
-}: {
-  label: string;
-  confirmLabel: string;
-  prompt: string;
-  onConfirm: () => void;
-  pending: boolean;
-  variant?: "destructive" | "ghost";
-}) {
-  const [armed, setArmed] = useState(false);
-  if (!armed) {
-    return (
-      <Button
-        variant={variant}
-        className="w-full"
-        disabled={pending}
-        onClick={() => setArmed(true)}
-      >
-        {label}
-      </Button>
-    );
-  }
-  return (
-    <div className="space-y-2 rounded-[8px] border border-line p-3">
-      <p className="text-sm text-fg-2">{prompt}</p>
-      <div className="grid grid-cols-2 gap-2">
-        <Button variant="ghost" disabled={pending} onClick={() => setArmed(false)}>
-          Keep
-        </Button>
-        <Button variant="destructive" disabled={pending} onClick={onConfirm}>
-          {pending ? <Spinner /> : confirmLabel}
-        </Button>
-      </div>
-    </div>
-  );
-}
 
 export function AdminSessionSheet({
   session,

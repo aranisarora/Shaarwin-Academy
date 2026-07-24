@@ -45,6 +45,9 @@ export function ProfileEditor({
   const [newPlayer, setNewPlayer] = useState({ fullName: "", dateOfBirth: "" });
   const [pushState, setPushState] = useState<PushState | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  // Which player row is armed for removal — a per-row two-step in place of a
+  // native confirm, which looks broken in a PWA and truncates on small screens.
+  const [removeArmed, setRemoveArmed] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
   return (
@@ -127,35 +130,54 @@ export function ProfileEditor({
       <div>
         <p className="label mb-3">Household players</p>
         <ul className="mb-3 divide-y divide-line rounded-[12px] border border-line bg-surface-2">
-          {players.map((p) => (
-            <li key={p.id} className="flex items-center justify-between gap-3 px-4 py-3">
-              <Link href={`/app/players/${p.id}`} className="min-w-0 flex-1">
-                <p className="font-medium">{p.full_name}</p>
-                <p className="text-xs text-fg-2">
-                  {p.date_of_birth ? `Born ${new Date(p.date_of_birth).getFullYear()} · ` : ""}
-                  attendance &amp; notes →
+          {players.map((p) =>
+            removeArmed === p.id ? (
+              <li key={p.id} className="flex items-center justify-between gap-3 px-4 py-3">
+                <p className="min-w-0 flex-1 text-sm text-fg-2">
+                  Remove {p.full_name}? Their history stays but won&apos;t be visible.
                 </p>
-              </Link>
-              <button
-                disabled={pending}
-                onClick={() => {
-                  if (
-                    !window.confirm(
-                      `Remove ${p.full_name} from your household? Their attendance history and coach notes will no longer be visible.`
-                    )
-                  )
-                    return;
-                  startTransition(async () => {
-                    const r = await removePlayer(p.id);
-                    if (!r.ok) setMessage(r.error ?? null);
-                  });
-                }}
-                className="text-xs text-fg-2 hover:text-err"
-              >
-                Remove
-              </button>
-            </li>
-          ))}
+                <div className="flex shrink-0 items-center gap-2">
+                  <button
+                    disabled={pending}
+                    onClick={() => setRemoveArmed(null)}
+                    className="min-h-11 px-2 text-xs text-fg-2 hover:text-fg"
+                  >
+                    Keep
+                  </button>
+                  <button
+                    disabled={pending}
+                    onClick={() =>
+                      startTransition(async () => {
+                        const r = await removePlayer(p.id);
+                        if (r.ok) setRemoveArmed(null);
+                        else setMessage(r.error ?? null);
+                      })
+                    }
+                    className="min-h-11 px-2 text-xs font-medium text-err hover:underline"
+                  >
+                    {pending ? <Spinner /> : "Remove"}
+                  </button>
+                </div>
+              </li>
+            ) : (
+              <li key={p.id} className="flex items-center justify-between gap-3 px-4 py-3">
+                <Link href={`/app/players/${p.id}`} className="min-w-0 flex-1">
+                  <p className="font-medium">{p.full_name}</p>
+                  <p className="text-xs text-fg-2">
+                    {p.date_of_birth ? `Born ${new Date(p.date_of_birth).getFullYear()} · ` : ""}
+                    attendance &amp; notes →
+                  </p>
+                </Link>
+                <button
+                  disabled={pending}
+                  onClick={() => setRemoveArmed(p.id)}
+                  className="min-h-11 px-2 text-xs text-fg-2 hover:text-err"
+                >
+                  Remove
+                </button>
+              </li>
+            )
+          )}
         </ul>
         <div className="space-y-2 rounded-[12px] border border-line p-4">
           <div className="grid grid-cols-2 gap-2">

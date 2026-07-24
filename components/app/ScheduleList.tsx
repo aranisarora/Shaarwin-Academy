@@ -6,7 +6,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/Tabs";
 import { Sheet } from "@/components/ui/Sheet";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
-import { Spinner } from "@/components/ui/Spinner";
+import { ConfirmAction } from "@/components/ui/ConfirmAction";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ButtonLink } from "@/components/ui/Button";
 import { cancelBooking } from "@/app/app/book/actions";
@@ -64,53 +64,6 @@ function BookingCard({
         {booking.status === "no_show" && <Badge>Missed</Badge>}
       </div>
     </button>
-  );
-}
-
-/** A destructive action that confirms in two taps inside the sheet — native
- * confirm dialogs look broken in a PWA and truncate on small screens. First tap
- * arms it (prompt + Keep/confirm); "Keep it" backs out. Same pattern the coach
- * and admin sheets use. */
-function ConfirmAction({
-  label,
-  confirmLabel,
-  prompt,
-  onConfirm,
-  pending,
-  variant = "destructive",
-}: {
-  label: string;
-  confirmLabel: string;
-  prompt: string;
-  onConfirm: () => void;
-  pending: boolean;
-  variant?: "destructive" | "ghost";
-}) {
-  const [armed, setArmed] = useState(false);
-  if (!armed) {
-    return (
-      <Button
-        variant={variant}
-        className="w-full"
-        disabled={pending}
-        onClick={() => setArmed(true)}
-      >
-        {label}
-      </Button>
-    );
-  }
-  return (
-    <div className="space-y-2 rounded-[8px] border border-line p-3">
-      <p className="text-sm text-fg-2">{prompt}</p>
-      <div className="grid grid-cols-2 gap-2">
-        <Button variant="ghost" disabled={pending} onClick={() => setArmed(false)}>
-          Keep it
-        </Button>
-        <Button variant="destructive" disabled={pending} onClick={onConfirm}>
-          {pending ? <Spinner /> : confirmLabel}
-        </Button>
-      </div>
-    </div>
   );
 }
 

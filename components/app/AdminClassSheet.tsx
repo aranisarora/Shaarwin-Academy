@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Select } from "@/components/ui/Select";
 import { Spinner } from "@/components/ui/Spinner";
+import { ConfirmAction } from "@/components/ui/ConfirmAction";
 import { setClassActive } from "@/app/admin/actions";
 import {
   deleteGroupClass,
@@ -70,6 +71,12 @@ export function AdminClassSheet({
   const [coachTarget, setCoachTarget] = useState("");
   const [lock, setLock] = useState(true);
   const [message, setMessage] = useState<string | null>(null);
+  // When the ranking rules reject a coach, we surface an in-sheet override
+  // prompt (not window.confirm) holding the reason; confirming forces it.
+  const [coachOverride, setCoachOverride] = useState<string | null>(null);
+  // The "Delete completely" text-link arms in place rather than via a native
+  // confirm — keeps its subtle affordance while dropping window.confirm.
+  const [deleteArmed, setDeleteArmed] = useState(false);
   const [pending, startTransition] = useTransition();
 
   const ended = !cls.active && !!cls.endsOn;
@@ -103,29 +110,39 @@ export function AdminClassSheet({
       })
     : null;
 
+  // Shared success handling for both the first attempt and the override — the
+  // r.skipped branch words the ✓ for coaches a clash kept off some weeks.
+  function coachDone(r: { changed?: number; skipped?: number }) {
+    onDone(
+      r.skipped
+        ? `Coach set on ${r.changed} upcoming sessions — ${r.skipped} couldn't take them (clashes) and kept their coach.`
+        : "Coach set for every upcoming week — everyone affected has been told."
+    );
+  }
+
   function applyCoach() {
     if (!coachTarget) return;
+    setCoachOverride(null);
     startTransition(async () => {
-      let r = await reassignClassCoach(cls.id, coachTarget, lock);
+      const r = await reassignClassCoach(cls.id, coachTarget, lock);
       if (!r.ok && r.code === "filter_failed") {
         // The rules say no — but the founder can override. A hard time clash
-        // is still blocked by the database either way.
-        const goAhead = window.confirm(
-          `${r.error ?? "That coach doesn't fit the rules."}\n\nAssign them anyway?`
-        );
-        if (!goAhead) {
-          setMessage(r.error ?? "Failed.");
-          return;
-        }
-        r = await reassignClassCoach(cls.id, coachTarget, lock, true);
+        // is still blocked by the database either way. Ask in-sheet, not native.
+        setCoachOverride(r.error ?? "That coach doesn't fit the rules.");
+        return;
       }
-      if (r.ok) {
-        onDone(
-          r.skipped
-            ? `Coach set on ${r.changed} upcoming sessions — ${r.skipped} couldn't take them (clashes) and kept their coach.`
-            : "Coach set for every upcoming week — everyone affected has been told."
-        );
-      } else setMessage(r.error ?? "Failed.");
+      if (r.ok) coachDone(r);
+      else setMessage(r.error ?? "Failed.");
+    });
+  }
+
+  function applyCoachOverride() {
+    if (!coachTarget) return;
+    startTransition(async () => {
+      const r = await reassignClassCoach(cls.id, coachTarget, lock, true);
+      setCoachOverride(null);
+      if (r.ok) coachDone(r);
+      else setMessage(r.error ?? "Failed.");
     });
   }
 
@@ -290,13 +307,31 @@ export function AdminClassSheet({
               />
               Keep this coach — don&apos;t swap them automatically
             </label>
-            <Button
-              onClick={applyCoach}
-              disabled={pending || !coachTarget}
-              className="w-full"
-            >
-              {pending ? <Spinner /> : "Set coach for every week"}
-            </Button>
+            {coachOverride ? (
+              <div className="space-y-2 rounded-[8px] border border-err p-3">
+                <p className="text-sm text-fg-2">{coachOverride} Assign them anyway?</p>
+                <div className="grid grid-cols-2 gap-2">
+                  <Button
+                    variant="ghost"
+                    disabled={pending}
+                    onClick={() => setCoachOverride(null)}
+                  >
+                    Keep
+                  </Button>
+                  <Button disabled={pending} onClick={applyCoachOverride}>
+                    {pending ? <Spinner /> : "Assign anyway"}
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <Button
+                onClick={applyCoach}
+                disabled={pending || !coachTarget}
+                className="w-full"
+              >
+                {pending ? <Spinner /> : "Set coach for every week"}
+              </Button>
+            )}
           </div>
         )}
 
@@ -320,44 +355,53 @@ export function AdminClassSheet({
         )}
 
         {cls.active && (
-          <Button
-            variant="destructive"
-            disabled={pending}
-            className="w-full"
-            onClick={() => {
-              if (
-                !window.confirm(
-                  "End this class? All upcoming sessions are cancelled and everyone booked gets a message. Past sessions stay in the history — and you can restore the class later from this list."
-                )
-              )
-                return;
+          <ConfirmAction
+            label="End class"
+            confirmLabel="End the class"
+            prompt="End this class? All upcoming sessions are cancelled and everyone booked gets a message. Past sessions stay in the history — and you can restore the class later from this list."
+            pending={pending}
+            onConfirm={() =>
               startTransition(async () => {
                 const r = await endGroupClass(cls.id);
                 if (r.ok) onDone("Class ended — everyone affected has been told. You can restore it from the weekly classes list.");
                 else setMessage(r.error ?? "Failed.");
-              });
-            }}
-          >
-            End class
-          </Button>
+              })
+            }
+          />
         )}
-        <button
-          disabled={pending}
-          className="w-full text-center text-sm text-fg-2 underline-offset-4 hover:underline"
-          onClick={() => {
-            if (
-              !window.confirm("Delete this class completely? Only works if nobody ever booked it.")
-            )
-              return;
-            startTransition(async () => {
-              const r = await deleteGroupClass(cls.id);
-              if (r.ok) onDone("Class deleted.");
-              else setMessage(r.error ?? "Failed.");
-            });
-          }}
-        >
-          Delete completely (mistakes only)
-        </button>
+        {deleteArmed ? (
+          <div className="space-y-2 rounded-[8px] border border-line p-3">
+            <p className="text-sm text-fg-2">
+              Delete this class completely? Only works if nobody ever booked it.
+            </p>
+            <div className="grid grid-cols-2 gap-2">
+              <Button variant="ghost" disabled={pending} onClick={() => setDeleteArmed(false)}>
+                Keep
+              </Button>
+              <Button
+                variant="destructive"
+                disabled={pending}
+                onClick={() =>
+                  startTransition(async () => {
+                    const r = await deleteGroupClass(cls.id);
+                    if (r.ok) onDone("Class deleted.");
+                    else setMessage(r.error ?? "Failed.");
+                  })
+                }
+              >
+                {pending ? <Spinner /> : "Delete class"}
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <button
+            disabled={pending}
+            className="w-full text-center text-sm text-fg-2 underline-offset-4 hover:underline"
+            onClick={() => setDeleteArmed(true)}
+          >
+            Delete completely (mistakes only)
+          </button>
+        )}
         {message && <p className="text-sm text-err">{message}</p>}
       </div>
     </Sheet>

@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Sheet } from "@/components/ui/Sheet";
 import { Spinner } from "@/components/ui/Spinner";
+import { ConfirmAction } from "@/components/ui/ConfirmAction";
 import { AddressForm, isAddressComplete } from "@/components/app/AddressForm";
 import {
   EMPTY_ADDRESS,
@@ -139,26 +140,19 @@ export function VenueManager({ venues }: { venues: Venue[] }) {
               {pending ? <Spinner /> : "Save venue"}
             </Button>
             {editing.id && (
-              <Button
-                variant="destructive"
-                disabled={pending}
-                className="w-full"
-                onClick={() => {
-                  if (
-                    !window.confirm(
-                      "Delete this venue for good? This only works if no classes use it."
-                    )
-                  )
-                    return;
+              <ConfirmAction
+                label="Delete venue"
+                confirmLabel="Delete"
+                prompt="Delete this venue for good? This only works if no classes use it."
+                pending={pending}
+                onConfirm={() =>
                   startTransition(async () => {
                     const r = await deleteVenue(editing.id!);
                     setMessage(r.ok ? "Venue deleted." : (r.error ?? "Delete failed."));
                     if (r.ok) setEditing(null);
-                  });
-                }}
-              >
-                Delete venue
-              </Button>
+                  })
+                }
+              />
             )}
           </div>
         )}

@@ -7,6 +7,7 @@ import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
 import { Sheet } from "@/components/ui/Sheet";
 import { Spinner } from "@/components/ui/Spinner";
+import { ConfirmAction } from "@/components/ui/ConfirmAction";
 import { AddressSearch, type GeocodeHit } from "@/components/app/AddressSearch";
 import { LocationPinMap } from "@/components/app/LocationPinMap";
 import {
@@ -249,7 +250,6 @@ export function CoachManager({
 
   function revokePending() {
     if (!editId) return;
-    if (!window.confirm("Remove this invite? They won't become a coach when they sign up.")) return;
     startTransition(async () => {
       const r = await deletePendingCoach(editId);
       if (r.ok) {
@@ -523,16 +523,18 @@ export function CoachManager({
           {/* ── Lifecycle actions ── */}
           <section className="space-y-3 border-t border-line pt-5">
             <p className="label">Manage</p>
-            <Button
+            <ConfirmAction
               variant="ghost"
-              disabled={isPending || uploadingPhoto}
-              className="w-full"
-              onClick={() => {
-                if (!editId) return;
-                const msg = editActive
+              label={editActive ? "Pause coach" : "Unpause coach"}
+              confirmLabel={editActive ? "Pause" : "Unpause"}
+              prompt={
+                editActive
                   ? "Pause this coach? They stop getting new sessions. Sessions already on their calendar stay until you reassign them."
-                  : "Put this coach back to work?";
-                if (!window.confirm(msg)) return;
+                  : "Put this coach back to work?"
+              }
+              pending={isPending || uploadingPhoto}
+              onConfirm={() => {
+                if (!editId) return;
                 startTransition(async () => {
                   const r = await setCoachActive(editId, !editActive);
                   if (r.ok) {
@@ -543,9 +545,7 @@ export function CoachManager({
                   }
                 });
               }}
-            >
-              {editActive ? "Pause coach" : "Unpause coach"}
-            </Button>
+            />
 
             <div className="space-y-3 rounded-[10px] border border-err/40 bg-err/5 p-3">
               <p className="text-sm text-fg-2">
@@ -567,21 +567,17 @@ export function CoachManager({
                     </option>
                   ))}
               </Select>
-              <Button
-                variant="destructive"
-                disabled={isPending || uploadingPhoto}
-                className="w-full"
-                onClick={() => {
-                  const to = coaches.find((c) => c.id === replacementId)?.name;
-                  const msg = to
-                    ? `Remove this coach and move their upcoming classes to ${to}?`
-                    : "Remove this coach? Their upcoming classes will be left unassigned.";
-                  if (!window.confirm(msg)) return;
-                  submitDelete();
-                }}
-              >
-                {isPending ? <Spinner /> : "Remove coach"}
-              </Button>
+              <ConfirmAction
+                label="Remove coach"
+                confirmLabel="Remove"
+                prompt={
+                  coaches.find((c) => c.id === replacementId)?.name
+                    ? `Remove this coach and move their upcoming classes to ${coaches.find((c) => c.id === replacementId)?.name}?`
+                    : "Remove this coach? Their upcoming classes will be left unassigned."
+                }
+                pending={isPending || uploadingPhoto}
+                onConfirm={submitDelete}
+              />
             </div>
           </section>
 
@@ -599,9 +595,13 @@ export function CoachManager({
           <Button onClick={submitPending} disabled={isPending} className="w-full">
             {isPending ? <Spinner /> : "Save invite"}
           </Button>
-          <Button variant="destructive" disabled={isPending} className="w-full" onClick={revokePending}>
-            Remove invite
-          </Button>
+          <ConfirmAction
+            label="Remove invite"
+            confirmLabel="Remove"
+            prompt="Remove this invite? They won't become a coach when they sign up."
+            pending={isPending}
+            onConfirm={revokePending}
+          />
           {sheetMessage && <p className="text-sm text-err">{sheetMessage}</p>}
         </div>
       </Sheet>
