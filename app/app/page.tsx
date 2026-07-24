@@ -39,6 +39,17 @@ export default async function AppHomePage() {
   const next = upcoming[0];
   const attended = bookings.filter((b) => b.status === "attended").length;
 
+  const bookButtons = (
+    <div className="grid grid-cols-2 gap-3">
+      <ButtonLink href="/app/book" size="lg" className="w-full">
+        Book group class
+      </ButtonLink>
+      <ButtonLink href="/app/book/private" size="lg" className="w-full">
+        Book private class
+      </ButtonLink>
+    </div>
+  );
+
   return (
     <ClientShell title={`Hi, ${profile.full_name.split(" ")[0]}`}>
       <div className="mx-auto max-w-2xl space-y-6">
@@ -60,16 +71,25 @@ export default async function AppHomePage() {
                 className="mt-2"
               />
             )}
-            <div className="mt-4 flex flex-wrap items-center gap-3">
-              {next.status === "waitlisted" && <Badge tone="ember">Waitlist</Badge>}
-              {next.session.isPrivate && <Badge>Private</Badge>}
-              <Link
-                href="/app/schedule"
-                className="text-sm text-ember underline-offset-4 hover:underline"
-              >
+            {(next.status === "waitlisted" || next.session.isPrivate) && (
+              <div className="mt-4 flex flex-wrap items-center gap-3">
+                {next.status === "waitlisted" && <Badge tone="ember">Waitlist</Badge>}
+                {next.session.isPrivate && <Badge>Private</Badge>}
+              </div>
+            )}
+            <div className="mt-4">
+              <ButtonLink href="/app/schedule" variant="ghost">
                 Manage booking
-              </Link>
+              </ButtonLink>
             </div>
+          </div>
+        ) : summary.active ? (
+          <div className="space-y-4">
+            <EmptyState
+              image="/images/empty-ivory.jpg"
+              copy="Nothing booked. The table's free — book a class."
+            />
+            {bookButtons}
           </div>
         ) : (
           <EmptyState
@@ -109,14 +129,9 @@ export default async function AppHomePage() {
           </div>
         )}
 
-        <div className="grid grid-cols-2 gap-3">
-          <ButtonLink href="/app/book" size="lg" className="w-full">
-            Book group class
-          </ButtonLink>
-          <ButtonLink href="/app/book/private" size="lg" className="w-full">
-            Book private class
-          </ButtonLink>
-        </div>
+        {/* Already shown under the empty state in the no-booking + active-plan
+            branch — don't repeat it there. */}
+        {(next || !summary.active) && bookButtons}
 
         <WhatsAppAssistantCard />
 

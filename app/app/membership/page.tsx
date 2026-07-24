@@ -100,7 +100,7 @@ export default async function MembershipPage() {
   return (
     <ClientShell title="Membership">
       <div className="mx-auto max-w-2xl">
-        <div className="relative mb-6 h-40 overflow-hidden rounded-[12px] border border-line">
+        <div className="relative mb-6 h-28 overflow-hidden rounded-[12px] border border-line lg:h-40">
           <Image
             src="/images/membership-still.jpg"
             alt=""
@@ -165,7 +165,7 @@ export default async function MembershipPage() {
         {!summary.groupPlan?.active && groupPlans.length > 0 && (
           <div className="mb-8">
             <p className="label mb-1">Group memberships</p>
-            <p className="mb-3 text-sm text-fg-2">
+            <p className="mb-3 hidden text-sm text-fg-2 lg:block">
               A regular weekly routine at your nearest venue. Renews monthly,
               cancel anytime. Members also get member pricing on private
               sessions.
@@ -181,7 +181,7 @@ export default async function MembershipPage() {
         {!summary.privatePlan?.active && privatePlans.length > 0 && (
           <div className="mb-8">
             <p className="label mb-1">Private coaching — we come to you</p>
-            <p className="mb-3 text-sm text-fg-2">
+            <p className="mb-3 hidden text-sm text-fg-2 lg:block">
               One-to-one sessions at your home or clubhouse. Sold as a weekly
               routine, metered in minutes — unused minutes roll over one month.
             </p>
@@ -196,7 +196,7 @@ export default async function MembershipPage() {
         {products.length > 0 && (
           <div className="mb-8">
             <p className="label mb-1">No membership needed</p>
-            <p className="mb-3 text-sm text-fg-2">
+            <p className="mb-3 hidden text-sm text-fg-2 lg:block">
               Pay for a single class whenever you like — memberships just make
               it cheaper.
             </p>
