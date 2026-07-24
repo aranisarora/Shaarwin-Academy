@@ -147,9 +147,20 @@ emojis/formatting in button titles, no newlines in variable values.
 | `TWILIO_WA_FOUNDER_DIGEST_SID` | `founder_daily_digest` | call-to-action |
 | `TWILIO_WA_FOUNDER_SIGNUP_SID` | `founder_signup_request` | quick-reply |
 | `TWILIO_WA_CLIENT_APPROVED_SID` | `client_signup_approved` | call-to-action |
+| `TWILIO_WA_COACH_COMING_SID` | `coach_coming_check` | quick-reply |
+| `TWILIO_WA_COACH_ARRIVAL_SID` | `coach_arrival_check` | quick-reply |
+| `TWILIO_WA_CLIENT_ARRIVED_SID` | `client_coach_arrived` | text |
+| `TWILIO_WA_CLIENT_LATE_SID` | `client_coach_late` | text |
 
 Until each SID is set the matching message sends as plain text (buttons omitted)
 and typed replies still drive the same actions.
+
+The arrival-flow templates ask the coach **one thing at a time**:
+`coach_coming_check` at T-60 (Yes / Can't make it) and `coach_arrival_check` at
+start (I've arrived / Running late) — replacing the old three-button
+`coach_class_reminder` in the coach flow (that template stays registered but is
+no longer referenced). `client_coach_arrived` / `client_coach_late` tell parents
+the coach has arrived or is running late (no buttons).
 
 ## Provisioning (manual — founder/operator)
 
@@ -166,7 +177,9 @@ and typed replies still drive the same actions.
      TWILIO_WA_CLIENT_REMINDER_SID=HX... TWILIO_WA_CLIENT_WAITLIST_SID=HX... \
      TWILIO_WA_CLIENT_PAYMENT_SID=HX... TWILIO_WA_CLIENT_BOOKED_SID=HX... \
      TWILIO_WA_COACH_PRIVATE_SID=HX... TWILIO_WA_FOUNDER_DIGEST_SID=HX... \
-     TWILIO_WA_FOUNDER_SIGNUP_SID=HX... TWILIO_WA_CLIENT_APPROVED_SID=HX...
+     TWILIO_WA_FOUNDER_SIGNUP_SID=HX... TWILIO_WA_CLIENT_APPROVED_SID=HX... \
+     TWILIO_WA_COACH_COMING_SID=HX... TWILIO_WA_COACH_ARRIVAL_SID=HX... \
+     TWILIO_WA_CLIENT_ARRIVED_SID=HX... TWILIO_WA_CLIENT_LATE_SID=HX...
    ```
 5. Spot-check one live round-trip per button on a real phone.
 

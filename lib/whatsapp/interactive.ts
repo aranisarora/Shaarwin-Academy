@@ -1,7 +1,8 @@
 // Deterministic handling of WhatsApp interactive replies (quick-reply buttons).
 // A tap runs the SAME action the sender would get in the app — no LLM round-trip.
 //
-//   Coach   — before-class:  "I'm coming" / "I've arrived" / "Running late"
+//   Coach   — coming check:   "Yes, I'm coming" / "Can't make it" (two-step)
+//             arrival check:   "I've arrived" / "Running late"
 //             after-class:    "All present" / "Some absent" (→ numbered reply)
 //   Client  — reminder:       "I'll be there" / "Can't make it"
 //             waitlist offer:  "Claim spot" / "Pass"
@@ -17,6 +18,7 @@ import type { Profile } from "@/lib/auth";
 
 export const WA_BUTTON = {
   COACH_CONFIRM: "coach_confirm",
+  COACH_CANT: "coach_cant",
   COACH_ARRIVED: "coach_arrived",
   COACH_LATE: "coach_late",
   AC_PRESENT: "ac_present",
@@ -34,6 +36,7 @@ type ButtonId = (typeof WA_BUTTON)[keyof typeof WA_BUTTON];
 const AFTER_GROUP: ReadonlySet<ButtonId> = new Set([WA_BUTTON.AC_PRESENT, WA_BUTTON.AC_ABSENT]);
 const COACH_IDS: ReadonlySet<string> = new Set([
   WA_BUTTON.COACH_CONFIRM,
+  WA_BUTTON.COACH_CANT,
   WA_BUTTON.COACH_ARRIVED,
   WA_BUTTON.COACH_LATE,
   WA_BUTTON.AC_PRESENT,
@@ -55,8 +58,11 @@ const FOUNDER_TITLE_TO_ID: Record<string, ButtonId> = {
 // Exact matches: a known payload id, or the button's exact title typed out.
 // Unambiguous — nobody types "all present ✅" in casual chat — so always honoured.
 const COACH_TITLE_TO_ID: Record<string, ButtonId> = {
+  "yes, i'm coming": WA_BUTTON.COACH_CONFIRM,
   "i'm coming": WA_BUTTON.COACH_CONFIRM,
   "im coming": WA_BUTTON.COACH_CONFIRM,
+  "can't make it": WA_BUTTON.COACH_CANT,
+  "cant make it": WA_BUTTON.COACH_CANT,
   "i've arrived": WA_BUTTON.COACH_ARRIVED,
   "ive arrived": WA_BUTTON.COACH_ARRIVED,
   "all present ✅": WA_BUTTON.AC_PRESENT,
@@ -80,6 +86,8 @@ const COACH_LOOSE_TO_ID: Record<string, ButtonId> = {
   coming: WA_BUTTON.COACH_CONFIRM,
   confirm: WA_BUTTON.COACH_CONFIRM,
   confirmed: WA_BUTTON.COACH_CONFIRM,
+  "can't make it": WA_BUTTON.COACH_CANT,
+  "cant make it": WA_BUTTON.COACH_CANT,
   arrived: WA_BUTTON.COACH_ARRIVED,
   reached: WA_BUTTON.COACH_ARRIVED,
   "running late": WA_BUTTON.COACH_LATE,
@@ -135,6 +143,11 @@ async function handleCoachReply(opts: {
     // No live prompt → a bare number is probably ordinary chat; fall through.
   }
 
+  // Live "can't make it" confirmation: a YES within 30 min commits the dropout;
+  // anything else clears the prompt and falls through to normal handling.
+  const cant = await handleCantConfirm(admin, supabase, profile, opts.text);
+  if (cant !== null) return cant;
+
   const exact = resolveCoachExact(opts.payload, opts.text);
   const loose = exact ? null : resolveCoachLoose(opts.text);
   const action = exact ?? loose;
@@ -156,10 +169,21 @@ async function handleCoachReply(opts: {
       if (error) return errorReply(error.message);
       return `✅ Thanks ${first} — you're confirmed. See you there!`;
     }
+    case WA_BUTTON.COACH_CANT: {
+      // Destructive (triggers a cover search) → confirm in two steps. Arm the
+      // prompt; a following YES commits it (handleCantConfirm).
+      const armed = await armCantPrompt(admin, profile.id, sessionId);
+      if (!armed) {
+        return `To cancel, please do it in the app: ${sessionLink}`;
+      }
+      const { title, time } = await sessionTitleTime(supabase, sessionId);
+      return `Are you sure you can't make ${title} at ${time}? Reply YES to confirm — we'll arrange cover.`;
+    }
     case WA_BUTTON.COACH_ARRIVED: {
       const { error } = await supabase.rpc("coach_mark_arrival", {
         p_session: sessionId,
         p_late: false,
+        p_source: "wa",
       });
       if (error) return errorReply(error.message);
       return "📍 Marked you as arrived — the parents have been notified. Have a great session!";
@@ -346,6 +370,123 @@ async function bookingNames(supabase: SupabaseClient, ids: string[]): Promise<st
         /\s+/
       )[0] || "Player"
   );
+}
+
+/**
+ * Arm the two-step "can't make it" confirmation: stash cant_prompt + timestamp
+ * on the coach's most recent notification for this session (whichever prompt
+ * they replied to). Returns false when there's no row to anchor it on.
+ */
+async function armCantPrompt(
+  admin: SupabaseClient,
+  coachId: string,
+  sessionId: string
+): Promise<boolean> {
+  const { data: note } = await admin
+    .from("notifications")
+    .select("id,data")
+    .eq("user_id", coachId)
+    .eq("data->>session_id", sessionId)
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (!note) return false;
+  await admin
+    .from("notifications")
+    .update({
+      data: {
+        ...(note.data as Record<string, unknown>),
+        cant_prompt: sessionId,
+        cant_prompt_at: new Date().toISOString(),
+      },
+    })
+    .eq("id", note.id);
+  return true;
+}
+
+async function clearCantPrompt(
+  admin: SupabaseClient,
+  noteId: string,
+  data: Record<string, unknown>
+): Promise<void> {
+  const cleared = { ...data };
+  delete cleared.cant_prompt;
+  delete cleared.cant_prompt_at;
+  await admin.from("notifications").update({ data: cleared }).eq("id", noteId);
+}
+
+/**
+ * If the coach has a live "can't make it" prompt (armed within 30 min), a YES
+ * commits handle_coach_dropout — the same RPC as the app's cantMakeIt. The
+ * prompt is single-shot: cleared whatever the reply, so anything other than YES
+ * clears it and returns null so normal handling continues. Returns null when
+ * there's no live prompt at all.
+ */
+async function handleCantConfirm(
+  admin: SupabaseClient,
+  supabase: SupabaseClient,
+  profile: Profile,
+  text: string
+): Promise<string | null> {
+  const { data: note } = await admin
+    .from("notifications")
+    .select("id,data")
+    .eq("user_id", profile.id)
+    .not("data->cant_prompt", "is", null)
+    .gt("created_at", new Date(Date.now() - 2 * 86400000).toISOString())
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (!note) return null;
+
+  const data = note.data as { cant_prompt?: string; cant_prompt_at?: string };
+  const sessionId = data.cant_prompt;
+  const at = data.cant_prompt_at ? new Date(data.cant_prompt_at).getTime() : 0;
+
+  // Single-shot: clear the prompt whatever the reply is.
+  await clearCantPrompt(admin, note.id, note.data as Record<string, unknown>);
+
+  if (!sessionId || Date.now() - at > 30 * 60000) return null; // expired → fall through
+  const t = (text || "").trim().toLowerCase().replace(/[.!]+$/, "");
+  if (t !== "yes" && t !== "y") return null; // not a confirmation → fall through
+
+  const { data: session } = await supabase
+    .from("class_sessions")
+    .select("starts_at,ends_at")
+    .eq("id", sessionId)
+    .maybeSingle();
+  if (!session) return "That session isn't on your schedule anymore.";
+
+  const { error } = await supabase.rpc("handle_coach_dropout", {
+    p_coach: profile.id,
+    p_from: session.starts_at,
+    p_to: session.ends_at,
+  });
+  if (error) return "Couldn't arrange cover just now — please tell the founder directly.";
+  return "Thanks for letting us know — we're arranging cover so you're off this session.";
+}
+
+/** Class title + IST clock time for a session, for the cancel confirmation copy. */
+async function sessionTitleTime(
+  supabase: SupabaseClient,
+  sessionId: string
+): Promise<{ title: string; time: string }> {
+  const { data } = await supabase
+    .from("class_sessions")
+    .select("starts_at,classes!inner(title)")
+    .eq("id", sessionId)
+    .maybeSingle();
+  const c = data?.classes as { title?: string } | { title?: string }[] | null;
+  const title = (Array.isArray(c) ? c[0]?.title : c?.title) ?? "your session";
+  const time = data?.starts_at
+    ? new Intl.DateTimeFormat("en-GB", {
+        hour: "numeric",
+        minute: "2-digit",
+        hour12: true,
+        timeZone: "Asia/Kolkata",
+      }).format(new Date(data.starts_at))
+    : "the session";
+  return { title, time };
 }
 
 // ---------------------------------------------------------------------------

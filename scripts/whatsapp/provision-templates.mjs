@@ -24,7 +24,9 @@
  *     TWILIO_WA_CLIENT_REMINDER_SID=HX... TWILIO_WA_CLIENT_WAITLIST_SID=HX... \
  *     TWILIO_WA_CLIENT_PAYMENT_SID=HX... TWILIO_WA_CLIENT_BOOKED_SID=HX... \
  *     TWILIO_WA_COACH_PRIVATE_SID=HX... TWILIO_WA_FOUNDER_DIGEST_SID=HX... \
- *     TWILIO_WA_FOUNDER_SIGNUP_SID=HX... TWILIO_WA_CLIENT_APPROVED_SID=HX...
+ *     TWILIO_WA_FOUNDER_SIGNUP_SID=HX... TWILIO_WA_CLIENT_APPROVED_SID=HX... \
+ *     TWILIO_WA_COACH_COMING_SID=HX... TWILIO_WA_COACH_ARRIVAL_SID=HX... \
+ *     TWILIO_WA_CLIENT_ARRIVED_SID=HX... TWILIO_WA_CLIENT_LATE_SID=HX...
  */
 import { readFileSync } from "node:fs";
 
@@ -318,6 +320,83 @@ const TEMPLATES = [
         },
         "twilio/text": {
           body: `Great news {{1}} — your Sharwin TTA membership request is approved. Set up your family and book your first session: ${APP_URL}/app`,
+        },
+      },
+    },
+  },
+  {
+    // Coach: "Are you coming?" at T-60 — one question, two buttons. Replaces the
+    // three-button coach_class_reminder in the coach flow (arrival-flow-plan).
+    key: "TWILIO_WA_COACH_COMING_SID",
+    approvalName: "coach_coming_check",
+    def: {
+      friendly_name: "coach_coming_check",
+      language: "en",
+      // {{3}} folds time + venue into one value ("6:30 pm at La Plazza").
+      variables: { 1: "Augustine", 2: "Beginners Batch", 3: "6:30 pm at La Plazza" },
+      types: {
+        "twilio/quick-reply": {
+          body: "Hi {{1}}! {{2}} starts at {{3}}. Are you coming?",
+          actions: [
+            { title: "Yes, I'm coming", id: "coach_confirm" },
+            { title: "Can't make it", id: "coach_cant" },
+          ],
+        },
+        "twilio/text": {
+          body: 'Hi {{1}}! {{2}} starts at {{3}}. Are you coming? Reply "coming" or "can\'t make it".',
+        },
+      },
+    },
+  },
+  {
+    // Coach: "Have you reached?" at start time — asked only if arrival is still
+    // missing. I've arrived / Running late.
+    key: "TWILIO_WA_COACH_ARRIVAL_SID",
+    approvalName: "coach_arrival_check",
+    def: {
+      friendly_name: "coach_arrival_check",
+      language: "en",
+      variables: { 1: "Augustine", 2: "Beginners Batch", 3: "La Plazza" },
+      types: {
+        "twilio/quick-reply": {
+          body: "Hi {{1}}! {{2}} is starting. Have you reached {{3}}?",
+          actions: [
+            { title: "I've arrived", id: "coach_arrived" },
+            { title: "Running late", id: "coach_late" },
+          ],
+        },
+        "twilio/text": {
+          body: 'Hi {{1}}! {{2}} is starting. Have you reached {{3}}? Reply "arrived" or "running late".',
+        },
+      },
+    },
+  },
+  {
+    // Parent: the coach has arrived. No buttons — informational utility message.
+    key: "TWILIO_WA_CLIENT_ARRIVED_SID",
+    approvalName: "client_coach_arrived",
+    def: {
+      friendly_name: "client_coach_arrived",
+      language: "en",
+      variables: { 1: "Priya", 2: "Augustine", 3: "La Plazza", 4: "6:30 pm" },
+      types: {
+        "twilio/text": {
+          body: "Good news {{1}} — Coach {{2}} has arrived at {{3}} for the {{4}} session.",
+        },
+      },
+    },
+  },
+  {
+    // Parent: the coach is running late. No buttons.
+    key: "TWILIO_WA_CLIENT_LATE_SID",
+    approvalName: "client_coach_late",
+    def: {
+      friendly_name: "client_coach_late",
+      language: "en",
+      variables: { 1: "Priya", 2: "Augustine", 3: "6:30 pm" },
+      types: {
+        "twilio/text": {
+          body: "Hi {{1}} — Coach {{2}} is running a few minutes late for the {{3}} session. They're on their way.",
         },
       },
     },

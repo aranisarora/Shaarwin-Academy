@@ -259,15 +259,6 @@ function quietHoursDefer(): string | null {
 // — never for happy-path status updates.
 // ---------------------------------------------------------------------------
 
-// class_sessions row shape used by the coach sweeps below, with the class title
-// and either the venue name or the private address joined in.
-type SweepSession = {
-  id: string;
-  starts_at: string;
-  coach_id: string;
-  classes: unknown;
-};
-
 /** Class title + location strings for a swept session (venue name or private address). */
 function locationOf(classes: unknown): { title: string; location: string } {
   const cls = classes as {
