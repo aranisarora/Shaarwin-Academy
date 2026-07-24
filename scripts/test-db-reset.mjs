@@ -154,6 +154,21 @@ async function main() {
     // coaches (for assignment) already exist. Its final generate_class_sessions
     // call — now the canonical schema.sql version — creates + assigns sessions.
     await client.query(batchesSql);
+    // seed.sql inserts auth.users directly and leaves GoTrue's token columns
+    // NULL. GoTrue scans them into non-nullable Go strings, so a NULL there
+    // makes every password sign-in 500 ("Database error querying schema").
+    // Normalise them to '' — how a GoTrue-created user looks.
+    await client.query(`
+      update auth.users set
+        confirmation_token         = coalesce(confirmation_token, ''),
+        recovery_token             = coalesce(recovery_token, ''),
+        email_change_token_new     = coalesce(email_change_token_new, ''),
+        email_change_token_current = coalesce(email_change_token_current, ''),
+        email_change               = coalesce(email_change, ''),
+        phone_change               = coalesce(phone_change, ''),
+        phone_change_token         = coalesce(phone_change_token, ''),
+        reauthentication_token     = coalesce(reauthentication_token, '')
+    `);
     await client.query("commit");
   } catch (err) {
     await client.query("rollback").catch(() => {});
