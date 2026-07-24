@@ -7,12 +7,12 @@
 // harness can never seed fake parents into the live DB or fire a real WhatsApp.
 
 import { config as loadEnv } from "dotenv";
-import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { existsSync } from "node:fs";
 
-const here = dirname(fileURLToPath(import.meta.url));
-const root = join(here, "..", "..");
+// Tests always run from the project root (npm scripts). Avoid import.meta.url so
+// this module loads identically under Vitest (ESM) and Playwright (CJS config).
+const root = process.cwd();
 
 // Load .env.test.local (local demo keys only — nothing secret). Falls back to
 // the committed .example so a fresh clone still boots with sane local defaults.

@@ -169,6 +169,16 @@ async function main() {
         phone_change_token         = coalesce(phone_change_token, ''),
         reauthentication_token     = coalesce(reauthentication_token, '')
     `);
+    // Seeded personas behave as active, approved users (seed.sql leaves
+    // approval_status at its 'pending' default) so both harness layers see a
+    // real logged-in experience, not the awaiting-approval gate.
+    await client.query(`
+      update profiles
+         set approval_status = 'approved',
+             onboarding_step = 2,
+             onboarded_at    = coalesce(onboarded_at, now())
+       where email like '%@sharwin.example'
+    `);
     await client.query("commit");
   } catch (err) {
     await client.query("rollback").catch(() => {});

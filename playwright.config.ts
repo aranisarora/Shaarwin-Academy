@@ -2,6 +2,9 @@ import { defineConfig } from "@playwright/test";
 
 export default defineConfig({
   testDir: "e2e",
+  // The flow harness lives in e2e/flows and runs from playwright.flows.config.ts
+  // against LOCAL Supabase — keep it out of the viewport audit entirely.
+  testIgnore: "flows/**",
   use: { baseURL: "http://localhost:3000" },
   projects: [
     { name: "android-small", use: { viewport: { width: 360, height: 740 }, isMobile: true, hasTouch: true } },

@@ -12,7 +12,7 @@
     "db:start": "supabase start",
     "db:reset": "node scripts/test-db-reset.mjs",
     "e2e": "playwright test",
-    "e2e:flows": "playwright test --project=flows",
+    "e2e:flows": "playwright test --config playwright.flows.config.ts",
     "wa:provision": "node scripts/whatsapp/provision-templates.mjs",
     "prepare": "git config core.hooksPath .githooks || exit 0"
   },

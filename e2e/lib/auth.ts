@@ -11,13 +11,12 @@
 // the installed ssr version does, we match it by construction.
 
 import { mkdirSync, writeFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { createServerClient } from "@supabase/ssr";
 import { SUPABASE_URL, ANON_KEY, assertLocalSupabase } from "./env";
 
-const here = dirname(fileURLToPath(import.meta.url));
-const authDir = join(here, "..", ".auth");
+// Project-root relative (see env.ts note on avoiding import.meta.url).
+const authDir = join(process.cwd(), "e2e", ".auth");
 
 export const SEED_PASSWORD = "SeedPass!2026";
 

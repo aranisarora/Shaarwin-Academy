@@ -4,16 +4,13 @@
 // order-independent within the run.
 
 import { execFileSync } from "node:child_process";
-import { fileURLToPath } from "node:url";
-import { dirname, join } from "node:path";
 import { assertLocalSupabase } from "../../e2e/lib/env";
 
 export default async function setup() {
   assertLocalSupabase();
-  const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
   console.log("\n[db tests] resetting local database…");
   execFileSync("node", ["scripts/test-db-reset.mjs"], {
-    cwd: root,
+    cwd: process.cwd(),
     stdio: "inherit",
   });
 }
