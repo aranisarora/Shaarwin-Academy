@@ -104,6 +104,7 @@ export async function requireUser(nextPath: string) {
   // created before the flow existed) are routed there before any /app page.
   if (
     p.role === "client" &&
+    p.approval_status === "approved" &&
     !p.onboarded_at &&
     nextPath.startsWith("/app") &&
     nextPath !== "/app/onboarding"
