@@ -6,16 +6,6 @@ import { getSubscriptionSummary } from "@/lib/billing";
 import { isWithinBengaluru } from "@/lib/coverage";
 import type { StructuredAddress } from "@/lib/address";
 
-function isFunctionMissing(code: string | undefined): boolean {
-  return code === "PGRST202" || code === "42883";
-}
-
-async function activeCoachIds(): Promise<string[]> {
-  const supabase = await createClient();
-  const { data } = await supabase.from("coaches").select("id").eq("active", true);
-  return (data ?? []).map((c) => c.id);
-}
-
 export async function checkCoverage(lat: number, lng: number) {
   return { covered: isWithinBengaluru(lat, lng) };
 }
@@ -42,41 +32,9 @@ export async function getSlots(
     p_player: playerId,
   });
   if (!error && data) return data as Slot[];
-  if (error && !isFunctionMissing(error.code)) return [];
-
-  // Fallback without the engine RPC: all active coaches' availability windows,
-  // provided the address is within our Bengaluru service area.
-  if (!isWithinBengaluru(lat, lng)) return [];
-  const coachIds = await activeCoachIds();
-  if (coachIds.length === 0) return [];
-  const { data: availability } = await supabase
-    .from("coach_availability")
-    .select("coach_id,weekday,start_time,end_time")
-    .in("coach_id", coachIds);
-  if (!availability || availability.length === 0) return [];
-
-  const slots: Slot[] = [];
-  const now = Date.now();
-  for (let d = 1; d <= 14; d++) {
-    const day = new Date(now + d * 86400000);
-    const isoDow = ((day.getDay() + 6) % 7); // 0=Mon
-    for (let h = 9; h <= 20; h++) {
-      for (const m of [0, 30]) {
-        const start = new Date(day.getFullYear(), day.getMonth(), day.getDate(), h, m);
-        if (start.getTime() < now + 24 * 3600000) continue;
-        const startMinutes = h * 60 + m;
-        const endMinutes = startMinutes + duration;
-        const count = availability.filter((a) => {
-          if (a.weekday !== isoDow) return false;
-          const [sh, sm] = a.start_time.split(":").map(Number);
-          const [eh, em] = a.end_time.split(":").map(Number);
-          return sh * 60 + sm <= startMinutes && eh * 60 + em >= endMinutes;
-        }).length;
-        if (count > 0) slots.push({ starts_at: start.toISOString(), coach_count: count });
-      }
-    }
-  }
-  return slots;
+  // Any RPC error → no slots. Never fall back to a permissive JS list that
+  // skips the engine's coverage, minutes and lead-time checks.
+  return [];
 }
 
 export type PrivateRequest = {

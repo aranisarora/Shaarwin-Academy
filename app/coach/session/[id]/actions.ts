@@ -187,26 +187,9 @@ export async function cantMakeIt(sessionId: string): Promise<Result> {
   });
 
   if (error) {
-    // Engine not applied yet: unassign + alert the founder directly.
-    await supabase
-      .from("class_sessions")
-      .update({ coach_id: null })
-      .eq("id", sessionId);
-    const { data: founders } = await supabase
-      .from("profiles")
-      .select("id")
-      .eq("role", "founder");
-    if (founders) {
-      await supabase.from("notifications").insert(
-        founders.map((f) => ({
-          user_id: f.id,
-          type: "session_unassigned",
-          title: "Cover needed",
-          body: "A coach dropped a session.",
-          data: { session_id: sessionId, url: "/admin/schedule" },
-        }))
-      );
-    }
+    // Never silently null the coach without the engine's cover search — that
+    // leaves the session unassigned with no replacement lined up.
+    return { ok: false, error: "Couldn't arrange cover — tell the founder directly." };
   }
   revalidatePath("/coach");
   return { ok: true };
