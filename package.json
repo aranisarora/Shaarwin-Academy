@@ -8,7 +8,11 @@
     "start": "next start",
     "lint": "eslint",
     "test": "vitest run",
+    "test:db": "vitest run tests/db",
+    "db:start": "supabase start",
+    "db:reset": "node scripts/test-db-reset.mjs",
     "e2e": "playwright test",
+    "e2e:flows": "playwright test --project=flows",
     "wa:provision": "node scripts/whatsapp/provision-templates.mjs",
     "prepare": "git config core.hooksPath .githooks || exit 0"
   },
@@ -27,8 +31,10 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "dotenv": "^17.4.2",
     "eslint": "^9",
     "eslint-config-next": "16.2.10",
+    "pg": "^8.22.0",
     "tailwindcss": "^4",
     "typescript": "^5",
     "vitest": "^2.1.9"
