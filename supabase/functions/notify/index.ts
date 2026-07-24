@@ -28,7 +28,9 @@ const TWILIO_TEMPLATE_SID = Deno.env.get("TWILIO_WA_TEMPLATE_SID");
 // Optional: until these are provisioned the coach prompts degrade gracefully to
 // plain text. See scripts/whatsapp/provision-templates.mjs and
 // docs/whatsapp-interactive.md.
-const TWILIO_WA_COACH_REMINDER_SID = Deno.env.get("TWILIO_WA_COACH_REMINDER_SID");
+// coach_before_class now uses TWILIO_WA_COACH_COMING_SID (arrival-flow-plan) —
+// the old three-button coach_class_reminder template stays registered in Twilio
+// but is no longer referenced (it re-introduced the "arrived" button at T-60).
 const TWILIO_WA_COACH_AFTERCLASS_SID = Deno.env.get("TWILIO_WA_COACH_AFTERCLASS_SID");
 // Client + coach + founder templates added in whatsapp-upgrade-plan Part 3. All
 // optional: until each SID is set the matching notification degrades to plain
@@ -43,6 +45,14 @@ const TWILIO_WA_FOUNDER_DIGEST_SID = Deno.env.get("TWILIO_WA_FOUNDER_DIGEST_SID"
 // the client "you're approved" CTA. Optional until provisioned.
 const TWILIO_WA_FOUNDER_SIGNUP_SID = Deno.env.get("TWILIO_WA_FOUNDER_SIGNUP_SID");
 const TWILIO_WA_CLIENT_APPROVED_SID = Deno.env.get("TWILIO_WA_CLIENT_APPROVED_SID");
+// Arrival-flow templates (arrival-flow-plan Part 4). "Coming?" at T-60 and
+// "Reached?" at start ask the coach one thing at a time; the two client
+// templates tell parents the coach arrived / is running late. All optional:
+// until each SID is set the matching notification degrades to plain text.
+const TWILIO_WA_COACH_COMING_SID = Deno.env.get("TWILIO_WA_COACH_COMING_SID");
+const TWILIO_WA_COACH_ARRIVAL_SID = Deno.env.get("TWILIO_WA_COACH_ARRIVAL_SID");
+const TWILIO_WA_CLIENT_ARRIVED_SID = Deno.env.get("TWILIO_WA_CLIENT_ARRIVED_SID");
+const TWILIO_WA_CLIENT_LATE_SID = Deno.env.get("TWILIO_WA_CLIENT_LATE_SID");
 const APP_URL = Deno.env.get("APP_URL") ?? "https://sharwinacademy.com";
 const WINDOW_MS = 24 * 60 * 60 * 1000;
 const IST = "Asia/Kolkata";
@@ -181,6 +191,8 @@ Deno.serve(async () => {
   // others or the delivery loop above.
   await safeSweep("waitlist-offers", sweepWaitlistOffers);
   await safeSweep("before-class", sweepBeforeClass);
+  await safeSweep("coach-confirm-nudge", sweepCoachConfirmNudge);
+  await safeSweep("arrival-check", sweepArrivalCheck);
   await safeSweep("founder-escalations", sweepFounderEscalations);
   await safeSweep("after-class", sweepAfterClass);
   await safeSweep("founder-digest", sweepFounderDigest);
@@ -247,12 +259,39 @@ function quietHoursDefer(): string | null {
 // — never for happy-path status updates.
 // ---------------------------------------------------------------------------
 
+// class_sessions row shape used by the coach sweeps below, with the class title
+// and either the venue name or the private address joined in.
+type SweepSession = {
+  id: string;
+  starts_at: string;
+  coach_id: string;
+  classes: unknown;
+};
+
+/** Class title + location strings for a swept session (venue name or private address). */
+function locationOf(classes: unknown): { title: string; location: string } {
+  const cls = classes as {
+    title?: string;
+    venues?: { name: string } | { name: string }[] | null;
+    private_class_details?: { address: string } | { address: string }[] | null;
+  } | null;
+  const venue = Array.isArray(cls?.venues) ? cls?.venues[0] : cls?.venues;
+  const priv = Array.isArray(cls?.private_class_details)
+    ? cls?.private_class_details[0]
+    : cls?.private_class_details;
+  return {
+    title: cls?.title ?? "your class",
+    location: venue?.name ?? priv?.address ?? "",
+  };
+}
+
 /**
- * 1 hour before each session, send the assigned coach ONE interactive reminder
- * with "I'm coming / I've arrived / Running late" buttons (falls back to text
- * until the WhatsApp template is provisioned — the inbound webhook also accepts
- * the same words typed out). Fires once per (coach, session) and targets the
- * whole next-60-min window, so a skipped cron tick still delivers.
+ * 1 hour before each session, ask the assigned coach ONE thing — "Are you
+ * coming?" — with Yes / Can't make it buttons (falls back to text until the
+ * WhatsApp template is provisioned; the inbound webhook also accepts the words
+ * typed out). Arrival is a separate question asked at start time. Fires once per
+ * (coach, session) and targets the whole next-60-min window, so a skipped cron
+ * tick still delivers.
  */
 async function sweepBeforeClass() {
   const now = Date.now();
@@ -270,16 +309,7 @@ async function sweepBeforeClass() {
   for (const s of sessions ?? []) {
     if (await alreadyFired("coach_before_class", s.id, s.coach_id)) continue;
 
-    const cls = s.classes as unknown as {
-      title: string;
-      venues: { name: string } | { name: string }[] | null;
-      private_class_details: { address: string } | { address: string }[] | null;
-    };
-    const venue = Array.isArray(cls.venues) ? cls.venues[0] : cls.venues;
-    const priv = Array.isArray(cls.private_class_details)
-      ? cls.private_class_details[0]
-      : cls.private_class_details;
-    const location = venue?.name ?? priv?.address ?? "";
+    const { title, location } = locationOf(s.classes);
     const loc = location ? ` at ${location}` : "";
     const time = fmtClock(s.starts_at);
     const firstName = await firstNameOf(s.coach_id);
@@ -288,12 +318,12 @@ async function sweepBeforeClass() {
       user_id: s.coach_id,
       type: "coach_before_class",
       title: "Class reminder",
-      body: `Hi ${firstName}! Reminder: ${cls.title} starts at ${time}${loc}. Reply "coming", "arrived", or "running late" to keep us posted.`,
+      body: `Hi ${firstName}! ${title} starts at ${time}${loc}. Are you coming? Reply "coming" or "can't make it".`,
       data: {
         session_id: s.id,
         kind: "before_class",
         first_name: firstName,
-        class_title: cls.title,
+        class_title: title,
         time_str: time,
         location_str: loc,
         url: `/coach/session/${s.id}`,
@@ -303,10 +333,101 @@ async function sweepBeforeClass() {
 }
 
 /**
- * Founder escalations — only when the founder may need to act:
- *  (a) ~10 min before start and the coach still hasn't confirmed;
- *  (b) the class has started and the coach hasn't marked they've arrived.
- * (Running late is pushed by coach_mark_arrival itself.) Fires once per session.
+ * T-30 → T-0: if a coach still hasn't confirmed OR arrived, nudge the *coach*
+ * once more (not the founder) with an honest heads-up that the founder gets
+ * alerted at T-10 if we still haven't heard. Plain text is fine — no dedicated
+ * template. Fires once per (coach, session).
+ */
+async function sweepCoachConfirmNudge() {
+  const now = Date.now();
+  const { data: sessions } = await supabase
+    .from("class_sessions")
+    .select("id,starts_at,coach_id,classes!inner(title)")
+    .eq("status", "scheduled")
+    .not("coach_id", "is", null)
+    .is("coach_confirmed_at", null)
+    .is("coach_arrived_at", null)
+    .gt("starts_at", new Date(now).toISOString())
+    .lt("starts_at", new Date(now + 30 * 60000).toISOString())
+    .limit(100);
+
+  for (const s of sessions ?? []) {
+    if (await alreadyFired("coach_confirm_nudge_2", s.id, s.coach_id)) continue;
+
+    const title = titleOf(s.classes);
+    const time = fmtClock(s.starts_at);
+    const firstName = await firstNameOf(s.coach_id);
+
+    await supabase.from("notifications").insert({
+      user_id: s.coach_id,
+      type: "coach_confirm_nudge_2",
+      title: "Quick check",
+      body: `Quick check — are you coming to ${title} at ${time}? The founder gets alerted in 20 minutes if we haven't heard.`,
+      data: {
+        session_id: s.id,
+        first_name: firstName,
+        class_title: title,
+        time_str: time,
+        url: `/coach/session/${s.id}`,
+      },
+    });
+  }
+}
+
+/**
+ * At start time (window [now-10min, now]) — if the coach hasn't marked arrival,
+ * ask ONE thing: "Have you reached?" with I've arrived / Running late buttons.
+ * Sent only once per (coach, session); arrival being marked by any surface
+ * short-circuits it via the coach_arrived_at filter. Plain text fallback until
+ * the template is provisioned.
+ */
+async function sweepArrivalCheck() {
+  const now = Date.now();
+  const { data: sessions } = await supabase
+    .from("class_sessions")
+    .select(
+      "id,starts_at,coach_id,classes!inner(title,venues(name),private_class_details(address))"
+    )
+    .eq("status", "scheduled")
+    .not("coach_id", "is", null)
+    .is("coach_arrived_at", null)
+    .lte("starts_at", new Date(now).toISOString())
+    .gt("starts_at", new Date(now - 10 * 60000).toISOString())
+    .limit(100);
+
+  for (const s of sessions ?? []) {
+    if (await alreadyFired("coach_arrival_check", s.id, s.coach_id)) continue;
+
+    const { title, location } = locationOf(s.classes);
+    const where = location || "the venue";
+    const time = fmtClock(s.starts_at);
+    const firstName = await firstNameOf(s.coach_id);
+
+    await supabase.from("notifications").insert({
+      user_id: s.coach_id,
+      type: "coach_arrival_check",
+      title: "Have you reached?",
+      body: `${title} is starting. Have you reached ${where}? Reply "arrived" or "running late".`,
+      data: {
+        session_id: s.id,
+        first_name: firstName,
+        class_title: title,
+        time_str: time,
+        location_str: where,
+        url: `/coach/session/${s.id}`,
+      },
+    });
+  }
+}
+
+/**
+ * Founder escalations — silent coaches only, and only when the founder may need
+ * to act:
+ *  (a) T-10 and the coach is still fully silent (no confirm AND no arrival);
+ *  (b) start+10 and the coach hasn't marked arrival — copy distinguishes
+ *      "confirmed then went silent" (more urgent) from "never answered at all".
+ * The T-30 nudge (sweepCoachConfirmNudge) targets the coach, not the founder;
+ * running late is pushed by coach_mark_arrival itself. Fires once per session.
  */
 async function sweepFounderEscalations() {
   const now = Date.now();
@@ -317,6 +438,7 @@ async function sweepFounderEscalations() {
     .eq("status", "scheduled")
     .not("coach_id", "is", null)
     .is("coach_confirmed_at", null)
+    .is("coach_arrived_at", null)
     .gt("starts_at", new Date(now).toISOString())
     .lt("starts_at", new Date(now + 10 * 60000).toISOString())
     .limit(50);
@@ -332,10 +454,12 @@ async function sweepFounderEscalations() {
 
   // Bounded to the last hour so we never backfill old sessions. 10-minute
   // grace: coaches typically tap "arrived" right around start time — only
-  // escalate when the class is 10+ minutes in with still no arrival mark.
+  // escalate when the class is 10+ minutes in with still no arrival mark. Copy
+  // branches on whether the coach ever confirmed: a confirmed-then-silent coach
+  // is more urgent (they promised) than one who never answered.
   const { data: notArrived } = await supabase
     .from("class_sessions")
-    .select("id,starts_at,coach_id,classes!inner(title)")
+    .select("id,starts_at,coach_id,coach_confirmed_at,classes!inner(title)")
     .eq("status", "scheduled")
     .not("coach_id", "is", null)
     .is("coach_arrived_at", null)
@@ -343,12 +467,16 @@ async function sweepFounderEscalations() {
     .gt("starts_at", new Date(now - 70 * 60000).toISOString())
     .limit(50);
   for (const s of notArrived ?? []) {
+    const confirmed = !!s.coach_confirmed_at;
     await escalateToFounders(
       "ops_coach_not_arrived",
       "Coach not marked arrived",
       s,
-      (name, title, when) =>
-        `${title} (${when}) started over 10 minutes ago and ${name} hasn't marked they've arrived. Worth a quick check-in.`
+      confirmed
+        ? (name, title, when) =>
+            `${name} confirmed they were coming to ${title} (${when}) but hasn't marked arrival 10+ minutes in — call them now.`
+        : (name, title, when) =>
+            `${title} (${when}) is 10+ minutes in and ${name} never responded at all today — likely a no-show, act now.`
     );
   }
 }
@@ -771,15 +899,53 @@ function interactiveContentFor(
   firstName: string
 ): Record<string, string> | null {
   const d = row.data ?? {};
-  if (row.type === "coach_before_class" && TWILIO_WA_COACH_REMINDER_SID) {
-    // {{3}} = time + venue in one value ("6:30 pm at La Plazza") — WhatsApp
-    // rejects templates with adjacent variables, so we can't use two here.
+  // Coach "Are you coming?" at T-60 → Yes / Can't make it buttons. {{3}} = time
+  // + venue in one value ("6:30 pm at La Plazza") — WhatsApp rejects templates
+  // with adjacent variables, so we can't use two here.
+  if (row.type === "coach_before_class" && TWILIO_WA_COACH_COMING_SID) {
     return {
-      ContentSid: TWILIO_WA_COACH_REMINDER_SID,
+      ContentSid: TWILIO_WA_COACH_COMING_SID,
       ContentVariables: JSON.stringify({
         "1": firstName,
         "2": String(d.class_title ?? "your class"),
         "3": `${String(d.time_str ?? "")}${String(d.location_str ?? "")}`.trim() || "soon",
+      }),
+    };
+  }
+  // Coach "Have you reached?" at start → I've arrived / Running late buttons.
+  if (row.type === "coach_arrival_check" && TWILIO_WA_COACH_ARRIVAL_SID) {
+    return {
+      ContentSid: TWILIO_WA_COACH_ARRIVAL_SID,
+      ContentVariables: JSON.stringify({
+        "1": firstName,
+        "2": String(d.class_title ?? "your class"),
+        "3": String(d.location_str ?? "the venue"),
+      }),
+    };
+  }
+  // Parent: coach has arrived (no buttons). Coach name/location/time come from
+  // the notification data coach_mark_arrival wrote. Gated on coach_name so the
+  // founder's coach_late row (which lacks it) keeps its own free-form path.
+  if (row.type === "coach_arrived" && TWILIO_WA_CLIENT_ARRIVED_SID && d.coach_name) {
+    return {
+      ContentSid: TWILIO_WA_CLIENT_ARRIVED_SID,
+      ContentVariables: JSON.stringify({
+        "1": firstName,
+        "2": String(d.coach_name ?? "your coach"),
+        "3": String(d.location_str ?? "the venue"),
+        "4": String(d.time_str ?? "today"),
+      }),
+    };
+  }
+  // Parent: coach running late (no buttons). Gated on coach_name so the
+  // founder's coach_late row keeps its own free-form path.
+  if (row.type === "coach_late" && TWILIO_WA_CLIENT_LATE_SID && d.coach_name) {
+    return {
+      ContentSid: TWILIO_WA_CLIENT_LATE_SID,
+      ContentVariables: JSON.stringify({
+        "1": firstName,
+        "2": String(d.coach_name ?? "your coach"),
+        "3": String(d.time_str ?? "today"),
       }),
     };
   }
