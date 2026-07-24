@@ -67,6 +67,53 @@ function BookingCard({
   );
 }
 
+/** A destructive action that confirms in two taps inside the sheet — native
+ * confirm dialogs look broken in a PWA and truncate on small screens. First tap
+ * arms it (prompt + Keep/confirm); "Keep it" backs out. Same pattern the coach
+ * and admin sheets use. */
+function ConfirmAction({
+  label,
+  confirmLabel,
+  prompt,
+  onConfirm,
+  pending,
+  variant = "destructive",
+}: {
+  label: string;
+  confirmLabel: string;
+  prompt: string;
+  onConfirm: () => void;
+  pending: boolean;
+  variant?: "destructive" | "ghost";
+}) {
+  const [armed, setArmed] = useState(false);
+  if (!armed) {
+    return (
+      <Button
+        variant={variant}
+        className="w-full"
+        disabled={pending}
+        onClick={() => setArmed(true)}
+      >
+        {label}
+      </Button>
+    );
+  }
+  return (
+    <div className="space-y-2 rounded-[8px] border border-line p-3">
+      <p className="text-sm text-fg-2">{prompt}</p>
+      <div className="grid grid-cols-2 gap-2">
+        <Button variant="ghost" disabled={pending} onClick={() => setArmed(false)}>
+          Keep it
+        </Button>
+        <Button variant="destructive" disabled={pending} onClick={onConfirm}>
+          {pending ? <Spinner /> : confirmLabel}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 export function ScheduleList({
   upcoming,
   past,
@@ -176,38 +223,41 @@ export function ScheduleList({
                 {cancelIsFree ? "Reschedule (free)" : "Reschedule (uses your session)"}
               </Button>
             )}
-            <Button
-              variant="destructive"
-              onClick={doCancel}
-              disabled={pending}
-              className="w-full"
-            >
-              {pending ? (
-                <Spinner />
-              ) : selected.seriesId || selected.privateSeriesId ? (
-                cancelIsFree ? "Cancel just this week (free)" : "Cancel just this week (uses your session)"
-              ) : cancelIsFree ? (
-                "Cancel (free)"
-              ) : (
-                "Cancel (uses your session)"
-              )}
-            </Button>
+            <ConfirmAction
+              label={
+                selected.seriesId || selected.privateSeriesId
+                  ? cancelIsFree
+                    ? "Cancel just this week (free)"
+                    : "Cancel just this week (uses your session)"
+                  : cancelIsFree
+                    ? "Cancel this class (free)"
+                    : "Cancel this class (uses your session)"
+              }
+              confirmLabel="Yes, cancel"
+              prompt={
+                (cancelIsFree
+                  ? "You'll free the spot for someone else."
+                  : "This is inside 24 hours of the start, so it counts as a used session.") +
+                (selected.seriesId || selected.privateSeriesId
+                  ? " Only this week is affected — future weeks stay booked."
+                  : "")
+              }
+              pending={pending}
+              onConfirm={doCancel}
+            />
             {(selected.seriesId || selected.privateSeriesId) && (
-              <Button
+              <ConfirmAction
                 variant="ghost"
-                onClick={doCancelSeries}
-                disabled={pending}
-                className="w-full"
-              >
-                {selected.privateSeriesId
-                  ? "End weekly sessions (all future weeks)"
-                  : "Stop recurring booking (all future weeks)"}
-              </Button>
-            )}
-            {!cancelIsFree && (
-              <p className="text-xs text-fg-2">
-                Inside 24 hours of the start, cancelled sessions count as used.
-              </p>
+                label={
+                  selected.privateSeriesId
+                    ? "End weekly sessions (all future weeks)"
+                    : "Stop recurring booking (all future weeks)"
+                }
+                confirmLabel="Yes, end it"
+                prompt="This stops every future week, not just this one. You can book again anytime."
+                pending={pending}
+                onConfirm={doCancelSeries}
+              />
             )}
             {error && <p className="text-sm text-err">{error}</p>}
           </div>
