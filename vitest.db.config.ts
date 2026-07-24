@@ -2,7 +2,7 @@ import { defineConfig } from "vitest/config";
 import { fileURLToPath } from "node:url";
 
 // Layer 1 of the E2E harness: DB-logic tests that call Postgres RPCs directly
-// against LOCAL Supabase. No browser, no Next server. See tests/db/README or
+// against LOCAL Supabase. No browser, no Next server. See e2e/README.md and
 // docs/testing-harness-plan.md (Phase 4).
 export default defineConfig({
   resolve: {

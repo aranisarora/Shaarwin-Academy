@@ -1,7 +1,21 @@
 # E2E Testing Harness — Implementation Plan
 
-**Status:** approved plan, not yet implemented.
+**Status:** ✅ implemented (Phases 0–6). Runbook: `e2e/README.md`. Conventions: `AGENTS.md` → "E2E testing harness". Blind-user audit: `docs/blind-user-audit.md`.
 **Implementer notes:** this doc is written to be executed by an agent (Opus). Follow phases in order — each phase is independently shippable and verifiable. Read `AGENTS.md` first (Next.js version has breaking changes; `supabase/schema.sql` is the canonical schema — do NOT infer schema from migrations, they have drifted behind the live DB).
+
+## Implementation notes (what actually happened)
+
+The plan held up; the surprises were all in getting a drifted-schema dump to rebuild cleanly on a fresh local stack. `scripts/test-db-reset.mjs` handles them and is the one place to look when the local DB won't build:
+
+- **`schema.sql` isn't dependency-ordered.** Foreign keys (both `ALTER … ADD FOREIGN KEY` and inline `references`) are deferred and replayed last; `check_function_bodies` is off during load.
+- **pgcrypto lives in the `extensions` schema** locally, so `crypt()`/`gen_salt()` need it on the search path before seeding.
+- **`plpgsql.variable_conflict = use_column`** is pinned at the database level (via the local superuser) — several functions (e.g. `generate_class_sessions`) rely on it and it's superuser-only to set per-session.
+- **Migrations are disabled at `supabase start`** (0001 assumes a pre-migration base and no longer replays from empty); the DB is built from `schema.sql`.
+- **Venue/batch DATA lives only in migration 0009** (schema.sql is DDL-only) — 0009 is replayed after seeding, with its two superseded function redefinitions stripped.
+- **GoTrue token columns** on directly-seeded `auth.users` rows are normalised from NULL to `''`, else every password sign-in 500s.
+- **Cookie name is `sb-127-auth-token`** locally (from the `127.0.0.1` host); auth cookies are produced by the real `@supabase/ssr` client rather than hand-rolled.
+
+Layer-1 items 5–6 (coach-silent escalation, quiet-hours/reminder consolidation) live in the Deno notify worker (`supabase/functions/notify`), which the plan trusts as a pipe — so they're covered at the queue level, not re-implemented as DB tests.
 
 ## Goal
 
@@ -179,13 +193,13 @@ The failure mode that actually deprecates harnesses is none of the above — it'
 
 ## Deliverables checklist
 
-- [ ] `scripts/test-db-reset.mjs` + `db:reset`/`db:start` scripts; `.env.test.local.example`
-- [ ] Local-only URL guardrail in every entry point
-- [ ] `e2e/lib/auth.ts` (mint any role), `e2e/lib/scenario.ts` (factories), `e2e/lib/notifications.ts` (assert queue)
-- [ ] `tests/db/` Vitest suite (Phase 4 list) + `test:db` script
-- [ ] `e2e/flows/` Playwright project + fixtures + `e2e:flows` script; existing viewport audit untouched
-- [ ] `docs/blind-user-audit.md` prompt template
-- [ ] Update `e2e/README.md` to describe both harnesses (viewport audit vs. flows) and the one-time Docker setup
+- [x] `scripts/test-db-reset.mjs` + `db:reset`/`db:start` scripts; `.env.test.local.example`
+- [x] Local-only URL guardrail in every entry point (`e2e/lib/env.ts`)
+- [x] `e2e/lib/auth.ts` (mint any role), `e2e/lib/scenario.ts` (factories), `e2e/lib/notifications.ts` (assert queue)
+- [x] `tests/db/` Vitest suite (booking, series/0028, cancellation, waitlist, arrival/0039, coach confirm/reassign) + `test:db` script — 12 tests
+- [x] `e2e/flows/` Playwright project + fixtures + `e2e:flows` script; existing viewport audit untouched — 6 tests
+- [x] `docs/blind-user-audit.md` prompt template
+- [x] Update `e2e/README.md` to describe both harnesses (viewport audit vs. flows) and the one-time Docker setup
 
 ## Founder manual steps (everything else is scripted)
 
