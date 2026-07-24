@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { requireUser } from "@/lib/auth";
 import { getSubscriptionSummary } from "@/lib/billing";
 import { ClientShell } from "@/components/app/ClientShell";
+import { BookModeSwitch } from "@/components/app/BookModeSwitch";
 import { OnboardingBanner } from "@/components/app/onboarding/OnboardingBanner";
 import { PrivateWizard } from "@/components/app/PrivateWizard";
 
@@ -39,7 +40,7 @@ export default async function PrivateBookingPage({
 
   return (
     <ClientShell title="Book private class">
-      {onboarding === "1" && <OnboardingBanner />}
+      {onboarding === "1" ? <OnboardingBanner /> : <BookModeSwitch active="private" />}
       <PrivateWizard
         players={playersRes.data ?? []}
         coaches={coaches}

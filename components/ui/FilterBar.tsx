@@ -26,7 +26,15 @@ export type FilterDef = {
   onChange: (value: string) => void;
 };
 
-export function FilterBar({ filters }: { filters: FilterDef[] }) {
+export function FilterBar({
+  filters,
+  trailing,
+}: {
+  filters: FilterDef[];
+  /** Extra chip(s) appended to the mobile row only (e.g. a map toggle). Desktop
+   * hides them because the sidebar they control is always visible there. */
+  trailing?: React.ReactNode;
+}) {
   // Which filter's option sheet is open on mobile (null = none).
   const [openKey, setOpenKey] = useState<string | null>(null);
   const openFilter = filters.find((f) => f.key === openKey) ?? null;
@@ -69,6 +77,7 @@ export function FilterBar({ filters }: { filters: FilterDef[] }) {
             </div>
           );
         })}
+        {trailing}
       </div>
 
       {/* ── Desktop: the inline dropdown grid, unchanged ── */}

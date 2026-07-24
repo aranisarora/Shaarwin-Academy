@@ -9,8 +9,10 @@ import { Button } from "@/components/ui/Button";
 import { Select } from "@/components/ui/Select";
 import { Spinner } from "@/components/ui/Spinner";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { FilterBar } from "@/components/ui/FilterBar";
 import { bookSlot, type BookSlotResult } from "@/app/app/book/actions";
 import { WhatsAppSayHi } from "@/components/app/WhatsAppSayHi";
+import { useIsDesktop } from "@/components/app/use-pwa";
 import type { BrowseSession } from "@/lib/booking";
 import type { Venue } from "@/lib/data";
 
@@ -90,6 +92,10 @@ export function BookBrowser({
 }) {
   const [level, setLevel] = useState<string>("all");
   const [weekday, setWeekday] = useState<string>("all");
+  // On the phone the venue map is folded behind a chip so the slot list is the
+  // first content; on desktop the sidebar map is always shown (see useIsDesktop).
+  const [mapOpen, setMapOpen] = useState(false);
+  const isDesktop = useIsDesktop();
   const [selected, setSelected] = useState<Slot | null>(null);
   const [recurring, setRecurring] = useState(entitlement.hasGroupPlan);
   const [playerId, setPlayerId] = useState(players[0]?.id ?? "");
@@ -171,7 +177,8 @@ export function BookBrowser({
 
   return (
     <div className="grid gap-6 lg:grid-cols-[420px_1fr]">
-      <div className="order-2 lg:order-1">
+      {/* Intro + filters (row 1, left column on desktop) */}
+      <div className="order-1 min-w-0 lg:col-start-1 lg:row-start-1">
         {hasGroupPlan ? (
           <p className="mb-4 text-sm text-fg-2">
             Pick a weekly slot — booking holds your place{" "}
@@ -186,23 +193,59 @@ export function BookBrowser({
           </p>
         )}
 
-        <div className="mb-4 grid grid-cols-2 gap-3">
-          <Select label="Level" value={level} onChange={(e) => setLevel(e.target.value)}>
-            {LEVELS.map((l) => (
-              <option key={l} value={l}>
-                {l === "all" ? "All levels" : l}
-              </option>
-            ))}
-          </Select>
-          <Select label="Day" value={weekday} onChange={(e) => setWeekday(e.target.value)}>
-            {WEEKDAYS.map((d) => (
-              <option key={d} value={d}>
-                {d === "all" ? "Any day" : d}
-              </option>
-            ))}
-          </Select>
-        </div>
+        <FilterBar
+          filters={[
+            {
+              key: "level",
+              aria: "Filter by level",
+              label: "All levels",
+              value: level,
+              onChange: setLevel,
+              options: LEVELS.map((l) => ({
+                value: l,
+                label: l === "all" ? "All levels" : l[0].toUpperCase() + l.slice(1),
+              })),
+            },
+            {
+              key: "day",
+              aria: "Filter by day",
+              label: "Any day",
+              value: weekday,
+              onChange: setWeekday,
+              options: WEEKDAYS.map((d) => ({
+                value: d,
+                label: d === "all" ? "Any day" : d,
+              })),
+            },
+          ]}
+          trailing={
+            <button
+              type="button"
+              onClick={() => setMapOpen((v) => !v)}
+              aria-pressed={mapOpen}
+              className={`inline-flex min-h-9 shrink-0 items-center whitespace-nowrap rounded-full border py-1.5 pl-3.5 pr-3 text-sm font-medium ${
+                mapOpen ? "border-ember text-ember" : "border-line text-fg-2"
+              }`}
+            >
+              Map
+              <span aria-hidden className="ml-1 text-xs opacity-70">
+                ▾
+              </span>
+            </button>
+          }
+        />
+      </div>
 
+      {/* Venue map — folded behind the chip on mobile, sticky sidebar on desktop.
+          Rendered once (never a hidden second Mapbox instance). */}
+      {(isDesktop || mapOpen) && (
+        <div className="order-2 lg:col-start-2 lg:row-span-2 lg:row-start-1 lg:sticky lg:top-20 lg:self-start">
+          <VenueMap venues={venues} height="42vh" interactiveCard={false} autoLocate />
+        </div>
+      )}
+
+      {/* Slot list — the first real content on the phone (row 2, left column) */}
+      <div className="order-3 min-w-0 lg:col-start-1 lg:row-start-2">
         {byVenue.length === 0 && (
           <EmptyState
             image="/images/empty-ivory.jpg"
@@ -255,10 +298,6 @@ export function BookBrowser({
         </div>
       </div>
 
-      <div className="order-1 lg:order-2 lg:sticky lg:top-20 lg:self-start">
-        <VenueMap venues={venues} height="42vh" interactiveCard={false} autoLocate />
-      </div>
-
       <Sheet
         open={selected !== null}
         onClose={() => setSelected(null)}
@@ -275,7 +314,8 @@ export function BookBrowser({
                 {selected.next.coachName ? ` · Coach ${selected.next.coachName}` : ""}
               </p>
               <p className="mt-1 text-sm text-fg-2">
-                Starting {fmtDate(selected.next.starts_at)}
+                Starting {fmtDate(selected.next.starts_at)} ·{" "}
+                {selected.next.level === "any" ? "all levels" : selected.next.level}
               </p>
             </div>
 
@@ -298,17 +338,42 @@ export function BookBrowser({
             </div>
 
             {players.length > 1 && (
-              <Select
-                label="Who's playing?"
-                value={playerId}
-                onChange={(e) => setPlayerId(e.target.value)}
-              >
-                {players.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.full_name}
-                  </option>
-                ))}
-              </Select>
+              <div>
+                <p className="label mb-2">Who&apos;s playing?</p>
+                {players.length <= 4 ? (
+                  // A quick household picker — no dropdown to open for two or
+                  // three kids. Falls back to a select once the list is long.
+                  <div className="flex flex-wrap gap-2">
+                    {players.map((p) => (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => setPlayerId(p.id)}
+                        aria-pressed={playerId === p.id}
+                        className={`min-h-11 rounded-full border px-4 text-sm font-medium ${
+                          playerId === p.id
+                            ? "border-ember bg-ember/5 text-ember"
+                            : "border-line text-fg-2 hover:border-ember"
+                        }`}
+                      >
+                        {p.full_name}
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <Select
+                    aria-label="Who's playing?"
+                    value={playerId}
+                    onChange={(e) => setPlayerId(e.target.value)}
+                  >
+                    {players.map((p) => (
+                      <option key={p.id} value={p.id}>
+                        {p.full_name}
+                      </option>
+                    ))}
+                  </Select>
+                )}
+              </div>
             )}
 
             {/* Recurring vs one-off — recurring is the default for members. */}

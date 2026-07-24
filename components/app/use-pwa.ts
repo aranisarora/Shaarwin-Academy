@@ -37,6 +37,24 @@ export function useIsStandalone(): boolean {
   return useSyncExternalStore(noopSubscribe, detectStandalone, () => false);
 }
 
+/**
+ * True on ≥1024px viewports. Server snapshot is `false` (mobile-first), so the
+ * desktop-only sidebar map mounts after hydration rather than SSR — this keeps a
+ * single Mapbox instance on the page (mounting a hidden second one would also
+ * fire the geolocation prompt with no visible map).
+ */
+export function useIsDesktop(): boolean {
+  return useSyncExternalStore(
+    (cb) => {
+      const mq = window.matchMedia("(min-width: 1024px)");
+      mq.addEventListener("change", cb);
+      return () => mq.removeEventListener("change", cb);
+    },
+    () => window.matchMedia("(min-width: 1024px)").matches,
+    () => false
+  );
+}
+
 /** True when the given localStorage flag is set (any non-null value). */
 export function useLocalFlag(key: string): boolean {
   return useSyncExternalStore(

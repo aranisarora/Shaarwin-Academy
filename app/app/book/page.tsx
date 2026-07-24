@@ -5,6 +5,7 @@ import { getBrowseSessions } from "@/lib/booking";
 import { getVenues } from "@/lib/data";
 import { ClientShell } from "@/components/app/ClientShell";
 import { BookBrowser } from "@/components/app/BookBrowser";
+import { BookModeSwitch } from "@/components/app/BookModeSwitch";
 import { OnboardingBanner } from "@/components/app/onboarding/OnboardingBanner";
 import { RealtimeRefresh } from "@/components/app/RealtimeRefresh";
 
@@ -31,7 +32,7 @@ export default async function BookPage({
   return (
     <ClientShell title="Book group class">
       <RealtimeRefresh tables={["bookings", "class_sessions"]} />
-      {onboarding === "1" && <OnboardingBanner />}
+      {onboarding === "1" ? <OnboardingBanner /> : <BookModeSwitch active="group" />}
       <BookBrowser
         sessions={sessions}
         venues={venues}
