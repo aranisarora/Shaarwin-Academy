@@ -330,15 +330,17 @@ async function sweepFounderEscalations() {
     );
   }
 
-  // Bounded to the last hour so we never backfill old sessions.
+  // Bounded to the last hour so we never backfill old sessions. 10-minute
+  // grace: coaches typically tap "arrived" right around start time — only
+  // escalate when the class is 10+ minutes in with still no arrival mark.
   const { data: notArrived } = await supabase
     .from("class_sessions")
     .select("id,starts_at,coach_id,classes!inner(title)")
     .eq("status", "scheduled")
     .not("coach_id", "is", null)
     .is("coach_arrived_at", null)
-    .lte("starts_at", new Date(now).toISOString())
-    .gt("starts_at", new Date(now - 60 * 60000).toISOString())
+    .lte("starts_at", new Date(now - 10 * 60000).toISOString())
+    .gt("starts_at", new Date(now - 70 * 60000).toISOString())
     .limit(50);
   for (const s of notArrived ?? []) {
     await escalateToFounders(
@@ -346,7 +348,7 @@ async function sweepFounderEscalations() {
       "Coach not marked arrived",
       s,
       (name, title, when) =>
-        `${title} (${when}) has started but ${name} hasn't marked they've arrived. Worth a quick check-in.`
+        `${title} (${when}) started over 10 minutes ago and ${name} hasn't marked they've arrived. Worth a quick check-in.`
     );
   }
 }
