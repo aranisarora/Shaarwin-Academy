@@ -19,7 +19,7 @@ export function BookModeSwitch({ active }: { active: "group" | "private" }) {
             key={t.key}
             href={t.href}
             aria-current={on ? "page" : undefined}
-            className={`inline-flex min-h-9 flex-1 items-center justify-center rounded-full px-4 text-sm font-medium transition-colors ${
+            className={`inline-flex min-h-11 flex-1 items-center justify-center rounded-full px-4 text-sm font-medium transition-colors ${
               on ? "bg-ember text-ivory" : "text-fg-2 hover:text-fg"
             }`}
           >
