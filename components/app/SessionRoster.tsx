@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useRef, useState, useTransition } from "react";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -37,7 +38,10 @@ export function SessionRoster({
 }) {
   const [rows, setRows] = useState(roster);
   const [notes, setNotes] = useState(coachNotes ?? "");
+  const [noteStatus, setNoteStatus] = useState<"idle" | "saving" | "saved">("idle");
   const [message, setMessage] = useState<string | null>(null);
+  // "Can't make it" confirms in two taps (native confirm looks broken in a PWA).
+  const [cantArmed, setCantArmed] = useState(false);
   const [pending, startTransition] = useTransition();
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -97,12 +101,37 @@ export function SessionRoster({
     });
   }
 
+  // The common case: everyone showed up. Flip every still-"confirmed" row to
+  // attended optimistically, then persist each via the existing per-row action
+  // (one revalidate lands at the end). Individual toggles still undo anyone.
+  const confirmedCount = rows.filter((r) => r.status === "confirmed").length;
+  function markAllPresent() {
+    const ids = rows.filter((r) => r.status === "confirmed").map((r) => r.id);
+    setRows((r) =>
+      r.map((row) => (row.status === "confirmed" ? { ...row, status: "attended" } : row))
+    );
+    startTransition(async () => {
+      for (const id of ids) {
+        const result = await setAttendance(id, "attended");
+        if (!result.ok) {
+          setMessage(result.error ?? "Couldn't save attendance.");
+          break;
+        }
+      }
+    });
+  }
+
+  const anyPresent = rows.some((r) => r.status === "attended");
+
   function onNotesChange(value: string) {
     setNotes(value);
+    setNoteStatus("idle");
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(() => {
+      setNoteStatus("saving");
       startTransition(async () => {
         await saveSessionNotes(sessionId, value);
+        setNoteStatus("saved");
       });
     }, 800);
   }
@@ -121,6 +150,16 @@ export function SessionRoster({
         </p>
         {rows.length === 0 && (
           <p className="text-sm text-fg-2">No bookings yet.</p>
+        )}
+        {attendanceOpen && confirmedCount >= 2 && (
+          <Button
+            variant="ghost"
+            disabled={pending}
+            onClick={markAllPresent}
+            className="mb-3 w-full"
+          >
+            ✓ All present
+          </Button>
         )}
         <ul className="divide-y divide-line rounded-[12px] border border-line bg-surface-2">
           {rows.map((row) => {
@@ -223,6 +262,15 @@ export function SessionRoster({
             )}
           </div>
         )}
+
+        {anyPresent && (
+          <p className="mt-3 text-sm text-fg-2">
+            Add a quick skills note for today?{" "}
+            <Link href="/coach/players" className="text-ember hover:underline">
+              Assessments →
+            </Link>
+          </p>
+        )}
       </div>
 
       <div>
@@ -236,34 +284,65 @@ export function SessionRoster({
           rows={4}
           className="w-full rounded-[8px] border border-line bg-surface-2 p-3.5 text-base"
         />
+        {noteStatus !== "idle" && (
+          <p className="mt-1 text-xs text-fg-2">
+            {noteStatus === "saving" ? "Saving…" : "Saved ✓"}
+          </p>
+        )}
       </div>
 
-      <div className="flex flex-wrap gap-3 border-t border-line pt-5">
-        <Button
-          variant="ghost"
-          disabled={pending}
-          onClick={() =>
-            startTransition(async () => {
-              const r = await reportProblem(sessionId);
-              setMessage(r.ok ? "Reported — the founder will follow up." : r.error ?? null);
-            })
-          }
-        >
-          Report a problem
-        </Button>
-        <Button
-          variant="destructive"
-          disabled={pending}
-          onClick={() => {
-            if (!window.confirm("Can't make this session? We'll find cover automatically.")) return;
-            startTransition(async () => {
-              const r = await cantMakeIt(sessionId);
-              setMessage(r.ok ? "We're on it — cover is being arranged." : r.error ?? null);
-            });
-          }}
-        >
-          Can&apos;t make it
-        </Button>
+      <div className="border-t border-line pt-5">
+        {cantArmed ? (
+          <div className="space-y-2 rounded-[8px] border border-line p-3">
+            <p className="text-sm text-fg-2">
+              Can&apos;t make it? We&apos;ll find cover automatically.
+            </p>
+            <div className="grid grid-cols-2 gap-2">
+              <Button variant="ghost" disabled={pending} onClick={() => setCantArmed(false)}>
+                Back
+              </Button>
+              <Button
+                variant="destructive"
+                disabled={pending}
+                onClick={() =>
+                  startTransition(async () => {
+                    const r = await cantMakeIt(sessionId);
+                    setCantArmed(false);
+                    setMessage(
+                      r.ok ? "We're on it — cover is being arranged." : r.error ?? null
+                    );
+                  })
+                }
+              >
+                Yes, find cover
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div className="flex flex-wrap gap-3">
+            <Button
+              variant="ghost"
+              disabled={pending}
+              onClick={() =>
+                startTransition(async () => {
+                  const r = await reportProblem(sessionId);
+                  setMessage(
+                    r.ok ? "Reported — the founder will follow up." : r.error ?? null
+                  );
+                })
+              }
+            >
+              Report a problem
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={pending}
+              onClick={() => setCantArmed(true)}
+            >
+              Can&apos;t make it
+            </Button>
+          </div>
+        )}
       </div>
       {message && <p className="text-sm text-fg-2">{message}</p>}
     </div>
