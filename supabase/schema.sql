@@ -106,7 +106,9 @@ create table public.class_sessions (
   cancel_reason text,
   created_at timestamptz default now() not null,
   coach_arrived_at timestamptz,
-  coach_confirmed_at timestamptz
+  coach_confirmed_at timestamptz,
+  coach_arrival_source text,
+  coach_arrival_distance_m integer
 );
 
 create table public.classes (
@@ -499,6 +501,7 @@ ALTER TABLE public.class_sessions ADD CONSTRAINT class_sessions_pkey PRIMARY KEY
 ALTER TABLE public.class_sessions ADD CONSTRAINT class_sessions_class_id_fkey FOREIGN KEY (class_id) REFERENCES classes(id) ON DELETE CASCADE;
 ALTER TABLE public.class_sessions ADD CONSTRAINT class_sessions_coach_id_fkey FOREIGN KEY (coach_id) REFERENCES coaches(id) ON DELETE SET NULL;
 ALTER TABLE public.class_sessions ADD CONSTRAINT class_sessions_capacity_override_check CHECK ((capacity_override >= 1));
+ALTER TABLE public.class_sessions ADD CONSTRAINT class_sessions_coach_arrival_source_check CHECK ((coach_arrival_source = ANY (ARRAY['auto'::text, 'tap'::text, 'wa'::text])));
 ALTER TABLE public.class_sessions ADD CONSTRAINT session_window CHECK ((starts_at < ends_at));
 ALTER TABLE public.classes ADD CONSTRAINT classes_pkey PRIMARY KEY (id);
 ALTER TABLE public.classes ADD CONSTRAINT classes_created_by_fkey FOREIGN KEY (created_by) REFERENCES profiles(id) ON DELETE SET NULL;
@@ -842,6 +845,18 @@ begin
   insert into bookings (session_id, client_id, player_id, status, private_series_id)
   values (v_session_id, p_client, p_player, 'confirmed', p_series)
   returning * into v_booking;
+
+  -- One consolidated reminder ~3h before start (P11 delivers). _book_one adds
+  -- this for group bookings; private occurrences insert into bookings directly
+  -- and would otherwise skip it. Unconditional (not gated on p_notify) so
+  -- series-materialized weeks still get reminders.
+  insert into notifications (user_id, type, title, body, data, scheduled_for) values
+    (p_client, 'reminder_upcoming', 'Later today', 'Private session',
+     jsonb_build_object('booking_id', v_booking.id, 'session_id', v_session_id,
+       'class_title', 'Private session',
+       'time_str', to_char(p_start at time zone 'Asia/Kolkata', 'FMHH12:MI am'),
+       'url', '/app/schedule'),
+     p_start - interval '3 hours');
 
   if v_coach is not null then
     if p_notify then
@@ -2842,7 +2857,7 @@ AS $function$
     and s.ends_at < now() - interval '48 hours';
 $function$;
 
-CREATE OR REPLACE FUNCTION public.coach_mark_arrival(p_session uuid, p_late boolean DEFAULT false)
+CREATE OR REPLACE FUNCTION public.coach_mark_arrival(p_session uuid, p_late boolean DEFAULT false, p_source text DEFAULT 'tap'::text, p_distance_m integer DEFAULT NULL::integer)
  RETURNS timestamptz
  LANGUAGE plpgsql
  SECURITY DEFINER
@@ -2888,8 +2903,13 @@ begin
     v_body  := 'Coach ' || v_name || ' is running a few minutes late for the '
                || v_time || ' session.';
   else
+    -- Arrived implies coming: also stamp confirm + provenance so a coach who
+    -- only ever taps "arrived" is never nagged or escalated as unconfirmed.
     update class_sessions
-       set coach_arrived_at = coalesce(coach_arrived_at, now())
+       set coach_arrived_at        = coalesce(coach_arrived_at, now()),
+           coach_confirmed_at       = coalesce(coach_confirmed_at, now()),
+           coach_arrival_source     = coalesce(coach_arrival_source, p_source),
+           coach_arrival_distance_m = coalesce(coach_arrival_distance_m, p_distance_m)
      where id = p_session
      returning coach_arrived_at into v_arrived;
     v_type  := 'coach_arrived';
@@ -2899,10 +2919,14 @@ begin
   end if;
 
   -- Booked clients (parents) are always told — arrived or late both matter to
-  -- them.
-  insert into notifications (user_id, type, title, body, data)
+  -- them. Auto arrivals delay 2 minutes so an Undo beats delivery; manual and
+  -- WhatsApp taps notify immediately. Data carries coach_name/location/time so
+  -- the notify worker can render the parent WhatsApp without re-querying.
+  insert into notifications (user_id, type, title, body, data, scheduled_for)
   select distinct b.client_id, v_type, v_title, v_body,
-         jsonb_build_object('session_id', p_session, 'url', '/app')
+         jsonb_build_object('session_id', p_session, 'url', '/app',
+           'coach_name', v_name, 'location_str', v_location, 'time_str', v_time),
+         case when p_source = 'auto' then now() + interval '2 minutes' else now() end
     from bookings b
    where b.session_id = p_session
      and b.status in ('confirmed', 'attended');
@@ -2918,6 +2942,44 @@ begin
   end if;
 
   return v_arrived;
+end;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.coach_undo_arrival(p_session uuid)
+ RETURNS void
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare
+  v_coach   uuid;
+  v_arrived timestamptz;
+begin
+  select coach_id, coach_arrived_at
+    into v_coach, v_arrived
+    from class_sessions where id = p_session;
+
+  if v_coach is null or v_coach <> auth.uid() then
+    raise exception 'not_your_session';
+  end if;
+
+  if v_arrived is null or now() - v_arrived > interval '10 minutes' then
+    raise exception 'undo_window_passed';
+  end if;
+
+  -- Clear the arrival but keep coach_confirmed_at — the coach is still coming.
+  update class_sessions
+     set coach_arrived_at        = null,
+         coach_arrival_source     = null,
+         coach_arrival_distance_m = null
+   where id = p_session;
+
+  -- Still-pending parent notification rows can be pulled; already-sent rows are
+  -- too late (acceptable).
+  delete from notifications
+   where type = 'coach_arrived'
+     and status = 'pending'
+     and data->>'session_id' = p_session::text;
 end;
 $function$;
 
