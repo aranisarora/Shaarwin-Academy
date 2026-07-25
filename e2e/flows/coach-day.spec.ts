@@ -6,6 +6,7 @@ import {
   createCoach,
   createClient,
   createGroupSession,
+  createPrivateSession,
   SEED,
   minutesFromNow,
   hoursFromNow,
@@ -198,5 +199,113 @@ test("cold open at the venue → arrive, take attendance, escape hatches present
   await expect(page.getByRole("button", { name: /report a problem/i })).toBeVisible();
 
   await page.screenshot({ path: "test-results/screens/coach-day/03-session.png", fullPage: true });
+  await context.close();
+});
+
+// ── Moment 4 — "My next stop is a private, at someone's home." ────────────────
+// A private is the other half of a coach's day, and it reads differently: no
+// venue name — the client's own address — so the schedule card names the *area*
+// and marks the session "Private", where a group would name a venue and say
+// "Group class". The blind coach must still get the two facts that matter
+// (where, when) at a glance, plus a way to navigate. (The client/child identity
+// lives on the session screen — Moment 5 — not on this card.)
+test("cold open before a private → schedule names the area, marks it private, with the time", async ({
+  browser,
+  admin,
+}) => {
+  const coach = await createCoach({ fullName: "Blind Coach — Private Schedule" });
+  const priv = await createPrivateSession({
+    coachId: coach.id,
+    startsAt: hoursFromNow(3),
+    locationName: "Palm Meadows",
+  });
+  // Pre-confirm so the takeover doesn't cover the schedule — this moment is
+  // "where am I going and when", not an action prompt.
+  await admin
+    .from("class_sessions")
+    .update({ coach_confirmed_at: new Date().toISOString() })
+    .eq("id", priv.sessionId);
+
+  const { context, page } = await coldOpen(browser, coach.email);
+  await page.goto("/coach");
+
+  // The card is reachable by an accessible label carrying BOTH the area and the
+  // time — a private names the area (never the exact street; "Open maps" covers
+  // that), not a venue.
+  await expect(
+    page.getByRole("link", { name: new RegExp(`${rx(priv.locationName)}.*[ap]m`, "i") })
+  ).toBeVisible();
+  await expect(page.getByText(TIME_RANGE).first()).toBeVisible(); // when
+  await expect(page.getByText("Private").first()).toBeVisible(); // what kind (badge)
+  await expect(page.getByText(/private session/i).first()).toBeVisible(); // type line (not "Group class")
+  await expect(page.getByRole("link", { name: /open maps/i }).first()).toBeVisible(); // how to get there
+
+  await page.screenshot({
+    path: "test-results/screens/coach-day/04-private-schedule.png",
+    fullPage: true,
+  });
+  await context.close();
+});
+
+// ── Moment 5 — "I'm at the client's door for the private." ───────────────────
+// Mid-private, the one screen has to answer where/when/who and — because it's
+// someone's home, not a venue — whether there's a table there. Then arrive
+// (parent pinged) and take the register, exactly as for a group.
+test("cold open at a private → address not venue, table note, arrive + attendance", async ({
+  browser,
+  admin,
+}) => {
+  const coach = await createCoach({ fullName: "Blind Coach — Private Session" });
+  const priv = await createPrivateSession({
+    coachId: coach.id,
+    startsAt: minutesFromNow(5), // arrival + attendance windows both open
+    locationName: "Prestige Shantiniketan",
+    hasTable: false, // exercise the "none — check with client" branch
+  });
+
+  const { context, page } = await coldOpen(browser, coach.email);
+  await page.goto(`/coach/session/${priv.sessionId}`);
+
+  // Everything the coach needs mid-private is on this one screen:
+  await expect(page.getByText(TIME_RANGE).first()).toBeVisible(); // when
+  await expect(page.getByText(priv.playerName).first()).toBeVisible(); // who's booked
+  await expect(page.getByText(/private/i).first()).toBeVisible(); // the private badge
+  // It's a home, not a venue: the client's own address shows, and the table
+  // note tells the coach to bring/expect one.
+  await expect(page.getByText(new RegExp(rx(priv.locationName), "i")).first()).toBeVisible();
+  await expect(page.getByText(/none.*check with client/i)).toBeVisible();
+
+  // Arrive → parent (the client) told, and it actually queues the ping.
+  await page.getByRole("button", { name: /arrived/i }).click();
+  await expect(page.getByText(/parents notified/i)).toBeVisible();
+  await expectNotification(admin, {
+    userId: priv.clientId,
+    type: "coach_arrived",
+    dataContains: { session_id: priv.sessionId },
+  });
+
+  // Attendance → the register records the child showed up.
+  await page
+    .getByRole("button", { name: new RegExp(`Mark ${rx(priv.playerName)} present`, "i") })
+    .click();
+  await expect
+    .poll(async () => {
+      const { data } = await admin
+        .from("bookings")
+        .select("status")
+        .eq("session_id", priv.sessionId)
+        .single();
+      return (data as { status: string } | null)?.status ?? null;
+    })
+    .toBe("attended");
+
+  // The same escape hatches must be reachable on a private.
+  await expect(page.getByRole("button", { name: /can.?t make it/i })).toBeVisible();
+  await expect(page.getByRole("button", { name: /report a problem/i })).toBeVisible();
+
+  await page.screenshot({
+    path: "test-results/screens/coach-day/05-private-session.png",
+    fullPage: true,
+  });
   await context.close();
 });

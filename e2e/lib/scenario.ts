@@ -253,6 +253,130 @@ export async function createGroupSession(opts: {
   return { sessionId: session.id, classId, coachId, startsAt, endsAt };
 }
 
+export type CreatedPrivateSession = CreatedSession & {
+  clientId: string;
+  playerId: string;
+  playerName: string;
+  locationName: string;
+  address: string;
+};
+
+/**
+ * A concrete PRIVATE session: a one-to-one class held at the client's own
+ * address (no venue), the coach assigned, and the client's child booked in.
+ * Seeded directly with the service role — like createGroupSession — so it
+ * bypasses the private-plan minutes gate that `_create_private_occurrence`
+ * enforces; this factory's job is to stand up a coach-facing private session,
+ * not to exercise billing. Mirrors the exact row shape that RPC writes (private
+ * `classes` row + `private_class_details` + a debit-less booking).
+ */
+export async function createPrivateSession(opts: {
+  startsAt?: Date;
+  coachId?: string;
+  durationMinutes?: number;
+  hasTable?: boolean;
+  locationName?: string;
+  fullName?: string;
+} = {}): Promise<CreatedPrivateSession> {
+  const db = admin();
+  const duration = opts.durationMinutes ?? 60;
+  const locationName = opts.locationName ?? "Whitefield Court";
+  const fullName = opts.fullName ?? "Private Parent";
+
+  // The private booking is the client's own child, so build the family first.
+  const client = await createClient({ children: 1, fullName });
+  const playerId = client.playerIds[0];
+  const { data: pl } = await db
+    .from("players")
+    .select("full_name")
+    .eq("id", playerId)
+    .single();
+  const playerName = (pl as { full_name: string }).full_name;
+
+  const startsAt = opts.startsAt ?? hoursFromNow(4);
+  const endsAt = new Date(startsAt.getTime() + duration * 60_000);
+  const startsOn = startsAt.toISOString().slice(0, 10);
+  const lat = 12.9698; // Whitefield, within the default coach's teachable range
+  const lng = 77.75;
+  const address = `12 ${locationName}, Whitefield`;
+
+  const { data: cls, error: clsErr } = await db
+    .from("classes")
+    .insert({
+      class_type: "private",
+      title: "Private session",
+      skill_level: "beginner",
+      capacity: 1,
+      duration_minutes: duration,
+      starts_on: startsOn,
+      created_by: client.id,
+    })
+    .select("id")
+    .single();
+  if (clsErr || !cls) throw new Error(`createPrivateSession class: ${clsErr?.message}`);
+
+  const { error: pcdErr } = await db.from("private_class_details").insert({
+    class_id: cls.id,
+    client_id: client.id,
+    player_id: playerId,
+    address,
+    postcode: "560066",
+    lat,
+    lng,
+    has_table: opts.hasTable ?? true,
+    access_notes: "Gate code 4321; park inside the compound.",
+    address_details: {
+      name: locationName,
+      formatted: address,
+      locality: "Whitefield",
+      city: "Bengaluru",
+      postcode: "560066",
+      lat,
+      lng,
+    },
+  });
+  if (pcdErr) throw new Error(`createPrivateSession details: ${pcdErr.message}`);
+
+  const { data: session, error: sErr } = await db
+    .from("class_sessions")
+    .insert({
+      class_id: cls.id,
+      starts_at: startsAt.toISOString(),
+      ends_at: endsAt.toISOString(),
+      coach_id: opts.coachId ?? null,
+    })
+    .select("id")
+    .single();
+  if (sErr || !session) throw new Error(`createPrivateSession session: ${sErr?.message}`);
+
+  let coachId = opts.coachId ?? null;
+  if (!coachId) {
+    const { data: assigned } = await db.rpc("assign_coach", { p_session: session.id });
+    coachId = (assigned as string | null) ?? null;
+  }
+
+  const { error: bErr } = await db.from("bookings").insert({
+    session_id: session.id,
+    client_id: client.id,
+    player_id: playerId,
+    status: "confirmed",
+  });
+  if (bErr) throw new Error(`createPrivateSession booking: ${bErr.message}`);
+
+  return {
+    sessionId: session.id,
+    classId: cls.id,
+    coachId,
+    startsAt,
+    endsAt,
+    clientId: client.id,
+    playerId,
+    playerName,
+    locationName,
+    address,
+  };
+}
+
 /** Book a single session as the given client (real book_session RPC). */
 export async function bookSession(args: {
   email: string;
