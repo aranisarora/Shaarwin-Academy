@@ -83,6 +83,17 @@ export function AddressForm({
 
   const hasPin = value.lat !== null && value.lng !== null;
 
+  // Subtle "this field is required" marker — a small red asterisk after the
+  // label, paired with the "(optional)" suffixes on the rest.
+  const req = (text: string) => (
+    <>
+      {text}{" "}
+      <span className="text-err" aria-hidden>
+        *
+      </span>
+    </>
+  );
+
   // GPS → reverse-geocode → pin. Opt-in on tap only (never on mount). GPS gets
   // the user close; they drag the pin to the exact door afterwards.
   function useMyLocation() {
@@ -119,7 +130,7 @@ export function AddressForm({
         setLocating(false);
         setGeoError(
           err.code === err.PERMISSION_DENIED
-            ? "Location is turned off for this site — allow it in your browser settings, or search below."
+            ? "Location is blocked for this site. Tap the lock/site-settings icon by the address bar to allow it, then try again — or just search below."
             : err.code === err.TIMEOUT
               ? "Locating took too long — try again, or search below."
               : "Couldn't get your location — search below instead."
@@ -146,6 +157,9 @@ export function AddressForm({
 
   return (
     <div className="space-y-4">
+      <p className="text-xs text-fg-2">
+        <span className="text-err">*</span> Required
+      </p>
       {showUseMyLocation && (
         <div className="space-y-1.5">
           <button
@@ -184,7 +198,7 @@ export function AddressForm({
       )}
 
       <AddressSearch
-        label={searchLabel}
+        label={req(searchLabel)}
         placeholder={searchPlaceholder}
         query={query}
         selected={selected}
@@ -226,7 +240,7 @@ export function AddressForm({
 
       <div className="grid grid-cols-2 gap-3">
         <Input
-          label={`Flat / unit no.${requireFlat ? "" : " (optional)"}`}
+          label={requireFlat ? req("Flat / unit no.") : "Flat / unit no. (optional)"}
           value={value.flat ?? ""}
           onChange={(e) => set("flat", e.target.value)}
         />

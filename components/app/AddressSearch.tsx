@@ -133,7 +133,7 @@ export function AddressSearch({
   onQueryChange,
   onSelect,
 }: {
-  label?: string;
+  label?: React.ReactNode;
   placeholder?: string;
   query: string;
   selected: boolean;

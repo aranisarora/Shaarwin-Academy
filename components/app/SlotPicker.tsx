@@ -26,15 +26,24 @@ function istDateKey(iso: string) {
   }).format(new Date(iso));
 }
 
-/** "Today" / "Tomorrow" / "Wed" — the day-pill label. One-off mode only ever
- * shows the next 7 days, so a bare weekday is unambiguous and stays narrow
- * enough that a whole week of pills fits a phone with little to no scroll. */
-function dayPillLabel(iso: string, todayKey: string, tomorrowKey: string) {
+/** "Today" / "Tomorrow" / "Wed" — the primary line of a one-off day pill. The
+ * date sits on a second line (dayPillDate) so the relative label stays glanceable
+ * without dropping the exact date. One-off mode only shows the next 7 days. */
+function dayPillTop(iso: string, todayKey: string, tomorrowKey: string) {
   const key = istDateKey(iso);
   if (key === todayKey) return "Today";
   if (key === tomorrowKey) return "Tomorrow";
   return new Intl.DateTimeFormat("en-GB", {
     weekday: "short",
+    timeZone: IST,
+  }).format(new Date(iso));
+}
+
+/** "25 Jul" — the date line under a one-off day pill's day name. */
+function dayPillDate(iso: string) {
+  return new Intl.DateTimeFormat("en-GB", {
+    day: "numeric",
+    month: "short",
     timeZone: IST,
   }).format(new Date(iso));
 }
@@ -188,19 +197,28 @@ export function SlotPicker({
       <div className="-mx-1 flex snap-x gap-2 overflow-x-auto px-1 pb-1">
         {groups.map((g) => {
           const isActive = active?.key === g.key;
-          const label =
-            mode === "weekly"
-              ? g.key
-              : dayPillLabel(g.times[0], todayKey, tomorrowKey);
           return (
             <button
               key={g.key}
               type="button"
               onClick={() => setActiveKey(g.key)}
               aria-pressed={isActive}
-              className={`${pill} ${isActive ? on : off}`}
+              className={`${pill} ${isActive ? on : off} ${
+                mode === "weekly" ? "" : "flex flex-col items-center py-1.5"
+              }`}
             >
-              {label}
+              {mode === "weekly" ? (
+                g.key
+              ) : (
+                <>
+                  <span className="leading-tight">
+                    {dayPillTop(g.times[0], todayKey, tomorrowKey)}
+                  </span>
+                  <span className="text-[0.7rem] font-medium leading-tight opacity-70">
+                    {dayPillDate(g.times[0])}
+                  </span>
+                </>
+              )}
             </button>
           );
         })}
