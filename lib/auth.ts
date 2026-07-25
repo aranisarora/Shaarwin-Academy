@@ -1,6 +1,7 @@
 import { cache } from "react";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import type { StructuredAddress } from "@/lib/address";
 
 /**
  * The current auth user, or null. Wrapped in React `cache` so multiple callers
@@ -37,6 +38,9 @@ export type Profile = {
   phone: string | null;
   avatar_url: string | null;
   default_address: string | null;
+  default_lat: number | null;
+  default_lng: number | null;
+  address_details: Partial<StructuredAddress> | null;
   stripe_customer_id: string | null;
   razorpay_customer_id: string | null;
   notification_prefs: Record<string, boolean>;

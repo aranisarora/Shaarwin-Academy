@@ -16,6 +16,30 @@ export async function recordAreaInterest(email: string, postcode: string, lat: n
   return { ok: true };
 }
 
+/**
+ * Persist the client's structured address as their default so the next private
+ * booking lands on step 1 already solved (pin + coverage green). Fire-and-forget
+ * after a successful booking — a failure here must never surface to the user,
+ * their session is already booked. Writes the same columns as the profile edit
+ * page (`default_address` + `address_details` + the lat/lng mirror).
+ */
+export async function saveDefaultAddress(details: StructuredAddress): Promise<void> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return;
+  await supabase
+    .from("profiles")
+    .update({
+      default_address: details.formatted.trim() || null,
+      address_details: details,
+      default_lat: details.lat,
+      default_lng: details.lng,
+    })
+    .eq("id", user.id);
+}
+
 export type Slot = { starts_at: string; coach_count: number };
 
 export async function getSlots(

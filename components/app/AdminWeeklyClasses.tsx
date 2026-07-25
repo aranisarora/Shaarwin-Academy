@@ -5,6 +5,7 @@
 // day sub-heading the classes read coach · time. Tap a class to change it for
 // every week; one-week-only changes happen on that session in the Schedule tab.
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState, useTransition } from "react";
 import { Button } from "@/components/ui/Button";
@@ -18,17 +19,28 @@ import { WeeklyClassCard } from "./ClassCard";
 import {
   WEEKDAY_NAME,
   WEEKDAYS,
+  wallDate,
   type ClassRow,
   type ClientOption,
   type Coach,
   type InviteOption,
+  type PrivateSeriesRow,
   type Venue,
 } from "./admin-calendar-types";
 
 const WEEKDAY_ORDER = WEEKDAYS.map(([code]) => code) as string[];
 
+/** "5:00 pm" from an "HH:MM" IST wall-clock string (series slot time). */
+function fmtSlotTime(hhmm: string): string {
+  const [h, m] = hhmm.split(":").map(Number);
+  const period = h < 12 ? "am" : "pm";
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return `${h12}:${String(m).padStart(2, "0")} ${period}`;
+}
+
 export function AdminWeeklyClasses({
   classes,
+  privateSeries = [],
   coaches,
   venues,
   clients,
@@ -36,6 +48,8 @@ export function AdminWeeklyClasses({
   openClassId = null,
 }: {
   classes: ClassRow[];
+  // Active client weekly privates, grouped under the same locations as classes.
+  privateSeries?: PrivateSeriesRow[];
   coaches: Coach[];
   venues: Venue[];
   clients: ClientOption[];
@@ -81,19 +95,27 @@ export function AdminWeeklyClasses({
   const [dayFilter, setDayFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("active");
 
+  // Location + day options are drawn from both classes and private series so a
+  // location that only hosts a private slot still appears in the filter.
   const venueOptions = useMemo(
     () =>
-      [...new Set(classes.map((c) => c.venueName ?? ""))].sort((a, b) =>
-        a.localeCompare(b)
-      ),
-    [classes]
+      [
+        ...new Set([
+          ...classes.map((c) => c.venueName ?? ""),
+          ...privateSeries.map((p) => p.venueName),
+        ]),
+      ].sort((a, b) => a.localeCompare(b)),
+    [classes, privateSeries]
   );
   const dayOptions = useMemo(
     () =>
-      [...new Set(classes.map((c) => c.weekday))].sort(
-        (a, b) => WEEKDAY_ORDER.indexOf(a) - WEEKDAY_ORDER.indexOf(b)
-      ),
-    [classes]
+      [
+        ...new Set([
+          ...classes.map((c) => c.weekday),
+          ...privateSeries.map((p) => p.weekday),
+        ]),
+      ].sort((a, b) => WEEKDAY_ORDER.indexOf(a) - WEEKDAY_ORDER.indexOf(b)),
+    [classes, privateSeries]
   );
 
   const filteredClasses = useMemo(
@@ -109,38 +131,79 @@ export function AdminWeeklyClasses({
     [classes, venueFilter, dayFilter, statusFilter]
   );
 
+  // Private series are always active (the page only queries active ones), so
+  // they show under "active"/"all" and drop out of the "paused"/"ended" views.
+  const filteredPrivates = useMemo(
+    () =>
+      privateSeries.filter((p) => {
+        if (venueFilter !== "all" && p.venueName !== venueFilter) return false;
+        if (dayFilter !== "all" && p.weekday !== dayFilter) return false;
+        if (statusFilter === "paused" || statusFilter === "ended") return false;
+        return true;
+      }),
+    [privateSeries, venueFilter, dayFilter, statusFilter]
+  );
+
+  // Curated venue names — a group with no group-classes that isn't a curated
+  // venue is a pure client-home location and gets the [private] badge.
+  const curatedNames = useMemo(
+    () => new Set(venues.map((v) => v.name.toLowerCase())),
+    [venues]
+  );
+
   // Group the filtered classes under their venue, then by day within that
   // venue. Days run Mon→Sun; classes under each day are sorted by time so the
   // card reads top-to-bottom in slot order. Venues themselves are listed
   // alphabetically, "No venue" last.
   const venueGroups = useMemo(() => {
-    const byVenue = new Map<string, ClassRow[]>();
+    const classesByVenue = new Map<string, ClassRow[]>();
     for (const c of filteredClasses) {
       const key = c.venueName ?? "";
-      (byVenue.get(key) ?? byVenue.set(key, []).get(key)!).push(c);
+      (classesByVenue.get(key) ?? classesByVenue.set(key, []).get(key)!).push(c);
     }
-    return [...byVenue.entries()]
-      .map(([venue, rows]) => {
-        const byDay = new Map<string, ClassRow[]>();
-        for (const c of rows) {
-          (byDay.get(c.weekday) ?? byDay.set(c.weekday, []).get(c.weekday)!).push(c);
-        }
+    const privatesByVenue = new Map<string, PrivateSeriesRow[]>();
+    for (const p of filteredPrivates) {
+      (privatesByVenue.get(p.venueName) ?? privatesByVenue.set(p.venueName, []).get(p.venueName)!).push(p);
+    }
+
+    const allVenues = new Set([...classesByVenue.keys(), ...privatesByVenue.keys()]);
+    return [...allVenues]
+      .map((venue) => {
+        const classRows = classesByVenue.get(venue) ?? [];
+        const privateRows = privatesByVenue.get(venue) ?? [];
+        // Days are the union of weekdays present in either kind; each day sorts
+        // classes then privates by slot time.
+        const byDay = new Map<string, { rows: ClassRow[]; privates: PrivateSeriesRow[] }>();
+        const bucket = (wk: string) =>
+          byDay.get(wk) ?? byDay.set(wk, { rows: [], privates: [] }).get(wk)!;
+        for (const c of classRows) bucket(c.weekday).rows.push(c);
+        for (const p of privateRows) bucket(p.weekday).privates.push(p);
         const days = [...byDay.entries()]
-          .map(([weekday, dayRows]) => ({
+          .map(([weekday, d]) => ({
             weekday,
-            rows: dayRows.sort((a, b) => a.time.localeCompare(b.time)),
+            rows: d.rows.sort((a, b) => a.time.localeCompare(b.time)),
+            privates: d.privates.sort((a, b) => a.time.localeCompare(b.time)),
           }))
           .sort(
             (a, b) => WEEKDAY_ORDER.indexOf(a.weekday) - WEEKDAY_ORDER.indexOf(b.weekday)
           );
-        return { venue, count: rows.length, days };
+        // Pure client-home location: only privates, and not a curated venue.
+        const privateOnly =
+          classRows.length === 0 && !!venue && !curatedNames.has(venue.toLowerCase());
+        return {
+          venue,
+          classCount: classRows.length,
+          privateCount: privateRows.length,
+          days,
+          privateOnly,
+        };
       })
       .sort((a, b) => {
         if (!a.venue) return 1;
         if (!b.venue) return -1;
         return a.venue.localeCompare(b.venue);
       });
-  }, [filteredClasses]);
+  }, [filteredClasses, filteredPrivates, curatedNames]);
 
   // On the phone the page opens one screen tall: only the first venue is
   // expanded, the rest collapse to a header + count. `toggled` holds the venues
@@ -220,7 +283,7 @@ export function AdminWeeklyClasses({
         </Button>
       </div>
 
-      {classes.length > 0 && <FilterBar filters={filterDefs} />}
+      {classes.length + privateSeries.length > 0 && <FilterBar filters={filterDefs} />}
 
       {venueGroups.map((group, i) => {
         const key = group.venue || "no-venue";
@@ -245,9 +308,17 @@ export function AdminWeeklyClasses({
                 ›
               </span>
               <span className="font-semibold">{group.venue || "No venue"}</span>
+              {group.privateOnly && (
+                <span className="rounded-full border border-line px-2 py-0.5 text-[0.65rem] font-medium uppercase tracking-wide text-fg-2">
+                  private
+                </span>
+              )}
             </span>
             <span className="shrink-0 text-sm text-fg-2">
-              {group.count} class{group.count === 1 ? "" : "es"}
+              {group.classCount > 0 &&
+                `${group.classCount} class${group.classCount === 1 ? "" : "es"}`}
+              {group.classCount > 0 && group.privateCount > 0 && " · "}
+              {group.privateCount > 0 && `${group.privateCount} private`}
             </span>
           </button>
           <div className={`divide-y divide-line lg:block ${open ? "block" : "hidden"}`}>
@@ -265,6 +336,9 @@ export function AdminWeeklyClasses({
                       }}
                     />
                   ))}
+                  {day.privates.map((p) => (
+                    <PrivateSeriesCard key={p.id} series={p} />
+                  ))}
                 </div>
               </div>
             ))}
@@ -272,7 +346,7 @@ export function AdminWeeklyClasses({
         </div>
         );
       })}
-      {classes.length === 0 && (
+      {classes.length + privateSeries.length === 0 && (
         <div className="rounded-[12px] border border-line bg-surface-2 p-4 text-sm text-fg-2">
           <p className="font-medium text-fg">Add each class you run — day, time, place.</p>
           <p className="mt-1">
@@ -281,11 +355,12 @@ export function AdminWeeklyClasses({
           </p>
         </div>
       )}
-      {classes.length > 0 && filteredClasses.length === 0 && (
-        <p className="rounded-[12px] border border-line bg-surface-2 p-4 text-sm text-fg-2">
-          No classes match these filters.
-        </p>
-      )}
+      {classes.length + privateSeries.length > 0 &&
+        filteredClasses.length + filteredPrivates.length === 0 && (
+          <p className="rounded-[12px] border border-line bg-surface-2 p-4 text-sm text-fg-2">
+            No classes match these filters.
+          </p>
+        )}
 
       {/* Phone: Create a class as a floating button above the tab bar. */}
       <Fab
@@ -363,4 +438,40 @@ export function AdminWeeklyClasses({
       )}
     </div>
   );
+}
+
+/** A client weekly private slot on the Weekly tab — view-only, sharing the class
+ * card's grammar (day + time bold, then the who). Deep-links to its next
+ * generated session on the Schedule tab; end/reassign live there, not here. The
+ * ember left-stripe marks it private, matching the schedule's private sessions. */
+function PrivateSeriesCard({ series }: { series: PrivateSeriesRow }) {
+  const dayShort = (WEEKDAY_NAME[series.weekday] ?? series.weekday).slice(0, 3);
+  const inner = (
+    <>
+      <p className="font-semibold">
+        Every {dayShort} · {fmtSlotTime(series.time)}
+      </p>
+      <p className="text-fg-2">
+        {series.playerName} <span className="text-fg-2">(private)</span>
+      </p>
+      <p className="text-xs text-fg-2">
+        {series.duration} min
+        {series.clientName ? ` · ${series.clientName}` : ""}
+        {series.coachName ? ` · ${series.coachName}` : ""}
+      </p>
+    </>
+  );
+  const cls =
+    "block w-full rounded-[8px] border border-line border-l-[3px] border-l-ember bg-surface-2 px-3 py-2 text-left text-sm";
+  if (series.nextSessionId && series.nextSessionStart) {
+    return (
+      <Link
+        href={`/admin/schedule?date=${wallDate(series.nextSessionStart)}&session=${series.nextSessionId}`}
+        className={`${cls} hover:border-ember`}
+      >
+        {inner}
+      </Link>
+    );
+  }
+  return <div className={cls}>{inner}</div>;
 }

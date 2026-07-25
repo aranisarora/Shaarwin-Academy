@@ -63,6 +63,29 @@ export type ClassRow = {
   nextCoachId: string | null;
 };
 
+/**
+ * An active client weekly private booking (private_booking_series), surfaced on
+ * the Weekly classes tab under the same location grouping as group classes.
+ * View-only: rows deep-link to the next generated session on the Schedule tab.
+ */
+export type PrivateSeriesRow = {
+  id: string;
+  playerName: string;
+  clientName: string; // family / client name, for the sub-line
+  weekday: string; // MO..SU (from the series' ISO weekday)
+  time: string; // HH:MM IST wall clock
+  duration: number;
+  coachName: string | null; // preferred coach, if set
+  // The resolved location name it groups under — a curated venue's name when
+  // the pin/address matches one, else the client-home location label.
+  venueName: string;
+  // Whether venueName matches a curated venue (venue badge) or is a pure
+  // private location (private badge).
+  knownVenue: boolean;
+  nextSessionId: string | null;
+  nextSessionStart: string | null; // ISO — for the ?date= deep-link
+};
+
 export type Coach = { id: string; name: string };
 export type Venue = {
   id: string;

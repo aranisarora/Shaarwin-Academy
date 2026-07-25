@@ -46,6 +46,7 @@ export default async function PrivateBookingPage({
         coaches={coaches}
         minutesBalance={summary.minutesBalance}
         defaultAddress={profile.default_address}
+        defaultAddressDetails={profile.address_details}
         privatePlan={privatePlan}
         onboarding={onboarding === "1"}
       />

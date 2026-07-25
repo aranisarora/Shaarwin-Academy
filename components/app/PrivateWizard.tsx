@@ -7,14 +7,16 @@ import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
 import { Spinner } from "@/components/ui/Spinner";
 import { AddressForm, isAddressComplete } from "@/components/app/AddressForm";
+import { SlotPicker } from "@/components/app/SlotPicker";
 import { WhatsAppSayHi } from "@/components/app/WhatsAppSayHi";
-import { EMPTY_ADDRESS, type StructuredAddress } from "@/lib/address";
+import { fromDetails, type StructuredAddress } from "@/lib/address";
 import {
   checkCoverage,
   recordAreaInterest,
   getSlots,
   requestPrivateSessions,
   requestPrivateSeries,
+  saveDefaultAddress,
   type Slot,
 } from "@/app/app/book/private/actions";
 
@@ -54,6 +56,15 @@ function fmtWeekly(iso: string) {
   }).format(new Date(iso));
 }
 
+/** "4 Aug" — the date a weekly series' first session lands on. */
+function fmtStartDate(iso: string) {
+  return new Intl.DateTimeFormat("en-GB", {
+    day: "numeric",
+    month: "short",
+    timeZone: "Asia/Kolkata",
+  }).format(new Date(iso));
+}
+
 /** IST weekday+time key so two dates of the same weekly slot collide. */
 function weeklyKey(iso: string) {
   return new Intl.DateTimeFormat("en-GB", {
@@ -70,6 +81,7 @@ export function PrivateWizard({
   coaches,
   minutesBalance,
   defaultAddress,
+  defaultAddressDetails = null,
   privatePlan = null,
   onboarding = false,
 }: {
@@ -77,6 +89,9 @@ export function PrivateWizard({
   coaches: Coach[];
   minutesBalance: number;
   defaultAddress: string | null;
+  /** The saved structured default address (profiles.address_details), if any —
+   * lets a returning client land on step 1 with pin + coverage pre-solved. */
+  defaultAddressDetails?: Partial<StructuredAddress> | null;
   privatePlan?: PrivatePlanLimits | null;
   onboarding?: boolean;
 }) {
@@ -88,9 +103,19 @@ export function PrivateWizard({
   const planMinutes = privatePlan?.sessionMinutes ?? null;
 
   // Step 1 — where. A single structured address drives the whole step; the pin
-  // lives in addr.lat/lng.
+  // lives in addr.lat/lng. Seed from the saved structured address (pin + all)
+  // when present, else the bare formatted line.
   const [addr, setAddr] = useState<StructuredAddress>(() =>
-    defaultAddress ? { ...EMPTY_ADDRESS, formatted: defaultAddress } : EMPTY_ADDRESS
+    fromDetails(defaultAddressDetails, { address: defaultAddress })
+  );
+  // A returning client with a complete saved address sees a tappable summary
+  // card instead of the empty form; "Change" reveals the form.
+  const [editingAddress, setEditingAddress] = useState(
+    () =>
+      !isAddressComplete(
+        fromDetails(defaultAddressDetails, { address: defaultAddress }),
+        true
+      )
   );
   const [covered, setCovered] = useState<boolean | null>(null);
   const [interestEmail, setInterestEmail] = useState("");
@@ -108,6 +133,12 @@ export function PrivateWizard({
   const [slots, setSlots] = useState<Slot[] | null>(null);
   const [selected, setSelected] = useState<string[]>([]);
   const [preferredCoach, setPreferredCoach] = useState("");
+
+  // Prefetched slots keyed by the inputs that determine them, so tapping
+  // "Choose a time" renders instantly instead of blocking on the round-trip.
+  const [prefetch, setPrefetch] = useState<{ key: string; slots: Slot[] } | null>(
+    null
+  );
 
   const [error, setError] = useState<string | null>(null);
   const [parked, setParked] = useState(false);
@@ -138,10 +169,39 @@ export function PrivateWizard({
     if (next.lat === null || next.lng === null) setCovered(null);
   }
 
+  // Identifies a slot list by everything that determines it — the prefetch
+  // cache is only reused when this key matches the current inputs.
+  const slotKey = (lat: number, lng: number, dur: number, player: string) =>
+    `${lat.toFixed(6)},${lng.toFixed(6)},${dur},${player}`;
+
+  // Prefetch on step 1 the moment the address is covered, so step 2 is instant.
+  // Same cancelled-flag guard as the coverage effect above — a stale prefetch
+  // (address dragged, duration changed) must never overwrite a newer one.
+  useEffect(() => {
+    if (!pin || covered !== true) return;
+    const { lat, lng } = pin;
+    const key = slotKey(lat, lng, duration, playerId);
+    if (prefetch?.key === key) return;
+    let cancelled = false;
+    (async () => {
+      const result = await getSlots(lat, lng, duration, playerId);
+      if (!cancelled) setPrefetch({ key, slots: result });
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pin?.lat, pin?.lng, covered, duration, playerId]);
+
   function toStep2() {
     if (!pin) return;
-    setSlots(null);
     setStep(2);
+    const key = slotKey(pin.lat, pin.lng, duration, playerId);
+    if (prefetch?.key === key) {
+      setSlots(prefetch.slots); // already in memory — no spinner
+      return;
+    }
+    setSlots(null);
     startTransition(async () => {
       const result = await getSlots(pin.lat, pin.lng, duration, playerId);
       setSlots(result);
@@ -152,6 +212,11 @@ export function PrivateWizard({
     setDuration(d);
     setSelected([]); // minutes-per-slot changed — start the pick over
     if (!pin) return;
+    const key = slotKey(pin.lat, pin.lng, d, playerId);
+    if (prefetch?.key === key) {
+      setSlots(prefetch.slots);
+      return;
+    }
     setSlots(null);
     startTransition(async () => {
       const result = await getSlots(pin.lat, pin.lng, d, playerId);
@@ -198,6 +263,7 @@ export function PrivateWizard({
       if (weeklyMode) {
         const result = await requestPrivateSeries(req, sortedSelected);
         if (result.ok) {
+          void saveDefaultAddress(addr); // pre-solve step 1 next time
           setBooked(result.booked);
           setRanOut(result.skipped > 0);
           setStep(4);
@@ -208,6 +274,7 @@ export function PrivateWizard({
       }
       const result = await requestPrivateSessions(req, sortedSelected);
       if (result.ok) {
+        void saveDefaultAddress(addr); // pre-solve step 1 next time
         setParked(result.parked > 0);
         setBooked(result.booked);
         setRanOut(result.ranOut);
@@ -221,6 +288,26 @@ export function PrivateWizard({
   // Every active coach serves Bengaluru, so once the address is inside our
   // coverage area they're all candidates for the preferred-coach picker.
   const coveringCoaches = covered ? coaches : [];
+
+  // §1c — name the first unmet condition under the disabled CTA, in priority
+  // order. Coverage (its own card) and the table toggle (inline) explain
+  // themselves, so only the pin and flat need a line here.
+  const disabledReason: string | null = !pin
+    ? "Search your address or use your current location to drop a pin."
+    : !addr.flat?.trim()
+      ? "Add your flat / unit number."
+      : null;
+
+  // A compact one-line summary for the returning-client saved-address card,
+  // e.g. "Home — Prestige Lakeside, flat 402".
+  const savedSummary = (() => {
+    const label = addr.label
+      ? addr.label[0].toUpperCase() + addr.label.slice(1)
+      : "Saved";
+    const place = addr.building?.trim() || addr.formatted.split(",")[0].trim();
+    const flat = addr.flat?.trim() ? `, flat ${addr.flat.trim()}` : "";
+    return `${label} — ${place}${flat}`;
+  })();
 
   // Minutes are the entitlement — without enough for even one session, the
   // wizard can't finish, so point at the membership page up front.
@@ -259,14 +346,29 @@ export function PrivateWizard({
       {step === 1 && (
         <div className="space-y-5">
           <h2 className="font-display text-2xl">Where&apos;s the table?</h2>
-          <AddressForm
-            value={addr}
-            onChange={updateAddr}
-            requireFlat
-            showAccessNotes
-            searchLabel="Address"
-            searchPlaceholder="Start typing your address…"
-          />
+          {editingAddress ? (
+            <AddressForm
+              value={addr}
+              onChange={updateAddr}
+              requireFlat
+              showAccessNotes
+              showUseMyLocation
+              searchLabel="Address"
+              searchPlaceholder="Start typing your address…"
+            />
+          ) : (
+            <button
+              type="button"
+              onClick={() => setEditingAddress(true)}
+              className="flex w-full items-center justify-between gap-3 rounded-[12px] border border-line bg-surface-2 p-4 text-left hover:border-ember"
+            >
+              <span>
+                <span className="block font-medium">{savedSummary}</span>
+                <span className="mt-0.5 block text-sm text-fg-2">{addr.formatted}</span>
+              </span>
+              <span className="shrink-0 text-sm font-medium text-ember">Change</span>
+            </button>
+          )}
 
           {covered === false && (
             <div className="rounded-[12px] border border-line bg-surface-2 p-4">
@@ -344,18 +446,23 @@ export function PrivateWizard({
             </button>
           </div>
 
-          <Button
-            onClick={toStep2}
-            disabled={
-              !isAddressComplete(addr, true) ||
-              covered !== true ||
-              !hasTable ||
-              pending
-            }
-            className="w-full"
-          >
-            {pending ? <Spinner /> : "Choose a time"}
-          </Button>
+          <div>
+            <Button
+              onClick={toStep2}
+              disabled={
+                !isAddressComplete(addr, true) ||
+                covered !== true ||
+                !hasTable ||
+                pending
+              }
+              className="w-full"
+            >
+              {pending ? <Spinner /> : "Choose a time"}
+            </Button>
+            {disabledReason && covered !== false && (
+              <p className="mt-2 text-sm text-fg-2">{disabledReason}</p>
+            )}
+          </div>
         </div>
       )}
 
@@ -450,40 +557,13 @@ export function PrivateWizard({
                 No servable times in the next two weeks — try a shorter duration.
               </p>
             ) : (
-              <div className="grid max-h-72 grid-cols-2 gap-2 overflow-y-auto pr-1">
-                {slots.slice(0, 60).map((s) => {
-                  const isSelected = selected.includes(s.starts_at);
-                  const dupWeekly =
-                    weeklyMode &&
-                    !isSelected &&
-                    selected.some((sel) => weeklyKey(sel) === weeklyKey(s.starts_at));
-                  const atCap = (!isSelected && selected.length >= maxSlots) || dupWeekly;
-                  return (
-                    <button
-                      key={s.starts_at}
-                      onClick={() => toggleSlot(s.starts_at)}
-                      disabled={atCap}
-                      aria-pressed={isSelected}
-                      title={
-                        dupWeekly
-                          ? "You've already picked this weekly slot"
-                          : atCap
-                            ? weeklyMode
-                              ? "Your plan covers that many weekly slots"
-                              : "Not enough minutes for another session"
-                            : undefined
-                      }
-                      className={`tnum min-h-11 rounded-[8px] border px-2 text-sm disabled:opacity-40 ${
-                        isSelected
-                          ? "border-ember bg-ember text-ivory"
-                          : "border-line hover:border-ember"
-                      }`}
-                    >
-                      {fmtSlot(s.starts_at)}
-                    </button>
-                  );
-                })}
-              </div>
+              <SlotPicker
+                slots={slots}
+                mode={weeklyMode ? "weekly" : "dates"}
+                selected={selected}
+                maxSlots={maxSlots}
+                onToggle={toggleSlot}
+              />
             )}
             {maxSlots > 1 && (
               <p className="mt-2 text-xs text-fg-2">
@@ -522,7 +602,14 @@ export function PrivateWizard({
               {sortedSelected.map((s) => (
                 <li key={s} className="flex items-center gap-2">
                   <span aria-hidden className="h-1.5 w-1.5 shrink-0 rounded-full bg-ember" />
-                  {weeklyMode ? `Every ${fmtWeekly(s)} — starting ${fmtSlot(s)}` : fmtSlot(s)}
+                  {weeklyMode ? (
+                    <span>
+                      <span className="font-semibold">Every {fmtWeekly(s)}</span>
+                      <span className="text-fg-2"> — first session {fmtStartDate(s)}</span>
+                    </span>
+                  ) : (
+                    fmtSlot(s)
+                  )}
                 </li>
               ))}
             </ul>

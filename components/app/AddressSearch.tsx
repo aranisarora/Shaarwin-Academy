@@ -29,6 +29,92 @@ const BASE = "https://api.mapbox.com/search/searchbox/v1";
 const PROXIMITY = "77.5946,12.9716";
 
 /**
+ * Parse one Search Box feature (from /retrieve or /reverse) into a GeocodeHit.
+ * The single source of truth for turning a Mapbox feature into our hit shape —
+ * the typeahead's `choose`, the "use my location" reverse-geocode and the
+ * "find on map" fallback all funnel through here so they can't drift apart.
+ */
+export function featureToGeocodeHit(feat: unknown): GeocodeHit | null {
+  const f = feat as {
+    properties?: Record<string, unknown>;
+    geometry?: { coordinates?: [number, number] };
+  } | null;
+  if (!f?.geometry?.coordinates) return null;
+  const p = (f.properties ?? {}) as Record<string, unknown>;
+  const ctx = (p.context ?? {}) as Record<string, { name?: string }>;
+  return {
+    // Only carry the short name for POI results; for streets/addresses it
+    // would just be the road name, which isn't a useful display label.
+    name: p.feature_type === "poi" ? ((p.name as string) ?? undefined) : undefined,
+    place_name:
+      (p.full_address as string) ||
+      [p.name, p.place_formatted].filter(Boolean).join(", "),
+    center: f.geometry.coordinates,
+    postcode: ctx.postcode?.name ?? "",
+    // Bengaluru results expose area under neighborhood/locality; city under
+    // place, state under region. Any may be absent for a sparse result.
+    locality: ctx.neighborhood?.name ?? ctx.locality?.name ?? undefined,
+    city: ctx.place?.name ?? undefined,
+    state: ctx.region?.name ?? undefined,
+    country: ctx.country?.name ?? undefined,
+  };
+}
+
+/**
+ * Reverse-geocode raw coordinates (the "use my current location" path). Returns
+ * the first feature as a GeocodeHit, or null if there's no token / no result.
+ */
+export async function reverseGeocode(
+  lat: number,
+  lng: number
+): Promise<GeocodeHit | null> {
+  const accessToken = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN;
+  if (!accessToken) return null;
+  try {
+    const res = await fetch(
+      `${BASE}/reverse?longitude=${lng}&latitude=${lat}` +
+        `&language=en&access_token=${accessToken}`
+    );
+    const body = await res.json();
+    return featureToGeocodeHit(body.features?.[0] ?? null);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Resolve free-typed / autofilled / pasted text to a pinned hit by running
+ * /suggest and auto-retrieving the top match (the "find this address on the
+ * map" fallback). Uses the same session-token pairing as the typeahead.
+ */
+export async function resolveTopSuggestion(
+  query: string
+): Promise<GeocodeHit | null> {
+  const accessToken = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN;
+  if (!accessToken || query.trim().length < 3) return null;
+  const session = crypto.randomUUID();
+  try {
+    const sres = await fetch(
+      `${BASE}/suggest?q=${encodeURIComponent(query)}` +
+        `&country=in&proximity=${PROXIMITY}&language=en&limit=1` +
+        `&types=poi,address,street,neighborhood,locality,place,postcode` +
+        `&session_token=${session}&access_token=${accessToken}`
+    );
+    const sbody = await sres.json();
+    const top = sbody.suggestions?.[0];
+    if (!top?.mapbox_id) return null;
+    const rres = await fetch(
+      `${BASE}/retrieve/${top.mapbox_id}` +
+        `?session_token=${session}&access_token=${accessToken}`
+    );
+    const rbody = await rres.json();
+    return featureToGeocodeHit(rbody.features?.[0] ?? null);
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Debounced Mapbox address/venue autocomplete (Bengaluru-biased).
  *
  * Uses the Search Box API (/suggest → /retrieve), which is POI/business-first
@@ -114,26 +200,8 @@ export function AddressSearch({
           `?session_token=${token()}&access_token=${accessToken}`
       );
       const body = await res.json();
-      const feat = body.features?.[0];
-      if (!feat) return;
-      const p = feat.properties ?? {};
-      const ctx = p.context ?? {};
-      onSelect({
-        // Only carry the short name for POI results; for streets/addresses it
-        // would just be the road name, which isn't a useful display label.
-        name: p.feature_type === "poi" ? (p.name ?? undefined) : undefined,
-        place_name:
-          p.full_address ||
-          [p.name, p.place_formatted].filter(Boolean).join(", "),
-        center: feat.geometry.coordinates as [number, number],
-        postcode: ctx.postcode?.name ?? "",
-        // Bengaluru results expose area under neighborhood/locality; city under
-        // place, state under region. Any may be absent for a sparse result.
-        locality: ctx.neighborhood?.name ?? ctx.locality?.name ?? undefined,
-        city: ctx.place?.name ?? undefined,
-        state: ctx.region?.name ?? undefined,
-        country: ctx.country?.name ?? undefined,
-      });
+      const hit = featureToGeocodeHit(body.features?.[0] ?? null);
+      if (hit) onSelect(hit);
     } catch {
       // Retrieve failed — drop it; the user can pick again.
     } finally {
