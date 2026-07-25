@@ -58,6 +58,46 @@ Swap the persona + goal, keep the rest of the prompt:
 - **Coach, can't make it:** "Something came up — you can't take tomorrow's 5pm. Deal with it in the app." (role: `coach`)
 - **Founder, morning triage:** "It's Monday morning. What needs your attention, and can you clear it?" (role: `founder`)
 
+## Coach cold-open protocol (phone, session-based)
+
+A coach doesn't sit in the app. They open it on their phone for a few seconds at
+a specific moment — to check where a class is, or once they're standing in it —
+and close it again. So audit the coach the same way: separate **cold opens**,
+each a fresh start with no memory of the last, on a phone-sized screen. The
+`e2e/flows/coach-day.spec.ts` flow already proves the *facts* are present and
+wired on each of these screens, for free, on every run; this protocol is the
+qualitative pass — is it actually clear to someone who's never seen it?
+
+Setup per moment: mint a coach login (`getStorageState("coach")`, or a fresh
+harness-seeded coach), load it into a **phone-sized** browser context
+(390×844, mobile), and give the agent one moment's goal and nothing else. Reset
+between moments so each is a genuine cold open — the coach isn't carrying state
+from an hour ago.
+
+Run each moment as its own short audit, swapping only the "you are / your goal"
+lines into the reusable prompt above:
+
+1. **Before you leave — "which class, and where?"**
+   *You are:* a coach with classes today, glancing at your phone before heading
+   out. *Your goal:* work out which class is next, what time, and where it is —
+   would you know where to drive without asking anyone?
+
+2. **On your way — "does the app tell me what to do?"**
+   *You are:* a coach about an hour before a session. *Your goal:* open the app
+   and do whatever it's asking of you, without hunting for it. (It should meet
+   you with a "coming?" prompt — did it, and was it obvious?)
+
+3. **In the class — "run it from here."**
+   *You are:* a coach who's just reached the venue, class about to start. *Your
+   goal:* tell the parents you've arrived, then take the register as kids turn
+   up — and if something's gone wrong (wrong venue, a child's hurt), find your
+   way to raise it.
+
+Keep each to its one goal and stop when it's met — that's what holds the audit to
+minutes and a small token bill. Report per moment: did you achieve it, the single
+biggest friction point (name the screen + a fix), and one thing that was clearly
+good.
+
 ## Why it's cheap and honest
 
 - The seeded scenario + instant login remove all setup cost — the agent spends its tokens *using* the product, not logging in.
