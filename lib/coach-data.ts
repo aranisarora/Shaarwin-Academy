@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { fromDetails, type StructuredAddress } from "@/lib/address";
+import { makeVenueResolver } from "@/lib/venue-display";
 
 type PrivDetail = {
   address: string;
@@ -51,6 +52,16 @@ export async function getCoachSessions(
     .order("starts_at");
 
   if (!sessions || sessions.length === 0) return [];
+
+  // Private classes store a raw client address, but most sit at (or near) a
+  // known venue. Resolve to the venue's title so a private card shows
+  // "La Palazzo" — or at least the first address segment — rather than falling
+  // through to "Private session". Mirrors the admin schedule + session sheet.
+  const { data: venues } = await supabase
+    .from("venues")
+    .select("name,address,lat,lng")
+    .eq("active", true);
+  const resolveVenueName = makeVenueResolver(venues ?? []);
 
   const ids = sessions.map((s) => s.id);
   const { data: bookingRows } = await supabase
@@ -110,7 +121,7 @@ export async function getCoachSessions(
       capacity: s.capacity_override ?? cls.capacity,
       confirmed: counts.get(s.id) ?? 0,
       playerName: priv?.profiles?.full_name ?? null,
-      venueName: cls.venues?.name ?? null,
+      venueName: cls.venues?.name ?? (priv ? resolveVenueName(priv) : null),
       venueAddress: cls.venues?.address ?? null,
       venuePostcode: cls.venues?.postcode ?? null,
       privateAddress: priv?.address ?? null,
