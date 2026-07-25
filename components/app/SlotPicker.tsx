@@ -26,11 +26,15 @@ function istDateKey(iso: string) {
   }).format(new Date(iso));
 }
 
-/** "Wed 30" — the day-pill label. */
-function dayPillLabel(iso: string) {
+/** "Today" / "Tomorrow" / "Wed" — the day-pill label. One-off mode only ever
+ * shows the next 7 days, so a bare weekday is unambiguous and stays narrow
+ * enough that a whole week of pills fits a phone with little to no scroll. */
+function dayPillLabel(iso: string, todayKey: string, tomorrowKey: string) {
+  const key = istDateKey(iso);
+  if (key === todayKey) return "Today";
+  if (key === tomorrowKey) return "Tomorrow";
   return new Intl.DateTimeFormat("en-GB", {
     weekday: "short",
-    day: "numeric",
     timeZone: IST,
   }).format(new Date(iso));
 }
@@ -152,7 +156,9 @@ export function SlotPicker({
       const day = istDateKey(s.starts_at);
       (byDay.get(day) ?? byDay.set(day, []).get(day)!).push(s.starts_at);
     }
-    return [...byDay.entries()].map(([key, times]) => ({ key, times }));
+    // One-off mode only offers the next 7 days — a two-week horizontal scroll
+    // is awkward on a phone and rarely needed for a soon booking.
+    return [...byDay.entries()].slice(0, 7).map(([key, times]) => ({ key, times }));
   }, [slots, mode]);
 
   const [activeKey, setActiveKey] = useState<string | null>(null);
@@ -162,6 +168,12 @@ export function SlotPicker({
     groups.find((g) => g.key === activeKey) ?? groups[0] ?? null;
 
   const atCap = selected.length >= maxSlots;
+
+  // IST wall-date keys for the "Today"/"Tomorrow" pill labels (IST has no DST,
+  // so a flat +24h step is exact).
+  const now = Date.now();
+  const todayKey = istDateKey(new Date(now).toISOString());
+  const tomorrowKey = istDateKey(new Date(now + 86_400_000).toISOString());
 
   if (groups.length === 0) return null;
 
@@ -177,7 +189,9 @@ export function SlotPicker({
         {groups.map((g) => {
           const isActive = active?.key === g.key;
           const label =
-            mode === "weekly" ? g.key : dayPillLabel(g.times[0]);
+            mode === "weekly"
+              ? g.key
+              : dayPillLabel(g.times[0], todayKey, tomorrowKey);
           return (
             <button
               key={g.key}

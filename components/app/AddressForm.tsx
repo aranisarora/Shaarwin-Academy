@@ -60,6 +60,9 @@ export function AddressForm({
   const [locating, setLocating] = useState(false);
   const [resolving, setResolving] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
+  // GPS failures get their own red message directly under the button (the
+  // thing the user just tapped) rather than the quiet notice under the search.
+  const [geoError, setGeoError] = useState<string | null>(null);
 
   function set<K extends keyof StructuredAddress>(
     key: K,
@@ -73,6 +76,7 @@ export function AddressForm({
     setQuery(next.formatted);
     setSelected(true);
     setNotice(null);
+    setGeoError(null);
     onChange(next);
     onGeocoded?.(next);
   }
@@ -82,22 +86,44 @@ export function AddressForm({
   // GPS → reverse-geocode → pin. Opt-in on tap only (never on mount). GPS gets
   // the user close; they drag the pin to the exact door afterwards.
   function useMyLocation() {
-    if (!navigator.geolocation) {
-      setNotice("Couldn't get your location — search instead.");
+    setGeoError(null);
+    // Geolocation is only exposed on secure origins — over plain http the API is
+    // either missing or throws, so say so instead of a vague "couldn't get it".
+    if (typeof window !== "undefined" && !window.isSecureContext) {
+      setGeoError("Location needs a secure (https) connection — search below instead.");
       return;
     }
-    setNotice(null);
+    if (!navigator.geolocation) {
+      setGeoError("This browser can't share your location — search below instead.");
+      return;
+    }
     setLocating(true);
     navigator.geolocation.getCurrentPosition(
       async (pos) => {
-        const hit = await reverseGeocode(pos.coords.latitude, pos.coords.longitude);
-        setLocating(false);
-        if (hit) pick(hit);
-        else setNotice("Couldn't get your location — search instead.");
+        try {
+          const hit = await reverseGeocode(pos.coords.latitude, pos.coords.longitude);
+          if (hit) pick(hit);
+          else
+            setGeoError(
+              "Got your location but couldn't map it — search below instead."
+            );
+        } catch {
+          setGeoError(
+            "Got your location but couldn't map it — search below instead."
+          );
+        } finally {
+          setLocating(false);
+        }
       },
-      () => {
+      (err) => {
         setLocating(false);
-        setNotice("Couldn't get your location — search instead.");
+        setGeoError(
+          err.code === err.PERMISSION_DENIED
+            ? "Location is turned off for this site — allow it in your browser settings, or search below."
+            : err.code === err.TIMEOUT
+              ? "Locating took too long — try again, or search below."
+              : "Couldn't get your location — search below instead."
+        );
       },
       { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
     );
@@ -121,33 +147,40 @@ export function AddressForm({
   return (
     <div className="space-y-4">
       {showUseMyLocation && (
-        <button
-          type="button"
-          onClick={useMyLocation}
-          disabled={locating}
-          className="flex min-h-11 w-full items-center justify-center gap-2 rounded-[8px] border border-line font-semibold text-fg transition-colors hover:border-ember hover:text-ember disabled:opacity-50"
-        >
-          {locating ? (
-            <Spinner />
-          ) : (
-            <>
-              <svg
-                aria-hidden
-                viewBox="0 0 24 24"
-                className="h-4 w-4"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <circle cx="12" cy="12" r="3" />
-                <path d="M12 2v3m0 14v3M2 12h3m14 0h3" />
-              </svg>
-              Use my current location
-            </>
+        <div className="space-y-1.5">
+          <button
+            type="button"
+            onClick={useMyLocation}
+            disabled={locating}
+            className="flex min-h-11 w-full items-center justify-center gap-2 rounded-[8px] border border-line font-semibold text-fg transition-colors hover:border-ember hover:text-ember disabled:opacity-50"
+          >
+            {locating ? (
+              <Spinner />
+            ) : (
+              <>
+                <svg
+                  aria-hidden
+                  viewBox="0 0 24 24"
+                  className="h-4 w-4"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <circle cx="12" cy="12" r="3" />
+                  <path d="M12 2v3m0 14v3M2 12h3m14 0h3" />
+                </svg>
+                Use my current location
+              </>
+            )}
+          </button>
+          {geoError && (
+            <p role="alert" className="text-xs text-err">
+              {geoError}
+            </p>
           )}
-        </button>
+        </div>
       )}
 
       <AddressSearch
