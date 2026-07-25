@@ -7,7 +7,7 @@
 // open until it's answered. Reuses the stepper's active-step buttons so the
 // logic never forks. No emojis.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Sheet } from "@/components/ui/Sheet";
 import { CheckIcon } from "@/components/ui/icons";
 import { ComingAction, ArriveAction } from "@/components/app/ArrivalActions";
@@ -37,11 +37,17 @@ export type CoachAction = {
 };
 
 export function CoachActionSheet({ action }: { action: CoachAction | null }) {
-  // Open on mount unless dismissed this visit. Read in a lazy initializer (not
-  // an effect) so it's evaluated once without a cascading render; the server
-  // renders closed (no window) and the client opens on first paint.
-  const [open, setOpen] = useState(() => !wasDismissed(action));
+  // Start closed so the server and the client's first paint agree (both render
+  // nothing), then open after mount unless this action was dismissed this visit.
+  // Deciding `open` during render — e.g. a lazy initializer that reads
+  // sessionStorage — makes the client's first render disagree with the server's,
+  // which React flags as a hydration mismatch.
+  const [open, setOpen] = useState(false);
   const [done, setDone] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (action && !wasDismissed(action)) setOpen(true);
+  }, [action]);
 
   if (!action) return null;
 
