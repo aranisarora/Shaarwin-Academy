@@ -56,3 +56,6 @@ next-env.d.ts
 
 # Local Codex/agent config
 .codex/
+.claude/
+.agents/
+skills-lock.json
