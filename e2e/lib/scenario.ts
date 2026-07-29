@@ -97,7 +97,10 @@ export async function createClient(opts: {
   if (authErr) throw new Error(`createClient auth: ${authErr.message}`);
   const id = created.user!.id;
 
-  const { error: profErr } = await db.from("profiles").insert({
+  // on_auth_user_created has already provisioned a client profile and one
+  // player for this user, exactly as production does. Upsert over the profile
+  // to apply this factory's options rather than racing the trigger's insert.
+  const { error: profErr } = await db.from("profiles").upsert({
     id,
     role: "client",
     full_name: fullName,
@@ -107,6 +110,10 @@ export async function createClient(opts: {
     onboarded_at: new Date().toISOString(),
   });
   if (profErr) throw new Error(`createClient profile: ${profErr.message}`);
+
+  // Drop the trigger's default player so the caller gets exactly `children`.
+  const { error: clearErr } = await db.from("players").delete().eq("client_id", id);
+  if (clearErr) throw new Error(`createClient clear players: ${clearErr.message}`);
 
   const playerIds: string[] = [];
   const n = opts.children ?? 1;
@@ -166,7 +173,10 @@ export async function createCoach(opts: {
   if (authErr) throw new Error(`createCoach auth: ${authErr.message}`);
   const id = created.user!.id;
 
-  const { error: profErr } = await db.from("profiles").insert({
+  // on_auth_user_created provisions every new auth user as a client (there is
+  // no coach_invite for this address), so upsert the role over the trigger's
+  // row and drop the player it created — a coach has none.
+  const { error: profErr } = await db.from("profiles").upsert({
     id,
     role: "coach",
     full_name: fullName,
@@ -174,6 +184,9 @@ export async function createCoach(opts: {
     approval_status: "approved",
   });
   if (profErr) throw new Error(`createCoach profile: ${profErr.message}`);
+
+  const { error: clearErr } = await db.from("players").delete().eq("client_id", id);
+  if (clearErr) throw new Error(`createCoach clear players: ${clearErr.message}`);
 
   const { error: coachErr } = await db.from("coaches").insert({
     id,

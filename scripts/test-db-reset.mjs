@@ -179,6 +179,19 @@ async function main() {
              onboarded_at    = coalesce(onboarded_at, now())
        where email like '%@sharwin.example'
     `);
+    // `drop schema public cascade` above also drops this trigger, because it
+    // depends on public.handle_new_user(). schema.sql restores the function but
+    // not the trigger — the trigger lives in the auth schema, which the
+    // public-only snapshot cannot carry. Without it a local signup produces an
+    // auth user with no profiles/players row, and requireUser (which no longer
+    // provisions as a fallback) throws. Mirrors migrations/0001_rls_auth.sql.
+    // Created last so it does not fire while seed.sql inserts auth.users directly.
+    await client.query(`
+      drop trigger if exists on_auth_user_created on auth.users;
+      create trigger on_auth_user_created
+        after insert on auth.users
+        for each row execute function public.handle_new_user();
+    `);
     await client.query("commit");
   } catch (err) {
     await client.query("rollback").catch(() => {});
