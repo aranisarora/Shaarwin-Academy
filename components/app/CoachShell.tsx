@@ -1,9 +1,10 @@
 import { StudioShell } from "@/components/shells/StudioShell";
+import { CalendarIcon, DotsIcon, PeopleIcon } from "@/components/ui/icons";
 
 const tabs = [
-  { href: "/coach", label: "Schedule", icon: "▦" },
-  { href: "/coach/players", label: "Players", icon: "◎" },
-  { href: "/coach/more", label: "More", icon: "≡" },
+  { href: "/coach", label: "Schedule", icon: <CalendarIcon /> },
+  { href: "/coach/players", label: "Players", icon: <PeopleIcon /> },
+  { href: "/coach/more", label: "More", icon: <DotsIcon /> },
 ];
 
 export function CoachShell({
