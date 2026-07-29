@@ -1,4 +1,5 @@
 import { createClient as createSupabaseClient } from "@supabase/supabase-js";
+import type { Database } from "@/lib/database.types";
 
 /**
  * Service-role Supabase client, for server-only paths with no user session
@@ -22,7 +23,7 @@ export function createAdminClient() {
       "SUPABASE_SERVICE_ROLE_KEY is missing or a placeholder — service-role operations cannot run"
     );
   }
-  return createSupabaseClient(
+  return createSupabaseClient<Database>(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
     { auth: { persistSession: false, autoRefreshToken: false } }

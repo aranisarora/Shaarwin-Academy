@@ -7,7 +7,7 @@
 // open until it's answered. Reuses the stepper's active-step buttons so the
 // logic never forks. No emojis.
 
-import { useEffect, useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { Sheet } from "@/components/ui/Sheet";
 import { CheckIcon } from "@/components/ui/icons";
 import { ComingAction, ArriveAction } from "@/components/app/ArrivalActions";
@@ -36,18 +36,28 @@ export type CoachAction = {
   venueLng: number | null;
 };
 
+/** True only after hydration. Lets a render read browser-only state (here,
+ *  sessionStorage) without the client's first paint disagreeing with the
+ *  server's: React uses the server snapshot for SSR *and* for hydration, then
+ *  re-renders with the client one. */
+const subscribeNoop = () => () => {};
+function useHydrated(): boolean {
+  return useSyncExternalStore(
+    subscribeNoop,
+    () => true,
+    () => false
+  );
+}
+
 export function CoachActionSheet({ action }: { action: CoachAction | null }) {
-  // Start closed so the server and the client's first paint agree (both render
-  // nothing), then open after mount unless this action was dismissed this visit.
-  // Deciding `open` during render — e.g. a lazy initializer that reads
-  // sessionStorage — makes the client's first render disagree with the server's,
-  // which React flags as a hydration mismatch.
-  const [open, setOpen] = useState(false);
+  // The sheet must render closed on the server and on the hydration pass (both
+  // render nothing), then open unless this action was dismissed this visit.
+  // `hydrated` gates the sessionStorage read so that stays true.
+  const hydrated = useHydrated();
+  const [dismissed, setDismissed] = useState(false);
   const [done, setDone] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (action && !wasDismissed(action)) setOpen(true);
-  }, [action]);
+  const open = hydrated && !dismissed && !wasDismissed(action);
 
   if (!action) return null;
 
@@ -57,7 +67,7 @@ export function CoachActionSheet({ action }: { action: CoachAction | null }) {
     } catch {
       /* private mode — fine, it just reopens */
     }
-    setOpen(false);
+    setDismissed(true);
   }
 
   return (

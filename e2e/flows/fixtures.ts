@@ -15,11 +15,18 @@ type Fixtures = {
   admin: SupabaseClient;
 };
 
+// Playwright passes the fixture callback positionally, so the second parameter
+// is named `provide` rather than the conventional `use` — under the React
+// plugin's rules-of-hooks a bare `use(...)` call reads as React's `use` hook
+// being called outside a component.
 function rolePage(role: string) {
-  return async ({ browser }: { browser: import("@playwright/test").Browser }, use: (p: Page) => Promise<void>) => {
+  return async (
+    { browser }: { browser: import("@playwright/test").Browser },
+    provide: (p: Page) => Promise<void>
+  ) => {
     const context = await browser.newContext({ storageState: await getStorageState(role) });
     const page = await context.newPage();
-    await use(page);
+    await provide(page);
     await context.close();
   };
 }
@@ -28,8 +35,8 @@ export const test = base.extend<Fixtures>({
   clientPage: rolePage("client"),
   coachPage: rolePage("coach"),
   founderPage: rolePage("founder"),
-  admin: async ({}, use) => {
-    await use(makeAdmin());
+  admin: async ({}, provide) => {
+    await provide(makeAdmin());
   },
 });
 
