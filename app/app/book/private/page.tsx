@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Suspense } from "react";
 import { requireUser } from "@/lib/auth";
 import { getSubscriptionSummary } from "@/lib/billing";
+import type { CoachRosterRow } from "@/lib/data";
 import { ClientShell } from "@/components/app/ClientShell";
 import { BookModeSwitch } from "@/components/app/BookModeSwitch";
 import { OnboardingBanner } from "@/components/app/onboarding/OnboardingBanner";
@@ -24,15 +25,14 @@ async function Wizard({ searchParams }: { searchParams: SearchParams }) {
   const [summary, playersRes, coachesRes] = await Promise.all([
     getSubscriptionSummary(supabase, user.id),
     supabase.from("players").select("id,full_name").eq("client_id", user.id),
-    supabase
-      .from("coaches")
-      .select("id,base_lat,base_lng,profiles!inner(full_name)")
-      .eq("active", true),
+    // Clients can't read other people's `profiles` rows, so the coach name has
+    // to come from the definer-rights roster function, not a join.
+    supabase.rpc("public_coach_roster"),
   ]);
 
-  const coaches = (coachesRes.data ?? []).map((c) => ({
+  const coaches = ((coachesRes.data ?? []) as CoachRosterRow[]).map((c) => ({
     id: c.id,
-    name: (c.profiles).full_name,
+    name: c.full_name,
     lat: c.base_lat,
     lng: c.base_lng,
   }));

@@ -14,6 +14,22 @@ function publicClient() {
   );
 }
 
+/**
+ * One row of `public.public_coach_roster()` — the RLS-safe coach projection.
+ * `full_name` and the base coordinates are NOT NULL on their source columns, so
+ * they are narrowed here even though a RETURNS TABLE column is always nullable.
+ */
+export type CoachRosterRow = {
+  id: string;
+  full_name: string;
+  bio: string | null;
+  quote: string | null;
+  credentials: string[] | null;
+  photo_url: string | null;
+  base_lat: number;
+  base_lng: number;
+};
+
 /** A coach as shown on the public /coaches page — sourced entirely from the DB. */
 export type PublicCoach = {
   slug: string;
@@ -154,24 +170,22 @@ export const getUpcomingSessions = unstable_cache(
 export const getCoaches = unstable_cache(
   async (): Promise<PublicCoach[]> => {
     const supabase = publicClient();
-    const { data } = await supabase
-      .from("coaches")
-      .select("id,bio,quote,credentials,photo_url,profiles!inner(full_name)")
-      .eq("active", true)
-      .order("created_at");
+    // Read through the definer-rights roster function rather than joining
+    // `profiles` directly: RLS keeps `profiles` owner-only, so an anon join
+    // returns nothing. See migration 0040_public_coach_roster.sql.
+    const { data } = await supabase.rpc("public_coach_roster");
 
     if (!data) return [];
 
-    return data.map((row) => {
-      const profile = row.profiles as unknown as { full_name: string };
-      const firstName = profile.full_name.toLowerCase().split(" ")[0];
+    return (data as CoachRosterRow[]).map((row) => {
+      const firstName = row.full_name.toLowerCase().split(" ")[0];
       return {
         slug: firstName || row.id,
-        name: profile.full_name,
+        name: row.full_name,
         image: row.photo_url ?? "/images/empty-ink.jpg",
         bio: row.bio ?? "",
         quote: row.quote ?? undefined,
-        credentials: (row.credentials as string[] | null) ?? undefined,
+        credentials: row.credentials ?? undefined,
       };
     });
   },

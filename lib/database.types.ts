@@ -2198,6 +2198,19 @@ export type Database = {
           sessions_per_week: number
         }[]
       }
+      public_coach_roster: {
+        Args: never
+        Returns: {
+          base_lat: number | null
+          base_lng: number | null
+          bio: string | null
+          credentials: string[] | null
+          full_name: string | null
+          id: string | null
+          photo_url: string | null
+          quote: string | null
+        }[]
+      }
       rank_coaches: {
         Args: { p_preferred?: string; p_session: string }
         Returns: {

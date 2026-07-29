@@ -2480,6 +2480,21 @@ AS $function$
   limit 1;
 $function$;
 
+CREATE OR REPLACE FUNCTION public.public_coach_roster()
+ RETURNS TABLE(id uuid, full_name text, bio text, quote text, credentials text[], photo_url text, base_lat double precision, base_lng double precision)
+ LANGUAGE sql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+  select c.id, p.full_name, c.bio, c.quote, c.credentials, c.photo_url,
+         c.base_lat, c.base_lng
+  from public.coaches c
+  join public.profiles p on p.id = c.id
+  where c.active
+    and p.deleted_at is null
+  order by c.created_at
+$function$;
+
 CREATE OR REPLACE FUNCTION public.rank_coaches(p_session uuid, p_preferred uuid DEFAULT NULL::uuid)
  RETURNS TABLE(coach_id uuid, score numeric)
  LANGUAGE plpgsql
