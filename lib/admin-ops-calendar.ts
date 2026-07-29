@@ -505,9 +505,13 @@ export async function createPrivateSessionCore(
 
   const firstWhen = whenIST(occurrences[0].start);
   if (clientId) {
+    // The CLIENT copy is its own type (G1). It used to share
+    // `new_private_session` with the coach, and interactiveContentFor() maps
+    // that type to the coach template — so a parent got coach-worded copy with
+    // a /coach/session/<id> CTA they can't open.
     await supabase.from("notifications").insert({
       user_id: clientId,
-      type: "new_private_session",
+      type: "private_session_booked",
       title: recurring ? "Weekly private sessions booked" : "Private session booked",
       body:
         recurring
@@ -517,15 +521,22 @@ export async function createPrivateSessionCore(
     });
   }
   if (input.coachId) {
-    for (const s of createdSessions) {
-      await supabase.from("notifications").insert({
-        user_id: input.coachId,
-        type: "new_private_session",
-        title: "New private session",
-        body: `${whenIST(s.start)} — ${input.address}`,
-        data: { session_id: s.id, url: `/coach/session/${s.id}` },
-      });
-    }
+    // One message for the whole booking, not one per occurrence — a recurring
+    // private over N weeks used to queue N messages to the same coach.
+    const first = createdSessions[0];
+    await supabase.from("notifications").insert({
+      user_id: input.coachId,
+      type: "new_private_session",
+      title: recurring ? "New weekly private session" : "New private session",
+      body: recurring
+        ? `${createdSessions.length} sessions from ${whenIST(first.start)} — ${input.address}`
+        : `${whenIST(first.start)} — ${input.address}`,
+      data: {
+        session_id: first.id,
+        session_count: createdSessions.length,
+        url: `/coach/session/${first.id}`,
+      },
+    });
   }
 
   await supabase.from("audit_log").insert({
@@ -695,7 +706,8 @@ export async function assignPrivateSessionClientCore(
 
   await supabase.from("notifications").insert({
     user_id: clientId,
-    type: "new_private_session",
+    // Client-worded type, not the coach's `new_private_session` (G1).
+    type: "private_session_booked",
     title: "Private session booked",
     body: `We've set up a private session for ${whenIST(start)} — it's on your schedule.`,
     data: { session_id: sessionId, url: "/app/schedule" },

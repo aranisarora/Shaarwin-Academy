@@ -83,6 +83,9 @@ const FEED_ONLY = new Set([
   "ops_wa_linked",
   "ops_credit_used",
   "ops_coach_change",
+  // Data-integrity alert: a session whose assigned coach isn't a coach. Feed +
+  // digest rather than an interrupt — it needs fixing, not acting on mid-class.
+  "ops_session_coach_invalid",
 ]);
 
 // Quiet hours: these non-time-critical types, when they come due inside IST
@@ -103,6 +106,9 @@ const DEFERRABLE = new Set([
   "ops_daily_digest",
   "time_off_requested",
   "time_off_decision",
+  // Client copy of an academy-booked private (G1). Informational, not urgent —
+  // the session itself gets its own reminder 3h before.
+  "private_session_booked",
   // "You're approved" — nobody onboards at 2am, so hold it to 08:00 IST. The
   // signup *request* is deliberately absent: the applicant is waiting live.
   "signup_approved",
@@ -379,6 +385,60 @@ async function deliveredTodayCount(userId: string): Promise<number> {
 // — never for happy-path status updates.
 // ---------------------------------------------------------------------------
 
+/**
+ * Drop swept sessions whose assigned coach isn't actually a coach, and raise a
+ * feed alert for each. (notification-fix-plan 2.4.)
+ *
+ * Production case: a client (role=client) received `coach_before_class` and
+ * `coach_after_class` for "Apr Villa Private", because that session's `coach_id`
+ * pointed at a non-coach profile. Every sweep below trusts `coach_id` to mean
+ * "a coach", so one bad row turns the whole coach message loop on a parent —
+ * who then gets asked to confirm attendance for a class they're attending.
+ *
+ * One extra query per sweep, not one per session: the ids are looked up in a
+ * single batch.
+ */
+async function withValidCoaches<T extends { id: string; coach_id: string }>(
+  rows: T[]
+): Promise<T[]> {
+  if (!rows.length) return rows;
+
+  const ids = [...new Set(rows.map((r) => r.coach_id))];
+  const { data } = await supabase.from("profiles").select("id,role").in("id", ids);
+  const valid = new Set((data ?? []).filter((p) => p.role === "coach").map((p) => p.id));
+
+  for (const r of rows) {
+    if (!valid.has(r.coach_id)) await alertInvalidCoach(r.coach_id, r.id);
+  }
+  return rows.filter((r) => valid.has(r.coach_id));
+}
+
+/** Tell the founders once per session that its coach assignment is broken. */
+async function alertInvalidCoach(coachId: string, sessionId: string) {
+  const { data: done } = await supabase
+    .from("notifications")
+    .select("id")
+    .eq("type", "ops_session_coach_invalid")
+    .eq("data->>session_id", sessionId)
+    .limit(1);
+  if (done?.length) return;
+
+  const { data: founders } = await supabase.from("profiles").select("id").eq("role", "founder");
+  if (!founders?.length) return;
+
+  await supabase.from("notifications").insert(
+    founders.map((f) => ({
+      user_id: f.id,
+      type: "ops_session_coach_invalid",
+      title: "Session has a non-coach assigned",
+      body:
+        "A scheduled session lists someone who isn't a coach as its coach. " +
+        "Coach prompts for it are suppressed until it's reassigned.",
+      data: { session_id: sessionId, coach_id: coachId, url: "/admin/schedule" },
+    }))
+  );
+}
+
 /** Class title + location strings for a swept session (venue name or private address). */
 function locationOf(classes: unknown): { title: string; location: string } {
   const cls = classes as {
@@ -417,7 +477,7 @@ async function sweepBeforeClass() {
     .lt("starts_at", new Date(now + 60 * 60000).toISOString())
     .limit(100);
 
-  for (const s of sessions ?? []) {
+  for (const s of await withValidCoaches(sessions ?? [])) {
     if (await alreadyFired("coach_before_class", s.id, s.coach_id)) continue;
 
     const { title, location } = locationOf(s.classes);
@@ -462,7 +522,7 @@ async function sweepCoachConfirmNudge() {
     .lt("starts_at", new Date(now + 30 * 60000).toISOString())
     .limit(100);
 
-  for (const s of sessions ?? []) {
+  for (const s of await withValidCoaches(sessions ?? [])) {
     if (await alreadyFired("coach_confirm_nudge_2", s.id, s.coach_id)) continue;
 
     const title = titleOf(s.classes);
@@ -506,7 +566,7 @@ async function sweepArrivalCheck() {
     .gt("starts_at", new Date(now - 10 * 60000).toISOString())
     .limit(100);
 
-  for (const s of sessions ?? []) {
+  for (const s of await withValidCoaches(sessions ?? [])) {
     if (await alreadyFired("coach_arrival_check", s.id, s.coach_id)) continue;
 
     const { title, location } = locationOf(s.classes);
@@ -553,7 +613,7 @@ async function sweepFounderEscalations() {
     .gt("starts_at", new Date(now).toISOString())
     .lt("starts_at", new Date(now + 10 * 60000).toISOString())
     .limit(50);
-  for (const s of unconfirmed ?? []) {
+  for (const s of await withValidCoaches(unconfirmed ?? [])) {
     await escalateToFounders(
       "ops_coach_unconfirmed",
       "Coach hasn't confirmed",
@@ -577,7 +637,7 @@ async function sweepFounderEscalations() {
     .lte("starts_at", new Date(now - 10 * 60000).toISOString())
     .gt("starts_at", new Date(now - 70 * 60000).toISOString())
     .limit(50);
-  for (const s of notArrived ?? []) {
+  for (const s of await withValidCoaches(notArrived ?? [])) {
     const confirmed = !!s.coach_confirmed_at;
     await escalateToFounders(
       "ops_coach_not_arrived",
@@ -649,7 +709,7 @@ async function sweepAfterClass() {
     .gt("ends_at", new Date(now - 2 * 3600000).toISOString())
     .limit(100);
 
-  for (const s of sessions ?? []) {
+  for (const s of await withValidCoaches(sessions ?? [])) {
     if (await alreadyFired("coach_after_class", s.id, s.coach_id)) continue;
 
     const title = titleOf(s.classes);
@@ -704,6 +764,7 @@ const OPS_DIGEST_LABELS: Record<string, [string, string]> = {
   ops_wa_linked: ["WhatsApp link", "WhatsApp links"],
   ops_credit_used: ["credit used", "credits used"],
   ops_coach_change: ["coach change", "coach changes"],
+  ops_session_coach_invalid: ["session with a bad coach", "sessions with a bad coach"],
 };
 
 /**
@@ -1148,7 +1209,15 @@ function interactiveContentFor(
     };
   }
   // Coach: new private session → CTA to the session page (dynamic URL suffix).
-  if (row.type === "new_private_session" && TWILIO_WA_COACH_PRIVATE_SID) {
+  // Gated on the row carrying a /coach/ link, the way coach_arrived gates on
+  // coach_name: this template is coach-worded and its CTA is a coach deep link,
+  // so it must never render for a client row. The client copy now has its own
+  // type (private_session_booked); this gate is the belt to that braces. (G1.)
+  if (
+    row.type === "new_private_session" &&
+    TWILIO_WA_COACH_PRIVATE_SID &&
+    String(d.url ?? "").startsWith("/coach/")
+  ) {
     const sessionId = String(d.session_id ?? "");
     if (sessionId) {
       return {
