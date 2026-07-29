@@ -1,8 +1,10 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import Link from "next/link";
 import { requireUser } from "@/lib/auth";
 import { ClientShell } from "@/components/app/ClientShell";
 import { SignOutButton } from "@/components/app/SignOutButton";
+import { Skeleton } from "@/components/ui/Skeleton";
 
 export const metadata: Metadata = { title: "More" };
 
@@ -29,15 +31,32 @@ const items = [
   },
 ];
 
-export default async function MorePage() {
+/** The only part of this screen that reads anything — everything else is links. */
+async function Identity() {
   const { profile } = await requireUser("/app/more");
+  return (
+    <>
+      <p className="font-display text-2xl">{profile.full_name}</p>
+      <p className="text-sm text-fg-2">{profile.email}</p>
+    </>
+  );
+}
 
+export default function MorePage() {
   return (
     <ClientShell title="More">
       <div className="mx-auto max-w-xl space-y-6">
         <div>
-          <p className="font-display text-2xl">{profile.full_name}</p>
-          <p className="text-sm text-fg-2">{profile.email}</p>
+          <Suspense
+            fallback={
+              <>
+                <Skeleton className="h-8 w-48" />
+                <Skeleton className="mt-1 h-4 w-56" />
+              </>
+            }
+          >
+            <Identity />
+          </Suspense>
         </div>
 
         <nav aria-label="Account">

@@ -1,18 +1,24 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import { requireUser } from "@/lib/auth";
 import { getSubscriptionSummary } from "@/lib/billing";
 import { ClientShell } from "@/components/app/ClientShell";
 import { BookModeSwitch } from "@/components/app/BookModeSwitch";
 import { OnboardingBanner } from "@/components/app/onboarding/OnboardingBanner";
 import { PrivateWizard } from "@/components/app/PrivateWizard";
+import { PageSkeleton } from "@/components/ui/Skeleton";
 
 export const metadata: Metadata = { title: "Private session" };
 
-export default async function PrivateBookingPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ onboarding?: string }>;
-}) {
+type SearchParams = Promise<{ onboarding?: string }>;
+
+/** The mode switch — needs searchParams only, so it resolves without a query. */
+async function Header({ searchParams }: { searchParams: SearchParams }) {
+  const { onboarding } = await searchParams;
+  return onboarding === "1" ? <OnboardingBanner /> : <BookModeSwitch active="private" />;
+}
+
+async function Wizard({ searchParams }: { searchParams: SearchParams }) {
   const { onboarding } = await searchParams;
   const { supabase, user, profile } = await requireUser("/app/book/private");
   const [summary, playersRes, coachesRes] = await Promise.all([
@@ -39,17 +45,31 @@ export default async function PrivateBookingPage({
     : null;
 
   return (
+    <PrivateWizard
+      players={playersRes.data ?? []}
+      coaches={coaches}
+      minutesBalance={summary.minutesBalance}
+      defaultAddress={profile.default_address}
+      defaultAddressDetails={profile.address_details}
+      privatePlan={privatePlan}
+      onboarding={onboarding === "1"}
+    />
+  );
+}
+
+export default function PrivateBookingPage({
+  searchParams,
+}: {
+  searchParams: SearchParams;
+}) {
+  return (
     <ClientShell title="Book private class">
-      {onboarding === "1" ? <OnboardingBanner /> : <BookModeSwitch active="private" />}
-      <PrivateWizard
-        players={playersRes.data ?? []}
-        coaches={coaches}
-        minutesBalance={summary.minutesBalance}
-        defaultAddress={profile.default_address}
-        defaultAddressDetails={profile.address_details}
-        privatePlan={privatePlan}
-        onboarding={onboarding === "1"}
-      />
+      <Suspense fallback={<div className="h-10" />}>
+        <Header searchParams={searchParams} />
+      </Suspense>
+      <Suspense fallback={<PageSkeleton />}>
+        <Wizard searchParams={searchParams} />
+      </Suspense>
     </ClientShell>
   );
 }
