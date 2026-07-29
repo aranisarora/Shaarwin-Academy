@@ -1871,6 +1871,24 @@ export type Database = {
         }
         Relationships: []
       }
+      wa_inbound_seen: {
+        Row: {
+          created_at: string
+          message_sid: string
+          phone: string | null
+        }
+        Insert: {
+          created_at?: string
+          message_sid: string
+          phone?: string | null
+        }
+        Update: {
+          created_at?: string
+          message_sid?: string
+          phone?: string | null
+        }
+        Relationships: []
+      }
       wa_links: {
         Row: {
           linked_at: string
@@ -2204,6 +2222,7 @@ export type Database = {
           sessions_per_week: number
         }[]
       }
+      prune_wa_inbound_seen: { Args: never; Returns: undefined }
       public_coach_roster: {
         Args: never
         Returns: {

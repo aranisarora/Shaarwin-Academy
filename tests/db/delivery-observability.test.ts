@@ -68,3 +68,43 @@ describe("delivery observability (migration 0041)", () => {
     expect(error).toBeNull();
   });
 });
+
+describe("inbound webhook dedupe (migration 0042)", () => {
+  it("lets the first claim through and rejects a Twilio retry of the same sid", async () => {
+    const db = admin();
+    const sid = `SM_test_${crypto.randomUUID()}`;
+
+    const first = await db.from("wa_inbound_seen").insert({ message_sid: sid, phone: "+910000000000" });
+    expect(first.error).toBeNull();
+
+    // Twilio retrying the same inbound message — must lose the race.
+    const retry = await db.from("wa_inbound_seen").insert({ message_sid: sid, phone: "+910000000000" });
+    expect(retry.error).not.toBeNull();
+    expect(retry.error!.code).toBe("23505"); // unique_violation — what route.ts keys off
+  });
+
+  it("treats distinct messages from the same phone independently", async () => {
+    const db = admin();
+    const phone = "+910000000001";
+    const a = await db.from("wa_inbound_seen").insert({ message_sid: `SM_a_${crypto.randomUUID()}`, phone });
+    const b = await db.from("wa_inbound_seen").insert({ message_sid: `SM_b_${crypto.randomUUID()}`, phone });
+    expect(a.error).toBeNull();
+    expect(b.error).toBeNull();
+  });
+
+  it("prunes rows older than the retry window", async () => {
+    const db = admin();
+    const stale = `SM_stale_${crypto.randomUUID()}`;
+    await db.from("wa_inbound_seen").insert({
+      message_sid: stale,
+      phone: "+910000000002",
+      created_at: new Date(Date.now() - 3 * 86400_000).toISOString(),
+    });
+
+    const { error } = await db.rpc("prune_wa_inbound_seen");
+    expect(error).toBeNull();
+
+    const { data } = await db.from("wa_inbound_seen").select("message_sid").eq("message_sid", stale);
+    expect(data).toHaveLength(0);
+  });
+});

@@ -467,6 +467,12 @@ create table public.wa_messages (
   created_at timestamptz default now() not null
 );
 
+create table public.wa_inbound_seen (
+  message_sid text not null,
+  phone text,
+  created_at timestamptz default now() not null
+);
+
 create table public.webhook_events (
   id uuid default gen_random_uuid() not null,
   stripe_event_id text,
@@ -591,6 +597,7 @@ ALTER TABLE public.wa_links ADD CONSTRAINT wa_links_pkey PRIMARY KEY (phone);
 ALTER TABLE public.wa_links ADD CONSTRAINT wa_links_user_id_fkey FOREIGN KEY (user_id) REFERENCES profiles(id) ON DELETE CASCADE;
 ALTER TABLE public.wa_messages ADD CONSTRAINT wa_messages_pkey PRIMARY KEY (id);
 ALTER TABLE public.wa_messages ADD CONSTRAINT wa_messages_role_check CHECK ((role = ANY (ARRAY['user'::text, 'assistant'::text])));
+ALTER TABLE public.wa_inbound_seen ADD CONSTRAINT wa_inbound_seen_pkey PRIMARY KEY (message_sid);
 ALTER TABLE public.webhook_events ADD CONSTRAINT webhook_events_event_id_key UNIQUE (event_id);
 ALTER TABLE public.webhook_events ADD CONSTRAINT webhook_events_stripe_event_id_key UNIQUE (stripe_event_id);
 ALTER TABLE public.webhook_events ADD CONSTRAINT webhook_events_pkey PRIMARY KEY (id);
@@ -626,6 +633,7 @@ CREATE INDEX private_credit_ledger_client_id_idx ON public.private_credit_ledger
 CREATE INDEX subscriptions_client_id_status_idx ON public.subscriptions USING btree (client_id, status);
 CREATE UNIQUE INDEX profiles_phone_key ON public.profiles USING btree (phone) WHERE (phone IS NOT NULL);
 CREATE INDEX wa_messages_phone_idx ON public.wa_messages USING btree (phone, created_at DESC);
+CREATE INDEX wa_inbound_seen_created_at_idx ON public.wa_inbound_seen USING btree (created_at);
 CREATE INDEX bookings_player_id_idx ON public.bookings USING btree (player_id);
 CREATE INDEX notifications_user_id_idx ON public.notifications USING btree (user_id);
 CREATE INDEX notifications_failed_idx ON public.notifications USING btree (created_at DESC) WHERE (status = 'failed'::notification_status);
@@ -3606,6 +3614,15 @@ begin
 end;
 $function$;
 
+create or replace function public.prune_wa_inbound_seen()
+returns void
+language sql
+security definer
+set search_path = public
+as $$
+  delete from public.wa_inbound_seen where created_at < now() - interval '1 day';
+$$;
+
 -- ── View ─────────────────────────────────────────────────────────────────────
 CREATE OR REPLACE VIEW public.coach_client_view AS
   SELECT id, full_name, avatar_url FROM profiles p;
@@ -3669,6 +3686,7 @@ alter table public.subscriptions enable row level security;
 alter table public.venues enable row level security;
 alter table public.wa_links enable row level security;
 alter table public.wa_messages enable row level security;
+alter table public.wa_inbound_seen enable row level security;
 alter table public.webhook_events enable row level security;
 
 -- ── Policies ─────────────────────────────────────────────────────────────────

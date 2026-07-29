@@ -68,6 +68,9 @@ export async function POST(request: Request) {
   const buttonPayload = (params.ButtonPayload ?? "").trim();
   const buttonText = (params.ButtonText ?? "").trim();
   const originalSid = (params.OriginalRepliedMessageSid ?? "").trim();
+  // Twilio's id for THIS inbound message — stable across its retries, which is
+  // what lets us process it exactly once (see handleInbound).
+  const messageSid = (params.MessageSid ?? params.SmsMessageSid ?? "").trim();
 
   after(async () => {
     try {
@@ -77,6 +80,7 @@ export async function POST(request: Request) {
         payload: buttonPayload,
         buttonText,
         originalSid,
+        messageSid,
       });
     } catch (err) {
       console.error("wa: message handling failed", err);
@@ -108,6 +112,7 @@ async function handleInbound(
     payload: string;
     buttonText: string;
     originalSid: string;
+    messageSid: string;
   }
 ) {
   const isTap = Boolean(ev.payload || ev.buttonText);
@@ -122,6 +127,16 @@ async function handleInbound(
   }
 
   const admin = adminClient();
+
+  // Exactly-once: claim this MessageSid before doing anything with side effects.
+  // We ack Twilio instantly and work in after(), so a retry can arrive while the
+  // first pass is mid-flight — that's how one "I've arrived" became three
+  // replies in production. The primary key makes the claim atomic; the loser of
+  // the race just returns. (notification-fix-plan 1.6.)
+  if (!(await claimInbound(admin, phone, ev.messageSid))) {
+    console.info("wa: duplicate inbound", ev.messageSid, "— skipping");
+    return;
+  }
 
   // Phone-first identity: resolve, and if the number is genuinely unknown,
   // provision a client account for it (the number is Twilio-verified, so no
@@ -190,4 +205,28 @@ async function handleInbound(
 
   const reply = await runAgent({ phone, userText: text, profile, supabase, admin });
   await sendWhatsApp(phone, reply);
+}
+
+/**
+ * Claim an inbound MessageSid. Returns true if this request is the first to see
+ * it (proceed) and false if it's a Twilio retry of something we already handled
+ * (ack and drop).
+ *
+ * Fails OPEN on an unexpected DB error: a dropped message is worse than a rare
+ * double reply, and the only DB error we expect here is the duplicate-key one we
+ * explicitly look for. A missing sid (shouldn't happen — Twilio always sends
+ * one) also proceeds rather than swallowing the message.
+ */
+async function claimInbound(
+  admin: ReturnType<typeof adminClient>,
+  phone: string,
+  messageSid: string
+): Promise<boolean> {
+  if (!messageSid) return true;
+  const { error } = await admin.from("wa_inbound_seen").insert({ message_sid: messageSid, phone });
+  if (!error) return true;
+  // 23505 = unique_violation → someone else already claimed this sid.
+  if (error.code === "23505") return false;
+  console.warn("wa: inbound claim failed, processing anyway", error.message);
+  return true;
 }
