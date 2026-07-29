@@ -21,7 +21,7 @@ import { normalizePhone } from "./phone";
 /** Supabase Auth needs an email; for phone-first users we mint a synthetic one
  *  that never receives mail. The phone (in wa_links + profiles.phone) is the
  *  real identity. */
-export function syntheticEmailFor(phone: string): string {
+function syntheticEmailFor(phone: string): string {
   const digits = phone.replace(/\D/g, "");
   return `wa${digits}@sharwin.local`;
 }
@@ -35,7 +35,7 @@ export function adminClient(): SupabaseClient<Database> {
 }
 
 /** Why a message is being handled without a linked account — for logging. */
-export type GuestReason = "not_linked" | "db_error";
+type GuestReason = "not_linked" | "db_error";
 
 export type IdentityResult =
   | { profile: Profile; reason: null }

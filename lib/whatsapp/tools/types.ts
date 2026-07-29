@@ -21,7 +21,7 @@ export type ToolContext = {
 };
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export type ToolInput = Record<string, any>;
+type ToolInput = Record<string, any>;
 
 export type WaTool = {
   name: string;

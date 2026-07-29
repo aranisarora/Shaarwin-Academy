@@ -12,7 +12,7 @@ import Link from "next/link";
 import { Badge } from "@/components/ui/Badge";
 import { NavigateButton } from "@/components/app/NavigateButton";
 
-export type ScheduleSession = {
+type ScheduleSession = {
   id: string;
   locationName: string;
   timeLabel: string;

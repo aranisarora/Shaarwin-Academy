@@ -4,7 +4,6 @@
 
 import type { StructuredAddress } from "@/lib/address";
 
-export { sessionTimeStatus, type SessionTimeStatus } from "@/lib/academy-time";
 
 export type SessionRow = {
   id: string;

@@ -2,14 +2,14 @@
 // (subscriptions) and OneOffPicker (orders). Keep the global declaration in
 // one place — duplicate `declare global` blocks with different shapes clash.
 
-export type RazorpayCheckoutResponse = {
+type RazorpayCheckoutResponse = {
   razorpay_payment_id: string;
   razorpay_subscription_id?: string;
   razorpay_order_id?: string;
   razorpay_signature: string;
 };
 
-export type RazorpayCheckoutOptions = {
+type RazorpayCheckoutOptions = {
   key: string;
   name: string;
   description?: string;

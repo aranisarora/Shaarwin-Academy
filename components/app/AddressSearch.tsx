@@ -34,7 +34,7 @@ const PROXIMITY = "77.5946,12.9716";
  * the typeahead's `choose`, the "use my location" reverse-geocode and the
  * "find on map" fallback all funnel through here so they can't drift apart.
  */
-export function featureToGeocodeHit(feat: unknown): GeocodeHit | null {
+function featureToGeocodeHit(feat: unknown): GeocodeHit | null {
   const f = feat as {
     properties?: Record<string, unknown>;
     geometry?: { coordinates?: [number, number] };

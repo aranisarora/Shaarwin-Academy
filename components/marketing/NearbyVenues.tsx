@@ -7,7 +7,7 @@ import { VenueMap } from "@/components/marketing/VenueMap";
 import { Badge } from "@/components/ui/Badge";
 import { ButtonLink } from "@/components/ui/Button";
 
-export type VenueClassInfo = {
+type VenueClassInfo = {
   id: string;
   title: string;
   skill_level: string;

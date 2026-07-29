@@ -18,7 +18,7 @@ import type { Database, Json } from "@/lib/database.types";
 import type { Profile } from "@/lib/auth";
 import { formatClock } from "@/lib/academy-time";
 
-export const WA_BUTTON = {
+const WA_BUTTON = {
   COACH_CONFIRM: "coach_confirm",
   COACH_CANT: "coach_cant",
   COACH_ARRIVED: "coach_arrived",

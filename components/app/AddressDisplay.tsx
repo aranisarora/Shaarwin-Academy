@@ -1,5 +1,4 @@
 import { NavigateButton } from "@/components/app/NavigateButton";
-import { formatAddress } from "@/lib/address-format";
 import type { StructuredAddress } from "@/lib/address";
 
 /**
@@ -45,6 +44,3 @@ export function AddressDisplay({
     </div>
   );
 }
-
-/** Re-export so callers can grab the plain-text form from the same module. */
-export { formatAddress };

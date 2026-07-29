@@ -27,10 +27,3 @@ export function formatAddress(
 
   return lines.join("\n");
 }
-
-/** Single-line variant for compact contexts (schedule rows, list items). */
-export function formatAddressLine(a: StructuredAddress): string {
-  return [a.flat, a.building, a.formatted || a.locality || a.city]
-    .filter(Boolean)
-    .join(", ");
-}

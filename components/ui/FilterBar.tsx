@@ -11,7 +11,7 @@ import { useState } from "react";
 import { Sheet } from "./Sheet";
 import { Select } from "./Select";
 
-export type FilterOption = { value: string; label: string };
+type FilterOption = { value: string; label: string };
 
 export type FilterDef = {
   /** Stable key + accessible name for the control ("Filter by coach"). */

@@ -16,7 +16,7 @@ import { haversineMeters } from "@/lib/geo";
  * on any failure — no coords, no geolocation, permission denied, or timeout. It
  * never rejects and never blocks longer than `timeoutMs`.
  */
-export function resolveDistance(
+function resolveDistance(
   venueLat: number | null,
   venueLng: number | null,
   timeoutMs: number

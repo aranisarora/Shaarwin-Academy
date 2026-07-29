@@ -11,7 +11,7 @@ type ServiceAccount = { client_email: string; private_key: string; project_id: s
 // request/token refresh. Lazy + memoised so a missing env var only throws when
 // something actually calls Vertex, not at import time.
 let _sa: ServiceAccount | null = null;
-export function serviceAccount(): ServiceAccount {
+function serviceAccount(): ServiceAccount {
   if (!_sa) _sa = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_JSON!) as ServiceAccount;
   return _sa;
 }

@@ -11,7 +11,7 @@ export type AttendanceEntry = {
   status: string;
 };
 
-export type StudentStats = {
+type StudentStats = {
   attended: number;
   noShows: number;
   cancelled: number;
