@@ -175,14 +175,22 @@ Deno.serve(async () => {
       .maybeSingle();
     if (!claimed) continue;
 
-    const delivered = await deliver(row);
-    if (delivered) {
+    const attempt = await deliver(row);
+    if (attempt.ok) {
       sent++;
+      await supabase
+        .from("notifications")
+        .update({ channel_attempted: attempt.channel })
+        .eq("id", row.id);
     } else {
       failed++;
       await supabase
         .from("notifications")
-        .update({ status: "failed" })
+        .update({
+          status: "failed",
+          channel_attempted: attempt.channel,
+          error: (attempt.error ?? "unknown").slice(0, 500),
+        })
         .eq("id", row.id);
     }
   }
@@ -762,6 +770,14 @@ async function sweepWaitlistOffers() {
   }
 }
 
+/**
+ * Outcome of one delivery attempt. `channel` is the last channel we actually
+ * tried ("whatsapp" | "email" | "none"); `error` is the accumulated reason
+ * chain, written to notifications.error so a failed row explains itself.
+ * (notification-fix-plan 1.5.)
+ */
+type Attempt = { ok: boolean; channel: string; error?: string };
+
 async function deliver(row: {
   id: string;
   user_id: string;
@@ -769,7 +785,7 @@ async function deliver(row: {
   title: string;
   body: string;
   data: { url?: string } & Record<string, unknown>;
-}): Promise<boolean> {
+}): Promise<Attempt> {
   const { data: profile } = await supabase
     .from("profiles")
     .select("email,full_name")
@@ -780,12 +796,24 @@ async function deliver(row: {
   // WhatsApp first for linked users. Inside the 24h service window we send rich
   // free-form text; outside it we fall back to the approved template (with the
   // member's name), and only then to email.
-  if (await deliverWhatsApp(row, firstName)) return true;
+  const wa = await deliverWhatsApp(row, firstName);
+  if (wa.ok) return wa;
+  const notes: string[] = wa.error ? [`whatsapp: ${wa.error}`] : [];
 
   // Email fallback via Resend (web push needs VAPID keys — add them and a
   // push library here when keys are provisioned; email is the reliable path).
-  if (!RESEND_KEY) return true; // nothing configured — count as delivered to avoid loops
-  if (!profile?.email) return false;
+  //
+  // Previously an unset RESEND_API_KEY returned `true` here — every undeliverable
+  // row was silently recorded as sent (G8). Now it fails honestly so the row
+  // carries `no_channel` and shows up in the failure query.
+  if (!RESEND_KEY) {
+    notes.push("email: no_channel");
+    return { ok: false, channel: wa.channel, error: notes.join("; ") };
+  }
+  if (!profile?.email) {
+    notes.push("email: no_address");
+    return { ok: false, channel: wa.channel, error: notes.join("; ") };
+  }
 
   const deepLink = `${Deno.env.get("APP_URL") ?? "http://localhost:3000"}${row.data?.url ?? "/app"}`;
   const res = await fetch("https://api.resend.com/emails", {
@@ -809,7 +837,10 @@ async function deliver(row: {
         </div>`,
     }),
   });
-  return res.ok;
+  if (res.ok) return { ok: true, channel: "email" };
+  const detail = (await res.text().catch(() => "")).slice(0, 200);
+  notes.push(`email: ${res.status} ${detail}`.trim());
+  return { ok: false, channel: "email", error: notes.join("; ") };
 }
 
 async function deliverWhatsApp(
@@ -822,17 +853,22 @@ async function deliverWhatsApp(
     data: Record<string, unknown>;
   },
   firstName: string
-): Promise<boolean> {
-  if (!TWILIO_SID || !TWILIO_TOKEN || !TWILIO_FROM) return false;
+): Promise<Attempt> {
+  if (!TWILIO_SID || !TWILIO_TOKEN || !TWILIO_FROM) {
+    return { ok: false, channel: "none", error: "not_configured" };
+  }
 
   const { data: link } = await supabase
     .from("wa_links")
     .select("phone")
     .eq("user_id", row.user_id)
     .maybeSingle();
-  if (!link?.phone) return false;
+  // The single biggest cause of the audit's ~300 failed rows for the second
+  // founder account. Now it says so on the row instead of failing anonymously.
+  if (!link?.phone) return { ok: false, channel: "none", error: "not_linked" };
 
   const endpoint = `https://api.twilio.com/2010-04-01/Accounts/${TWILIO_SID}/Messages.json`;
+  const notes: string[] = [];
 
   // Interactive templates (WhatsApp-approved) can be sent business-initiated at
   // any time, so they don't depend on the 24h service window. When one is
@@ -840,16 +876,18 @@ async function deliverWhatsApp(
   // on the row so an inbound button tap can be mapped back to the session.
   const interactive = interactiveContentFor(row, firstName);
   if (interactive) {
-    const sid = await twilioSend(endpoint, { To: `whatsapp:${link.phone}`, ...interactive });
-    if (sid) {
+    const res = await twilioSend(endpoint, { To: `whatsapp:${link.phone}`, ...interactive });
+    if (res.sid) {
       await supabase
         .from("notifications")
-        .update({ data: { ...row.data, twilio_sid: sid } })
+        .update({ data: { ...row.data, twilio_sid: res.sid } })
         .eq("id", row.id);
-      return true;
+      return { ok: true, channel: "whatsapp" };
     }
     // Interactive send failed (e.g. template not approved yet) → fall through to
-    // the plain-text paths below so the coach still gets the message.
+    // the plain-text paths below so the coach still gets the message. The reason
+    // is kept so an unprovisioned SID is visible in the failure query.
+    notes.push(`template ${res.error ?? "send_failed"}`);
   }
 
   // Is the user inside the 24h WhatsApp service window? (Did they message us
@@ -873,10 +911,15 @@ async function deliverWhatsApp(
     fields.ContentSid = TWILIO_TEMPLATE_SID;
     fields.ContentVariables = JSON.stringify({ "1": firstName, "2": `${row.title} — ${row.body}` });
   } else {
-    // No template configured and outside the window: can't send free-form.
-    return false;
+    // No template configured and outside the window: can't send free-form. This
+    // is the generic TWILIO_WA_TEMPLATE_SID gap from 1.4 — name it explicitly.
+    notes.push("outside_24h_window_and_no_generic_template");
+    return { ok: false, channel: "whatsapp", error: notes.join("; ") };
   }
-  return (await twilioSend(endpoint, fields)) !== null;
+  const res = await twilioSend(endpoint, fields);
+  if (res.sid) return { ok: true, channel: "whatsapp" };
+  notes.push(res.error ?? "send_failed");
+  return { ok: false, channel: "whatsapp", error: notes.join("; ") };
 }
 
 /**
@@ -1040,11 +1083,16 @@ function interactiveContentFor(
   return null;
 }
 
-/** POST to Twilio Messages; returns the message SID on success, else null. */
+/**
+ * POST to Twilio Messages. Returns `{ sid }` on success, `{ error }` on failure
+ * — Twilio's own numeric code + message where available (e.g.
+ * "63016 failed to send freeform message"), which is what makes an
+ * unprovisioned template distinguishable from a bad number on the failed row.
+ */
 async function twilioSend(
   endpoint: string,
   fields: Record<string, string>
-): Promise<string | null> {
+): Promise<{ sid?: string; error?: string }> {
   const auth = `Basic ${btoa(`${TWILIO_SID}:${TWILIO_TOKEN}`)}`;
   const res = await fetch(endpoint, {
     method: "POST",
@@ -1052,9 +1100,17 @@ async function twilioSend(
     body: new URLSearchParams({ From: TWILIO_FROM!, ...fields }),
   });
   if (!res.ok) {
-    console.error("twilio send failed", res.status, (await res.text().catch(() => "")).slice(0, 300));
-    return null;
+    const text = (await res.text().catch(() => "")).slice(0, 300);
+    console.error("twilio send failed", res.status, text);
+    let detail = `${res.status}`;
+    try {
+      const json = JSON.parse(text) as { code?: number; message?: string };
+      if (json.code || json.message) detail = `${json.code ?? res.status} ${json.message ?? ""}`.trim();
+    } catch {
+      if (text) detail = `${res.status} ${text}`;
+    }
+    return { error: detail };
   }
   const json = (await res.json().catch(() => null)) as { sid?: string } | null;
-  return json?.sid ?? "sent";
+  return { sid: json?.sid ?? "sent" };
 }

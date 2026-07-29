@@ -904,8 +904,10 @@ export type Database = {
         Row: {
           body: string
           channel: Database["public"]["Enums"]["notification_channel"]
+          channel_attempted: string | null
           created_at: string
           data: Json
+          error: string | null
           id: string
           read_at: string | null
           scheduled_for: string
@@ -918,8 +920,10 @@ export type Database = {
         Insert: {
           body: string
           channel?: Database["public"]["Enums"]["notification_channel"]
+          channel_attempted?: string | null
           created_at?: string
           data?: Json
+          error?: string | null
           id?: string
           read_at?: string | null
           scheduled_for?: string
@@ -932,8 +936,10 @@ export type Database = {
         Update: {
           body?: string
           channel?: Database["public"]["Enums"]["notification_channel"]
+          channel_attempted?: string | null
           created_at?: string
           data?: Json
+          error?: string | null
           id?: string
           read_at?: string | null
           scheduled_for?: string
@@ -2201,14 +2207,14 @@ export type Database = {
       public_coach_roster: {
         Args: never
         Returns: {
-          base_lat: number | null
-          base_lng: number | null
-          bio: string | null
-          credentials: string[] | null
-          full_name: string | null
-          id: string | null
-          photo_url: string | null
-          quote: string | null
+          base_lat: number
+          base_lng: number
+          bio: string
+          credentials: string[]
+          full_name: string
+          id: string
+          photo_url: string
+          quote: string
         }[]
       }
       rank_coaches: {

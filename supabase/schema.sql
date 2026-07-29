@@ -230,7 +230,9 @@ create table public.notifications (
   status notification_status default 'pending'::notification_status not null,
   sent_at timestamptz,
   read_at timestamptz,
-  created_at timestamptz default now() not null
+  created_at timestamptz default now() not null,
+  error text,
+  channel_attempted text
 );
 
 create table public.student_notes (
@@ -626,6 +628,7 @@ CREATE UNIQUE INDEX profiles_phone_key ON public.profiles USING btree (phone) WH
 CREATE INDEX wa_messages_phone_idx ON public.wa_messages USING btree (phone, created_at DESC);
 CREATE INDEX bookings_player_id_idx ON public.bookings USING btree (player_id);
 CREATE INDEX notifications_user_id_idx ON public.notifications USING btree (user_id);
+CREATE INDEX notifications_failed_idx ON public.notifications USING btree (created_at DESC) WHERE (status = 'failed'::notification_status);
 CREATE INDEX class_credits_booking_id_idx ON public.class_credits USING btree (booking_id);
 CREATE INDEX class_credits_order_id_idx ON public.class_credits USING btree (order_id);
 CREATE INDEX orders_client_id_idx ON public.orders USING btree (client_id);
