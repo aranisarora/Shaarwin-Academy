@@ -13,6 +13,7 @@ import {
   resolveIdentity,
   userClientFor,
 } from "@/lib/whatsapp/identity";
+import { applyOptOut, matchOptOut } from "@/lib/whatsapp/optout";
 import { normalizePhone } from "@/lib/whatsapp/phone";
 import {
   sendWhatsApp,
@@ -153,6 +154,20 @@ async function handleInbound(
       phone,
       "I'm having trouble reaching your account right now — please try again in a minute."
     );
+    return;
+  }
+
+  // Opt-out, ahead of everything else. Before this, a typed "STOP" fell through
+  // to the LLM, which answered it conversationally and kept the messages
+  // coming. (notification-fix-plan 2.3.)
+  const optOut = matchOptOut(text);
+  if (optOut) {
+    const reply = await applyOptOut(admin, profile.id, optOut);
+    await admin.from("wa_messages").insert([
+      { phone, role: "user", content: text.slice(0, 4000) },
+      { phone, role: "assistant", content: reply.slice(0, 4000) },
+    ]);
+    await sendWhatsApp(phone, reply);
     return;
   }
 

@@ -1428,6 +1428,7 @@ export type Database = {
           razorpay_customer_id: string | null
           role: Database["public"]["Enums"]["user_role"]
           stripe_customer_id: string | null
+          wa_muted: boolean
         }
         Insert: {
           address_details?: Json | null
@@ -1449,6 +1450,7 @@ export type Database = {
           razorpay_customer_id?: string | null
           role?: Database["public"]["Enums"]["user_role"]
           stripe_customer_id?: string | null
+          wa_muted?: boolean
         }
         Update: {
           address_details?: Json | null
@@ -1470,6 +1472,7 @@ export type Database = {
           razorpay_customer_id?: string | null
           role?: Database["public"]["Enums"]["user_role"]
           stripe_customer_id?: string | null
+          wa_muted?: boolean
         }
         Relationships: []
       }
@@ -2235,6 +2238,16 @@ export type Database = {
           photo_url: string
           quote: string
         }[]
+      }
+      queue_coach_changed: {
+        Args: {
+          p_body: string
+          p_session: string
+          p_title: string
+          p_url: string
+          p_user: string
+        }
+        Returns: undefined
       }
       rank_coaches: {
         Args: { p_preferred?: string; p_session: string }

@@ -371,7 +371,8 @@ create table public.profiles (
   onboarding_step smallint default 0 not null,
   -- closed-membership gate: self-signups start 'pending' and wait for founder
   -- approval; existing rows + founder-invited clients are 'approved'.
-  approval_status signup_approval_status default 'pending'::signup_approval_status not null
+  approval_status signup_approval_status default 'pending'::signup_approval_status not null,
+  wa_muted boolean default false not null
 );
 
 create table public.push_subscriptions (
