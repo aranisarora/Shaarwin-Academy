@@ -500,6 +500,26 @@ export async function createPrivateSessionCore(
         return { ok: false, error: "Couldn't book the client in." };
       }
 
+      // The 3-hour reminder. request_private_class queues this unconditionally
+      // for client-initiated privates, but this admin path never did — and
+      // production books ~96% of its sessions from here, so most families were
+      // getting no reminder at all. Payload matches the reminder template's
+      // variables (class_title, time_str). (notification-fix-plan Phase 3 / C4.)
+      await supabase.from("notifications").insert({
+        user_id: clientId,
+        type: "reminder_upcoming",
+        title: "Later today",
+        body: "Private session",
+        data: {
+          booking_id: booking.id,
+          session_id: session.id,
+          class_title: "Private session",
+          time_str: whenIST(occ.start),
+          url: "/app/schedule",
+        },
+        scheduled_for: new Date(occ.start.getTime() - 3 * 3600_000).toISOString(),
+      });
+
       const { data: ledger } = await supabase
         .from("private_credit_ledger")
         .insert({
@@ -716,6 +736,23 @@ export async function assignPrivateSessionClientCore(
     delta_minutes: -duration,
     reason: "booking",
     note: "booked by academy",
+  });
+
+  // Same gap as createPrivateSessionCore: filling a held slot booked the client
+  // in but never queued their 3-hour reminder. (notification-fix-plan Phase 3 / C4.)
+  await supabase.from("notifications").insert({
+    user_id: clientId,
+    type: "reminder_upcoming",
+    title: "Later today",
+    body: "Private session",
+    data: {
+      booking_id: booking.id,
+      session_id: sessionId,
+      class_title: "Private session",
+      time_str: whenIST(start),
+      url: "/app/schedule",
+    },
+    scheduled_for: new Date(start.getTime() - 3 * 3600_000).toISOString(),
   });
 
   await supabase.from("notifications").insert({
