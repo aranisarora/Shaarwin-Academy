@@ -20,8 +20,6 @@ import { AddressDisplay } from "@/components/app/AddressDisplay";
 import type { MyBooking } from "@/lib/booking";
 import { formatSessionDate, nowMs } from "@/lib/academy-time";
 
-const fmt = formatSessionDate;
-
 function BookingCard({
   booking,
   onOpen,
@@ -37,7 +35,7 @@ function BookingCard({
       }`}
     >
       <div>
-        <p className="tnum font-medium">{fmt(booking.session.starts_at)}</p>
+        <p className="tnum font-medium">{formatSessionDate(booking.session.starts_at)}</p>
         <p className="text-sm text-fg-2">
           {booking.session.classTitle}
           {booking.session.venueName ? ` — ${booking.session.venueName}` : " — at your address"}
@@ -131,7 +129,7 @@ export function ScheduleList({
           <div className="space-y-5">
             <div>
               <p className="tnum font-display text-3xl">
-                {fmt(selected.session.starts_at)}
+                {formatSessionDate(selected.session.starts_at)}
               </p>
               <p className="mt-1 text-fg-2">
                 {selected.session.venueName ?? "At your address"}

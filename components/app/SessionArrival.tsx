@@ -18,8 +18,6 @@ import { haversineMeters } from "@/lib/geo";
 const GEOFENCE_M = 150;
 const UNDO_WINDOW_MS = 10 * 60000;
 
-const fmtClock = formatClock;
-
 export function SessionArrival({
   sessionId,
   startsAt,
@@ -110,7 +108,7 @@ export function SessionArrival({
         {comingDone ? (
           <div className="flex items-center gap-2 text-ok">
             <CheckIcon className="h-5 w-5 shrink-0" />
-            <p className="font-medium">Confirmed at {fmtClock(comingDone)}</p>
+            <p className="font-medium">Confirmed at {formatClock(comingDone)}</p>
           </div>
         ) : (
           <ComingAction
@@ -149,7 +147,7 @@ export function SessionArrival({
             <div className="space-y-2.5">
               <div className="flex items-center gap-2 text-ok">
                 <CheckIcon className="h-5 w-5 shrink-0" />
-                <p className="font-medium">Arrived at {fmtClock(arrivedAt)} · parents notified</p>
+                <p className="font-medium">Arrived at {formatClock(arrivedAt)} · parents notified</p>
               </div>
               {canUndo && (
                 <Button variant="ghost" disabled={pending} onClick={onUndo} className="w-full sm:w-auto">
@@ -180,7 +178,7 @@ export function SessionArrival({
         ) : beforeWindow ? (
           <div className="flex items-center gap-2 text-fg-2">
             <LockIcon className="h-5 w-5 shrink-0" />
-            <p className="text-sm">Unlocks {fmtClock(unlockMs)}</p>
+            <p className="text-sm">Unlocks {formatClock(unlockMs)}</p>
           </div>
         ) : (
           <div className="flex items-center gap-2 text-fg-2">
