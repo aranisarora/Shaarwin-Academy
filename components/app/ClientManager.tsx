@@ -11,6 +11,8 @@ import { Select } from "@/components/ui/Select";
 import { Sheet } from "@/components/ui/Sheet";
 import { Spinner } from "@/components/ui/Spinner";
 import { ConfirmAction } from "@/components/ui/ConfirmAction";
+import { formatDateFull } from "@/lib/academy-time";
+import { formatPrice } from "@/lib/format";
 import { grantCompSubscription, adjustCredits } from "@/app/admin/actions";
 import {
   addClientInvite,
@@ -408,12 +410,8 @@ export function ClientManager({
           <div className="space-y-6">
             <p className="tnum text-sm text-fg-2">
               Client since{" "}
-              {new Date(selected.createdAt).toLocaleDateString("en-GB", {
-                day: "numeric",
-                month: "short",
-                year: "numeric",
-              })}{" "}
-              · paid £{(selected.ltvPence / 100).toFixed(0)} · {selected.attendedCount}{" "}
+              {formatDateFull(selected.createdAt)}{" "}
+              · paid {formatPrice(selected.ltvPence)} · {selected.attendedCount}{" "}
               attended · {selected.noShowCount} no-shows
             </p>
 

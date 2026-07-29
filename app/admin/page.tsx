@@ -1,7 +1,12 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { requireUser } from "@/lib/auth";
-import { academyToday, formatSessionDate, utcToAcademyWall } from "@/lib/academy-time";
+import {
+  academyToday,
+  formatDateFull,
+  formatSessionDate,
+  utcToAcademyWall,
+} from "@/lib/academy-time";
 import { AdminShell } from "@/components/app/AdminShell";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
@@ -153,8 +158,7 @@ export default async function AdminTodayPage() {
                       {(t.profiles as unknown as { full_name: string } | null)?.full_name}
                     </p>
                     <p className="tnum text-sm text-fg-2">
-                      {new Date(t.starts_at).toLocaleDateString("en-GB")} –{" "}
-                      {new Date(t.ends_at).toLocaleDateString("en-GB")}
+                      {formatDateFull(t.starts_at)} – {formatDateFull(t.ends_at)}
                       {t.reason ? ` · ${t.reason}` : ""}
                     </p>
                   </div>

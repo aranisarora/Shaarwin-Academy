@@ -196,6 +196,22 @@ export function formatWallDay(dateStr: string): string {
   }).format(new Date(Date.UTC(y, m - 1, d)));
 }
 
+/**
+ * "12 Jul 2026" for a bare "YYYY-MM-DD" wall date — the `formatDateFull` shape
+ * for calendar dates that carry no time (date of birth, term dates). Formatted
+ * in UTC for the same reason as `formatWallDay`: `new Date("2015-03-01")` is
+ * UTC midnight, so any negative-offset viewer would otherwise see 28 Feb.
+ */
+export function formatWallDateFull(dateStr: string): string {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: "UTC",
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  }).format(new Date(Date.UTC(y, m - 1, d)));
+}
+
 // ── Machine-readable wall-clock values ───────────────────────────────────────
 
 const WALL_DATE = opts(

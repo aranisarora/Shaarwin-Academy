@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/Badge";
 import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
 import { Spinner } from "@/components/ui/Spinner";
+import { formatDateFull } from "@/lib/academy-time";
 import {
   addWindow,
   removeWindow,
@@ -152,8 +153,7 @@ export function AvailabilityEditor({
               className="flex items-center justify-between rounded-[12px] border border-line bg-surface-2 px-4 py-3"
             >
               <p className="tnum text-sm">
-                {new Date(t.starts_at).toLocaleDateString("en-GB")} –{" "}
-                {new Date(t.ends_at).toLocaleDateString("en-GB")}
+                {formatDateFull(t.starts_at)} – {formatDateFull(t.ends_at)}
                 {t.reason ? ` · ${t.reason}` : ""}
               </p>
               <Badge

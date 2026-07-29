@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { requireUser } from "@/lib/auth";
+import { formatDateFull } from "@/lib/academy-time";
 import { AdminShell } from "@/components/app/AdminShell";
 import { DeepLinkFocus } from "@/components/app/DeepLinkFocus";
 import { TimeOffDecision } from "@/components/app/TimeOffDecision";
@@ -86,7 +87,7 @@ export default async function AdminCoachesPage({
                     coachName={
                       (t.profiles as unknown as { full_name: string } | null)?.full_name ?? "Coach"
                     }
-                    range={`${new Date(t.starts_at).toLocaleDateString("en-GB")} – ${new Date(t.ends_at).toLocaleDateString("en-GB")}`}
+                    range={`${formatDateFull(t.starts_at)} – ${formatDateFull(t.ends_at)}`}
                     reason={t.reason}
                   />
                 </div>

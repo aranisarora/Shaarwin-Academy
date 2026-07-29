@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Badge } from "@/components/ui/Badge";
 import { Input } from "@/components/ui/Input";
 import { Sheet } from "@/components/ui/Sheet";
+import { formatWallDateFull } from "@/lib/academy-time";
 import { masteryLabel } from "@/lib/mastery";
 
 type PlayerRow = {
@@ -235,11 +236,7 @@ export function PlayerManager({ players }: { players: PlayerRow[] }) {
                 </div>
                 {selected.dateOfBirth && (
                   <p className="tnum mt-1 text-sm text-fg-2">
-                    {new Date(selected.dateOfBirth).toLocaleDateString("en-GB", {
-                      day: "numeric",
-                      month: "short",
-                      year: "numeric",
-                    })}{" "}
+                    {formatWallDateFull(selected.dateOfBirth)}{" "}
                     · {ageYears(selected.dateOfBirth)} yrs
                   </p>
                 )}
