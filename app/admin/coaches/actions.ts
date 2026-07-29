@@ -8,7 +8,6 @@ import {
   decideTimeOffCore,
   deleteCoachCore,
   deletePendingCoachCore,
-  promoteToCoachCore,
   saveCoachCore,
   savePendingCoachCore,
   setCoachActiveCore,
@@ -18,16 +17,6 @@ import {
 import { standardizeCoachPortrait } from "@/lib/coach-photo";
 
 type Result = { ok: boolean; error?: string };
-
-export async function promoteToCoach(profileId: string): Promise<Result> {
-  const { supabase, founder } = await requireFounder();
-  if (!founder) return { ok: false, error: "Founder only." };
-  const result = await promoteToCoachCore(supabase, founder.id, profileId);
-  if (!result.ok) return result;
-  revalidatePath("/admin/coaches");
-  revalidateTag("coaches", "max");
-  return { ok: true };
-}
 
 export async function addCoach(
   details: CoachDetails

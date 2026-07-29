@@ -3,10 +3,6 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 
-export type BookResult =
-  | { ok: true; status: "confirmed" | "waitlisted"; bookingId: string }
-  | { ok: false; error: string };
-
 /** Result of booking a slot that may span many future weeks. */
 export type BookSlotResult =
   | {
@@ -78,43 +74,6 @@ export async function bookSlot(
       confirmed: d.confirmed ?? 0,
       waitlisted: d.waitlisted ?? 0,
       skipped: d.skipped ?? 0,
-    };
-  }
-
-  if (error) {
-    const key = Object.keys(errorCopy).find((k) => error.message.includes(k));
-    return { ok: false, error: key ? errorCopy[key] : errorCopy.booking_failed };
-  }
-
-  return { ok: false, error: errorCopy.booking_failed };
-}
-
-export async function bookSession(
-  sessionId: string,
-  playerId: string
-): Promise<BookResult> {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return { ok: false, error: "Sign in to book." };
-
-  // Preferred path: the race-proof SQL RPC (P05 contract).
-  const { data, error } = await supabase.rpc("book_session", {
-    p_session: sessionId,
-    p_player: playerId,
-  });
-
-  if (!error && data) {
-    revalidatePath("/app");
-    revalidatePath("/app/schedule");
-    // book_session returns a full bookings row, so its status is typed as the
-    // whole booking_status enum; the function only ever hands back a fresh
-    // booking, which is confirmed or (when the class is full) waitlisted.
-    return {
-      ok: true,
-      status: data.status === "waitlisted" ? "waitlisted" : "confirmed",
-      bookingId: data.id,
     };
   }
 

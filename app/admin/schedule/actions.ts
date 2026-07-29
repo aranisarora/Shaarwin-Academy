@@ -10,7 +10,6 @@ import {
   assignPrivateSessionClientCore,
   cancelFuturePrivateSessionsCore,
   createOneOffClassCore,
-  createOneOffSessionCore,
   createPrivateSessionCore,
   deleteGroupClassCore,
   materializeInviteCore,
@@ -45,7 +44,6 @@ import {
 //   deleteGroupClass ................. notifies nobody (only unbooked classes delete)
 //   topUpSessions .................... notifies nobody
 //   createOneOffClass ................ notifies nobody (nothing booked yet)
-//   createOneOffSession .............. notifies nobody
 //   addSchoolPlayer .................. notifies nobody
 //   createPrivateSession ............. notifies the client
 //   assignPrivateSessionClient ....... notifies the client
@@ -189,20 +187,6 @@ export async function createOneOffClass(input: NewOneOffClass): Promise<Result> 
   const { supabase, founder } = await requireFounder();
   if (!founder) return { ok: false, error: "Founder only." };
   const result = await createOneOffClassCore(supabase, founder.id, input);
-  if (!result.ok) return result;
-  refresh();
-  return { ok: true };
-}
-
-export async function createOneOffSession(
-  classId: string,
-  date: string,
-  time: string,
-  coachId: string
-): Promise<Result> {
-  const { supabase, founder } = await requireFounder();
-  if (!founder) return { ok: false, error: "Founder only." };
-  const result = await createOneOffSessionCore(supabase, founder.id, classId, date, time, coachId);
   if (!result.ok) return result;
   refresh();
   return { ok: true };

@@ -31,25 +31,6 @@ export async function addStudentNote(
   return { ok: true };
 }
 
-export async function deleteStudentNote(
-  playerId: string,
-  noteId: string
-): Promise<Result> {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return { ok: false, error: "Sign in first." };
-
-  // RLS restricts deletes to the note's author (or founder).
-  const { error } = await supabase.from("student_notes").delete().eq("id", noteId);
-  if (error) return { ok: false, error: "Couldn’t delete the note." };
-
-  revalidatePath(`/coach/players/${playerId}`);
-  revalidatePath(`/admin/players/${playerId}`);
-  return { ok: true };
-}
-
 export async function submitAssessment(
   playerId: string,
   sessionId: string | null,
