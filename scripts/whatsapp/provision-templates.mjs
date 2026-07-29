@@ -20,13 +20,19 @@
  * After approval (check the Twilio Console → Messaging → Content Template
  * Builder), set the printed SIDs on the Supabase edge function:
  *   supabase secrets set \
- *     TWILIO_WA_COACH_REMINDER_SID=HX... TWILIO_WA_COACH_AFTERCLASS_SID=HX... \
+ *     TWILIO_WA_COACH_AFTERCLASS_SID=HX... \
  *     TWILIO_WA_CLIENT_REMINDER_SID=HX... TWILIO_WA_CLIENT_WAITLIST_SID=HX... \
  *     TWILIO_WA_CLIENT_PAYMENT_SID=HX... TWILIO_WA_CLIENT_BOOKED_SID=HX... \
  *     TWILIO_WA_COACH_PRIVATE_SID=HX... TWILIO_WA_FOUNDER_DIGEST_SID=HX... \
  *     TWILIO_WA_FOUNDER_SIGNUP_SID=HX... TWILIO_WA_CLIENT_APPROVED_SID=HX... \
  *     TWILIO_WA_COACH_COMING_SID=HX... TWILIO_WA_COACH_ARRIVAL_SID=HX... \
  *     TWILIO_WA_CLIENT_ARRIVED_SID=HX... TWILIO_WA_CLIENT_LATE_SID=HX...
+ *
+ * Plus ONE template this script cannot create: the generic
+ * TWILIO_WA_TEMPLATE_SID (two variables — {{1}} name, {{2}} message) used for
+ * any notification with no dedicated template when the user is outside the 24h
+ * service window. Build it by hand in the Content Template Builder; without it
+ * those sends fail with `outside_24h_window_and_no_generic_template`.
  */
 import { readFileSync } from "node:fs";
 
@@ -110,33 +116,15 @@ async function requestApproval(sid, name) {
   }
 }
 
+// NOTE: the old three-button `coach_class_reminder` template
+// (TWILIO_WA_COACH_REMINDER_SID) is deliberately NOT provisioned any more
+// (notification-fix-plan 1.4 / G12). The arrival-flow rework split it into two
+// one-question prompts — `coach_coming_check` at T-60 and `coach_arrival_check`
+// at start — because offering "I've arrived" an hour early trained coaches to
+// tap it before leaving home. The worker reads TWILIO_WA_COACH_COMING_SID; a
+// template registered under the old name is unreferenced and its env var should
+// be removed from the function's secrets.
 const TEMPLATES = [
-  {
-    key: "TWILIO_WA_COACH_REMINDER_SID",
-    approvalName: "coach_class_reminder",
-    def: {
-      friendly_name: "coach_class_reminder",
-      language: "en",
-      // {{3}} folds time + venue into one value ("6:30 pm at La Plazza"):
-      // WhatsApp disallows variables that are adjacent, or at the start/end.
-      variables: { 1: "Augustine", 2: "Beginners Batch", 3: "6:30 pm at La Plazza" },
-      types: {
-        "twilio/quick-reply": {
-          body:
-            "Hi {{1}} 👋 Reminder: your class *{{2}}* starts at {{3}}. Tap a button below to keep us posted — see you on court!",
-          actions: [
-            { title: "I'm coming", id: "coach_confirm" },
-            { title: "I've arrived", id: "coach_arrived" },
-            { title: "Running late", id: "coach_late" },
-          ],
-        },
-        "twilio/text": {
-          body:
-            'Hi {{1}}! Reminder: {{2}} starts at {{3}}. Reply "coming", "arrived", or "running late" to keep us posted.',
-        },
-      },
-    },
-  },
   {
     key: "TWILIO_WA_COACH_AFTERCLASS_SID",
     approvalName: "coach_class_complete",
