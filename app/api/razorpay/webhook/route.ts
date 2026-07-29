@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createClient as createAdminClient } from "@supabase/supabase-js";
+import { createAdminClient, hasServiceRoleKey } from "@/lib/supabase/admin";
 import { verifyWebhookSignature } from "@/lib/razorpay";
 
 /**
@@ -7,13 +7,6 @@ import { verifyWebhookSignature } from "@/lib/razorpay";
  * the x-razorpay-event-id header. Uses the service-role client — webhooks have
  * no user session.
  */
-function admin() {
-  return createAdminClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    { auth: { persistSession: false } }
-  );
-}
 
 // Razorpay subscription status → our subscription_status enum.
 const STATUS_MAP: Record<string, string> = {
@@ -48,7 +41,9 @@ type RzpPayment = {
 
 export async function POST(request: Request) {
   const secret = process.env.RAZORPAY_WEBHOOK_SECRET;
-  if (!secret || secret.startsWith("whsec_xxx")) {
+  if (!secret || secret.startsWith("whsec_xxx") || !hasServiceRoleKey()) {
+    // 503 so Razorpay retries the delivery once the key is in place; a 200 here
+    // would drop the event permanently.
     return NextResponse.json({ error: "billing_not_configured" }, { status: 503 });
   }
 
@@ -68,13 +63,13 @@ export async function POST(request: Request) {
     };
   };
 
-  const db = admin();
+  const db = createAdminClient();
 
   // Idempotency first: unique insert; on conflict return 200 and stop.
   const { error: dupe } = await db.from("webhook_events").insert({
     event_id: eventId,
     type: event.event,
-    payload: event as unknown as Record<string, unknown>,
+    payload: event,
   });
   if (dupe) return NextResponse.json({ received: true, duplicate: true });
 

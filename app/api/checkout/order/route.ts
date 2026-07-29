@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient, hasServiceRoleKey } from "@/lib/supabase/admin";
 import { getRazorpay } from "@/lib/razorpay";
 
 /**
@@ -10,17 +10,11 @@ import { getRazorpay } from "@/lib/razorpay";
  * happens in the webhook on payment.captured, keyed off our orders table.
  */
 
-function admin() {
-  return createAdminClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.SUPABASE_SERVICE_ROLE_KEY ?? process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    { auth: { persistSession: false } }
-  );
-}
-
 export async function POST(request: Request) {
   const razorpay = getRazorpay();
-  if (!razorpay) {
+  // The intro-promo check and the orders insert both need service-role. Bail
+  // before taking money rather than creating a Razorpay order we can't record.
+  if (!razorpay || !hasServiceRoleKey()) {
     return NextResponse.json({ error: "billing_not_configured" }, { status: 503 });
   }
 
@@ -67,7 +61,7 @@ export async function POST(request: Request) {
     }
   }
 
-  const db = admin();
+  const db = createAdminClient();
 
   // Intro promo: once per child, ever.
   if (product.kind === "private_intro") {
