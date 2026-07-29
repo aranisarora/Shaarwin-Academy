@@ -1,18 +1,23 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import { requireUser } from "@/lib/auth";
 import { effectiveCoachId } from "@/lib/coach-preview";
 import { CoachShell } from "@/components/app/CoachShell";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { PageSkeleton } from "@/components/ui/Skeleton";
 import { CoachPlayerList } from "@/components/app/CoachPlayerList";
 import { getMasteryMap } from "@/lib/mastery";
 
 export const metadata: Metadata = { title: "Players" };
 
-export default async function CoachPlayersPage() {
+/** Streamed under the shell — the roll-up needs auth, the chrome does not. */
+async function PlayerList() {
   const { supabase, user } = await requireUser("/coach/players");
   const coachId = await effectiveCoachId(user.id);
 
   // Players the coach actually coaches — via bookings on own sessions (RLS-safe).
+  // Nothing here can overlap: the mastery lookup below needs the player ids this
+  // query returns.
   const { data: rows } = await supabase
     .from("bookings")
     .select("player_id,status,players(full_name),class_sessions!inner(coach_id)")
@@ -44,17 +49,23 @@ export default async function CoachPlayersPage() {
     .map((p) => ({ ...p, mastery: masteryMap.get(p.id) ?? 0 }))
     .sort((a, b) => b.sessions - a.sessions);
 
+  return players.length === 0 ? (
+    <EmptyState
+      image="/images/empty-ivory.jpg"
+      copy="Your players will appear here once sessions are booked."
+    />
+  ) : (
+    <CoachPlayerList players={players} />
+  );
+}
+
+export default function CoachPlayersPage() {
   return (
     <CoachShell title="Players">
       <div className="mx-auto max-w-2xl">
-        {players.length === 0 ? (
-          <EmptyState
-            image="/images/empty-ivory.jpg"
-            copy="Your players will appear here once sessions are booked."
-          />
-        ) : (
-          <CoachPlayerList players={players} />
-        )}
+        <Suspense fallback={<PageSkeleton />}>
+          <PlayerList />
+        </Suspense>
       </div>
     </CoachShell>
   );

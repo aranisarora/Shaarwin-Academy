@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import Link from "next/link";
 import { requireUser } from "@/lib/auth";
 import { effectiveCoachId } from "@/lib/coach-preview";
@@ -8,11 +9,13 @@ import { AvailabilityEditor } from "@/components/app/AvailabilityEditor";
 import { WhatsAppAssistantCard } from "@/components/app/WhatsAppAssistantCard";
 import { InstallAppCard } from "@/components/app/InstallAppCard";
 import { SignOutButton } from "@/components/app/SignOutButton";
+import { PageSkeleton } from "@/components/ui/Skeleton";
 import { BENGALURU } from "@/lib/coverage";
 
 export const metadata: Metadata = { title: "More" };
 
-export default async function CoachMorePage() {
+/** Profile and availability — streamed, so the shell and its links paint first. */
+async function Settings() {
   const { supabase, user, profile } = await requireUser("/coach/more");
   const coachId = await effectiveCoachId(user.id);
   const [{ data: coach }, { data: windows }, { data: timeOff }] =
@@ -37,16 +40,28 @@ export default async function CoachMorePage() {
     ]);
 
   return (
+    <>
+      <CoachProfileEditor
+        fullName={profile.full_name}
+        bio={coach?.bio ?? ""}
+        baseLat={coach?.base_lat ?? BENGALURU.lat}
+        baseLng={coach?.base_lng ?? BENGALURU.lng}
+        baseAddress={coach?.base_address ?? ""}
+      />
+      <AvailabilityEditor windows={windows ?? []} timeOff={timeOff ?? []} />
+    </>
+  );
+}
+
+export default function CoachMorePage() {
+  return (
     <CoachShell title="More" actions={<SignOutButton />}>
       <div className="mx-auto max-w-2xl space-y-8">
-        <CoachProfileEditor
-          fullName={profile.full_name}
-          bio={coach?.bio ?? ""}
-          baseLat={coach?.base_lat ?? BENGALURU.lat}
-          baseLng={coach?.base_lng ?? BENGALURU.lng}
-          baseAddress={coach?.base_address ?? ""}
-        />
-        <AvailabilityEditor windows={windows ?? []} timeOff={timeOff ?? []} />
+        <Suspense fallback={<PageSkeleton />}>
+          <Settings />
+        </Suspense>
+        {/* Everything below needs no data, so it stays outside the boundary and
+            lands in the first flush. */}
         <WhatsAppAssistantCard />
         <Link
           href="/coach/skills"

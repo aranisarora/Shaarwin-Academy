@@ -1,11 +1,14 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import { requireUser } from "@/lib/auth";
 import { CoachShell } from "@/components/app/CoachShell";
 import { SkillsManager } from "@/components/app/SkillsManager";
+import { PageSkeleton } from "@/components/ui/Skeleton";
 
 export const metadata: Metadata = { title: "Skills" };
 
-export default async function CoachSkillsPage() {
+/** Streamed under the shell — the manager needs auth, the chrome does not. */
+async function Manager() {
   const { supabase } = await requireUser("/coach/skills");
 
   const [{ data: categories }, { data: skills }] = await Promise.all([
@@ -22,16 +25,24 @@ export default async function CoachSkillsPage() {
   ]);
 
   return (
+    <SkillsManager
+      role="coach"
+      categories={categories ?? []}
+      skills={skills ?? []}
+    />
+  );
+}
+
+export default function CoachSkillsPage() {
+  return (
     <CoachShell title="Skills">
       <div className="mx-auto max-w-3xl">
         <p className="mb-4 text-sm text-fg-2">
           Add the skills you assess players on. Categories are set by the founder.
         </p>
-        <SkillsManager
-          role="coach"
-          categories={categories ?? []}
-          skills={skills ?? []}
-        />
+        <Suspense fallback={<PageSkeleton />}>
+          <Manager />
+        </Suspense>
       </div>
     </CoachShell>
   );

@@ -1,9 +1,11 @@
 import type { Metadata } from "next";
+import { cache, Suspense } from "react";
 import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import { effectiveCoachId } from "@/lib/coach-preview";
 import { CoachShell } from "@/components/app/CoachShell";
 import { Badge } from "@/components/ui/Badge";
+import { PageSkeleton, Skeleton } from "@/components/ui/Skeleton";
 import { SessionRoster } from "@/components/app/SessionRoster";
 import { SessionArrival } from "@/components/app/SessionArrival";
 import { AddressDisplay } from "@/components/app/AddressDisplay";
@@ -12,24 +14,47 @@ import { formatClock, formatDayLong, nowMs } from "@/lib/academy-time";
 
 export const metadata: Metadata = { title: "Session" };
 
-export default async function CoachSessionPage({
-  params,
-}: {
-  params: Promise<{ id: string }>;
-}) {
-  const { id } = await params;
+/**
+ * The session and its roster. Wrapped in React `cache` so the header title and
+ * the body below it — two children of the same page, each streamed behind its
+ * own boundary — share one pair of queries instead of issuing two.
+ *
+ * The roster needs only the session id, which is known before the session row
+ * comes back, so the two overlap rather than running back to back.
+ */
+const loadSession = cache(async (id: string) => {
   const { supabase, user } = await requireUser(`/coach/session/${id}`);
   const coachId = await effectiveCoachId(user.id);
 
-  const { data: session } = await supabase
-    .from("class_sessions")
-    .select(
-      "id,starts_at,ends_at,coach_id,coach_notes,coach_arrived_at,coach_confirmed_at,classes!inner(title,skill_level,class_type,is_school,venues(name,address,postcode,lat,lng,address_details),private_class_details(address,postcode,lat,lng,access_notes,has_table,address_details))"
-    )
-    .eq("id", id)
-    .maybeSingle();
+  const [{ data: session }, { data: roster }] = await Promise.all([
+    supabase
+      .from("class_sessions")
+      .select(
+        "id,starts_at,ends_at,coach_id,coach_notes,coach_arrived_at,coach_confirmed_at,classes!inner(title,skill_level,class_type,is_school,venues(name,address,postcode,lat,lng,address_details),private_class_details(address,postcode,lat,lng,access_notes,has_table,address_details))"
+      )
+      .eq("id", id)
+      .maybeSingle(),
+    supabase
+      .from("bookings")
+      .select("id,status,coach_note,players(full_name,date_of_birth,skill_level)")
+      .eq("session_id", id)
+      .in("status", ["confirmed", "attended", "no_show"]),
+  ]);
 
   if (!session || session.coach_id !== coachId) notFound();
+
+  return { session, roster: roster ?? [] };
+});
+
+async function SessionTitle({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  const { session } = await loadSession(id);
+  return <>{session.classes.title}</>;
+}
+
+async function SessionBody({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params;
+  const { session, roster } = await loadSession(id);
 
   const cls = session.classes;
   const priv = cls.private_class_details;
@@ -50,13 +75,7 @@ export default async function CoachSessionPage({
         })
       : null;
 
-  const { data: roster } = await supabase
-    .from("bookings")
-    .select("id,status,coach_note,players(full_name,date_of_birth,skill_level)")
-    .eq("session_id", id)
-    .in("status", ["confirmed", "attended", "no_show"]);
-
-  const rows = (roster ?? []).map((b) => {
+  const rows = roster.map((b) => {
     const player = b.players;
     const junior =
       player.date_of_birth !== null &&
@@ -75,52 +94,70 @@ export default async function CoachSessionPage({
   const when = `${formatDayLong(session.starts_at)}, ${formatClock(session.starts_at)} – ${formatClock(session.ends_at)}`;
 
   return (
-    <CoachShell title={cls.title}>
-      <div className="mx-auto max-w-2xl space-y-6">
-        <div>
-          <p className="tnum font-display text-3xl">{when}</p>
-          {cls.venues && (
-            <p className="mt-1 font-medium">{cls.venues.name}</p>
-          )}
-          {address ? (
-            <AddressDisplay address={address} audience="staff" className="mt-1" />
-          ) : (
-            <p className="mt-1 text-fg-2">Location TBC</p>
-          )}
-          <div className="mt-3 flex gap-2">
-            <Badge tone={cls.class_type === "private" ? "ember" : "neutral"}>
-              {cls.class_type}
-            </Badge>
-            <Badge>{cls.skill_level}</Badge>
-          </div>
-          {priv && (
-            <div className="mt-3 rounded-[12px] border border-line bg-surface-2 p-4 text-sm">
-              <p>
-                <span className="label">Table:</span>{" "}
-                {priv.has_table ? "at the address" : "none — check with client"}
-              </p>
-            </div>
-          )}
+    <>
+      <div>
+        <p className="tnum font-display text-3xl">{when}</p>
+        {cls.venues && <p className="mt-1 font-medium">{cls.venues.name}</p>}
+        {address ? (
+          <AddressDisplay address={address} audience="staff" className="mt-1" />
+        ) : (
+          <p className="mt-1 text-fg-2">Location TBC</p>
+        )}
+        <div className="mt-3 flex gap-2">
+          <Badge tone={cls.class_type === "private" ? "ember" : "neutral"}>
+            {cls.class_type}
+          </Badge>
+          <Badge>{cls.skill_level}</Badge>
         </div>
+        {priv && (
+          <div className="mt-3 rounded-[12px] border border-line bg-surface-2 p-4 text-sm">
+            <p>
+              <span className="label">Table:</span>{" "}
+              {priv.has_table ? "at the address" : "none — check with client"}
+            </p>
+          </div>
+        )}
+      </div>
 
-        <SessionArrival
-          sessionId={session.id}
-          startsAt={session.starts_at}
-          endsAt={session.ends_at}
-          coachArrivedAt={session.coach_arrived_at}
-          coachConfirmedAt={session.coach_confirmed_at}
-          venueLat={cls.venues?.lat ?? priv?.lat ?? null}
-          venueLng={cls.venues?.lng ?? priv?.lng ?? null}
-          venueName={cls.venues?.name ?? null}
-        />
+      <SessionArrival
+        sessionId={session.id}
+        startsAt={session.starts_at}
+        endsAt={session.ends_at}
+        coachArrivedAt={session.coach_arrived_at}
+        coachConfirmedAt={session.coach_confirmed_at}
+        venueLat={cls.venues?.lat ?? priv?.lat ?? null}
+        venueLng={cls.venues?.lng ?? priv?.lng ?? null}
+        venueName={cls.venues?.name ?? null}
+      />
 
-        <SessionRoster
-          sessionId={session.id}
-          startsAt={session.starts_at}
-          roster={rows}
-          coachNotes={session.coach_notes}
-          isSchool={cls.is_school}
-        />
+      <SessionRoster
+        sessionId={session.id}
+        startsAt={session.starts_at}
+        roster={rows}
+        coachNotes={session.coach_notes}
+        isSchool={cls.is_school}
+      />
+    </>
+  );
+}
+
+export default function CoachSessionPage({
+  params,
+}: {
+  params: Promise<{ id: string }>;
+}) {
+  return (
+    <CoachShell
+      title={
+        <Suspense fallback={<Skeleton className="h-6 w-32" />}>
+          <SessionTitle params={params} />
+        </Suspense>
+      }
+    >
+      <div className="mx-auto max-w-2xl space-y-6">
+        <Suspense fallback={<PageSkeleton />}>
+          <SessionBody params={params} />
+        </Suspense>
       </div>
     </CoachShell>
   );

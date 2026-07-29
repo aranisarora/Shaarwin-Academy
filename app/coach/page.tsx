@@ -1,9 +1,11 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import { requireUser } from "@/lib/auth";
 import { effectiveCoachId } from "@/lib/coach-preview";
 import { getCoachSessions, type CoachSession } from "@/lib/coach-data";
 import { CoachShell } from "@/components/app/CoachShell";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { PageSkeleton } from "@/components/ui/Skeleton";
 import { AutoOpenSession } from "@/components/app/AutoOpenSession";
 import { CoachActionSheet, type CoachAction } from "@/components/app/CoachActionSheet";
 import {
@@ -83,15 +85,34 @@ function pickCoachAction(
   return confirm ? toAction(confirm, "confirm") : null;
 }
 
-export default async function CoachSchedulePage() {
+/** The whole schedule, streamed so the shell paints before auth resolves. */
+async function Schedule() {
   const { supabase, user } = await requireUser("/coach");
   const coachId = await effectiveCoachId(user.id);
   const from = new Date();
   from.setHours(0, 0, 0, 0);
   const to = new Date(from.getTime() + 28 * 86400000);
-  const sessions = await getCoachSessions(supabase, coachId, from, to);
 
   const now = nowMs();
+
+  // The takeover-sheet query needs nothing from the schedule query — only
+  // coachId and the clock, both known here — so the two overlap instead of
+  // running back to back. Supabase builders are lazy; `Promise.all` awaiting
+  // them is what dispatches both.
+  const [sessions, { data: actRows }] = await Promise.all([
+    getCoachSessions(supabase, coachId, from, to),
+    supabase
+      .from("class_sessions")
+      .select(
+        "id,starts_at,ends_at,coach_confirmed_at,coach_arrived_at,classes!inner(title,venues(name,lat,lng),private_class_details(address,lat,lng))"
+      )
+      .eq("coach_id", coachId)
+      .eq("status", "scheduled")
+      .gte("starts_at", new Date(now - 3 * 3600000).toISOString())
+      .lte("starts_at", new Date(now + 12 * 3600000).toISOString())
+      .order("starts_at", { ascending: true }),
+  ]);
+
   const todayKey = dayLabel(new Date().toISOString());
   const tomorrowKey = dayLabel(new Date(now + 86400000).toISOString());
 
@@ -164,21 +185,10 @@ export default async function CoachSchedulePage() {
   // The single next action to surface as a takeover sheet: an "arrived?" for a
   // session already in the window, else a "coming?" for one starting within 12h
   // that the coach has neither confirmed nor arrived. Most-urgent first.
-  const { data: actRows } = await supabase
-    .from("class_sessions")
-    .select(
-      "id,starts_at,ends_at,coach_confirmed_at,coach_arrived_at,classes!inner(title,venues(name,lat,lng),private_class_details(address,lat,lng))"
-    )
-    .eq("coach_id", coachId)
-    .eq("status", "scheduled")
-    .gte("starts_at", new Date(now - 3 * 3600000).toISOString())
-    .lte("starts_at", new Date(now + 12 * 3600000).toISOString())
-    .order("starts_at", { ascending: true });
-
   const coachAction = pickCoachAction(actRows ?? [], now, todayKey, tomorrowKey);
 
   return (
-    <CoachShell title="Schedule">
+    <>
       {liveSession && <AutoOpenSession sessionId={liveSession.id} />}
       <CoachActionSheet action={coachAction} />
       {sessions.length === 0 ? (
@@ -191,6 +201,16 @@ export default async function CoachSchedulePage() {
       ) : (
         <CoachScheduleDays days={days} />
       )}
+    </>
+  );
+}
+
+export default function CoachSchedulePage() {
+  return (
+    <CoachShell title="Schedule">
+      <Suspense fallback={<PageSkeleton />}>
+        <Schedule />
+      </Suspense>
     </CoachShell>
   );
 }
