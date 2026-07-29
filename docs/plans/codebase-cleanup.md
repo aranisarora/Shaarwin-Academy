@@ -1,7 +1,7 @@
 # Codebase cleanup plan — dead code, redundant fallbacks, duplication
 
-**Status:** Phases 1–3 SHIPPED on branch `chore/cleanup-and-perf` (2026-07-29).
-Phase 4 and 5 remain. Written 2026-07-29.
+**Status:** COMPLETE — Phases 1–5 shipped on branch `chore/cleanup-and-perf`
+(2026-07-29), except the `ui/DateInput` noted below. Written 2026-07-29.
 **Audience:** implementing model. Every claim was verified on 2026-07-29 by static read,
 `grep`, and a `knip@6.29` run unless marked **Verify**. Absorbs and supersedes
 `docs/reuse-audit.md` (now deleted); original evidence line numbers preserved.
@@ -39,7 +39,40 @@ local Supabase must be up) and `npm run build`.
   was added to `lib/academy-time.ts` for date-of-birth. Never pass a bare `YYYY-MM-DD`
   to `new Date()`.
 
+**Corrections found while implementing Phases 4–5:**
+
+- **4.1's long tail was already done.** The local formatter *implementations*
+  had been collapsed in an earlier pass; what survived was a residue of 12
+  aliases (`const fmtSlot = formatSessionDate`) that hid the canonical name at
+  the call site. Those were inlined. `lib/whatsapp/agent.ts` was the last file
+  constructing its own `Intl.DateTimeFormat` — that shape is now
+  `formatFullDateTime` in `academy-time`, which is what let the Phase 5 lint
+  guard land with zero violations.
+- **The Bengaluru coordinate was in nine places, not three** (see below).
+- **4.3 needed two props on `ConfirmAction`, not zero.** The four call sites
+  differ in trigger chrome, not in behaviour: `variant="subtle"` (underlined
+  text trigger) and `fullWidth={false}` (trigger inline in a button row) cover
+  the real variation. Two deliberate UX deltas the owner should eyeball:
+  ProfileEditor's player rows now show the standard prompt panel instead of a
+  dense in-row confirm, and `ManageBillingButton` now actually asks a question
+  before cancelling a membership — it previously showed two bare buttons.
+- **Phase 5's `ui/DateInput` was NOT done.** `ui/Switch`, `ui/Checkbox` and
+  `ui/Radio` shipped. `DateInput` is a design job rather than a dedup — the
+  point is to stop `<input type="date">` following the OS locale, mirroring
+  `TimeSelect12h` — so it wants its own change rather than being smuggled into
+  a cleanup commit. Six call sites are listed in Phase 5 below.
+- **The Phase 5 lint guard also bans `toLocale*String`**, not just
+  `new Intl.DateTimeFormat` — that call is what caused the Phase 3.3 bug. The
+  rule was verified to actually fire on both shapes (and to leave
+  `Intl.NumberFormat` alone) rather than being assumed to work.
+
 **New finding for Phase 4 — the Bengaluru coordinate is triplicated.**
+*(Resolved: it was in nine places. `BENGALURU` is now exported from
+`lib/coverage.ts`, with `BENGALURU_PROXIMITY` deriving the `"lng,lat"` string
+Mapbox wants. Beyond the three below, the same centre was inlined as a default
+coach base in `admin/coaches/page`, `coach/more/page`, `CoachManager` and
+`whatsapp/tools/founder-admin`, and as a proximity string in `AddressSearch`
+and `whatsapp/geocode`.)*
 `{ lat: 12.9716, lng: 77.5946 }` (Bengaluru city centre) is declared three times for
 three different jobs: `lib/coverage.ts:6` (origin of the 40 km service-radius check),
 `lib/admin-ops-coaches.ts:10` (default base for a coach with no address),
