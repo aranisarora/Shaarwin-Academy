@@ -27,7 +27,6 @@ export type Profile = {
   default_lat: number | null;
   default_lng: number | null;
   address_details: Partial<StructuredAddress> | null;
-  stripe_customer_id: string | null;
   razorpay_customer_id: string | null;
   notification_prefs: Record<string, boolean>;
   onboarded_at: string | null;
@@ -36,7 +35,13 @@ export type Profile = {
 
 /**
  * Server-side auth guard. Redirects to /login when signed out.
- * Provisions the profile + player rows if the DB trigger hasn't (belt & braces).
+ *
+ * The profile row is provisioned by the `on_auth_user_created` trigger on
+ * auth.users (public.handle_new_user), which inserts the profile and the
+ * client's first player row inside the signup transaction. This function
+ * therefore reads that row and never creates it: a signed-in user without one
+ * means the trigger is missing or failed, which is a bug to surface, not to
+ * paper over with a second provisioning path that can drift from the first.
  *
  * Uses the request-cached `getCurrentUser` so the auth-server round-trip is
  * shared with any other caller in the same render (e.g. shell chrome like
@@ -48,32 +53,17 @@ export async function requireUser(nextPath: string) {
 
   if (!user) redirect(`/login?next=${encodeURIComponent(nextPath)}`);
 
-  let { data: profile } = await supabase
+  const { data: profile } = await supabase
     .from("profiles")
     .select("*")
     .eq("id", user.id)
     .maybeSingle();
 
   if (!profile) {
-    const fullName =
-      (user.user_metadata.full_name as string | undefined) ??
-      user.email?.split("@")[0] ??
-      "Player";
-    await supabase.from("profiles").insert({
-      id: user.id,
-      role: "client",
-      full_name: fullName,
-      email: user.email ?? "",
-    });
-    await supabase.from("players").insert({
-      client_id: user.id,
-      full_name: fullName,
-    });
-    ({ data: profile } = await supabase
-      .from("profiles")
-      .select("*")
-      .eq("id", user.id)
-      .maybeSingle());
+    throw new Error(
+      `No profiles row for signed-in user ${user.id} — check the ` +
+        `on_auth_user_created trigger on auth.users.`
+    );
   }
 
   // Closed membership: a self-signup client who isn't approved yet is held at
