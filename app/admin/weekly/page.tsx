@@ -107,6 +107,20 @@ export default async function AdminWeeklyPage({
     });
   }
 
+  // The private-series booking lookup only needs `series` from the Promise.all
+  // above, so start it here rather than at its use site further down — calling
+  // .then() is what actually dispatches a Supabase builder, letting it overlap
+  // the class-bookings query below instead of costing a second serial round
+  // trip to Tokyo.
+  const seriesIds = ((series ?? []) as unknown as { id: string }[]).map((s) => s.id);
+  const seriesBookingsPromise = seriesIds.length
+    ? supabase
+        .from("bookings")
+        .select("private_series_id,class_sessions(id,starts_at,status)")
+        .in("private_series_id", seriesIds)
+        .then((r) => r.data)
+    : Promise.resolve(null);
+
   // How full each class's next session is — one grouped count over the next
   // session of every class, so the card can show "6 of 10 booked".
   const nextSessionIds = [...nextByClass.values()].map((n) => n.sessionId);
@@ -171,13 +185,9 @@ export default async function AdminWeeklyPage({
   // Each series' next generated session (for the deep-link): sessions link to a
   // series through their booking's private_series_id, so find the earliest
   // scheduled future session across those bookings.
-  const seriesIds = seriesRows.map((s) => s.id);
   const nextBySeriesId = new Map<string, { id: string; starts_at: string }>();
-  if (seriesIds.length) {
-    const { data: seriesBookings } = await supabase
-      .from("bookings")
-      .select("private_series_id,class_sessions(id,starts_at,status)")
-      .in("private_series_id", seriesIds);
+  {
+    const seriesBookings = await seriesBookingsPromise;
     const nowIso = new Date().toISOString();
     for (const b of seriesBookings ?? []) {
       const sid = b.private_series_id as string | null;
