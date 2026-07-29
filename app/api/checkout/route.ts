@@ -44,13 +44,13 @@ export async function POST(request: Request) {
 
   try {
     // total_count = billing cycles before the subscription completes. Razorpay
-    // requires a finite count; 100 monthly cycles (~8 years) is effectively
-    // "until cancelled" for a membership.
+    // requires a finite count; 3 monthly cycles bills the member for one
+    // quarter, after which they re-subscribe (rather than an ~8-year mandate).
     const subscription = await razorpay.post<{ id: string; status: string }>(
       "/subscriptions",
       {
         plan_id: plan.razorpay_plan_id,
-        total_count: 100,
+        total_count: 3,
         quantity: 1,
         customer_notify: 1,
         notes: {
