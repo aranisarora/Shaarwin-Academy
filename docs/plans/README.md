@@ -7,7 +7,11 @@ Active, execution-ready plans live here. Each is written for an implementing mod
 | Plan | Status | What it delivers |
 | --- | --- | --- |
 | [navigation-performance.md](navigation-performance.md) | not started | Instant-feeling navigation in the signed-in app: streaming, router cache, halved auth round trips |
-| [codebase-cleanup.md](codebase-cleanup.md) | not started | Dead code deleted, redundant fallbacks removed, formatting/confirm/phone duplication collapsed |
+| [codebase-cleanup.md](codebase-cleanup.md) | **Phases 1–3 shipped**, 4–5 remain | Dead code deleted, redundant fallbacks removed, formatting/confirm/phone duplication collapsed |
+
+All work lands on the branch `chore/cleanup-and-perf`, not `main`. See the execution log
+at the top of `codebase-cleanup.md` for corrections found while implementing — including
+one row of its Phase 1.2 table that is factually wrong.
 
 ## Execution order
 

@@ -1,9 +1,57 @@
 # Codebase cleanup plan — dead code, redundant fallbacks, duplication
 
-**Status:** not started. Written 2026-07-29.
+**Status:** Phases 1–3 SHIPPED on branch `chore/cleanup-and-perf` (2026-07-29).
+Phase 4 and 5 remain. Written 2026-07-29.
 **Audience:** implementing model. Every claim was verified on 2026-07-29 by static read,
 `grep`, and a `knip@6.29` run unless marked **Verify**. Absorbs and supersedes
 `docs/reuse-audit.md` (now deleted); original evidence line numbers preserved.
+
+## Execution log — read before continuing
+
+Workflow: all plan work lands on the long-lived branch `chore/cleanup-and-perf`, one
+commit per plan item, pushed after each phase. `main` is untouched until the owner has
+verified with `npm run dev` and says to merge. Gate after each phase:
+`npx tsc --noEmit && npm run lint && npm run test`, plus `npm run test:db` (Docker +
+local Supabase must be up) and `npm run build`.
+
+**Corrections to this document, found while implementing:**
+
+- **1.2 is wrong about `requestPrivateClass`.** It is live, not dead:
+  `PrivateWizard.tsx:246` → `requestPrivateSessions` (`app/app/book/private/actions.ts:94`)
+  → `requestPrivateClass` (`:141`). It was kept. Deleting it breaks one-off private
+  booking. Treat every row of that table as a claim to re-verify, not a fact.
+- **1.3's `formatAddress` finding cascaded.** `AddressDisplay` imported it solely to
+  re-export it, so removing the dead re-export left `lib/address-format.ts` with zero
+  importers. The owner chose to delete the whole module. `AddressDisplay` already
+  re-implements the same field order in JSX; if the WhatsApp bot ever needs to *send* an
+  address (it currently only geocodes them in), write it then and factor the shared
+  ordering at that point.
+- **1.5 (knip as a devDependency) was declined** — skipped by owner decision, not missed.
+- **2.1's premise held, but only in production.** `on_auth_user_created` exists and is
+  enabled on live. It was absent locally because `scripts/test-db-reset.mjs` does
+  `drop schema public cascade`, which drops the trigger along with the function it
+  depends on, and `schema.sql` (public-only) restores only the function. Fixed in
+  `2b53674`: the reset script recreates the trigger last, and the `createClient` /
+  `createCoach` scenario factories now upsert over the trigger's row instead of assuming
+  a triggerless DB. `tests/db/provisioning.test.ts` pins it.
+- **3.3 needed a new helper.** `formatWallDay` has the right UTC-parsing technique for
+  bare `date` columns but the wrong shape (weekday, no year), so `formatWallDateFull`
+  was added to `lib/academy-time.ts` for date-of-birth. Never pass a bare `YYYY-MM-DD`
+  to `new Date()`.
+
+**New finding for Phase 4 — the Bengaluru coordinate is triplicated.**
+`{ lat: 12.9716, lng: 77.5946 }` (Bengaluru city centre) is declared three times for
+three different jobs: `lib/coverage.ts:6` (origin of the 40 km service-radius check),
+`lib/admin-ops-coaches.ts:10` (default base for a coach with no address),
+`components/app/VenueManager.tsx:31` (fallback map centre). Collapse to one exported
+const and import it in the other two. Note Phase 1.3 *un-exported* it in `coverage.ts`
+because nothing imported it at the time; this consolidation flips it back to `export`.
+
+**Locale note.** The academy is in Bengaluru: currency is INR (`lib/format.ts`
+`formatPrice`, `en-IN`) and the timezone is `Asia/Kolkata` (`lib/academy-time.ts`
+`ACADEMY_TZ`). The `en-GB` *locale* in the date formatters is only a day-before-month
+ordering convention, which matches Indian usage — it implies nothing about London. Do
+not "fix" it to a US locale, and never render money with `£`.
 
 **Goal:** an optimum codebase — no dead code, no redundant fallbacks, one implementation
 per concern. Not in scope: performance (see `navigation-performance.md`), features.
