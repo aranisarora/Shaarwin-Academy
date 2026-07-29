@@ -1,8 +1,10 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import { requireUser } from "@/lib/auth";
 import { utcToAcademyWall } from "@/lib/academy-time";
 import { makeVenueResolver, withVenueAddress } from "@/lib/venue-display";
 import { AdminShell } from "@/components/app/AdminShell";
+import { PageSkeleton } from "@/components/ui/Skeleton";
 import { AdminWeeklyClasses } from "@/components/app/AdminWeeklyClasses";
 import type {
   ClassRow,
@@ -16,15 +18,15 @@ const ISO_WEEKDAY_CODE = WEEKDAYS.map(([code]) => code); // 0-based: [MO..SU]
 
 export const metadata: Metadata = { title: "Weekly classes" };
 
+type SearchParams = Promise<{ class?: string }>;
+
 // The repeating classes behind the schedule — create, edit, pause and end
 // them here. The Schedule tab shows the sessions they generate.
-export default async function AdminWeeklyPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ class?: string }>;
-}) {
-  const { supabase } = await requireUser("/admin/weekly");
-  const { class: openClassId } = await searchParams;
+async function Weekly({ searchParams }: { searchParams: SearchParams }) {
+  const [{ supabase }, { class: openClassId }] = await Promise.all([
+    requireUser("/admin/weekly"),
+    searchParams,
+  ]);
 
   const [
     { data: classes },
@@ -257,16 +259,28 @@ export default async function AdminWeeklyPage({
   }));
 
   return (
+    <AdminWeeklyClasses
+      classes={classRows}
+      privateSeries={privateSeriesRows}
+      coaches={coachList}
+      venues={withVenueAddress(venues)}
+      clients={clientRows}
+      invites={inviteRows}
+      openClassId={openClassId ?? null}
+    />
+  );
+}
+
+export default function AdminWeeklyPage({
+  searchParams,
+}: {
+  searchParams: SearchParams;
+}) {
+  return (
     <AdminShell title="Weekly classes">
-      <AdminWeeklyClasses
-        classes={classRows}
-        privateSeries={privateSeriesRows}
-        coaches={coachList}
-        venues={withVenueAddress(venues)}
-        clients={clientRows}
-        invites={inviteRows}
-        openClassId={openClassId ?? null}
-      />
+      <Suspense fallback={<PageSkeleton />}>
+        <Weekly searchParams={searchParams} />
+      </Suspense>
     </AdminShell>
   );
 }

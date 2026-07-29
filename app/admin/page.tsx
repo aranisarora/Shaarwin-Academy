@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import Link from "next/link";
 import { requireUser } from "@/lib/auth";
 import {
@@ -10,6 +11,7 @@ import {
 import { AdminShell } from "@/components/app/AdminShell";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
+import { PageSkeleton } from "@/components/ui/Skeleton";
 import { SessionCard } from "@/components/app/ClassCard";
 import { WhatsAppAssistantCard } from "@/components/app/WhatsAppAssistantCard";
 import { fetchWeekSessions } from "@/app/admin/schedule/actions";
@@ -17,7 +19,8 @@ import { formatPrice } from "@/lib/format";
 
 export const metadata: Metadata = { title: "Today" };
 
-export default async function AdminTodayPage() {
+/** The whole dashboard, streamed so the shell paints before auth resolves. */
+async function Today() {
   const { supabase } = await requireUser("/admin");
   const now = new Date();
   const weekAhead = new Date(now.getTime() + 7 * 86400000);
@@ -91,137 +94,147 @@ export default async function AdminTodayPage() {
     (issues.data?.length ?? 0);
 
   return (
+    <>
+      {/* ── Section 1: today's classes — the courtside glance ── */}
+      <section>
+        <h2 className="label mb-3">Today&apos;s classes</h2>
+        {todaySessions.length === 0 ? (
+          <Card>
+            <Card.Content>
+              <p className="text-fg-2">No classes today.</p>
+            </Card.Content>
+          </Card>
+        ) : (
+          <div className="grid gap-2 sm:grid-cols-2">
+            {todaySessions.map((s) => (
+              <SessionCard
+                key={s.id}
+                session={s}
+                href={`/admin/schedule?session=${s.id}`}
+              />
+            ))}
+          </div>
+        )}
+      </section>
+
+      {/* ── Section 2: needs your attention — every row opens the item ── */}
+      <section>
+        <h2 className="label mb-3">Needs your attention</h2>
+        {exceptions === 0 ? (
+          <Card>
+            <Card.Content>
+              <p className="text-fg-2">
+                Nothing needs you — reminders, bookings and reschedules are handled
+                automatically.
+              </p>
+            </Card.Content>
+          </Card>
+        ) : (
+          <div className="space-y-3">
+            {(unassigned.data ?? []).map((s) => (
+              <Link
+                key={s.id}
+                href={`/admin/schedule?session=${s.id}&date=${utcToAcademyWall(new Date(s.starts_at)).date}`}
+                className="flex items-center justify-between rounded-[12px] border border-err bg-surface-2 px-4 py-3 hover:bg-surface"
+              >
+                <div>
+                  <p className="font-medium">
+                    ⚠ Unassigned —{" "}
+                    {(s.classes as unknown as { title: string } | null)?.title}
+                  </p>
+                  <p className="tnum text-sm text-fg-2">
+                    {formatSessionDate(s.starts_at)}
+                  </p>
+                </div>
+                <Badge tone="err">Assign</Badge>
+              </Link>
+            ))}
+            {(timeOff.data ?? []).map((t) => (
+              <Link
+                key={t.id}
+                href={`/admin/coaches?coach=${t.coach_id}`}
+                className="flex items-center justify-between rounded-[12px] border border-line bg-surface-2 px-4 py-3 hover:bg-surface"
+              >
+                <div>
+                  <p className="font-medium">
+                    Time off —{" "}
+                    {(t.profiles as unknown as { full_name: string } | null)?.full_name}
+                  </p>
+                  <p className="tnum text-sm text-fg-2">
+                    {formatDateFull(t.starts_at)} – {formatDateFull(t.ends_at)}
+                    {t.reason ? ` · ${t.reason}` : ""}
+                  </p>
+                </div>
+                <Badge>Review</Badge>
+              </Link>
+            ))}
+            {(pastDue.data ?? []).map((s) => (
+              <Link
+                key={s.id}
+                href={`/admin/players?view=clients&client=${s.client_id}`}
+                className="flex items-center justify-between rounded-[12px] border border-err bg-surface-2 px-4 py-3 hover:bg-surface"
+              >
+                <p className="font-medium">
+                  Payment past due —{" "}
+                  {(s.profiles as unknown as { full_name: string } | null)?.full_name}
+                </p>
+                <Badge tone="err">Payment overdue</Badge>
+              </Link>
+            ))}
+            {(issues.data ?? []).map((n) => (
+              <Link
+                key={n.id}
+                href={(n.data as { url?: string })?.url ?? "/admin/schedule"}
+                className="flex items-center justify-between rounded-[12px] border border-line bg-surface-2 px-4 py-3 hover:bg-surface"
+              >
+                <div>
+                  <p className="font-medium">{n.title}</p>
+                  <p className="text-sm text-fg-2">{n.body}</p>
+                </div>
+                <Badge>Open</Badge>
+              </Link>
+            ))}
+          </div>
+        )}
+      </section>
+
+      {/* ── Section 3: the numbers, demoted to one glanceable strip ── */}
+      <Link
+        href="/admin/billing"
+        className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-[12px] border border-line bg-surface-2 px-4 py-3 text-sm text-fg-2 hover:bg-surface"
+      >
+        <span>
+          <span className="tnum font-medium text-fg">{subs.count ?? 0}</span> members
+        </span>
+        <span aria-hidden>·</span>
+        <span>
+          <span className="tnum font-medium text-fg">
+            {formatPrice(revenue)}
+          </span>{" "}
+          this month
+        </span>
+        <span aria-hidden>·</span>
+        <span>
+          <span className="tnum font-medium text-fg">{sessionsWeek.count ?? 0}</span>{" "}
+          classes this week
+        </span>
+        <span aria-hidden className="ml-auto text-fg-2">
+          →
+        </span>
+      </Link>
+
+      <WhatsAppAssistantCard />
+    </>
+  );
+}
+
+export default function AdminTodayPage() {
+  return (
     <AdminShell title="Today">
       <div className="mx-auto max-w-4xl space-y-6 lg:space-y-8">
-        {/* ── Section 1: today's classes — the courtside glance ── */}
-        <section>
-          <h2 className="label mb-3">Today&apos;s classes</h2>
-          {todaySessions.length === 0 ? (
-            <Card>
-              <Card.Content>
-                <p className="text-fg-2">No classes today.</p>
-              </Card.Content>
-            </Card>
-          ) : (
-            <div className="grid gap-2 sm:grid-cols-2">
-              {todaySessions.map((s) => (
-                <SessionCard
-                  key={s.id}
-                  session={s}
-                  href={`/admin/schedule?session=${s.id}`}
-                />
-              ))}
-            </div>
-          )}
-        </section>
-
-        {/* ── Section 2: needs your attention — every row opens the item ── */}
-        <section>
-          <h2 className="label mb-3">Needs your attention</h2>
-          {exceptions === 0 ? (
-            <Card>
-              <Card.Content>
-                <p className="text-fg-2">
-                  Nothing needs you — reminders, bookings and reschedules are handled
-                  automatically.
-                </p>
-              </Card.Content>
-            </Card>
-          ) : (
-            <div className="space-y-3">
-              {(unassigned.data ?? []).map((s) => (
-                <Link
-                  key={s.id}
-                  href={`/admin/schedule?session=${s.id}&date=${utcToAcademyWall(new Date(s.starts_at)).date}`}
-                  className="flex items-center justify-between rounded-[12px] border border-err bg-surface-2 px-4 py-3 hover:bg-surface"
-                >
-                  <div>
-                    <p className="font-medium">
-                      ⚠ Unassigned —{" "}
-                      {(s.classes as unknown as { title: string } | null)?.title}
-                    </p>
-                    <p className="tnum text-sm text-fg-2">
-                      {formatSessionDate(s.starts_at)}
-                    </p>
-                  </div>
-                  <Badge tone="err">Assign</Badge>
-                </Link>
-              ))}
-              {(timeOff.data ?? []).map((t) => (
-                <Link
-                  key={t.id}
-                  href={`/admin/coaches?coach=${t.coach_id}`}
-                  className="flex items-center justify-between rounded-[12px] border border-line bg-surface-2 px-4 py-3 hover:bg-surface"
-                >
-                  <div>
-                    <p className="font-medium">
-                      Time off —{" "}
-                      {(t.profiles as unknown as { full_name: string } | null)?.full_name}
-                    </p>
-                    <p className="tnum text-sm text-fg-2">
-                      {formatDateFull(t.starts_at)} – {formatDateFull(t.ends_at)}
-                      {t.reason ? ` · ${t.reason}` : ""}
-                    </p>
-                  </div>
-                  <Badge>Review</Badge>
-                </Link>
-              ))}
-              {(pastDue.data ?? []).map((s) => (
-                <Link
-                  key={s.id}
-                  href={`/admin/players?view=clients&client=${s.client_id}`}
-                  className="flex items-center justify-between rounded-[12px] border border-err bg-surface-2 px-4 py-3 hover:bg-surface"
-                >
-                  <p className="font-medium">
-                    Payment past due —{" "}
-                    {(s.profiles as unknown as { full_name: string } | null)?.full_name}
-                  </p>
-                  <Badge tone="err">Payment overdue</Badge>
-                </Link>
-              ))}
-              {(issues.data ?? []).map((n) => (
-                <Link
-                  key={n.id}
-                  href={(n.data as { url?: string })?.url ?? "/admin/schedule"}
-                  className="flex items-center justify-between rounded-[12px] border border-line bg-surface-2 px-4 py-3 hover:bg-surface"
-                >
-                  <div>
-                    <p className="font-medium">{n.title}</p>
-                    <p className="text-sm text-fg-2">{n.body}</p>
-                  </div>
-                  <Badge>Open</Badge>
-                </Link>
-              ))}
-            </div>
-          )}
-        </section>
-
-        {/* ── Section 3: the numbers, demoted to one glanceable strip ── */}
-        <Link
-          href="/admin/billing"
-          className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-[12px] border border-line bg-surface-2 px-4 py-3 text-sm text-fg-2 hover:bg-surface"
-        >
-          <span>
-            <span className="tnum font-medium text-fg">{subs.count ?? 0}</span> members
-          </span>
-          <span aria-hidden>·</span>
-          <span>
-            <span className="tnum font-medium text-fg">
-              {formatPrice(revenue)}
-            </span>{" "}
-            this month
-          </span>
-          <span aria-hidden>·</span>
-          <span>
-            <span className="tnum font-medium text-fg">{sessionsWeek.count ?? 0}</span>{" "}
-            classes this week
-          </span>
-          <span aria-hidden className="ml-auto text-fg-2">
-            →
-          </span>
-        </Link>
-
-        <WhatsAppAssistantCard />
+        <Suspense fallback={<PageSkeleton />}>
+          <Today />
+        </Suspense>
       </div>
     </AdminShell>
   );

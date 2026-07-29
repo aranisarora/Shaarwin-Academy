@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import { requireUser } from "@/lib/auth";
 import {
   academyToday,
@@ -9,6 +10,7 @@ import {
 } from "@/lib/academy-time";
 import { AdminShell } from "@/components/app/AdminShell";
 import { AdminCalendarNav } from "@/components/app/AdminCalendarNav";
+import { PageSkeleton } from "@/components/ui/Skeleton";
 import type {
   ClientOption,
   InviteOption,
@@ -19,13 +21,13 @@ import { makeVenueResolver, withVenueAddress } from "@/lib/venue-display";
 
 export const metadata: Metadata = { title: "Schedule" };
 
-export default async function AdminCalendarPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ date?: string; week?: string; session?: string }>;
-}) {
-  const { supabase } = await requireUser("/admin/schedule");
-  const { date, week, session: openSessionId } = await searchParams;
+type SearchParams = Promise<{ date?: string; week?: string; session?: string }>;
+
+async function Schedule({ searchParams }: { searchParams: SearchParams }) {
+  const [{ supabase }, { date, week, session: openSessionId }] = await Promise.all([
+    requireUser("/admin/schedule"),
+    searchParams,
+  ]);
 
   // The schedule shows a 7-day window starting on an anchor date. Prefer an
   // explicit ?date=, fall back to a legacy ?week= offset (old links / stored
@@ -86,7 +88,9 @@ export default async function AdminCalendarPage({
   ]);
 
   // Round 2: nextSessions and privProfiles are independent of each other but
-  // both depend on round-1 data — run them in parallel.
+  // both genuinely depend on round-1 data — nextSessions on the class ids,
+  // privProfiles on the client ids embedded in the sessions — so this second
+  // trip can't be folded into the first. They already run in parallel.
   const classIds = (classes ?? []).map((c) => c.id);
 
   const privateClientIds = [
@@ -216,19 +220,31 @@ export default async function AdminCalendarPage({
   const nextByClassObj = Object.fromEntries(nextByClass);
 
   return (
+    <AdminCalendarNav
+      initialAnchor={anchor}
+      today={today}
+      initialSessions={rows}
+      initialRangeLabel={rangeLabel}
+      nextByClass={nextByClassObj}
+      coaches={coachList}
+      venues={withVenueAddress(venues)}
+      clients={clientRows}
+      invites={inviteRows}
+      openSessionId={openSessionId ?? null}
+    />
+  );
+}
+
+export default function AdminCalendarPage({
+  searchParams,
+}: {
+  searchParams: SearchParams;
+}) {
+  return (
     <AdminShell title="Schedule">
-      <AdminCalendarNav
-        initialAnchor={anchor}
-        today={today}
-        initialSessions={rows}
-        initialRangeLabel={rangeLabel}
-        nextByClass={nextByClassObj}
-        coaches={coachList}
-        venues={withVenueAddress(venues)}
-        clients={clientRows}
-        invites={inviteRows}
-        openSessionId={openSessionId ?? null}
-      />
+      <Suspense fallback={<PageSkeleton />}>
+        <Schedule searchParams={searchParams} />
+      </Suspense>
     </AdminShell>
   );
 }

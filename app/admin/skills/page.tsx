@@ -1,11 +1,14 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import { requireUser } from "@/lib/auth";
 import { AdminShell } from "@/components/app/AdminShell";
 import { SkillsManager } from "@/components/app/SkillsManager";
+import { PageSkeleton } from "@/components/ui/Skeleton";
 
 export const metadata: Metadata = { title: "Skills" };
 
-export default async function AdminSkillsPage() {
+/** Streamed under the shell — the manager needs auth, the chrome does not. */
+async function Manager() {
   const { supabase } = await requireUser("/admin/skills");
 
   const [{ data: categories }, { data: skills }] = await Promise.all([
@@ -22,13 +25,21 @@ export default async function AdminSkillsPage() {
   ]);
 
   return (
+    <SkillsManager
+      role="founder"
+      categories={categories ?? []}
+      skills={skills ?? []}
+    />
+  );
+}
+
+export default function AdminSkillsPage() {
+  return (
     <AdminShell title="Skills">
       <div className="mx-auto max-w-3xl">
-        <SkillsManager
-          role="founder"
-          categories={categories ?? []}
-          skills={skills ?? []}
-        />
+        <Suspense fallback={<PageSkeleton />}>
+          <Manager />
+        </Suspense>
       </div>
     </AdminShell>
   );

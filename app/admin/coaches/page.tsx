@@ -1,8 +1,10 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import { requireUser } from "@/lib/auth";
 import { formatDateFull } from "@/lib/academy-time";
 import { AdminShell } from "@/components/app/AdminShell";
 import { DeepLinkFocus } from "@/components/app/DeepLinkFocus";
+import { PageSkeleton } from "@/components/ui/Skeleton";
 import { TimeOffDecision } from "@/components/app/TimeOffDecision";
 import {
   CoachManager,
@@ -13,14 +15,14 @@ import { BENGALURU } from "@/lib/coverage";
 
 export const metadata: Metadata = { title: "Coaches" };
 
-export default async function AdminCoachesPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ coach?: string }>;
-}) {
-  const { supabase } = await requireUser("/admin/coaches");
+type SearchParams = Promise<{ coach?: string }>;
+
+async function Coaches({ searchParams }: { searchParams: SearchParams }) {
   // Deep-link from Today's "Time off — …" alert: focus that coach's request.
-  const { coach: focusCoach } = await searchParams;
+  const [{ supabase }, { coach: focusCoach }] = await Promise.all([
+    requireUser("/admin/coaches"),
+    searchParams,
+  ]);
   const [{ data: coaches }, { data: pendingTimeOff }, { data: invites }] = await Promise.all([
     supabase
       .from("coaches")
@@ -74,30 +76,44 @@ export default async function AdminCoachesPage({
   }));
 
   return (
-    <AdminShell title="Coaches">
+    <>
       <DeepLinkFocus targetId={focusCoach ? `coach-${focusCoach}` : null} />
-      <div className="mx-auto max-w-3xl space-y-8">
-        {(pendingTimeOff ?? []).length > 0 && (
-          <div>
-            <p className="label mb-3">Time off — waiting on you</p>
-            <div className="space-y-2">
-              {(pendingTimeOff ?? []).map((t) => (
-                <div key={t.id} id={`coach-${t.coach_id}`}>
-                  <TimeOffDecision
-                    id={t.id}
-                    coachName={
-                      (t.profiles as unknown as { full_name: string } | null)?.full_name ?? "Coach"
-                    }
-                    range={`${formatDateFull(t.starts_at)} – ${formatDateFull(t.ends_at)}`}
-                    reason={t.reason}
-                  />
-                </div>
-              ))}
-            </div>
+      {(pendingTimeOff ?? []).length > 0 && (
+        <div>
+          <p className="label mb-3">Time off — waiting on you</p>
+          <div className="space-y-2">
+            {(pendingTimeOff ?? []).map((t) => (
+              <div key={t.id} id={`coach-${t.coach_id}`}>
+                <TimeOffDecision
+                  id={t.id}
+                  coachName={
+                    (t.profiles as unknown as { full_name: string } | null)?.full_name ?? "Coach"
+                  }
+                  range={`${formatDateFull(t.starts_at)} – ${formatDateFull(t.ends_at)}`}
+                  reason={t.reason}
+                />
+              </div>
+            ))}
           </div>
-        )}
+        </div>
+      )}
 
-        <CoachManager coaches={rows} pending={pending} />
+      <CoachManager coaches={rows} pending={pending} />
+    </>
+  );
+}
+
+export default function AdminCoachesPage({
+  searchParams,
+}: {
+  searchParams: SearchParams;
+}) {
+  return (
+    <AdminShell title="Coaches">
+      <div className="mx-auto max-w-3xl space-y-8">
+        <Suspense fallback={<PageSkeleton />}>
+          <Coaches searchParams={searchParams} />
+        </Suspense>
       </div>
     </AdminShell>
   );

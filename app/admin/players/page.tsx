@@ -1,41 +1,52 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import { requireUser } from "@/lib/auth";
 import { AdminShell } from "@/components/app/AdminShell";
+import { PageSkeleton } from "@/components/ui/Skeleton";
 import { type PendingClientRow } from "@/components/app/ClientManager";
 import { PeopleTabs } from "@/components/app/PeopleTabs";
 import { getMasteryMap } from "@/lib/mastery";
 
 export const metadata: Metadata = { title: "Players" };
 
-export default async function AdminPlayersPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ view?: string; client?: string }>;
-}) {
-  const { supabase } = await requireUser("/admin/players");
-  const { view, client: focusClient } = await searchParams;
-  const { data: clients } = await supabase
-    .from("profiles")
-    .select("id,full_name,email,phone,disputed,deleted_at,created_at,approval_status")
-    .eq("role", "client")
-    .order("created_at", { ascending: false })
-    .limit(200);
+type SearchParams = Promise<{ view?: string; client?: string }>;
 
-  const { data: invites } = await supabase
-    .from("client_invites")
-    .select("id,phone,full_name,notes,plan_id")
-    .is("claimed_at", null)
-    .order("created_at", { ascending: false });
+async function People({ searchParams }: { searchParams: SearchParams }) {
+  const [{ supabase }, { view, client: focusClient }] = await Promise.all([
+    requireUser("/admin/players"),
+    searchParams,
+  ]);
 
+  // Round 1 — everything that needs nothing but the request. The invites, plans
+  // and school-player queries used to sit behind the client list (invites on its
+  // own await, the other two inside the id-keyed batch below) even though none
+  // of them reads a client id. That cost a whole serial round trip to Tokyo.
+  const [{ data: clients }, { data: invites }, { data: plans }, { data: schoolPlayers }] =
+    await Promise.all([
+      supabase
+        .from("profiles")
+        .select("id,full_name,email,phone,disputed,deleted_at,created_at,approval_status")
+        .eq("role", "client")
+        .order("created_at", { ascending: false })
+        .limit(200),
+      supabase
+        .from("client_invites")
+        .select("id,phone,full_name,notes,plan_id")
+        .is("claimed_at", null)
+        .order("created_at", { ascending: false }),
+      supabase.from("plans").select("id,name").eq("active", true).order("price_pence"),
+      // School players have no account holder — fetched on their own and joined
+      // to the school (venue) they attend.
+      supabase
+        .from("players")
+        .select("id,full_name,skill_level,date_of_birth,notes,created_at,grade,venues(name)")
+        .is("client_id", null)
+        .order("created_at"),
+    ]);
+
+  // Round 2 — the per-client roll-ups, which genuinely need the ids above.
   const ids = (clients ?? []).map((c) => c.id);
-  const [
-    { data: subs },
-    { data: invoices },
-    { data: bookings },
-    { data: plans },
-    { data: players },
-    { data: schoolPlayers },
-  ] =
+  const [{ data: subs }, { data: invoices }, { data: bookings }, { data: players }] =
     await Promise.all([
       ids.length
         ? supabase
@@ -58,7 +69,6 @@ export default async function AdminPlayersPage({
             .in("status", ["attended", "no_show"])
             .in("client_id", ids)
         : Promise.resolve({ data: [] }),
-      supabase.from("plans").select("id,name").eq("active", true).order("price_pence"),
       ids.length
         ? supabase
             .from("players")
@@ -66,13 +76,6 @@ export default async function AdminPlayersPage({
             .in("client_id", ids)
             .order("created_at")
         : Promise.resolve({ data: [] }),
-      // School players have no account holder — fetched on their own and joined
-      // to the school (venue) they attend.
-      supabase
-        .from("players")
-        .select("id,full_name,skill_level,date_of_birth,notes,created_at,grade,venues(name)")
-        .is("client_id", null)
-        .order("created_at"),
     ]);
 
   const subByClient = new Map(
@@ -137,7 +140,8 @@ export default async function AdminPlayersPage({
 
   // The Players view — every household player, joined with their account
   // holder's contact details. Archived clients' players stay hidden, matching
-  // the default client list.
+  // the default client list. This one really is a third trip: it needs the
+  // player ids round 2 returns.
   const masteryMap = await getMasteryMap(supabase, [
     ...(players ?? []).map((p) => p.id),
     ...(schoolPlayers ?? []).map((p) => p.id),
@@ -188,16 +192,28 @@ export default async function AdminPlayersPage({
   );
 
   return (
+    <PeopleTabs
+      initialView={view === "clients" || focusClient ? "clients" : "players"}
+      clients={rows}
+      plans={plans ?? []}
+      pending={pendingRows}
+      players={playerRows}
+      focusClientId={focusClient ?? null}
+    />
+  );
+}
+
+export default function AdminPlayersPage({
+  searchParams,
+}: {
+  searchParams: SearchParams;
+}) {
+  return (
     <AdminShell title="Players">
       <div className="mx-auto max-w-3xl">
-        <PeopleTabs
-          initialView={view === "clients" || focusClient ? "clients" : "players"}
-          clients={rows}
-          plans={plans ?? []}
-          pending={pendingRows}
-          players={playerRows}
-          focusClientId={focusClient ?? null}
-        />
+        <Suspense fallback={<PageSkeleton />}>
+          <People searchParams={searchParams} />
+        </Suspense>
       </div>
     </AdminShell>
   );

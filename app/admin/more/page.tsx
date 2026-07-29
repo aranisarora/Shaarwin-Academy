@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { requireUser } from "@/lib/auth";
 import { AdminShell } from "@/components/app/AdminShell";
 import { SignOutButton } from "@/components/app/SignOutButton";
 
@@ -34,9 +33,14 @@ const items = [
   },
 ];
 
-export default async function AdminMorePage() {
-  await requireUser("/admin/more");
-
+/**
+ * A static list of links, so this page reads nothing at all. The `requireUser`
+ * that used to sit here was a guard, not a fetch — and the proxy already
+ * performs that guard (signed-in check, then a role check that sends anyone but
+ * a founder to their own home) before this file runs. Calling it again bought
+ * nothing and cost a Supabase round trip on every visit.
+ */
+export default function AdminMorePage() {
   return (
     <AdminShell title="More" actions={<SignOutButton />}>
       <div className="mx-auto max-w-xl space-y-6">
