@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
+import { PhoneField } from "@/components/app/PhoneField";
 import { Spinner } from "@/components/ui/Spinner";
 import { enablePush, type PushState } from "@/lib/push";
 import { AddressForm } from "@/components/app/AddressForm";
@@ -59,11 +60,9 @@ export function ProfileEditor({
           value={form.fullName}
           onChange={(e) => setForm({ ...form, fullName: e.target.value })}
         />
-        <Input
-          label="Phone"
-          type="tel"
+        <PhoneField
           value={form.phone}
-          onChange={(e) => setForm({ ...form, phone: e.target.value })}
+          onChange={(v) => setForm({ ...form, phone: v })}
         />
         <div>
           <p className="label mb-2">Default address (prefills private bookings)</p>

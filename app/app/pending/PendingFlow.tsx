@@ -4,6 +4,7 @@ import { useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
+import { PhoneField } from "@/components/app/PhoneField";
 import { Spinner } from "@/components/ui/Spinner";
 import { submitSignupRequest } from "./actions";
 
@@ -132,14 +133,7 @@ export function PendingFlow({
         value={name}
         onChange={(e) => setName(e.target.value)}
       />
-      <Input
-        label="Phone (with country code)"
-        type="tel"
-        autoComplete="tel"
-        placeholder="+91 98123 45678"
-        value={phoneInput}
-        onChange={(e) => setPhoneInput(e.target.value)}
-      />
+      <PhoneField value={phoneInput} onChange={setPhoneInput} />
 
       {error && <p className="text-sm text-err">{error}</p>}
 

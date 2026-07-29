@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
-import { Input } from "@/components/ui/Input";
+import { PhoneField } from "@/components/app/PhoneField";
 import { Spinner } from "@/components/ui/Spinner";
 import { acknowledgePhoneStep, confirmPhone, type ConfirmPhoneResult } from "@/app/app/onboarding/actions";
 
@@ -55,14 +55,10 @@ export function PhoneStep({
 
   return (
     <div className="space-y-5">
-      <Input
-        label="Phone (with country code)"
-        type="tel"
-        autoComplete="tel"
-        placeholder="+91 98123 45678"
+      <PhoneField
         value={phone}
-        onChange={(e) => {
-          setPhone(e.target.value);
+        onChange={(v) => {
+          setPhone(v);
           setSaved(null);
         }}
       />
