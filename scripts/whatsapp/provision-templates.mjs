@@ -261,12 +261,15 @@ const TEMPLATES = [
       language: "en",
       variables: { 1: "2026-07-23", 2: "12 bookings · 2 cancellations · 1 new client" },
       types: {
+        // Lengthened for the same Meta variables-to-length rule as the two
+        // coach prompts — "Today at the academy ({{1}}): {{2}}" was refused.
         "twilio/call-to-action": {
-          body: "Today at the academy ({{1}}): {{2}}",
+          body:
+            "Here is your daily summary of activity at Sharwin Table Tennis Academy for {{1}}. Overview of the day: {{2}}. Open the dashboard below for the full breakdown of bookings, cancellations and new clients.",
           actions: [{ type: "URL", title: "Open dashboard", url: `${APP_URL}/admin` }],
         },
         "twilio/text": {
-          body: `Today at the academy ({{1}}): {{2}} — ${APP_URL}/admin`,
+          body: `Your daily summary for Sharwin Table Tennis Academy, {{1}}. Overview of the day: {{2}}. Full breakdown on the dashboard: ${APP_URL}/admin`,
         },
       },
     },
@@ -323,15 +326,21 @@ const TEMPLATES = [
       // {{3}} folds time + venue into one value ("6:30 pm at La Plazza").
       variables: { 1: "Augustine", 2: "Beginners Batch", 3: "6:30 pm at La Plazza" },
       types: {
+        // Meta rejects a body with too many variables for its length
+        // (subCode 2388293) — the terse "Hi {{1}}! {{2}} starts at {{3}}. Are
+        // you coming?" was refused. Keep enough literal text around the three
+        // variables to clear that ratio.
         "twilio/quick-reply": {
-          body: "Hi {{1}}! {{2}} starts at {{3}}. Are you coming?",
+          body:
+            "Hi {{1}}, this is a quick check from Sharwin Table Tennis Academy about your upcoming session. Your class {{2}} is scheduled to start at {{3}}. Please let us know whether you are coming, so we can arrange cover in good time if you cannot.",
           actions: [
             { title: "Yes, I'm coming", id: "coach_confirm" },
             { title: "Can't make it", id: "coach_cant" },
           ],
         },
         "twilio/text": {
-          body: 'Hi {{1}}! {{2}} starts at {{3}}. Are you coming? Reply "coming" or "can\'t make it".',
+          body:
+            'Hi {{1}}, a quick check about your upcoming session. Your class {{2}} is scheduled to start at {{3}}. Reply "coming" if you are on your way, or "can\'t make it" so we can arrange cover.',
         },
       },
     },
@@ -346,15 +355,19 @@ const TEMPLATES = [
       language: "en",
       variables: { 1: "Augustine", 2: "Beginners Batch", 3: "La Plazza" },
       types: {
+        // Lengthened for the same Meta variables-to-length rule as
+        // coach_coming_check above.
         "twilio/quick-reply": {
-          body: "Hi {{1}}! {{2}} is starting. Have you reached {{3}}?",
+          body:
+            "Hi {{1}}, your session at Sharwin Table Tennis Academy is about to begin. The class {{2}} is starting now, and we would like to confirm that you have reached {{3}}. Please let us know so we can keep the parents updated.",
           actions: [
             { title: "I've arrived", id: "coach_arrived" },
             { title: "Running late", id: "coach_late" },
           ],
         },
         "twilio/text": {
-          body: 'Hi {{1}}! {{2}} is starting. Have you reached {{3}}? Reply "arrived" or "running late".',
+          body:
+            'Hi {{1}}, your session is about to begin. The class {{2}} is starting now — have you reached {{3}}? Reply "arrived" or "running late" so we can keep the parents updated.',
         },
       },
     },

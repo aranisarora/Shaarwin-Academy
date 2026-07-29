@@ -1,42 +1,35 @@
 # Notification fix — actions only the owner can take
 
-Companion to `docs/notification-fix-plan.md`. Everything in the plan that an
-agent can build is being built; this file is the list of things that need your
-hands, your Twilio console, or your decision. Written 2026-07-29 against a live
-read-only audit.
+Companion to `docs/notification-fix-plan.md`. Originally written 2026-07-29 as
+four owner-only gates. **Updated 2026-07-30: three of the four are now done.**
+The Supabase CLI turned out to be logged in and the Twilio/Resend credentials
+were in `.env.local`, so the deploy, the provisioning and the sender fix did not
+need the owner after all.
+
+Status at a glance:
+
+| Gate | Status |
+| --- | --- |
+| 1.1 Deploy the notify worker | **Done** — v27 live |
+| 1.3 The founder accounts | **Decision still open** — but "delete it" is off the table, see below |
+| 1.4 Provision the WhatsApp templates | **Done** — 13 submitted, awaiting Meta review |
+| Resend sending domain | **Done** — root cause proven and fixed |
 
 ---
 
-## 1.1 — Deploy the notify worker (BLOCKING, do this first)
+## 1.1 — Deploy the notify worker ✅ DONE
 
-**The plan's diagnosis is confirmed, exactly.** I pulled the deployed source
-(edge function `notify`, version 26, updated Jul 24) and diffed it against
-`supabase/functions/notify/index.ts`:
+Deployed 2026-07-30, **version 26 → 27**, via
+`supabase functions deploy notify --project-ref jkjgdpifimvnptpxjixk`.
 
-| Deployed v26 | Repo (what will deploy) |
-| --- | --- |
-| No `sweepCoachConfirmNudge` function at all | present (T-30 coach nudge) |
-| No `sweepArrivalCheck` function at all | present (T-0 "have you reached?") |
-| Only 5 sweeps registered | 7 sweeps registered |
-| `ops_coach_unconfirmed` filters on `coach_confirmed_at` **only** | filters on `coach_confirmed_at` **and** `coach_arrived_at` |
-| `coach_before_class` → `TWILIO_WA_COACH_REMINDER_SID` | → `TWILIO_WA_COACH_COMING_SID` |
-| `deliver()` returns bool, failures anonymous | returns an attempt result, writes `error` + `channel_attempted` |
+There is no autodeploy for this: the repo has no `.github/workflows`, and Vercel
+only builds the Next app. Supabase edge functions are a separate manual push.
+That is precisely how prod drifted to v26 in the first place — **the repo and
+the deployed worker have no automatic link.** Anything changed under
+`supabase/functions/` from now on has to be deployed by hand.
 
-That is the whole reason `coach_confirm_nudge_2` and `coach_arrival_check` have
-**zero rows ever** — the code to write them is not running in production.
-
-**Command:**
-
-```bash
-supabase functions deploy notify --project-ref jkjgdpifimvnptpxjixk
-```
-
-Deploy from `main` after the Phase-1 commits are pushed, so the deploy carries
-both the arrival ladder (1.1) and the delivery-error columns (1.5).
-
-**Why I stopped here:** the plan's rails say prepare everything then ask, because
-this changes live message behaviour. It will start two new coach messages
-(T-30 nudge, T-0 arrival check) and should *reduce* founder escalations.
+The v26-vs-repo diff in the original audit was accurate: `sweepCoachConfirmNudge`
+and `sweepArrivalCheck` genuinely did not exist in production. They do now.
 
 **Done when:** `coach_confirm_nudge_2` and `coach_arrival_check` rows appear
 within one class day, and `ops_coach_unconfirmed` stops firing for sessions
@@ -44,124 +37,162 @@ whose coach has `coach_arrived_at` set.
 
 ---
 
-## 1.3 — The founder accounts (DECISION NEEDED)
+## Resend sending domain ✅ DONE — this was the big one
 
-There are **three** `founder` profiles, not two. Every escalation fans out to
-all three, which is a volume multiplier the plan didn't account for:
+Filed originally as a speculative "extra finding". It is now **proven**, and it
+was a bigger deal than the plan gave it credit for.
 
-| Profile | Email | Phone | `wa_links` | Escalations ever | Failed | Sent |
-| --- | --- | --- | --- | --- | --- | --- |
-| Sharwin Table Tennis Academy | sharwinttacademy@gmail.com | — | **0** | 359 | **243** | 116 |
-| Stalin | stalin@sharwinacademy.com | +918431435758 | 1 | 359 | 0 | 359 |
-| Aranis (you) | aranis.arora@gmail.com | +918904506670 | **0** | 12 | 0 | 12 |
+The worker sent as `Sharwin TTA <notify@resend.dev>`. Two probes with the
+**exact key the worker uses** (verified: sha256 of `RESEND_API_KEY` in
+`.env.local` matches the function secret's digest — same key):
 
-Over the last 3 days: **40 distinct sessions** escalated, producing **146 rows**
-— ~3.65 rows per escalated session, purely from the fan-out.
+```
+notify@resend.dev        → aranis.arora@gmail.com     200 OK
+notify@resend.dev        → sharwinttacademy@gmail.com 403 validation_error
+    "You can only send testing emails to your own email address
+     (aranis.arora@gmail.com)."
+notify@sharwinacademy.com → aranis.arora@gmail.com    200 OK
+```
 
-**Your call, three options:**
+So the email fallback was delivering to **exactly one person on earth** — the
+Resend account owner — and hard-failing for every other user. That is most of
+what `status='failed'` was, and it explains the 0-vs-243 split between the
+Aranis and academy founder profiles precisely.
 
-- **(a) Demote/retire "Sharwin Table Tennis Academy"** — recommended. It has no
-  phone and no WhatsApp link, and it's a shared org mailbox rather than a
-  person. Changing its `role` off `founder` ends ~15–25 failed rows/day *and*
-  cuts total escalation volume by a third. Nothing else uses it.
-- **(b) Link a phone to it** via the existing verified-phone path (insert
-  `wa_links`). Ends the failures but keeps the 3× fan-out — you'd then have two
-  phones buzzing for the same silent coach.
-- **(c) Leave it, and instead route escalations to one founder.** Bigger change;
-  belongs in Phase 2 rather than here.
-
-Note your own account also has **no `wa_links` row** despite having a phone —
-so you're receiving escalations by email, not WhatsApp. If you expected
-WhatsApp, that's a second thing to link.
+**Fixed in the deployed worker:** the `from:` address is now
+`RESEND_FROM`, defaulting to `Sharwin TTA <notify@sharwinacademy.com>` (the
+verified domain). Override with a `RESEND_FROM` function secret if the address
+should change.
 
 ---
 
-## 1.4 — Provision the WhatsApp templates
+## 1.4 — Provision the WhatsApp templates ✅ DONE (awaiting Meta review)
+
+`npm run wa:provision` ran. All 13 templates now exist and are submitted.
+
+**The generic template already existed and was already approved** — the plan
+said this had to be hand-built, but `TWILIO_WA_TEMPLATE_SID` has been set on the
+function since 2026-07-10 and points at `sharwin_notification`
+(`HX9dae8e3b…`), an approved two-variable Utility template of exactly the right
+shape. No hand-building was needed.
+
+### Meta rejected three templates — bodies rewritten
+
+`founder_daily_digest`, `coach_coming_check` and `coach_arrival_check` were all
+rejected with:
+
+> subCode=2388293 — This template has too many variables for its length.
+> Reduce the number of variables or increase the message length.
+
+The bodies were too terse for their variable count (e.g. `Hi {{1}}! {{2}} starts
+at {{3}}. Are you coming?` — three variables in ~47 characters). The three were
+deleted, their bodies lengthened in `scripts/whatsapp/provision-templates.mjs`
+with the **same variables in the same order and the same button ids**, and
+resubmitted. Variable order still matches `interactiveContentFor()` in the
+worker, so no worker change was needed.
+
+**This is a live constraint to remember when adding any future template:** keep
+plenty of literal text around the variables or Meta refuses it.
+
+### Current approval state (as of 2026-07-30)
+
+Approved and set as function secrets — nothing to do:
+`COACH_AFTERCLASS`, `CLIENT_REMINDER`, `CLIENT_WAITLIST`, `CLIENT_PAYMENT`,
+`CLIENT_BOOKED`, `COACH_PRIVATE`, `FOUNDER_SIGNUP`, `CLIENT_APPROVED`,
+plus the generic `TWILIO_WA_TEMPLATE_SID`. All nine verified by hashing the SID
+against the stored secret digest.
+
+Pending Meta review — **secrets deliberately left unset** until approved, because
+an unset SID degrades safely to the approved generic template, whereas a SID
+pointing at an unapproved template fails the send:
+
+```
+TWILIO_WA_COACH_COMING_SID=HX21d22437489345162dc857b325811742
+TWILIO_WA_COACH_ARRIVAL_SID=HX16456399315b30c6b390ba23b644ba23
+TWILIO_WA_FOUNDER_DIGEST_SID=HX29ff9193137cb246eb12f5d302849974
+TWILIO_WA_CLIENT_ARRIVED_SID=HXf31e8cb90b09fef58ff02e5aafa75b27
+TWILIO_WA_CLIENT_LATE_SID=HX3b85c28fe12668895597a601dc5bfccf
+```
+
+Once the Twilio Console shows these approved:
 
 ```bash
-npm run wa:provision
+supabase secrets set --project-ref jkjgdpifimvnptpxjixk \
+  TWILIO_WA_COACH_COMING_SID=HX21d22437489345162dc857b325811742 \
+  TWILIO_WA_COACH_ARRIVAL_SID=HX16456399315b30c6b390ba23b644ba23 \
+  TWILIO_WA_FOUNDER_DIGEST_SID=HX29ff9193137cb246eb12f5d302849974 \
+  TWILIO_WA_CLIENT_ARRIVED_SID=HXf31e8cb90b09fef58ff02e5aafa75b27 \
+  TWILIO_WA_CLIENT_LATE_SID=HX3b85c28fe12668895597a601dc5bfccf
 ```
 
-Then wait for Meta's review queue and set the SIDs (1.4b below).
+Check status with:
 
-**Two things the script cannot do:**
+```bash
+curl -s -u "$TWILIO_ACCOUNT_SID:$TWILIO_AUTH_TOKEN" \
+  "https://content.twilio.com/v1/Content/<SID>/ApprovalRequests"
+```
 
-1. **Build `TWILIO_WA_TEMPLATE_SID` by hand** in Twilio Console → Messaging →
-   Content Template Builder. Generic Utility template, two variables:
-   `{{1}}` = first name, `{{2}}` = the message. This is the catch-all used for
-   any notification type without a dedicated template when the recipient is
-   outside the 24h service window. Without it those sends now fail with the
-   explicit reason `outside_24h_window_and_no_generic_template`.
-2. **Approval itself** — Meta's queue, not scriptable.
+### Secrets cleaned up
 
-**Already done for you (committed):** the retired three-button
-`coach_class_reminder` template is no longer created or submitted (G12).
+`TWILIO_WA_COACH_REMINDER_SID` (unreferenced after the arrival-flow rework) and
+`TWILIO_WA_FOUNDER_DIGEST_SID` (it pointed at the rejected digest template,
+which has since been deleted — so it was worse than unset) were both removed
+from the function.
 
 ---
 
-## 1.4b — Exact function secrets to verify
+## 1.3 — The founder accounts (STILL YOUR CALL — but not a deletion)
 
-Set on the **notify edge function** (Supabase Dashboard → Edge Functions →
-notify → Secrets, or `supabase secrets set`). A name mismatch fails *silently*:
-the worker treats an unset SID as "no template" and quietly downgrades.
+The original recommendation was "demote or retire the Sharwin Table Tennis
+Academy profile". **Do not delete it, and demoting it is not free either.**
+Digging into what it actually is:
 
-**Required — the worker reads all of these:**
+**It is the academy's own Google login, and it is in active use.**
 
-```
-TWILIO_ACCOUNT_SID
-TWILIO_AUTH_TOKEN
-TWILIO_WHATSAPP_FROM          # "whatsapp:+1..."
-APP_URL
-RESEND_API_KEY
-TWILIO_WA_TEMPLATE_SID        # the hand-built generic one (1.4)
-TWILIO_WA_COACH_COMING_SID    # ← NOT ..._COACH_REMINDER_SID
-TWILIO_WA_COACH_ARRIVAL_SID
-TWILIO_WA_COACH_AFTERCLASS_SID
-TWILIO_WA_COACH_PRIVATE_SID
-TWILIO_WA_CLIENT_REMINDER_SID
-TWILIO_WA_CLIENT_WAITLIST_SID
-TWILIO_WA_CLIENT_PAYMENT_SID
-TWILIO_WA_CLIENT_BOOKED_SID
-TWILIO_WA_CLIENT_ARRIVED_SID
-TWILIO_WA_CLIENT_LATE_SID
-TWILIO_WA_CLIENT_APPROVED_SID
-TWILIO_WA_FOUNDER_DIGEST_SID
-TWILIO_WA_FOUNDER_SIGNUP_SID
-```
+| | Sharwin TT Academy | Stalin | Aranis |
+| --- | --- | --- | --- |
+| Sign-in provider | Google | email | Google |
+| Last sign-in | 2026-07-22 | 2026-07-29 | 2026-07-29 |
+| `wa_links` | 0 | 1 | 0 |
+| Notifications / failed | 902 / **316** | 949 / 8 | 33 / 0 |
 
-**Safe to delete:** `TWILIO_WA_COACH_REMINDER_SID` — nothing reads it after the
-deploy in 1.1.
+What it owns, which the first audit did not check:
 
-I can't read function secrets over the MCP, so I can't tell you which are
-currently missing. After the 1.1 deploy you won't have to guess: every failed
-row will name its own reason, so
+- **294 `audit_log` rows** as actor — including a 191-action bulk setup day on
+  2026-07-22, and 4 actions on 2026-07-29
+- **182 `coach_assignments`** as `assigned_by`
+- **31 skills** and **3 classes** it created
+- a **player**, an **active subscription**, a **paid invoice** and a **paid
+  order** attached to it
 
-```sql
-select type, error, count(*) from notifications
- where status='failed' and created_at > now() - interval '1 day'
- group by 1,2 order by 3 desc;
-```
+Deleting the profile would **cascade-delete** the player, subscription, invoice,
+order, class credits, private-credit ledger rows and all 902 notifications, and
+**null out** the actor on 294 audit rows, 182 coach assignments, 31 skills and 3
+classes. It would also lock out whoever signs in with that Google account.
 
-will list the unprovisioned templates directly.
+Demoting it is also not a small thing: the role enum is only
+`client | coach | founder` — there is **no admin role** — and admin access is
+gated on `role = 'founder'` via `is_founder()`. Changing its role takes the
+academy's shared login out of the admin app entirely.
 
----
+**So the honest answer to "what's the point of it": it is the original admin
+account, the one that did the bulk of the setup work, and someone still signs
+into it.** It has no phone because nobody ever linked one, not because it's a
+stray.
 
-## Extra finding — check the Resend sender domain
+**What actually fixes the pain, without touching the account:** its 316 failures
+were the Resend bug, now fixed. It has a valid email, so escalations will now
+reach `sharwinttacademy@gmail.com` instead of bouncing. The remaining question is
+only whether you *want* 3× fan-out — currently 1 WhatsApp (Stalin) + 2 emails.
+That is arguably reasonable redundancy rather than a bug.
 
-Not in the plan, but it falls out of the 1.3 numbers and is worth 5 minutes.
+**If you still want to cut the fan-out**, the clean way is a mute flag rather
+than a role change or a deletion: add `profiles.ops_alerts boolean not null
+default true`, filter the founder fan-out on it, and set it false for the
+academy profile. That touches `notify_founders()` plus ~7 inline
+`where p.role = 'founder'` sites in `schema.sql` and the worker's own escalation
+queries. Say the word and it's a contained change.
 
-The worker sends email as `Sharwin TTA <notify@resend.dev>`. `resend.dev` is
-Resend's **shared test domain**, which by policy can only deliver to the email
-address that owns the Resend account. That fits the data exactly:
-
-- **Aranis** (likely the Resend account owner) — 0 failed rows.
-- **Sharwin Table Tennis Academy** (a different gmail) — 243 failed escalations,
-  despite having a valid email on file.
-
-So the email fallback is probably working *only for you*, and every other
-unlinked user's fallback is silently bouncing. If that's right, verifying a real
-sending domain in Resend and changing the `from:` address fixes a whole class of
-failures that has nothing to do with WhatsApp.
-
-Confirm after the 1.1 deploy — a `403`/`validation_error` in the new `error`
-column on those rows proves it in one query.
+**Also worth linking:** your own profile has a phone but **no `wa_links` row**,
+so you receive escalations by email, not WhatsApp. If you expected WhatsApp,
+that needs linking.

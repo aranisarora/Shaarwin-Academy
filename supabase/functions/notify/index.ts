@@ -17,6 +17,12 @@ const supabase = createClient(
 );
 
 const RESEND_KEY = Deno.env.get("RESEND_API_KEY");
+// Must be an address on a domain verified in Resend. It used to be
+// notify@resend.dev — Resend's shared test domain, which hard-403s any
+// recipient other than the account owner ("You can only send testing emails to
+// your own email address"). That silently broke the email fallback for every
+// user except one, which is most of what `status='failed'` was.
+const RESEND_FROM = Deno.env.get("RESEND_FROM") ?? "Sharwin TTA <notify@sharwinacademy.com>";
 const TWILIO_SID = Deno.env.get("TWILIO_ACCOUNT_SID");
 const TWILIO_TOKEN = Deno.env.get("TWILIO_AUTH_TOKEN");
 const TWILIO_FROM = Deno.env.get("TWILIO_WHATSAPP_FROM"); // "whatsapp:+1..."
@@ -1097,7 +1103,7 @@ async function deliver(row: {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      from: "Sharwin TTA <notify@resend.dev>",
+      from: RESEND_FROM,
       to: profile.email,
       subject: row.title,
       html: `
