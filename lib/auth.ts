@@ -25,6 +25,14 @@ export const getCurrentUser = cache(async () => {
   return { id: claims.sub, email: typeof claims.email === "string" ? claims.email : "" };
 });
 
+/**
+ * Keep in step with `Profile` below — this is the shape the select produces.
+ * One literal rather than a concatenation, so the generated Supabase types can
+ * still infer the row shape from it.
+ */
+const PROFILE_COLUMNS =
+  "id,role,full_name,email,phone,avatar_url,default_address,default_lat,default_lng,address_details,razorpay_customer_id,notification_prefs,onboarded_at,approval_status";
+
 export type Profile = {
   id: string;
   role: "client" | "coach" | "founder";
@@ -62,9 +70,13 @@ export async function requireUser(nextPath: string) {
 
   if (!user) redirect(`/login?next=${encodeURIComponent(nextPath)}`);
 
+  // Exactly the columns `Profile` declares, not select("*"): this runs on every
+  // protected navigation, and the table also carries stripe_customer_id,
+  // disputed, deleted_at, created_at and onboarding_step, which nothing here
+  // reads. The screens that do need those fetch them in their own selects.
   const { data: profile } = await supabase
     .from("profiles")
-    .select("*")
+    .select(PROFILE_COLUMNS)
     .eq("id", user.id)
     .maybeSingle();
 
