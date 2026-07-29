@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/Input";
 import { PhoneField } from "@/components/app/PhoneField";
 import { Spinner } from "@/components/ui/Spinner";
 import { ConfirmAction } from "@/components/ui/ConfirmAction";
+import { Switch } from "@/components/ui/Switch";
 import { enablePush, type PushState } from "@/lib/push";
 import { AddressForm } from "@/components/app/AddressForm";
 import {
@@ -82,22 +83,12 @@ export function ProfileEditor({
             return (
               <label key={key} className="flex min-h-11 items-center justify-between gap-3">
                 <span className="text-sm">{labelText}</span>
-                <button
-                  role="switch"
-                  aria-checked={on}
-                  onClick={() =>
-                    setForm({ ...form, prefs: { ...form.prefs, [key]: !on } })
+                <Switch
+                  checked={on}
+                  onChange={(next) =>
+                    setForm({ ...form, prefs: { ...form.prefs, [key]: next } })
                   }
-                  className={`relative h-7 w-12 shrink-0 rounded-full transition-colors ${
-                    on ? "bg-ember" : "bg-line"
-                  }`}
-                >
-                  <span
-                    className={`absolute top-1 h-5 w-5 rounded-full bg-ivory transition-all ${
-                      on ? "left-6" : "left-1"
-                    }`}
-                  />
-                </button>
+                />
               </label>
             );
           })}
