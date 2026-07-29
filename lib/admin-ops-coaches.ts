@@ -3,7 +3,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/database.types";
-import { normalizePhone } from "@/lib/whatsapp/phone";
+import { normalizePhoneInput } from "@/lib/whatsapp/phone";
 import { reassignSessionCore } from "@/lib/admin-ops-calendar";
 import type { OpResult, TableUpdate } from "@/lib/admin-ops-types";
 
@@ -93,6 +93,13 @@ export async function saveCoachCore(
   if (input.fullName != null && !input.fullName.trim()) {
     return { ok: false, error: "Name can't be empty." };
   }
+  // Validated up front so a bad number can't leave the coaches row written and
+  // the profile row not.
+  let phone: string | null = null;
+  if (input.phone != null && input.phone.trim()) {
+    phone = normalizePhoneInput(input.phone);
+    if (!phone) return { ok: false, error: "That phone number doesn't look valid." };
+  }
   const patch: TableUpdate<"coaches"> = {
     bio: input.bio || null,
     base_address: input.baseAddress || null,
@@ -109,7 +116,7 @@ export async function saveCoachCore(
   if (input.fullName != null || input.phone != null) {
     const patch: TableUpdate<"profiles"> = {};
     if (input.fullName != null) patch.full_name = input.fullName.trim();
-    if (input.phone != null) patch.phone = input.phone.trim() ? normalizePhone(input.phone) : null;
+    if (input.phone != null) patch.phone = phone;
     const { error: profErr } = await supabase
       .from("profiles")
       .update(patch)
@@ -140,7 +147,10 @@ export async function addCoachCore(
   const email = d.email.trim().toLowerCase();
   if (!EMAIL_RE.test(email)) return { ok: false, error: "That email doesn't look valid." };
   if (!d.fullName.trim()) return { ok: false, error: "Enter the coach's name." };
-  const phone = d.phone.trim() ? normalizePhone(d.phone) : null;
+  const phone = d.phone.trim() ? normalizePhoneInput(d.phone) : null;
+  if (d.phone.trim() && !phone) {
+    return { ok: false, error: "That phone number doesn't look valid." };
+  }
 
   // Already an account? Promote (if needed) and apply the entered details.
   const { data: existing } = await supabase
@@ -203,7 +213,10 @@ export async function savePendingCoachCore(
   const email = d.email.trim().toLowerCase();
   if (!EMAIL_RE.test(email)) return { ok: false, error: "That email doesn't look valid." };
   if (!d.fullName.trim()) return { ok: false, error: "Enter the coach's name." };
-  const phone = d.phone.trim() ? normalizePhone(d.phone) : null;
+  const phone = d.phone.trim() ? normalizePhoneInput(d.phone) : null;
+  if (d.phone.trim() && !phone) {
+    return { ok: false, error: "That phone number doesn't look valid." };
+  }
   const { error } = await supabase
     .from("coach_invites")
     .update({

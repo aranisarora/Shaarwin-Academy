@@ -2,6 +2,8 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { normalizePhoneInput } from "@/lib/whatsapp/phone";
+import { adminClient } from "@/lib/whatsapp/identity";
 import type { StructuredAddress } from "@/lib/address";
 
 type Result = { ok: boolean; error?: string };
@@ -20,12 +22,37 @@ export async function saveProfile(input: {
   if (!user) return { ok: false, error: "Sign in first." };
   if (!input.fullName.trim()) return { ok: false, error: "Name can't be empty." };
 
+  // profiles.phone is how the WhatsApp bot identifies an account, and it
+  // compares against the normalized inbound number. Storing what was typed
+  // ("98123 45678") would never match "+919812345678" and would silently drop
+  // a working account into guest mode, so normalize on the way in.
+  const phone = input.phone.trim() ? normalizePhoneInput(input.phone) : null;
+  if (input.phone.trim() && !phone) {
+    return {
+      ok: false,
+      error: "That doesn't look like a phone number — include the country code, e.g. +91.",
+    };
+  }
+
+  // The column is unique; pre-check for a friendly message, not a constraint error.
+  if (phone) {
+    const { data: taken } = await adminClient()
+      .from("profiles")
+      .select("id")
+      .eq("phone", phone)
+      .neq("id", user.id)
+      .maybeSingle();
+    if (taken) {
+      return { ok: false, error: "That number is already on another account." };
+    }
+  }
+
   const d = input.addressDetails;
   const { error } = await supabase
     .from("profiles")
     .update({
       full_name: input.fullName.trim(),
-      phone: input.phone.trim() || null,
+      phone,
       // The formatted line stays the canonical flat value; the structured form
       // (when present) also finally populates the long-unused lat/lng columns.
       default_address: (d?.formatted || input.defaultAddress).trim() || null,

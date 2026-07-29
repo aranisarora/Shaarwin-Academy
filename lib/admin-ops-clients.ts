@@ -3,7 +3,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/database.types";
-import { normalizePhone } from "@/lib/whatsapp/phone";
+import { normalizePhoneInput } from "@/lib/whatsapp/phone";
 import { adminClient, autoProvisionClient, linkPhoneToUser } from "@/lib/whatsapp/identity";
 import type { OpResult } from "@/lib/admin-ops-types";
 
@@ -15,7 +15,7 @@ export async function updateClientCore(
   phone: string
 ): Promise<OpResult> {
   if (!fullName.trim()) return { ok: false, error: "Name can't be empty." };
-  const normalized = phone.trim() ? normalizePhone(phone) : null;
+  const normalized = phone.trim() ? normalizePhoneInput(phone) : null;
   if (phone.trim() && !normalized) {
     return { ok: false, error: "That phone number doesn't look valid." };
   }
@@ -73,7 +73,7 @@ export async function addClientInviteCore(
   founderId: string,
   d: ClientInviteDetails
 ): Promise<OpResult> {
-  const phone = normalizePhone(d.phone);
+  const phone = normalizePhoneInput(d.phone);
   if (!phone) return { ok: false, error: "That phone number doesn't look valid." };
 
   // Already an account with this number? Nothing to pre-register.
@@ -118,7 +118,7 @@ export async function savePendingClientCore(
   id: string,
   d: ClientInviteDetails
 ): Promise<OpResult> {
-  const phone = normalizePhone(d.phone);
+  const phone = normalizePhoneInput(d.phone);
   if (!phone) return { ok: false, error: "That phone number doesn't look valid." };
   const { error } = await supabase
     .from("client_invites")
