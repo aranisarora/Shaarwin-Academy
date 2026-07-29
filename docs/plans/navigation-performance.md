@@ -1,6 +1,56 @@
 # Navigation performance plan
 
-**Status:** not started. Written 2026-07-29; re-verified against the code the same day.
+**Status:** Steps 1–6 shipped on `chore/cleanup-and-perf` (2026-07-29), with the
+corrections below. Step 7 (`rank_coaches`) untouched — it blocks no navigation.
+Written 2026-07-29; re-verified against the code the same day.
+
+## Execution log — read before continuing
+
+**The diagnosis in section B was wrong, and it changed what Step 1 turned out to be.**
+`loading.js` "will automatically wrap the `page.js` file and any children below in a
+`<Suspense>` boundary" (`node_modules/next/dist/docs/.../loading.md`). A `loading.tsx`
+at a segment root therefore already covers every route beneath it — the three existing
+files covered all 34 protected routes, and the ~30 "missing" ones were never a gap.
+Nothing was ever unprefetched for want of a loading boundary.
+
+What actually made navigation feel frozen, in order of size:
+
+1. **The prefetched shell was being thrown away.** Because every protected route *does*
+   sit under a `loading.tsx`, they all live in the client cache's `dynamic` bucket —
+   which defaults to **0 seconds**. Next prefetched each shell and discarded it on
+   arrival, so every click paid the full round trip again. Step 3 (one config line) was
+   the highest-value change in this plan, not the footnote it looks like.
+2. **~300ms of auth before any byte could stream.** Step 2, as diagnosed. Correct.
+3. **A layout that suppressed its own loading UI.** `app/coach/layout.tsx` was `async`
+   and awaited `getCoachPreview()` in its body. Per the same doc, a layout reading
+   runtime data means "navigation blocks until the layout finishes rendering" and
+   `loading.tsx` shows no fallback — for the whole `/coach` subtree. The plan missed
+   this entirely. The banner now sits behind its own `<Suspense>`.
+
+**Other corrections:**
+
+- **Step 2's header handoff was not implemented.** It targeted round trips #3 and #4;
+  `getClaims()` already removes #3, and #4 cannot go while `requireUser` returns the
+  full profile its callers use (`approval_status`, `onboarded_at`, address). Doing it
+  would mean trusting request headers for identity — its own change, with its own
+  threat model, not a perf tweak.
+- **Step 2's trap #2 is now pinned by a test.** `tests/db/auth-claims.test.ts` asserts
+  `getClaims()` makes no `/auth/v1/user` call, *and* that the same interceptor does trip
+  on a real `getUser()` — otherwise the assertion would pass vacuously and the silent
+  fallback this trap warns about would go unnoticed. Both the live project and the local
+  stack sign ES256, so the harness exercises the production path.
+- **Step 4 needed no work.** The `from("profiles")` call already sat after the `wanted`
+  check, as the plan suspected. With `getClaims()` the public-route cost is local
+  crypto, so the matcher was left alone.
+- **Step 1 was applied to `/app`, `/app/schedule` and `/app/book`** (the priority-1
+  group) plus the coach layout fix. The remaining routes already have loading
+  boundaries; per-page `<Suspense>` there is refinement, not a missing floor.
+- **Not yet measured.** The plan's "re-measure in Vercel runtime logs" step needs a
+  deploy. Nothing here was validated against production latency, and the e2e flow specs
+  could not run locally (a `next dev` server was already bound to this project
+  directory, and Next refuses a second instance).
+
+
 **Problem:** clicking any link in the signed-in app (`/app`, `/coach`, `/admin`) is not
 instant — the browser sits on the old page, visibly frozen, then swaps.
 
