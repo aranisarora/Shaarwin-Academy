@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { notFound } from "next/navigation";
 import { Button, ButtonLink } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
@@ -103,6 +104,9 @@ function MoodPanel({ mood }: { mood: "stage" | "studio" }) {
 }
 
 export default function StyleguidePage() {
+  // Design-time reference only — never routable in production.
+  if (process.env.NODE_ENV === "production") notFound();
+
   return (
     <div data-mood="studio" className="min-h-dvh bg-surface px-4 py-10 text-fg sm:px-8">
       <div className="mx-auto max-w-6xl">
