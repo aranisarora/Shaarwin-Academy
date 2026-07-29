@@ -67,6 +67,9 @@ export const PREF_GROUP_FOR_TYPE: Record<string, PrefGroup> = {
   coach_arrived: "reminders",
 
   // ── Progress ──
+  // The positive session outcome. Its counterpart player_absent is deliberately
+  // absent from this map — see UNMUTABLE.
+  session_outcome: "progress",
   monthly_progress: "progress",
   assessment_ready: "progress",
   student_note: "progress",

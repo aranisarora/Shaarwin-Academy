@@ -65,6 +65,9 @@ const TRANSACTIONAL = new Set([
   "session_cancelled",
   "signup_request",
   "signup_approved",
+  // A parent believing their child is at the table when they aren't is a
+  // safety matter, not a preference. (C11 / M1.)
+  "player_absent",
 ]);
 
 // Founder ops-feed types that live in-app only (/admin). We never deliver these
@@ -140,7 +143,12 @@ const CAP_EXEMPT = new Set([
   "coach_after_class",
   "new_private_session",
   "session_unassigned",
-  // Parent: where is my child's coach, and is my session still on.
+  // Parent: did my child turn up, where is their coach, is the session still on.
+  // Both outcome types are at most one per player per session, so a family with
+  // three children legitimately gets three — the Progress toggle is the right
+  // lever for that, not the daily cap.
+  "player_absent",
+  "session_outcome",
   "coach_arrived",
   "coach_late",
   "reminder_upcoming",
@@ -179,6 +187,7 @@ const PREF_GROUP_FOR_TYPE: Record<string, string> = {
   // here — a coach *not* being there is what a parent needs to know.
   coach_arrived: "reminders",
 
+  session_outcome: "progress",
   monthly_progress: "progress",
   assessment_ready: "progress",
   student_note: "progress",

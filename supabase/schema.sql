@@ -3437,6 +3437,9 @@ declare
   v_player  text;
   v_client  text;
   v_who     text;
+  v_first   text;
+  v_when    text;
+  v_note    text;
 begin
   if old.status = new.status then return new; end if;
   -- cancelled_by_academy is founder-initiated (already knows); rescheduled is
@@ -3457,6 +3460,9 @@ begin
   v_who := coalesce(v_client, 'A client')
     || case when v_player is not null and v_player <> v_client then ' (' || v_player || ')' else '' end;
 
+  v_first := split_part(coalesce(nullif(trim(v_player), ''), 'Your player'), ' ', 1);
+  v_when  := fmt_ist(v_session.starts_at);
+
   if new.status = 'cancelled_by_client' then
     perform notify_founders('ops_cancellation', 'Booking cancelled',
       v_who || ' cancelled ' || v_class.title
@@ -3469,11 +3475,57 @@ begin
       coalesce(v_player, 'A player') || ' attended ' || v_class.title
       || ' (' || fmt_ist(v_session.starts_at) || ').',
       jsonb_build_object('booking_id', new.id, 'session_id', new.session_id, 'url', '/admin/calendar'));
+
+    -- C11 positive. "What was worked on" comes from the coach's note for this
+    -- player, if they wrote one after the session started — so the message
+    -- carries real substance when it exists and degrades to a clean
+    -- confirmation when it doesn't.
+    select body into v_note
+      from student_notes
+     where player_id = new.player_id
+       and author_id = v_session.coach_id
+       and created_at >= v_session.starts_at
+     order by created_at desc
+     limit 1;
+
+    if new.client_id is not null then
+      insert into notifications (user_id, type, title, body, data)
+      values (new.client_id, 'session_outcome',
+        v_first || ' was at ' || v_class.title,
+        v_first || ' attended ' || v_class.title || ' (' || v_when || ').'
+        || coalesce(' Coach''s note: ' || nullif(trim(v_note), ''), ''),
+        jsonb_build_object('booking_id', new.id, 'session_id', new.session_id,
+                           'player_id', new.player_id,
+                           'player_name', v_first,
+                           'class_title', v_class.title,
+                           'time_str', v_when,
+                           'coach_note', nullif(trim(v_note), ''),
+                           'url', '/app/players'));
+    end if;
+
   elsif new.status = 'no_show' then
     perform notify_founders('ops_attendance', 'No-show',
       coalesce(v_player, 'A player') || ' did NOT show for ' || v_class.title
       || ' (' || fmt_ist(v_session.starts_at) || ').',
       jsonb_build_object('booking_id', new.id, 'session_id', new.session_id, 'url', '/admin/calendar'));
+
+    -- C11 / M1 — the message this whole item exists for. Copy is deliberately
+    -- non-accusatory and opens a reply channel: the parent may know something
+    -- we don't, and the marking may simply be wrong.
+    if new.client_id is not null then
+      insert into notifications (user_id, type, title, body, data)
+      values (new.client_id, 'player_absent',
+        v_first || ' wasn''t at today''s class',
+        'We marked ' || v_first || ' absent for ' || v_class.title || ' (' || v_when
+        || '). If that''s a mistake or something''s up, just reply here — we''ll sort it.',
+        jsonb_build_object('booking_id', new.id, 'session_id', new.session_id,
+                           'player_id', new.player_id,
+                           'player_name', v_first,
+                           'class_title', v_class.title,
+                           'time_str', v_when,
+                           'url', '/app/schedule'));
+    end if;
+
   else -- waitlisted → confirmed
     perform notify_founders('ops_booking', 'Waitlist spot claimed',
       v_who || ' claimed the freed spot in ' || v_class.title
