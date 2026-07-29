@@ -13,18 +13,25 @@ import { PageSkeleton } from "@/components/ui/Skeleton";
 
 export const metadata: Metadata = { title: "Book" };
 
-type DB = Awaited<ReturnType<typeof requireUser>>["supabase"];
+type SearchParams = Promise<{ onboarding?: string }>;
+
+/**
+ * The switch between group and private booking — or the onboarding banner, when
+ * the flow routed here. Needs `searchParams` and nothing else, so it sits in its
+ * own boundary: it resolves without a network call while the browser below is
+ * still querying, rather than being held back by it.
+ */
+async function Header({ searchParams }: { searchParams: SearchParams }) {
+  const { onboarding } = await searchParams;
+  return onboarding === "1" ? <OnboardingBanner /> : <BookModeSwitch active="group" />;
+}
 
 /** The browsable session list — streamed, so the shell and mode switch paint first. */
-async function Browser({
-  supabase,
-  userId,
-  onboarding,
-}: {
-  supabase: DB;
-  userId: string;
-  onboarding: boolean;
-}) {
+async function Browser({ searchParams }: { searchParams: SearchParams }) {
+  const { onboarding } = await searchParams;
+  const { supabase, user } = await requireUser("/app/book");
+  const userId = user.id;
+
   const [sessions, venues, summary, players] = await Promise.all([
     getBrowseSessions(supabase, userId),
     getVenues(),
@@ -41,7 +48,7 @@ async function Browser({
       sessions={sessions}
       venues={venues}
       players={players}
-      onboarding={onboarding}
+      onboarding={onboarding === "1"}
       entitlement={{
         hasGroupPlan: Boolean(summary.groupPlan?.active),
         // The account-level trial can go to any household player.
@@ -58,27 +65,21 @@ async function Browser({
   );
 }
 
-export default async function BookPage({
+export default function BookPage({
   searchParams,
 }: {
-  searchParams: Promise<{ onboarding?: string }>;
+  searchParams: SearchParams;
 }) {
-  const { onboarding } = await searchParams;
-  const { supabase, user } = await requireUser("/app/book");
   return (
     <ClientShell title="Book group class">
       <RealtimeRefresh tables={["bookings", "class_sessions"]} />
-      {onboarding === "1" ? (
-        <OnboardingBanner />
-      ) : (
-        <BookModeSwitch active="group" />
-      )}
+      {/* Passed down unawaited: awaiting searchParams here would block the
+          shell for exactly the reason requireUser used to. */}
+      <Suspense fallback={<div className="h-10" />}>
+        <Header searchParams={searchParams} />
+      </Suspense>
       <Suspense fallback={<PageSkeleton />}>
-        <Browser
-          supabase={supabase}
-          userId={user.id}
-          onboarding={onboarding === "1"}
-        />
+        <Browser searchParams={searchParams} />
       </Suspense>
     </ClientShell>
   );

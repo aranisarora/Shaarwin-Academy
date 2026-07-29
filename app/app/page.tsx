@@ -12,26 +12,34 @@ import { Badge } from "@/components/ui/Badge";
 import { WhatsAppAssistantCard } from "@/components/app/WhatsAppAssistantCard";
 import { AddressDisplay } from "@/components/app/AddressDisplay";
 import { getMasteryMap, masteryLabel } from "@/lib/mastery";
-import { PageSkeleton } from "@/components/ui/Skeleton";
+import { PageSkeleton, Skeleton } from "@/components/ui/Skeleton";
 
 export const metadata: Metadata = { title: "Home" };
 
-type DB = Awaited<ReturnType<typeof requireUser>>["supabase"];
+/**
+ * The header greeting. The only part of this screen's chrome that needs the
+ * profile, so it streams into the shell's title slot instead of making the
+ * whole shell wait on auth — `StudioShell` takes a `ReactNode` there, which is
+ * the same seam app/app/loading.tsx uses for its skeleton title.
+ */
+async function Greeting() {
+  const { profile } = await requireUser("/app");
+  return <>Hi, {profile.full_name.split(" ")[0]}</>;
+}
 
 /**
  * Everything on the home screen that needs data. Streamed under the shell so
- * the greeting paints as soon as the profile is known, rather than waiting on
- * the booking, billing and mastery queries behind it — `getMasteryMap` in
- * particular can't join the Promise.all, since it needs the player ids it
- * returns.
+ * the chrome paints before auth resolves, rather than waiting on the booking,
+ * billing and mastery queries behind it — `getMasteryMap` in particular can't
+ * join the Promise.all, since it needs the player ids it returns.
+ *
+ * The `requireUser` here is free: it shares one profile read with `Greeting`
+ * above via the React cache in lib/auth.ts.
  */
-async function HomeBody({
-  supabase,
-  userId,
-}: {
-  supabase: DB;
-  userId: string;
-}) {
+async function HomeBody() {
+  const { supabase, user } = await requireUser("/app");
+  const userId = user.id;
+
   const [summary, bookings, playersRes] = await Promise.all([
     getSubscriptionSummary(supabase, userId),
     getMyBookings(supabase, userId),
@@ -198,13 +206,18 @@ async function HomeBody({
   );
 }
 
-export default async function AppHomePage() {
-  const { supabase, user, profile } = await requireUser("/app");
+export default function AppHomePage() {
   return (
-    <ClientShell title={`Hi, ${profile.full_name.split(" ")[0]}`}>
+    <ClientShell
+      title={
+        <Suspense fallback={<Skeleton className="h-6 w-32" />}>
+          <Greeting />
+        </Suspense>
+      }
+    >
       <div className="mx-auto max-w-2xl space-y-6">
         <Suspense fallback={<PageSkeleton />}>
-          <HomeBody supabase={supabase} userId={user.id} />
+          <HomeBody />
         </Suspense>
       </div>
     </ClientShell>

@@ -9,11 +9,14 @@ import { nowMs } from "@/lib/academy-time";
 
 export const metadata: Metadata = { title: "Schedule" };
 
-type DB = Awaited<ReturnType<typeof requireUser>>["supabase"];
-
-/** The booking list, streamed under the shell rather than blocking it. */
-async function Bookings({ supabase, userId }: { supabase: DB; userId: string }) {
-  const bookings = await getMyBookings(supabase, userId);
+/**
+ * The booking list, streamed under the shell rather than blocking it. It calls
+ * `requireUser` itself so the shell above does not have to await auth — see the
+ * Phase A note in docs/plans/instant-navigation.md.
+ */
+async function Bookings() {
+  const { supabase, user } = await requireUser("/app/schedule");
+  const bookings = await getMyBookings(supabase, user.id);
 
   const now = nowMs();
   const upcoming = bookings.filter(
@@ -28,13 +31,12 @@ async function Bookings({ supabase, userId }: { supabase: DB; userId: string }) 
   return <ScheduleList upcoming={upcoming} past={past} />;
 }
 
-export default async function SchedulePage() {
-  const { supabase, user } = await requireUser("/app/schedule");
+export default function SchedulePage() {
   return (
     <ClientShell title="Schedule">
       <div className="mx-auto max-w-2xl">
         <Suspense fallback={<PageSkeleton />}>
-          <Bookings supabase={supabase} userId={user.id} />
+          <Bookings />
         </Suspense>
       </div>
     </ClientShell>

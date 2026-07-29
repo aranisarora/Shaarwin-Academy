@@ -33,6 +33,34 @@ export const getCurrentUser = cache(async () => {
 const PROFILE_COLUMNS =
   "id,role,full_name,email,phone,avatar_url,default_address,default_lat,default_lng,address_details,razorpay_customer_id,notification_prefs,onboarded_at,approval_status";
 
+/**
+ * The signed-in user's profile row, or null when signed out. Wrapped in React
+ * `cache`, like `getCurrentUser` above, because pages now call `requireUser`
+ * from *inside* their `<Suspense>` boundaries — often from more than one child
+ * of the same page. Without this each of those children would issue its own
+ * identical select and the shell-first refactor would trade one blocking round
+ * trip for two concurrent ones.
+ *
+ * Takes no arguments so every caller in a request shares one cache entry.
+ */
+const getProfileRow = cache(async (): Promise<Profile | null> => {
+  const user = await getCurrentUser();
+  if (!user) return null;
+  const supabase = await createClient();
+
+  // Exactly the columns `Profile` declares, not select("*"): this runs on every
+  // protected navigation, and the table also carries stripe_customer_id,
+  // disputed, deleted_at, created_at and onboarding_step, which nothing here
+  // reads. The screens that do need those fetch them in their own selects.
+  const { data } = await supabase
+    .from("profiles")
+    .select(PROFILE_COLUMNS)
+    .eq("id", user.id)
+    .maybeSingle();
+
+  return (data as Profile) ?? null;
+});
+
 export type Profile = {
   id: string;
   role: "client" | "coach" | "founder";
@@ -79,15 +107,7 @@ export async function requireUser(nextPath: string) {
 
   if (!user) redirect(`/login?next=${encodeURIComponent(nextPath)}`);
 
-  // Exactly the columns `Profile` declares, not select("*"): this runs on every
-  // protected navigation, and the table also carries stripe_customer_id,
-  // disputed, deleted_at, created_at and onboarding_step, which nothing here
-  // reads. The screens that do need those fetch them in their own selects.
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select(PROFILE_COLUMNS)
-    .eq("id", user.id)
-    .maybeSingle();
+  const profile = await getProfileRow();
 
   if (!profile) {
     throw new Error(
@@ -96,5 +116,5 @@ export async function requireUser(nextPath: string) {
     );
   }
 
-  return { supabase, user, profile: profile as Profile };
+  return { supabase, user, profile };
 }
