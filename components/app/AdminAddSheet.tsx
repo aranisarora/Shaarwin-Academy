@@ -75,7 +75,6 @@ function firstOccurrenceOnOrAfter(startDate: string, weekdayCode: string): strin
 }
 
 /** "2025-07-14" → "Mon 14 Jul" */
-const fmtDateTag = formatWallDay;
 
 export function AdminAddSheet({
   variant = "create",
@@ -255,7 +254,7 @@ export function AdminAddSheet({
   function oneOffTitle(): string {
     if (dates.length === 1) {
       const t = time12h(dateTimes[dates[0]] ?? lastTime);
-      return venueName ? `${fmtDateTag(dates[0])} ${t} · ${venueName}` : `${fmtDateTag(dates[0])} ${t}`;
+      return venueName ? `${formatWallDay(dates[0])} ${t} · ${venueName}` : `${formatWallDay(dates[0])} ${t}`;
     }
     return venueName ? `${venueName} · one-time` : "One-time class";
   }
@@ -571,7 +570,7 @@ export function AdminAddSheet({
                 </p>
                 <ItemTimesList
                   items={dates}
-                  labelOf={fmtDateTag}
+                  labelOf={formatWallDay}
                   times={dateTimes}
                   onSetTime={setDateTime}
                   onRemove={removeDate}

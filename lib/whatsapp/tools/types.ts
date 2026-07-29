@@ -7,7 +7,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/database.types";
 import type { Profile } from "@/lib/auth";
-import { formatSessionDate } from "@/lib/academy-time";
 
 export type ToolContext = {
   /** E.164 phone of the sender, e.g. "+919812345678". */
@@ -41,9 +40,6 @@ export function ok(payload: unknown): string {
 export function fail(error: string, detail?: unknown): string {
   return JSON.stringify({ ok: false, error, detail });
 }
-
-/** "Sat 12 Jul, 6:30 pm" in academy time — what users should always see. */
-export const fmtIST = formatSessionDate;
 
 // Mirrors lib/data.ts formatPrice. `pence` holds paise (minor unit of INR).
 export function formatPricePence(pence: number): string {

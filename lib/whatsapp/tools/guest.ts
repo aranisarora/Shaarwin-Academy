@@ -4,7 +4,8 @@
 // the admin client is used only for public catalogue reads.
 
 import { getBrowseSessions } from "@/lib/booking";
-import { fmtIST, formatPricePence, ok, type WaTool } from "./types";
+import { formatSessionDate } from "@/lib/academy-time";
+import { formatPricePence, ok, type WaTool } from "./types";
 
 export const academyInfo: WaTool = {
   name: "get_academy_info",
@@ -39,7 +40,7 @@ export const academyInfo: WaTool = {
       venues: venues ?? [],
       next_7_days_group_sessions: sessions.map((s) => ({
         session_id: s.id,
-        when: fmtIST(s.starts_at),
+        when: formatSessionDate(s.starts_at),
         title: s.classTitle,
         level: s.level,
         venue: s.venue?.name ?? null,

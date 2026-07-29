@@ -28,9 +28,9 @@ import {
   getSettingsCore,
   saveSettingsCore,
 } from "@/lib/admin-ops";
-import { utcToAcademyWall } from "@/lib/academy-time";
+import { formatSessionDate, utcToAcademyWall } from "@/lib/academy-time";
 import { geocode } from "@/lib/whatsapp/geocode";
-import { fail, fmtIST, ok, type ToolContext, type WaTool } from "./types";
+import { fail, ok, type ToolContext, type WaTool } from "./types";
 
 const SUBSCRIPTION_STATUSES = [
   "incomplete",
@@ -619,7 +619,7 @@ const clientAttendance: WaTool = {
           recent: rows
             .filter((r) => r.status !== "rescheduled")
             .slice(0, 10)
-            .map((r) => ({ when: fmtIST(r.when), class: r.title, status: r.status })),
+            .map((r) => ({ when: formatSessionDate(r.when), class: r.title, status: r.status })),
         };
       })
     );
@@ -652,7 +652,7 @@ const clientNotes: WaTool = {
         record_note: p.notes,
         coach_notes: (
           (notes as { body: string; created_at: string; author_name: string }[] | null) ?? []
-        ).map((n) => ({ when: fmtIST(n.created_at), author: n.author_name, note: n.body })),
+        ).map((n) => ({ when: formatSessionDate(n.created_at), author: n.author_name, note: n.body })),
       });
     }
     return ok(result);
@@ -704,20 +704,20 @@ const clientPayments: WaTool = {
         plan: (s.plans)?.name ?? "?",
         status: s.status,
         source: s.source,
-        renews: s.current_period_end ? fmtIST(s.current_period_end) : null,
+        renews: s.current_period_end ? formatSessionDate(s.current_period_end) : null,
       })),
       total_paid_inr: Math.round(paidPence / 100),
       private_minutes_balance: (ledger ?? []).reduce((sum, l) => sum + l.delta_minutes, 0),
       recent_invoices: (invoices ?? []).map((i) => ({
         amount_inr: Math.round(i.amount_pence / 100),
         status: i.status,
-        when: fmtIST(i.paid_at ?? i.created_at),
+        when: formatSessionDate(i.paid_at ?? i.created_at),
       })),
       recent_purchases: (orders ?? []).map((o) => ({
         product: (o.products)?.name ?? "?",
         amount_inr: Math.round(o.amount_pence / 100),
         status: o.status,
-        when: fmtIST(o.created_at),
+        when: formatSessionDate(o.created_at),
       })),
     });
   },
@@ -947,7 +947,7 @@ const listSubscriptions: WaTool = {
         client: (s.profiles)?.full_name ?? "?",
         plan: (s.plans)?.name ?? "?",
         status: s.status,
-        renews: s.current_period_end ? fmtIST(s.current_period_end) : null,
+        renews: s.current_period_end ? formatSessionDate(s.current_period_end) : null,
       }))
     );
   },
@@ -970,7 +970,7 @@ const listDunning: WaTool = {
           client: p?.full_name ?? "?",
           phone: p?.phone ?? null,
           plan: (s.plans)?.name ?? "?",
-          since: s.current_period_end ? fmtIST(s.current_period_end) : null,
+          since: s.current_period_end ? formatSessionDate(s.current_period_end) : null,
         };
       })
     );

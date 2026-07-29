@@ -17,8 +17,6 @@ import {
 import type { MyBooking } from "@/lib/booking";
 import { formatSessionDate, nowMs } from "@/lib/academy-time";
 
-const fmt = formatSessionDate;
-
 export function RescheduleSheet({
   booking,
   onClose,
@@ -92,7 +90,7 @@ export function RescheduleSheet({
         : await rescheduleGroupBooking(booking.id, target.sessionId);
       if (r.ok) {
         setScopeTarget(null);
-        setSuccess(fmt(target.starts_at));
+        setSuccess(formatSessionDate(target.starts_at));
       } else {
         setError(r.error ?? null);
         setScopeTarget(null);
@@ -123,7 +121,7 @@ export function RescheduleSheet({
     if (!booking || !picked) return;
     startTransition(async () => {
       const r = await confirmPrivateReschedule(booking.session.id, picked);
-      if (r.ok) setSuccess(fmt(picked));
+      if (r.ok) setSuccess(formatSessionDate(picked));
       else setError(r.error ?? null);
     });
   }
@@ -148,7 +146,7 @@ export function RescheduleSheet({
               <div>
                 <p className="text-sm text-fg-2">Moving</p>
                 <p className="tnum font-medium">
-                  {fmt(booking.session.starts_at)} — {booking.session.classTitle}
+                  {formatSessionDate(booking.session.starts_at)} — {booking.session.classTitle}
                 </p>
                 <p className="mt-1 text-xs text-fg-2">
                   {isFree
@@ -167,7 +165,7 @@ export function RescheduleSheet({
                 <div className="space-y-3 rounded-[12px] border border-line bg-surface p-4">
                   <div>
                     <p className="text-sm text-fg-2">Move to</p>
-                    <p className="tnum font-medium">{fmt(scopeTarget.starts_at)}</p>
+                    <p className="tnum font-medium">{formatSessionDate(scopeTarget.starts_at)}</p>
                   </div>
                   <p className="text-sm text-fg-2">
                     This is a recurring booking. Move just this week, or shift every
@@ -214,7 +212,7 @@ export function RescheduleSheet({
                       className="flex w-full items-center justify-between gap-3 rounded-[8px] border border-line px-3.5 py-3 text-left hover:border-ember"
                     >
                       <div>
-                        <p className="tnum text-sm font-medium">{fmt(t.starts_at)}</p>
+                        <p className="tnum text-sm font-medium">{formatSessionDate(t.starts_at)}</p>
                         <p className="text-xs text-fg-2">
                           {t.classTitle}
                           {t.venueName ? ` — ${t.venueName}` : ""}
@@ -243,7 +241,7 @@ export function RescheduleSheet({
                       onClick={() => pickPrivate(s.starts_at)}
                       className="tnum min-h-11 rounded-[8px] border border-line px-2 text-sm hover:border-ember"
                     >
-                      {fmt(s.starts_at)}
+                      {formatSessionDate(s.starts_at)}
                     </button>
                   ))}
                 </div>
@@ -251,7 +249,7 @@ export function RescheduleSheet({
 
               {isPrivate && preview && picked && (
                 <div className="space-y-4 rounded-[12px] border border-line bg-surface p-4">
-                  <p className="tnum font-medium">{fmt(picked)}</p>
+                  <p className="tnum font-medium">{formatSessionDate(picked)}</p>
                   {preview.changed ? (
                     <p className="text-sm">
                       {booking.session.coachName ?? "Your coach"} isn&apos;t free then.{" "}

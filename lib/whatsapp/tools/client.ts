@@ -9,7 +9,8 @@ import { getBrowseSessions, getMyBookings } from "@/lib/booking";
 import { getSubscriptionSummary } from "@/lib/billing";
 import { getRazorpay } from "@/lib/razorpay";
 import { geocode } from "@/lib/whatsapp/geocode";
-import { fail, fmtIST, formatPricePence, ok, type ToolContext, type WaTool } from "./types";
+import { formatSessionDate } from "@/lib/academy-time";
+import { fail, formatPricePence, ok, type ToolContext, type WaTool } from "./types";
 
 const RPC_ERROR_COPY: Record<string, string> = {
   no_active_subscription: "No active membership — buy one on the website pricing page first.",
@@ -75,7 +76,7 @@ const mySchedule: WaTool = {
         status: b.status,
         waitlist_position: b.waitlist_position,
         player: b.playerName,
-        when: fmtIST(b.session.starts_at),
+        when: formatSessionDate(b.session.starts_at),
         starts_at: b.session.starts_at,
         title: b.session.classTitle,
         type: b.session.isPrivate ? "private" : "group",
@@ -103,7 +104,7 @@ const browseSessions: WaTool = {
     return ok(
       sessions.map((s) => ({
         session_id: s.id,
-        when: fmtIST(s.starts_at),
+        when: formatSessionDate(s.starts_at),
         starts_at: s.starts_at,
         title: s.classTitle,
         level: s.level,
@@ -203,7 +204,7 @@ const membership: WaTool = {
         ? {
             plan: summary.groupPlan.planName,
             status: summary.groupPlan.status,
-            renews: summary.groupPlan.periodEnd ? fmtIST(summary.groupPlan.periodEnd) : null,
+            renews: summary.groupPlan.periodEnd ? formatSessionDate(summary.groupPlan.periodEnd) : null,
             cancels_at_period_end: summary.groupPlan.cancelAtPeriodEnd,
           }
         : null,
@@ -211,7 +212,7 @@ const membership: WaTool = {
         ? {
             plan: summary.privatePlan.planName,
             status: summary.privatePlan.status,
-            renews: summary.privatePlan.periodEnd ? fmtIST(summary.privatePlan.periodEnd) : null,
+            renews: summary.privatePlan.periodEnd ? formatSessionDate(summary.privatePlan.periodEnd) : null,
             cancels_at_period_end: summary.privatePlan.cancelAtPeriodEnd,
           }
         : null,
@@ -261,7 +262,7 @@ const privateSlots: WaTool = {
     const slots = (data as { starts_at: string; coach_count: number }[]) ?? [];
     return ok({
       resolved_address: geo.place,
-      slots: slots.slice(0, 40).map((s) => ({ starts_at: s.starts_at, when: fmtIST(s.starts_at) })),
+      slots: slots.slice(0, 40).map((s) => ({ starts_at: s.starts_at, when: formatSessionDate(s.starts_at) })),
       note: slots.length > 40 ? `${slots.length - 40} more slots not shown.` : undefined,
     });
   },

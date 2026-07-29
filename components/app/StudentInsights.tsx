@@ -11,9 +11,6 @@ const STATUS_LABELS: Record<string, { label: string; tone: "neutral" | "ember" |
   cancelled_by_academy: { label: "cancelled by academy", tone: "neutral" },
 };
 
-const fmtDateTime = formatSessionDate;
-const fmtDate = formatDateFull;
-
 function Stat({ label, value }: { label: string; value: React.ReactNode }) {
   return (
     <div className="rounded-[12px] border border-line bg-surface-2 px-4 py-3">
@@ -33,7 +30,7 @@ function AttendanceList({ entries }: { entries: AttendanceEntry[] }) {
             <div>
               <p className="font-medium">{e.title}</p>
               <p className="tnum text-xs text-fg-2">
-                {fmtDateTime(e.startsAt)} · {e.classType === "private" ? "private" : "group"}
+                {formatSessionDate(e.startsAt)} · {e.classType === "private" ? "private" : "group"}
               </p>
             </div>
             <Badge tone={s.tone}>{s.label}</Badge>
@@ -65,7 +62,7 @@ export function StudentInsights({ data }: { data: StudentInsightsData }) {
         </div>
         <p className="mt-2 text-xs text-fg-2">
           {stats.lastAttended
-            ? `Last attended ${fmtDate(stats.lastAttended)}`
+            ? `Last attended ${formatDateFull(stats.lastAttended)}`
             : "No attended sessions yet"}
           {stats.cancelled > 0 && ` · ${stats.cancelled} cancelled`}
         </p>

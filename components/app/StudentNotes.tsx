@@ -12,8 +12,6 @@ type Note = {
   author: string;
 };
 
-const fmtDate = formatDateFull;
-
 export function StudentNotes({
   playerId,
   authorName,
@@ -87,7 +85,7 @@ export function StudentNotes({
               className="rounded-[12px] border border-line bg-surface-2 px-4 py-3"
             >
               <p className="tnum mb-1 text-xs text-fg-2">
-                {fmtDate(n.createdAt)} · {n.author}
+                {formatDateFull(n.createdAt)} · {n.author}
               </p>
               <p className="whitespace-pre-wrap">{n.body}</p>
             </li>

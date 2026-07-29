@@ -19,7 +19,6 @@ import {
 
 export const metadata: Metadata = { title: "Schedule" };
 
-const fmtTime = formatClock;
 // Doubles as the day-grouping key: "Saturday 12 July" is unique per day.
 const dayLabel = formatDayLong;
 
@@ -62,7 +61,7 @@ function pickCoachAction(
     return {
       sessionId: r.id,
       title: cls.title ?? "Session",
-      whenLabel: `${dayName} · ${fmtTime(r.starts_at)}`,
+      whenLabel: `${dayName} · ${formatClock(r.starts_at)}`,
       venueName: venue?.name ?? null,
       phase,
       venueLat: venue?.lat ?? priv?.lat ?? null,
@@ -129,7 +128,7 @@ export default async function CoachSchedulePage() {
       key,
       label,
       isToday: key === todayKey,
-      firstTime: fmtTime(rows[0].starts_at),
+      firstTime: formatClock(rows[0].starts_at),
       sessions: ordered.map((s, i) => {
         const prev = ordered[i - 1];
         const travelGap =
@@ -147,7 +146,7 @@ export default async function CoachSchedulePage() {
         return {
           id: s.id,
           locationName,
-          timeLabel: `${fmtTime(s.starts_at)} – ${fmtTime(s.ends_at)}`,
+          timeLabel: `${formatClock(s.starts_at)} – ${formatClock(s.ends_at)}`,
           typeLine: classTypeLine(s),
           status: sessionTimeStatus(s.starts_at, s.ends_at, now),
           featured: s.id === featuredId,

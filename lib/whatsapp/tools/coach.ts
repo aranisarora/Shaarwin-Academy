@@ -2,8 +2,8 @@
 // windows, and time-off requests. Runs as the coach's own session (RLS).
 
 import { getCoachSessions } from "@/lib/coach-data";
-import { academyWallToUtc } from "@/lib/academy-time";
-import { fail, fmtIST, ok, type WaTool } from "./types";
+import { academyWallToUtc, formatSessionDate } from "@/lib/academy-time";
+import { fail, ok, type WaTool } from "./types";
 
 const WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
@@ -40,7 +40,7 @@ const mySessions: WaTool = {
     return ok(
       sessions.map((s) => ({
         session_id: s.id,
-        when: fmtIST(s.starts_at),
+        when: formatSessionDate(s.starts_at),
         title: s.classTitle,
         type: s.isPrivate ? "private" : "group",
         level: s.level,
@@ -177,8 +177,8 @@ const myAvailability: WaTool = {
       })),
       time_off: (timeOff ?? []).map((t) => ({
         time_off_id: t.id,
-        from: fmtIST(t.starts_at),
-        to: fmtIST(t.ends_at),
+        from: formatSessionDate(t.starts_at),
+        to: formatSessionDate(t.ends_at),
         reason: t.reason,
         status: t.status,
       })),

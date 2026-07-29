@@ -5,7 +5,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/database.types";
 import type { Profile } from "@/lib/auth";
-import { ACADEMY_TZ } from "@/lib/academy-time";
+import { formatFullDateTime } from "@/lib/academy-time";
 import { getVertexToken, vertexUrl } from "@/lib/vertex";
 import { toolsForRole, type ToolContext, type WaTool } from "./tools";
 
@@ -85,13 +85,7 @@ Guardrails:
  * and across users of the same role.
  */
 function dynamicContext(profile: Profile | null): string {
-  // The one place a full "Saturday, 12 July 2026 at 18:30" reading is wanted,
-  // so it builds its own formatter rather than joining lib/academy-time's set.
-  const now = new Intl.DateTimeFormat("en-IN", {
-    timeZone: ACADEMY_TZ,
-    dateStyle: "full",
-    timeStyle: "short",
-  }).format(new Date());
+  const now = formatFullDateTime(new Date());
   const who = profile
     ? ` You are talking to ${profile.full_name?.trim() || "a new member whose name isn't saved yet"}.`
     : "";

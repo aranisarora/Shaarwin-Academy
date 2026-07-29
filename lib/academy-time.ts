@@ -125,6 +125,7 @@ const WEEKLY_SLOT = opts({
   minute: "2-digit",
   hour12: true,
 });
+const FULL_DATE_TIME = opts({ dateStyle: "full", timeStyle: "short" }, "en-IN");
 
 /** "6:30 pm" */
 export function formatClock(iso: string | number | Date): string {
@@ -179,6 +180,15 @@ export function formatDateClock(iso: string | number | Date): string {
 /** "Saturday, 6:30 pm" — the recurring identity of a weekly slot. */
 export function formatWeeklySlot(iso: string | number | Date): string {
   return WEEKLY_SLOT.format(new Date(iso));
+}
+
+/**
+ * "Saturday, 12 July 2026 at 6:30 pm" — the one long-form reading, used to tell
+ * the WhatsApp model what time it is now. Spelled out because the model reasons
+ * over the text rather than displaying it.
+ */
+export function formatFullDateTime(iso: string | number | Date): string {
+  return FULL_DATE_TIME.format(new Date(iso));
 }
 
 /**

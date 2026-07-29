@@ -39,11 +39,8 @@ export type PrivatePlanLimits = {
 // more time commuting than coaching.
 const DURATIONS = [60, 90] as const;
 
-const fmtSlot = formatSessionDate;
 /** "Every Tue, 5:00 pm" — the weekly identity of a slot. */
-const fmtWeekly = formatWeeklySlot;
 /** "4 Aug" — the date a weekly series' first session lands on. */
-const fmtStartDate = formatDate;
 /** IST weekday+time key so two dates of the same weekly slot collide. */
 const weeklyKey = wallWeekdayTime;
 
@@ -575,11 +572,11 @@ export function PrivateWizard({
                   <span aria-hidden className="h-1.5 w-1.5 shrink-0 rounded-full bg-ember" />
                   {weeklyMode ? (
                     <span>
-                      <span className="font-semibold">Every {fmtWeekly(s)}</span>
-                      <span className="text-fg-2"> — first session {fmtStartDate(s)}</span>
+                      <span className="font-semibold">Every {formatWeeklySlot(s)}</span>
+                      <span className="text-fg-2"> — first session {formatDate(s)}</span>
                     </span>
                   ) : (
-                    fmtSlot(s)
+                    formatSessionDate(s)
                   )}
                 </li>
               ))}

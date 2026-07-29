@@ -10,8 +10,6 @@ import { formatDateFull } from "@/lib/academy-time";
 
 export const metadata: Metadata = { title: "Player" };
 
-const fmtNoteDate = formatDateFull;
-
 export default async function PlayerPage({
   params,
 }: {
@@ -64,7 +62,7 @@ export default async function PlayerPage({
                 <li key={n.id} className="px-4 py-3">
                   <p className="whitespace-pre-wrap text-sm">{n.body}</p>
                   <p className="tnum mt-1 text-xs text-fg-2">
-                    {n.author_name} · {fmtNoteDate(n.created_at)}
+                    {n.author_name} · {formatDateFull(n.created_at)}
                   </p>
                 </li>
               ))}

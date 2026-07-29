@@ -24,8 +24,6 @@ import type { Venue } from "@/lib/data";
 const LEVELS = ["all", "beginner", "intermediate", "advanced", "elite"] as const;
 const WEEKDAYS = ["all", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
 
-const fmtDate = formatSessionDate;
-
 /** Wall-clock parts of a session in the academy timezone. */
 function slotParts(iso: string) {
   const weekday = formatWeekdayLong(iso); // "Monday"
@@ -257,7 +255,7 @@ export function BookBrowser({
                             {PLURAL[slot.weekday] ?? slot.weekday} · {slot.time}
                           </p>
                           <p className="text-sm text-fg-2">
-                            {s.classTitle} · {s.durationMinutes} min · next {fmtDate(s.starts_at)}
+                            {s.classTitle} · {s.durationMinutes} min · next {formatSessionDate(s.starts_at)}
                           </p>
                         </div>
                         <div className="flex flex-col items-end gap-1.5">
@@ -298,7 +296,7 @@ export function BookBrowser({
                 {selected.next.coachName ? ` · Coach ${selected.next.coachName}` : ""}
               </p>
               <p className="mt-1 text-sm text-fg-2">
-                Starting {fmtDate(selected.next.starts_at)} ·{" "}
+                Starting {formatSessionDate(selected.next.starts_at)} ·{" "}
                 {selected.next.level === "any" ? "all levels" : selected.next.level}
               </p>
             </div>
@@ -383,7 +381,7 @@ export function BookBrowser({
                 >
                   <p className="text-sm font-semibold">Just once</p>
                   <p className="mt-0.5 text-xs text-fg-2">
-                    Only {fmtDate(selected.next.starts_at)}.
+                    Only {formatSessionDate(selected.next.starts_at)}.
                   </p>
                 </button>
               </div>

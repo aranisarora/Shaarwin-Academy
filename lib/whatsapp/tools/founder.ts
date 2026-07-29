@@ -9,7 +9,8 @@ import {
   decideTimeOffCore,
   grantCompCore,
 } from "@/lib/admin-ops";
-import { fail, fmtIST, ok, type WaTool } from "./types";
+import { formatSessionDate } from "@/lib/academy-time";
+import { fail, ok, type WaTool } from "./types";
 import { founderAdminTools } from "./founder-admin";
 
 const overview: WaTool = {
@@ -96,7 +97,7 @@ const listSessions: WaTool = {
         ).length;
         return {
           session_id: s.id,
-          when: fmtIST(s.starts_at),
+          when: formatSessionDate(s.starts_at),
           title: cls.title,
           type: cls.class_type,
           coach: s.coach_id ? (names.get(s.coach_id) ?? "?") : "UNASSIGNED",
@@ -451,8 +452,8 @@ const pendingTimeOff: WaTool = {
       (data ?? []).map((t) => ({
         time_off_id: t.id,
         coach: (t.profiles as unknown as { full_name: string } | null)?.full_name ?? "?",
-        from: fmtIST(t.starts_at),
-        to: fmtIST(t.ends_at),
+        from: formatSessionDate(t.starts_at),
+        to: formatSessionDate(t.ends_at),
         reason: t.reason,
       }))
     );
