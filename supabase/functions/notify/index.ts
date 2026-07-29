@@ -932,12 +932,27 @@ async function sweepWaitlistOffers() {
     const alreadyOffered = new Set([offer.user_id]);
     const candidate = (next ?? []).find((b) => !alreadyOffered.has(b.client_id));
     if (candidate) {
+      // The fourth waitlist insert site (G4). Like the three in SQL, this one
+      // carried no class_title and no claim_minutes, so the template could only
+      // say "a spot just opened in a class" with a hardcoded 15 minutes.
+      const { data: session } = await supabase
+        .from("class_sessions")
+        .select("classes!inner(title)")
+        .eq("id", sessionId)
+        .maybeSingle();
+
       await supabase.from("notifications").insert({
         user_id: candidate.client_id,
         type: "waitlist_spot",
         title: "A spot opened",
         body: `Claim it within ${claimMinutes} minutes.`,
-        data: { session_id: sessionId, booking_id: candidate.id, url: "/app/book" },
+        data: {
+          session_id: sessionId,
+          booking_id: candidate.id,
+          class_title: titleOf(session?.classes),
+          claim_minutes: claimMinutes,
+          url: `/app/book/class/${sessionId}`,
+        },
       });
     }
   }

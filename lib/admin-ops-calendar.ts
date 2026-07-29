@@ -120,6 +120,16 @@ export async function moveSessionCore(
     .eq("session_id", sessionId)
     .in("status", ["confirmed", "waitlisted"]);
   const when = whenIST(newStart);
+  // old → new, so the message can say what it changed FROM. Without this the
+  // member is told a session "is now Thursday 6:30pm" with no way to know which
+  // of their sessions moved. (notification-fix-plan 2.5.)
+  const wasWhen = whenIST(new Date(session.starts_at));
+  const changed = {
+    old_time_str: wasWhen,
+    new_time_str: when,
+    old_starts_at: session.starts_at,
+    new_starts_at: newStart.toISOString(),
+  };
   const notified = new Set<string>();
   for (const b of bookings ?? []) {
     // A school player's booking has no account behind it — nobody to notify.
@@ -130,8 +140,8 @@ export async function moveSessionCore(
       user_id: b.client_id,
       type: "session_moved",
       title: "Session moved",
-      body: `${cls.title} is now ${when}.`,
-      data: { session_id: sessionId, url: "/app/schedule" },
+      body: `${cls.title} has moved from ${wasWhen} to ${when}.`,
+      data: { session_id: sessionId, class_title: cls.title, ...changed, url: "/app/schedule" },
     });
   }
   if (session.coach_id) {
@@ -139,8 +149,12 @@ export async function moveSessionCore(
       user_id: session.coach_id,
       type: "session_moved",
       title: coachCleared ? "Session moved off your calendar" : "Session moved",
-      body: `${cls.title} — ${coachCleared ? "the new time clashed for you" : `now ${when}`}.`,
-      data: { session_id: sessionId, url: "/coach" },
+      body: `${cls.title} — ${
+        coachCleared
+          ? `the new time (${when}) clashed for you, so it's off your calendar`
+          : `moved from ${wasWhen} to ${when}`
+      }.`,
+      data: { session_id: sessionId, class_title: cls.title, ...changed, url: "/coach" },
     });
   }
 

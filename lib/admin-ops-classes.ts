@@ -8,6 +8,10 @@ import { reassignSessionCore } from "@/lib/admin-ops-calendar";
 import { toSkillLevel, type OpResult } from "@/lib/admin-ops-types";
 
 const WEEKDAY_NUM: Record<string, number> = { MO: 1, TU: 2, WE: 3, TH: 4, FR: 5, SA: 6, SU: 7 };
+const WEEKDAY_LABEL: Record<string, string> = {
+  MO: "Monday", TU: "Tuesday", WE: "Wednesday", TH: "Thursday",
+  FR: "Friday", SA: "Saturday", SU: "Sunday",
+};
 
 export type ClassUpdate = {
   classId: string;
@@ -62,6 +66,35 @@ export async function updateGroupClassCore(
     .eq("class_id", input.classId)
     .eq("status", "scheduled")
     .gt("starts_at", new Date().toISOString());
+
+  // Capture the OLD slot before the loop below moves the sessions, so the
+  // notification can say what the class changed FROM. Previously it only ever
+  // said "has a new time or place — check your schedule", which forces the
+  // member to go and diff it themselves. (notification-fix-plan 2.5.)
+  const oldWeekdayCode = /BYDAY=([A-Z]{2})/.exec(cls.recurrence_rule ?? "")?.[1] ?? "";
+  const firstOldWall = sessions?.[0] ? utcToAcademyWall(new Date(sessions[0].starts_at)) : null;
+  const oldSlot =
+    oldWeekdayCode && firstOldWall
+      ? `${WEEKDAY_LABEL[oldWeekdayCode] ?? oldWeekdayCode}s at ${firstOldWall.time}`
+      : null;
+  const newSlot = `${WEEKDAY_LABEL[input.weekday] ?? input.weekday}s at ${input.time}`;
+  const slotMoved = oldSlot !== null && oldSlot !== newSlot;
+  const changed = {
+    class_id: input.classId,
+    class_title: input.title,
+    old_slot: oldSlot,
+    new_slot: newSlot,
+    venue_changed: venueChanged,
+  };
+
+  // "Thursdays at 18:30 → Fridays at 18:30", "now at a new venue", or both.
+  const whatChanged = slotMoved
+    ? venueChanged
+      ? `has moved from ${oldSlot} to ${newSlot}, and is at a new venue`
+      : `has moved from ${oldSlot} to ${newSlot}`
+    : venueChanged
+      ? `is at a new venue (still ${newSlot})`
+      : "has changed";
 
   const movedSessionIds: string[] = [];
   const affectedCoaches = new Set<string>();
@@ -123,8 +156,8 @@ export async function updateGroupClassCore(
         user_id: b.client_id,
         type: "class_updated",
         title: "Class schedule changed",
-        body: `${input.title} has a new time or place — check your schedule.`,
-        data: { url: "/app/schedule" },
+        body: `${input.title} ${whatChanged} — check your schedule.`,
+        data: { ...changed, url: "/app/schedule" },
       });
     }
     for (const coachId of affectedCoaches) {
@@ -132,8 +165,8 @@ export async function updateGroupClassCore(
         user_id: coachId,
         type: "class_updated",
         title: "Class schedule changed",
-        body: `${input.title} moved — check your calendar.`,
-        data: { url: "/coach" },
+        body: `${input.title} ${whatChanged} — check your calendar.`,
+        data: { ...changed, url: "/coach" },
       });
     }
   }

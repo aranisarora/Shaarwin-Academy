@@ -1249,12 +1249,16 @@ begin
 
     if found then
       insert into notifications (user_id, type, title, body, data, scheduled_for)
-      values (v_next.client_id, 'waitlist_spot', 'A spot opened',
+      select v_next.client_id, 'waitlist_spot', 'A spot opened',
         'Claim it within ' || get_setting_int('waitlist_claim_minutes', 15) || ' minutes.',
         jsonb_build_object('booking_id', v_next.id, 'session_id', v_booking.session_id,
                            'claim_by', now() + make_interval(mins => get_setting_int('waitlist_claim_minutes', 15)),
+                           'class_title', coalesce(c.title, 'a class'),
+                           'claim_minutes', get_setting_int('waitlist_claim_minutes', 15),
                            'url', '/app/book/class/' || v_booking.session_id),
-        now());
+        now()
+      from class_sessions s join classes c on c.id = s.class_id
+      where s.id = v_booking.session_id;
     end if;
   end if;
 
@@ -1394,8 +1398,12 @@ begin
     select b.client_id, 'waitlist_spot', 'A spot opened',
       'Claim it within ' || get_setting_int('waitlist_claim_minutes', 15) || ' minutes.',
       jsonb_build_object('booking_id', b.id, 'session_id', r.session_id,
+        'class_title', coalesce(c.title, 'a class'),
+        'claim_minutes', get_setting_int('waitlist_claim_minutes', 15),
         'url', '/app/book/class/' || r.session_id), now()
     from bookings b
+    join class_sessions s on s.id = b.session_id
+    join classes c on c.id = s.class_id
     where b.session_id = r.session_id and b.status = 'waitlisted'
     order by b.waitlist_position asc limit 1;
 
@@ -2764,8 +2772,13 @@ begin
   insert into notifications (user_id, type, title, body, data, scheduled_for)
   select b.client_id, 'waitlist_spot', 'A spot opened',
          'Claim it within ' || get_setting_int('waitlist_claim_minutes', 15) || ' minutes.',
-         jsonb_build_object('booking_id', b.id, 'session_id', v_booking.session_id), now()
+         jsonb_build_object('booking_id', b.id, 'session_id', v_booking.session_id,
+           'class_title', coalesce(c.title, 'a class'),
+           'claim_minutes', get_setting_int('waitlist_claim_minutes', 15),
+           'url', '/app/book/class/' || v_booking.session_id), now()
   from bookings b
+  join class_sessions s on s.id = b.session_id
+  join classes c on c.id = s.class_id
   where b.session_id = v_booking.session_id and b.status = 'waitlisted'
   order by b.waitlist_position asc limit 1;
 
@@ -3550,7 +3563,8 @@ begin
     values (new.client_id, 'payment_failed', 'Payment issue',
       'Your ' || coalesce(v_plan.name, 'membership')
       || ' payment didn''t go through. Please update your payment method to keep booking.',
-      jsonb_build_object('url', '/app/billing'));
+      jsonb_build_object('url', '/app/billing',
+                         'plan_name', coalesce(v_plan.name, 'your membership')));
   elsif new.status = 'canceled' then
     perform notify_founders('ops_membership', 'Membership cancelled',
       coalesce(v_client, 'A client') || ' — ' || coalesce(v_plan.name, 'plan') || ' is cancelled.',
