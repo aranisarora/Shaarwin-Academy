@@ -16,7 +16,7 @@ import {
   type StructuredAddress,
 } from "@/lib/address";
 import { saveProfile, addPlayer, removePlayer } from "@/app/app/profile/actions";
-import { PREF_TYPES } from "@/lib/notification-prefs";
+import { PREF_GROUPS } from "@/lib/notification-prefs";
 
 type Player = {
   id: string;
@@ -78,11 +78,14 @@ export function ProfileEditor({
       <div>
         <p className="label mb-3">Notifications</p>
         <div className="space-y-2 rounded-[12px] border border-line bg-surface-2 p-4">
-          {PREF_TYPES.map(([key, labelText]) => {
+          {PREF_GROUPS.map(({ key, label: labelText, description }) => {
             const on = form.prefs[key] !== false; // default on
             return (
-              <label key={key} className="flex min-h-11 items-center justify-between gap-3">
-                <span className="text-sm">{labelText}</span>
+              <label key={key} className="flex min-h-11 items-start justify-between gap-3 py-1">
+                <span>
+                  <span className="block text-sm">{labelText}</span>
+                  <span className="block text-xs text-fg-2">{description}</span>
+                </span>
                 <Switch
                   checked={on}
                   onChange={(next) =>
@@ -93,7 +96,9 @@ export function ProfileEditor({
             );
           })}
           <p className="pt-1 text-xs text-fg-2">
-            Payment and cancellation notices always deliver.
+            Whatever these are set to, we&apos;ll always tell you if a session is
+            cancelled, your coach is running late, your player was absent, or a
+            payment fails.
           </p>
         </div>
         <div className="mt-3 flex items-center gap-3">

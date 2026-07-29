@@ -10,7 +10,7 @@ import { describe, it, expect } from "vitest";
 import { admin } from "../../e2e/lib/supabase";
 import { createClient } from "../../e2e/lib/scenario";
 import { applyOptOut } from "../../lib/whatsapp/optout";
-import { PREF_TYPES } from "../../lib/notification-prefs";
+import { ALL_PREF_KEYS } from "../../lib/notification-prefs";
 
 describe("WhatsApp opt-out (migration 0044)", () => {
   it("STOP sets the hard channel gate and turns every mutable pref off", async () => {
@@ -28,7 +28,7 @@ describe("WhatsApp opt-out (migration 0044)", () => {
 
     expect(data!.wa_muted).toBe(true);
     const prefs = data!.notification_prefs as Record<string, boolean>;
-    for (const [key] of PREF_TYPES) expect(prefs[key]).toBe(false);
+    for (const key of ALL_PREF_KEYS) expect(prefs[key]).toBe(false);
   });
 
   it("START reverses it completely", async () => {
@@ -47,7 +47,7 @@ describe("WhatsApp opt-out (migration 0044)", () => {
 
     expect(data!.wa_muted).toBe(false);
     const prefs = data!.notification_prefs as Record<string, boolean>;
-    for (const [key] of PREF_TYPES) expect(prefs[key]).toBe(true);
+    for (const key of ALL_PREF_KEYS) expect(prefs[key]).toBe(true);
   });
 
   it("defaults to not-muted, so existing members are unaffected", async () => {

@@ -12,7 +12,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/database.types";
-import { PREF_TYPES } from "@/lib/notification-prefs";
+import { ALL_PREF_KEYS } from "@/lib/notification-prefs";
 
 export type OptOutAction = "stop" | "start";
 
@@ -52,7 +52,9 @@ export async function applyOptOut(
   const prefs = {
     ...((profile?.notification_prefs as Record<string, boolean> | null) ?? {}),
   };
-  for (const [key] of PREF_TYPES) prefs[key] = !muted;
+  // Both the group toggles and the legacy per-type keys, so the app screen
+  // shows the same state regardless of which era wrote the member's prefs.
+  for (const key of ALL_PREF_KEYS) prefs[key] = !muted;
 
   await admin
     .from("profiles")

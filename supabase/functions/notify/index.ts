@@ -156,6 +156,47 @@ const CAP_EXEMPT = new Set([
 // delivered) rather than deferred forever.
 const CAP_DROP_AFTER_MS = 3 * 86400000;
 
+// ── Grouped preferences (notification-fix-plan 2.6 / G9) ────────────────────
+//
+// Members now toggle three groups — Reminders · Progress · News & offers —
+// instead of five per-type switches that covered a fraction of what we send.
+//
+// MUST stay in sync with PREF_GROUP_FOR_TYPE in lib/notification-prefs.ts. The
+// worker is Deno and can't import from lib/, so the map is duplicated here on
+// purpose (same arrangement as the WhatsApp button ids). A type in neither map
+// is unmutable, so an omission fails loud rather than silent.
+const PREF_GROUP_FOR_TYPE: Record<string, string> = {
+  reminder_upcoming: "reminders",
+  waitlist_spot: "reminders",
+  coach_changed: "reminders",
+  booking_rescheduled: "reminders",
+  booking_confirmed: "reminders",
+  session_moved: "reminders",
+  class_updated: "reminders",
+  coach_assigned: "reminders",
+  private_session_booked: "reminders",
+  // Mutable on purpose: reassurance decays with repetition. coach_late is NOT
+  // here — a coach *not* being there is what a parent needs to know.
+  coach_arrived: "reminders",
+
+  monthly_progress: "progress",
+  assessment_ready: "progress",
+  student_note: "progress",
+
+  announcement: "news",
+  renewal_upcoming: "news",
+  new_class_open: "news",
+  payment_receipt: "news",
+};
+
+/** Per-type keys win over the group toggle, so pre-regrouping choices survive. */
+function mutedByPrefs(type: string, prefs: Record<string, boolean> | null): boolean {
+  if (!prefs) return false;
+  if (prefs[type] === false) return true;
+  const group = PREF_GROUP_FOR_TYPE[type];
+  return group ? prefs[group] === false : false;
+}
+
 Deno.serve(async () => {
   const { data: due } = await supabase
     .from("notifications")
@@ -214,7 +255,7 @@ Deno.serve(async () => {
         await markSent(row.id);
         continue;
       }
-      if (profile?.notification_prefs?.[row.type] === false) {
+      if (mutedByPrefs(row.type, profile?.notification_prefs ?? null)) {
         await markSent(row.id);
         continue;
       }
