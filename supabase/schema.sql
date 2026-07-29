@@ -1644,6 +1644,67 @@ begin
 end;
 $function$;
 
+create or replace function public.queue_coach_changed(
+  p_user uuid,
+  p_session uuid,
+  p_title text,
+  p_body text,
+  p_url text
+)
+returns void
+language plpgsql
+security definer
+set search_path to 'public'
+as $function$
+declare
+  v_existing notifications%rowtype;
+  v_count int;
+  v_day_start timestamptz;
+begin
+  if p_user is null then return; end if;
+
+  -- Start of the current IST day. India has no DST so this is unambiguous.
+  v_day_start := date_trunc('day', now() at time zone 'Asia/Kolkata')
+                 at time zone 'Asia/Kolkata';
+
+  select * into v_existing
+  from notifications
+  where user_id = p_user
+    and type = 'coach_changed'
+    and status = 'pending'
+    and created_at >= v_day_start
+  order by created_at
+  limit 1
+  for update;
+
+  if not found then
+    insert into notifications (user_id, type, title, body, data, scheduled_for)
+    values (p_user, 'coach_changed', p_title, p_body,
+            jsonb_build_object('session_id', p_session, 'url', p_url,
+                               'change_count', 1),
+            now() + interval '2 minutes');
+    return;
+  end if;
+
+  -- Second and subsequent changes today → one summary instead of N messages.
+  v_count := coalesce((v_existing.data ->> 'change_count')::int, 1) + 1;
+
+  update notifications
+  set title = 'Schedule updated',
+      body  = 'Your schedule was updated — ' || v_count
+              || ' of your sessions have a new coach.',
+      data  = v_existing.data
+              || jsonb_build_object('change_count', v_count,
+                                    'url', p_url,
+                                    'collapsed', true),
+      scheduled_for = greatest(v_existing.scheduled_for, now() + interval '2 minutes')
+  where id = v_existing.id;
+end;
+$function$;
+
+comment on function public.queue_coach_changed is
+  'Queue a coach_changed notification, collapsing repeats for the same user on the same IST day into one summary row. See notification-fix-plan 2.1.';
+
 CREATE OR REPLACE FUNCTION public.founder_reassign(p_session uuid, p_coach uuid, p_lock boolean DEFAULT false, p_force boolean DEFAULT false)
  RETURNS void
  LANGUAGE plpgsql
@@ -1653,6 +1714,7 @@ AS $function$
 declare
   v_fail text;
   v_old uuid;
+  r record;
 begin
   if not is_founder() then raise exception 'founder_only'; end if;
 
@@ -1676,25 +1738,23 @@ begin
           jsonb_build_object('from', v_old, 'to', p_coach, 'locked', p_lock,
                              'forced', p_force, 'overridden_rule', v_fail));
 
-  -- notify old coach, new coach, booked clients
+  -- notify old coach, new coach, booked clients — each collapsed per day
   if v_old is not null and v_old <> p_coach then
-    insert into notifications (user_id, type, title, body, data)
-    values (v_old, 'coach_changed', 'Session reassigned',
-            'One of your sessions was moved to another coach.',
-            jsonb_build_object('session_id', p_session, 'url', '/coach/calendar'));
+    perform queue_coach_changed(v_old, p_session, 'Session reassigned',
+            'One of your sessions was moved to another coach.', '/coach/calendar');
   end if;
 
-  insert into notifications (user_id, type, title, body, data)
-  values (p_coach, 'coach_changed', 'New session assigned',
-          'A session was added to your calendar.',
-          jsonb_build_object('session_id', p_session, 'url', '/coach/calendar'));
+  perform queue_coach_changed(p_coach, p_session, 'New session assigned',
+          'A session was added to your calendar.', '/coach/calendar');
 
-  insert into notifications (user_id, type, title, body, data)
-  select distinct b.client_id, 'coach_changed', 'Meet your new coach',
-         'Your session has a new coach — say hello at the table.',
-         jsonb_build_object('session_id', p_session, 'url', '/app/schedule')
-  from bookings b
-  where b.session_id = p_session and b.status = 'confirmed';
+  for r in
+    select distinct b.client_id
+    from bookings b
+    where b.session_id = p_session and b.status = 'confirmed'
+  loop
+    perform queue_coach_changed(r.client_id, p_session, 'Meet your new coach',
+            'Your session has a new coach — say hello at the table.', '/app/schedule');
+  end loop;
 end;
 $function$;
 
@@ -1891,6 +1951,7 @@ CREATE OR REPLACE FUNCTION public.handle_coach_dropout(p_coach uuid, p_from time
 AS $function$
 declare
   r record;
+  c record;
   v_new uuid;
 begin
   for r in
@@ -1918,16 +1979,17 @@ begin
       values (r.id, v_new, null, 'active');
       update class_sessions set coach_id = v_new where id = r.id;
 
-      insert into notifications (user_id, type, title, body, data)
-      values (v_new, 'coach_changed', 'You picked up a session',
-              'Cover assigned to you automatically.',
-              jsonb_build_object('session_id', r.id, 'url', '/coach/calendar'));
+      perform queue_coach_changed(v_new, r.id, 'You picked up a session',
+              'Cover assigned to you automatically.', '/coach/calendar');
 
-      insert into notifications (user_id, type, title, body, data)
-      select distinct b.client_id, 'coach_changed', 'Meet your new coach',
-             'Your session has a new coach.',
-             jsonb_build_object('session_id', r.id, 'url', '/app/schedule')
-      from bookings b where b.session_id = r.id and b.status = 'confirmed';
+      for c in
+        select distinct b.client_id
+        from bookings b
+        where b.session_id = r.id and b.status = 'confirmed'
+      loop
+        perform queue_coach_changed(c.client_id, r.id, 'Meet your new coach',
+                'Your session has a new coach.', '/app/schedule');
+      end loop;
     else
       insert into notifications (user_id, type, title, body, data)
       select p.id, 'session_unassigned', 'Cover needed',
