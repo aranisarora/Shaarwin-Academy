@@ -1,16 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { fromDetails, type StructuredAddress } from "@/lib/address";
+import type { Database } from "@/lib/database.types";
+import { asAddressDetails, fromDetails, type StructuredAddress } from "@/lib/address";
 import { makeVenueResolver } from "@/lib/venue-display";
-
-type PrivDetail = {
-  address: string;
-  postcode: string;
-  lat: number;
-  lng: number;
-  access_notes: string | null;
-  address_details: Partial<StructuredAddress> | null;
-  profiles: { full_name: string } | null;
-};
 
 export type CoachSession = {
   id: string;
@@ -35,7 +26,7 @@ export type CoachSession = {
 };
 
 export async function getCoachSessions(
-  supabase: SupabaseClient,
+  supabase: SupabaseClient<Database>,
   coachId: string,
   from: Date,
   to: Date
@@ -75,34 +66,17 @@ export async function getCoachSessions(
   }
 
   return sessions.map((s) => {
-    const cls = s.classes as unknown as {
-      title: string;
-      skill_level: string;
-      capacity: number;
-      class_type: string;
-      venues: {
-        name: string;
-        address: string;
-        postcode: string;
-        lat: number;
-        lng: number;
-        address_details: Partial<StructuredAddress> | null;
-      } | null;
-      private_class_details: PrivDetail | PrivDetail[] | null;
-    };
-    // PostgREST returns this one-to-one embed as a single object (not an array),
-    // so normalize both shapes rather than blindly indexing [0].
-    const rawPriv = cls.private_class_details;
-    const priv = Array.isArray(rawPriv) ? (rawPriv[0] ?? null) : (rawPriv ?? null);
+    const cls = s.classes;
+    const priv = cls.private_class_details;
     const address = cls.venues
-      ? fromDetails(cls.venues.address_details, {
+      ? fromDetails(asAddressDetails(cls.venues.address_details), {
           address: cls.venues.address,
           postcode: cls.venues.postcode,
           lat: cls.venues.lat,
           lng: cls.venues.lng,
         })
       : priv
-        ? fromDetails(priv.address_details, {
+        ? fromDetails(asAddressDetails(priv.address_details), {
             address: priv.address,
             postcode: priv.postcode,
             lat: priv.lat,

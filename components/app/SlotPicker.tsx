@@ -9,22 +9,27 @@
 // All formatting is Asia/Kolkata via Intl — never the device timezone.
 
 import { useMemo, useState } from "react";
+import {
+  formatClock,
+  formatDate,
+  formatDay,
+  formatWeekday,
+  formatWeekdayLong,
+  nowMs,
+  wallDate,
+  wallHour,
+  wallWeekdayTime,
+} from "@/lib/academy-time";
 import type { Slot } from "@/app/app/book/private/actions";
 
 type Mode = "dates" | "weekly";
 
-// ── IST formatting helpers ────────────────────────────────────────────────
-const IST = "Asia/Kolkata";
+// ── Label helpers ─────────────────────────────────────────────────────────
+// The academy-time formatters do the Intl work; these name the labels in the
+// picker's own vocabulary.
 
 /** YYYY-MM-DD wall date in IST — the grouping key for one-off day pills. */
-function istDateKey(iso: string) {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: IST,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date(iso));
-}
+const istDateKey = wallDate;
 
 /** "Today" / "Tomorrow" / "Wed" — the primary line of a one-off day pill. The
  * date sits on a second line (dayPillDate) so the relative label stays glanceable
@@ -33,88 +38,34 @@ function dayPillTop(iso: string, todayKey: string, tomorrowKey: string) {
   const key = istDateKey(iso);
   if (key === todayKey) return "Today";
   if (key === tomorrowKey) return "Tomorrow";
-  return new Intl.DateTimeFormat("en-GB", {
-    weekday: "short",
-    timeZone: IST,
-  }).format(new Date(iso));
+  return formatWeekday(iso);
 }
 
 /** "25 Jul" — the date line under a one-off day pill's day name. */
-function dayPillDate(iso: string) {
-  return new Intl.DateTimeFormat("en-GB", {
-    day: "numeric",
-    month: "short",
-    timeZone: IST,
-  }).format(new Date(iso));
-}
+const dayPillDate = formatDate;
 
 /** "Wed 30 Jul" — used inside one-off selection chips. */
-function dayLabel(iso: string) {
-  return new Intl.DateTimeFormat("en-GB", {
-    weekday: "short",
-    day: "numeric",
-    month: "short",
-    timeZone: IST,
-  }).format(new Date(iso));
-}
+const dayLabel = formatDay;
 
 /** "5:00 pm" — time-only chip label. */
-function timeLabel(iso: string) {
-  return new Intl.DateTimeFormat("en-GB", {
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true,
-    timeZone: IST,
-  }).format(new Date(iso));
-}
+const timeLabel = formatClock;
 
 /** "starts 4 Aug" — the series start date shown under a weekly time. */
-function startLabel(iso: string) {
-  return new Intl.DateTimeFormat("en-GB", {
-    day: "numeric",
-    month: "short",
-    timeZone: IST,
-  }).format(new Date(iso));
-}
+const startLabel = formatDate;
 
 /** "Mon"…"Sun" — weekday-pill key/label for weekly mode. */
-function weekdayShort(iso: string) {
-  return new Intl.DateTimeFormat("en-GB", {
-    weekday: "short",
-    timeZone: IST,
-  }).format(new Date(iso));
-}
+const weekdayShort = formatWeekday;
 
 /** "Tuesdays" — the recurring identity used in weekly selection chips. */
 function weekdayPlural(iso: string) {
-  return (
-    new Intl.DateTimeFormat("en-GB", { weekday: "long", timeZone: IST }).format(
-      new Date(iso)
-    ) + "s"
-  );
+  return formatWeekdayLong(iso) + "s";
 }
 
 /** IST weekday+time key so two dates of the same weekly slot collide. */
-function weeklyKey(iso: string) {
-  return new Intl.DateTimeFormat("en-GB", {
-    weekday: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-    timeZone: IST,
-  }).format(new Date(iso));
-}
+const weeklyKey = wallWeekdayTime;
 
 /** 0–23 IST hour, for morning/afternoon/evening bucketing. */
-function istHour(iso: string): number {
-  return Number(
-    new Intl.DateTimeFormat("en-GB", {
-      hour: "2-digit",
-      hour12: false,
-      timeZone: IST,
-    }).format(new Date(iso))
-  );
-}
+const istHour = wallHour;
 
 function partOfDay(iso: string): "Morning" | "Afternoon" | "Evening" {
   const h = istHour(iso);
@@ -180,9 +131,9 @@ export function SlotPicker({
 
   // IST wall-date keys for the "Today"/"Tomorrow" pill labels (IST has no DST,
   // so a flat +24h step is exact).
-  const now = Date.now();
-  const todayKey = istDateKey(new Date(now).toISOString());
-  const tomorrowKey = istDateKey(new Date(now + 86_400_000).toISOString());
+  const now = nowMs();
+  const todayKey = istDateKey(now);
+  const tomorrowKey = istDateKey(now + 86_400_000);
 
   if (groups.length === 0) return null;
 

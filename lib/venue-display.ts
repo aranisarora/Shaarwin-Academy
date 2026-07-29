@@ -3,6 +3,8 @@
 // "47/1, Bengaluru…"). Used by the schedule card, the session sheet header and
 // the client-side week refetch so they never disagree.
 
+import { asAddressDetails, type StructuredAddress } from "@/lib/address";
+
 export type VenueLike = {
   name: string;
   address: string | null;
@@ -10,11 +12,28 @@ export type VenueLike = {
   lng: number | null;
 };
 
+/**
+ * Narrow the `address_details` jsonb on a venue row selected straight from
+ * Postgres. The three admin pages that list venues run the same select, so the
+ * one cast from `Json` to the address shape lives here rather than at each.
+ */
+export function withVenueAddress<T extends { address_details: unknown }>(
+  rows: T[] | null
+): (Omit<T, "address_details"> & {
+  address_details: Partial<StructuredAddress> | null;
+})[] {
+  return (rows ?? []).map((v) => ({
+    ...v,
+    address_details: asAddressDetails(v.address_details),
+  }));
+}
+
 export type PrivLocation = {
   address: string | null;
   lat: number | null;
   lng: number | null;
-  address_details?: { name?: string | null } | null;
+  /** Raw jsonb — narrowed here, since only the POI `name` is read. */
+  address_details?: unknown;
 };
 
 /** Lowercase, collapse whitespace, strip trailing commas/spaces — so a stray
@@ -60,7 +79,7 @@ export function makeVenueResolver(venues: VenueLike[]) {
       const exact = byAddress.get(normAddress(addr));
       if (exact) return exact;
     }
-    const poi = priv.address_details?.name?.trim();
+    const poi = asAddressDetails(priv.address_details)?.name?.trim();
     if (poi) return poi;
     const nearName = near(priv.lat, priv.lng);
     if (nearName) return nearName;

@@ -6,18 +6,11 @@ import { Badge } from "@/components/ui/Badge";
 import { StudentInsights } from "@/components/app/StudentInsights";
 import { getStudentInsights } from "@/lib/student-insights";
 import { getMasteryMap, masteryLabel } from "@/lib/mastery";
-import { ACADEMY_TZ } from "@/lib/academy-time";
+import { formatDateFull } from "@/lib/academy-time";
 
 export const metadata: Metadata = { title: "Player" };
 
-function fmtNoteDate(iso: string) {
-  return new Intl.DateTimeFormat("en-GB", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-    timeZone: ACADEMY_TZ,
-  }).format(new Date(iso));
-}
+const fmtNoteDate = formatDateFull;
 
 export default async function PlayerPage({
   params,

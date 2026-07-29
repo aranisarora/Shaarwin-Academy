@@ -1,6 +1,7 @@
 // Venue CRUD cores — shared by the admin actions and the WhatsApp bot.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import type { Database } from "@/lib/database.types";
 import type { OpResult } from "@/lib/admin-ops-types";
 import type { StructuredAddress } from "@/lib/address";
 
@@ -15,7 +16,7 @@ export type VenueInput = {
 };
 
 export async function saveVenueCore(
-  supabase: SupabaseClient,
+  supabase: SupabaseClient<Database>,
   founderId: string,
   input: VenueInput
 ): Promise<OpResult> {
@@ -48,7 +49,7 @@ export async function saveVenueCore(
 }
 
 export async function setVenueActiveCore(
-  supabase: SupabaseClient,
+  supabase: SupabaseClient<Database>,
   founderId: string,
   venueId: string,
   active: boolean
@@ -65,7 +66,7 @@ export async function setVenueActiveCore(
 }
 
 export async function deleteVenueCore(
-  supabase: SupabaseClient,
+  supabase: SupabaseClient<Database>,
   founderId: string,
   venueId: string
 ): Promise<OpResult> {

@@ -7,12 +7,8 @@ import {
   NearbyVenues,
   type EnrichedVenue,
 } from "@/components/marketing/NearbyVenues";
-import {
-  getVenues,
-  getGroupClasses,
-  getUpcomingSessions,
-  formatSessionTime,
-} from "@/lib/data";
+import { getVenues, getGroupClasses, getUpcomingSessions } from "@/lib/data";
+import { formatSessionTime } from "@/lib/academy-time";
 
 export const metadata: Metadata = {
   title: "Locations",

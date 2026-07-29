@@ -2,9 +2,10 @@
 // admin actions and the WhatsApp bot; RLS enforces on the caller's client.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import type { Database } from "@/lib/database.types";
 import { normalizePhone } from "@/lib/whatsapp/phone";
 import { reassignSessionCore } from "@/lib/admin-ops-calendar";
-import type { OpResult } from "@/lib/admin-ops-types";
+import type { OpResult, TableUpdate } from "@/lib/admin-ops-types";
 
 const BENGALURU = { lat: 12.9716, lng: 77.5946 };
 
@@ -23,7 +24,7 @@ export type CoachDetails = {
 
 /** Turn an existing client account into a coach (they keep the same login). */
 export async function promoteToCoachCore(
-  supabase: SupabaseClient,
+  supabase: SupabaseClient<Database>,
   founderId: string,
   profileId: string
 ): Promise<OpResult> {
@@ -85,14 +86,14 @@ export type CoachInput = {
 };
 
 export async function saveCoachCore(
-  supabase: SupabaseClient,
+  supabase: SupabaseClient<Database>,
   founderId: string,
   input: CoachInput
 ): Promise<OpResult> {
   if (input.fullName != null && !input.fullName.trim()) {
     return { ok: false, error: "Name can't be empty." };
   }
-  const patch: Record<string, unknown> = {
+  const patch: TableUpdate<"coaches"> = {
     bio: input.bio || null,
     base_address: input.baseAddress || null,
     base_lat: input.baseLat,
@@ -106,7 +107,7 @@ export async function saveCoachCore(
   if (error) return { ok: false, error: "Couldn't save the coach." };
 
   if (input.fullName != null || input.phone != null) {
-    const patch: Record<string, unknown> = {};
+    const patch: TableUpdate<"profiles"> = {};
     if (input.fullName != null) patch.full_name = input.fullName.trim();
     if (input.phone != null) patch.phone = input.phone.trim() ? normalizePhone(input.phone) : null;
     const { error: profErr } = await supabase
@@ -132,7 +133,7 @@ export async function saveCoachCore(
  * invite so the account is provisioned as a coach the moment they sign up.
  */
 export async function addCoachCore(
-  supabase: SupabaseClient,
+  supabase: SupabaseClient<Database>,
   founderId: string,
   d: CoachDetails
 ): Promise<OpResult & { pending?: boolean }> {
@@ -194,7 +195,7 @@ export async function addCoachCore(
 
 /** Edit a not-yet-claimed invite. */
 export async function savePendingCoachCore(
-  supabase: SupabaseClient,
+  supabase: SupabaseClient<Database>,
   founderId: string,
   id: string,
   d: CoachDetails
@@ -228,7 +229,7 @@ export async function savePendingCoachCore(
 
 /** Revoke a not-yet-claimed invite. */
 export async function deletePendingCoachCore(
-  supabase: SupabaseClient,
+  supabase: SupabaseClient<Database>,
   founderId: string,
   id: string
 ): Promise<OpResult> {
@@ -260,7 +261,7 @@ export async function deletePendingCoachCore(
  * taking a coach off the roster; the account itself is preserved.
  */
 export async function deleteCoachCore(
-  supabase: SupabaseClient,
+  supabase: SupabaseClient<Database>,
   founderId: string,
   coachId: string,
   replacementCoachId?: string | null
@@ -325,7 +326,7 @@ export async function deleteCoachCore(
 
 /** Pause = stop new assignments; existing sessions stay until reassigned. */
 export async function setCoachActiveCore(
-  supabase: SupabaseClient,
+  supabase: SupabaseClient<Database>,
   founderId: string,
   coachId: string,
   active: boolean

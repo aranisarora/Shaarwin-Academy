@@ -14,6 +14,7 @@ import {
   createClient as createSupabaseClient,
   type SupabaseClient,
 } from "@supabase/supabase-js";
+import type { Database } from "@/lib/database.types";
 import type { Profile } from "@/lib/auth";
 import { normalizePhone } from "./phone";
 
@@ -25,7 +26,7 @@ export function syntheticEmailFor(phone: string): string {
   return `wa${digits}@sharwin.local`;
 }
 
-export function adminClient(): SupabaseClient {
+export function adminClient(): SupabaseClient<Database> {
   return createSupabaseClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
@@ -49,7 +50,7 @@ export type IdentityResult =
  * Returns a typed reason when nothing matches so the caller can log/act.
  */
 export async function resolveIdentity(
-  admin: SupabaseClient,
+  admin: SupabaseClient<Database>,
   rawPhone: string
 ): Promise<IdentityResult> {
   const phone = normalizePhone(rawPhone);
@@ -108,21 +109,13 @@ export async function resolveIdentity(
  * together (unique profiles.phone does this for webapp saves).
  */
 export async function linkPhoneToUser(
-  admin: SupabaseClient,
+  admin: SupabaseClient<Database>,
   phone: string,
   userId: string
 ): Promise<void> {
   await admin.from("wa_links").delete().eq("phone", phone);
   await admin.from("wa_links").delete().eq("user_id", userId);
   await admin.from("wa_links").insert({ phone, user_id: userId });
-}
-
-/** @deprecated use resolveIdentity — kept for callers that only need the profile. */
-export async function resolveLinkedProfile(
-  admin: SupabaseClient,
-  phone: string
-): Promise<Profile | null> {
-  return (await resolveIdentity(admin, phone)).profile;
 }
 
 /**
@@ -132,7 +125,7 @@ export async function resolveLinkedProfile(
  * update_profile. Returns the fresh profile, or null on failure.
  */
 export async function autoProvisionClient(
-  admin: SupabaseClient,
+  admin: SupabaseClient<Database>,
   rawPhone: string
 ): Promise<Profile | null> {
   const phone = normalizePhone(rawPhone);
@@ -190,7 +183,7 @@ export async function autoProvisionClient(
  */
 export async function userClientFor(
   email: string
-): Promise<SupabaseClient | null> {
+): Promise<SupabaseClient<Database> | null> {
   const admin = adminClient();
   const { data, error } = await admin.auth.admin.generateLink({
     type: "magiclink",

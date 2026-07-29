@@ -13,10 +13,8 @@ import { ActionResult } from "./ActionResult";
 import { AdminSessionSheet } from "./AdminSessionSheet";
 import { AdminAddSheet } from "./AdminAddSheet";
 import { SessionCard } from "./ClassCard";
+import { formatDay, sessionTimeStatus, wallDate } from "@/lib/academy-time";
 import {
-  dayLabel,
-  sessionTimeStatus,
-  wallDate,
   type ClientOption,
   type Coach,
   type InviteOption,
@@ -35,7 +33,7 @@ function groupByDay(rows: SessionRow[], today: string): DayGroup[] {
     const key = wallDate(s.starts_at);
     let g = groups[groups.length - 1];
     if (!g || g.key !== key) {
-      g = { key, label: dayLabel(s.starts_at), isToday: key === today, rows: [] };
+      g = { key, label: formatDay(s.starts_at), isToday: key === today, rows: [] };
       groups.push(g);
     }
     g.rows.push(s);
@@ -85,7 +83,7 @@ export function AdminCalendar({
     const seen = new Map<string, string>();
     for (const s of sessions) {
       const key = wallDate(s.starts_at);
-      if (!seen.has(key)) seen.set(key, dayLabel(s.starts_at));
+      if (!seen.has(key)) seen.set(key, formatDay(s.starts_at));
     }
     return [...seen.entries()];
   }, [sessions]);

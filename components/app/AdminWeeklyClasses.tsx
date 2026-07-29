@@ -16,10 +16,10 @@ import { topUpSessions } from "@/app/admin/schedule/actions";
 import { AdminClassSheet } from "./AdminClassSheet";
 import { AdminAddSheet } from "./AdminAddSheet";
 import { WeeklyClassCard } from "./ClassCard";
+import { wallDate } from "@/lib/academy-time";
 import {
   WEEKDAY_NAME,
   WEEKDAYS,
-  wallDate,
   type ClassRow,
   type ClientOption,
   type Coach,

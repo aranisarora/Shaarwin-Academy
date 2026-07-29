@@ -182,26 +182,5 @@ export const getCoaches = unstable_cache(
 /** `pence` holds paise (minor unit of INR). ₹1,800,000 paise → "₹18,000". */
 export { formatPrice } from "./format";
 
-export const ACADEMY_TZ = "Asia/Kolkata";
-
-export function formatSessionTime(iso: string): string {
-  return new Intl.DateTimeFormat("en-GB", {
-    weekday: "short",
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true,
-    timeZone: ACADEMY_TZ,
-  }).format(new Date(iso));
-}
-
-export function formatSessionDate(iso: string): string {
-  return new Intl.DateTimeFormat("en-GB", {
-    weekday: "short",
-    day: "numeric",
-    month: "short",
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true,
-    timeZone: ACADEMY_TZ,
-  }).format(new Date(iso));
-}
+// Session time formatting lives in lib/academy-time.ts — this module imports
+// the server Supabase client, so client components can't reach it.

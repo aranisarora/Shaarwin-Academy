@@ -95,7 +95,7 @@ export type Venue = {
   postcode: string;
   lat: number;
   lng: number;
-  address_details: Record<string, unknown> | null;
+  address_details: Partial<StructuredAddress> | null;
 };
 export type ClientOption = {
   id: string;
@@ -122,59 +122,6 @@ export const WEEKDAY_NAME: Record<string, string> = Object.fromEntries(WEEKDAYS)
 export function weekdayOfDate(date: string): string {
   const [y, m, d] = date.split("-").map(Number);
   return ["SU", "MO", "TU", "WE", "TH", "FR", "SA"][new Date(y, m - 1, d).getDay()];
-}
-
-/** "Mon 14 Jul" — day header for grouping the week view by day. */
-export function dayLabel(iso: string): string {
-  return new Intl.DateTimeFormat("en-GB", {
-    weekday: "short",
-    day: "numeric",
-    month: "short",
-    timeZone: "Asia/Kolkata",
-  }).format(new Date(iso));
-}
-
-/** "Sat 12 Jul, 6:30 pm" — display formatting in academy time. */
-export function fmtWhen(iso: string): string {
-  return new Intl.DateTimeFormat("en-GB", {
-    weekday: "short",
-    day: "numeric",
-    month: "short",
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true,
-    timeZone: "Asia/Kolkata",
-  }).format(new Date(iso));
-}
-
-/** YYYY-MM-DD academy wall date — feeds <input type="date">. */
-export function wallDate(iso: string): string {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: "Asia/Kolkata",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date(iso));
-}
-
-/** 24-hour "HH:MM" — feeds <input type="time">, which requires it. */
-export function wallTime(iso: string): string {
-  return new Intl.DateTimeFormat("en-GB", {
-    timeZone: "Asia/Kolkata",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-  }).format(new Date(iso));
-}
-
-/** 12-hour "5:00 pm" — for display. */
-export function clockTime(iso: string): string {
-  return new Intl.DateTimeFormat("en-GB", {
-    timeZone: "Asia/Kolkata",
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true,
-  }).format(new Date(iso));
 }
 
 /** How a coach's arrival was captured, for the schedule sheet. */

@@ -2,9 +2,10 @@
 // bot. Caller supplies the user-scoped client + founder id; RLS enforces.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import type { Database } from "@/lib/database.types";
 import { academyWallToUtc, utcToAcademyWall } from "@/lib/academy-time";
 import { reassignSessionCore } from "@/lib/admin-ops-calendar";
-import type { OpResult } from "@/lib/admin-ops-types";
+import { toSkillLevel, type OpResult } from "@/lib/admin-ops-types";
 
 const WEEKDAY_NUM: Record<string, number> = { MO: 1, TU: 2, WE: 3, TH: 4, FR: 5, SA: 6, SU: 7 };
 
@@ -26,7 +27,7 @@ export type ClassUpdate = {
  * who no longer fit are cleared for the engine to refill.
  */
 export async function updateGroupClassCore(
-  supabase: SupabaseClient,
+  supabase: SupabaseClient<Database>,
   founderId: string,
   input: ClassUpdate
 ): Promise<OpResult> {
@@ -44,7 +45,7 @@ export async function updateGroupClassCore(
     .update({
       title: input.title,
       description: input.description || null,
-      skill_level: input.skillLevel,
+      skill_level: toSkillLevel(input.skillLevel),
       capacity: input.capacity,
       duration_minutes: input.durationMinutes,
       venue_id: input.venueId,
@@ -114,6 +115,8 @@ export async function updateGroupClassCore(
       .in("status", ["confirmed", "waitlisted"]);
     const notified = new Set<string>();
     for (const b of bookings ?? []) {
+      // A school player's booking has no account behind it — nobody to notify.
+      if (b.client_id === null) continue;
       if (notified.has(b.client_id)) continue;
       notified.add(b.client_id);
       await supabase.from("notifications").insert({
@@ -147,7 +150,7 @@ export async function updateGroupClassCore(
 
 /** Stop a class: cancels every upcoming session, tells everyone, keeps history. */
 export async function endGroupClassCore(
-  supabase: SupabaseClient,
+  supabase: SupabaseClient<Database>,
   founderId: string,
   classId: string
 ): Promise<OpResult> {
@@ -193,6 +196,9 @@ export async function endGroupClassCore(
           cancel_reason: "class ended",
         })
         .eq("id", b.id);
+      // The booking is still cancelled above; only the notification needs an
+      // account holder, which a school player's booking doesn't have.
+      if (b.client_id === null) continue;
       if (notified.has(b.client_id)) continue;
       notified.add(b.client_id);
       await supabase.from("notifications").insert({
@@ -234,7 +240,7 @@ export async function endGroupClassCore(
  * counted rather than failing the whole change.
  */
 export async function reassignClassCoachCore(
-  supabase: SupabaseClient,
+  supabase: SupabaseClient<Database>,
   founderId: string,
   classId: string,
   coachId: string,
@@ -288,7 +294,7 @@ export async function reassignClassCoachCore(
  * the ending are not resurrected — clients were already told to rebook.
  */
 export async function restoreGroupClassCore(
-  supabase: SupabaseClient,
+  supabase: SupabaseClient<Database>,
   founderId: string,
   classId: string
 ): Promise<OpResult> {
@@ -346,7 +352,7 @@ export async function restoreGroupClassCore(
 
 /** Hard delete — only for classes nobody ever booked. */
 export async function deleteGroupClassCore(
-  supabase: SupabaseClient,
+  supabase: SupabaseClient<Database>,
   founderId: string,
   classId: string
 ): Promise<OpResult> {
@@ -380,7 +386,7 @@ export async function deleteGroupClassCore(
 }
 
 export async function setClassActiveCore(
-  supabase: SupabaseClient,
+  supabase: SupabaseClient<Database>,
   founderId: string,
   classId: string,
   active: boolean
@@ -398,7 +404,7 @@ export async function setClassActiveCore(
 
 /** Refill the next 8 weeks of sessions for every running class. */
 export async function topUpSessionsCore(
-  supabase: SupabaseClient,
+  supabase: SupabaseClient<Database>,
   founderId: string
 ): Promise<OpResult & { created?: number }> {
   const { data, error } = await supabase.rpc("generate_class_sessions", { p_weeks: 8 });

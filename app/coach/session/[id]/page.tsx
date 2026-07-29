@@ -7,20 +7,10 @@ import { Badge } from "@/components/ui/Badge";
 import { SessionRoster } from "@/components/app/SessionRoster";
 import { SessionArrival } from "@/components/app/SessionArrival";
 import { AddressDisplay } from "@/components/app/AddressDisplay";
-import { fromDetails, type StructuredAddress } from "@/lib/address";
-import { ACADEMY_TZ, nowMs } from "@/lib/academy-time";
+import { asAddressDetails, fromDetails, type StructuredAddress } from "@/lib/address";
+import { formatClock, formatDayLong, nowMs } from "@/lib/academy-time";
 
 export const metadata: Metadata = { title: "Session" };
-
-type PrivDetail = {
-  address: string;
-  postcode: string;
-  lat: number;
-  lng: number;
-  access_notes: string | null;
-  has_table: boolean;
-  address_details: Partial<StructuredAddress> | null;
-};
 
 export default async function CoachSessionPage({
   params,
@@ -41,34 +31,17 @@ export default async function CoachSessionPage({
 
   if (!session || session.coach_id !== coachId) notFound();
 
-  const cls = session.classes as unknown as {
-    title: string;
-    skill_level: string;
-    class_type: string;
-    is_school: boolean;
-    venues: {
-      name: string;
-      address: string;
-      postcode: string;
-      lat: number;
-      lng: number;
-      address_details: Partial<StructuredAddress> | null;
-    } | null;
-    private_class_details: PrivDetail | PrivDetail[] | null;
-  };
-  // PostgREST returns this one-to-one embed as a single object (not an array),
-  // so normalize both shapes rather than blindly indexing [0].
-  const rawPriv = cls.private_class_details;
-  const priv = Array.isArray(rawPriv) ? (rawPriv[0] ?? null) : (rawPriv ?? null);
+  const cls = session.classes;
+  const priv = cls.private_class_details;
   const address: StructuredAddress | null = cls.venues
-    ? fromDetails(cls.venues.address_details, {
+    ? fromDetails(asAddressDetails(cls.venues.address_details), {
         address: cls.venues.address,
         postcode: cls.venues.postcode,
         lat: cls.venues.lat,
         lng: cls.venues.lng,
       })
     : priv
-      ? fromDetails(priv.address_details, {
+      ? fromDetails(asAddressDetails(priv.address_details), {
           address: priv.address,
           postcode: priv.postcode,
           lat: priv.lat,
@@ -84,11 +57,7 @@ export default async function CoachSessionPage({
     .in("status", ["confirmed", "attended", "no_show"]);
 
   const rows = (roster ?? []).map((b) => {
-    const player = b.players as unknown as {
-      full_name: string;
-      date_of_birth: string | null;
-      skill_level: string;
-    };
+    const player = b.players;
     const junior =
       player.date_of_birth !== null &&
       new Date(player.date_of_birth) >
@@ -103,20 +72,7 @@ export default async function CoachSessionPage({
     };
   });
 
-  const dayLabel = new Intl.DateTimeFormat("en-GB", {
-    weekday: "long",
-    day: "numeric",
-    month: "short",
-    timeZone: ACADEMY_TZ,
-  }).format(new Date(session.starts_at));
-  const fmtClock = (iso: string) =>
-    new Intl.DateTimeFormat("en-GB", {
-      hour: "numeric",
-      minute: "2-digit",
-      hour12: true,
-      timeZone: ACADEMY_TZ,
-    }).format(new Date(iso));
-  const when = `${dayLabel}, ${fmtClock(session.starts_at)} – ${fmtClock(session.ends_at)}`;
+  const when = `${formatDayLong(session.starts_at)}, ${formatClock(session.starts_at)} – ${formatClock(session.ends_at)}`;
 
   return (
     <CoachShell title={cls.title}>

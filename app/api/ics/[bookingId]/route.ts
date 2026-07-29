@@ -24,14 +24,7 @@ export async function GET(
 
   if (!booking) return NextResponse.json({ error: "not_found" }, { status: 404 });
 
-  const session = booking.class_sessions as unknown as {
-    starts_at: string;
-    ends_at: string;
-    classes: {
-      title: string;
-      venues: { name: string; address: string; postcode: string } | null;
-    };
-  };
+  const session = booking.class_sessions;
 
   const toIcs = (iso: string) =>
     new Date(iso).toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");

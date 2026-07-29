@@ -3,10 +3,11 @@
 // etc.). Shared by the admin actions and the WhatsApp bot.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import type { Database } from "@/lib/database.types";
 import type { OpResult } from "@/lib/admin-ops-types";
 
 export async function getSettingsCore(
-  supabase: SupabaseClient
+  supabase: SupabaseClient<Database>
 ): Promise<Record<string, number>> {
   const { data } = await supabase.from("settings").select("key,value");
   const out: Record<string, number> = {};
@@ -15,7 +16,7 @@ export async function getSettingsCore(
 }
 
 export async function saveSettingsCore(
-  supabase: SupabaseClient,
+  supabase: SupabaseClient<Database>,
   founderId: string,
   values: Record<string, number>
 ): Promise<OpResult> {

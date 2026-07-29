@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { requireUser } from "@/lib/auth";
+import { asAddressDetails } from "@/lib/address";
 import { ClientShell } from "@/components/app/ClientShell";
 import { ProfileEditor } from "@/components/app/ProfileEditor";
 import { InstallAppCard } from "@/components/app/InstallAppCard";
@@ -29,7 +30,7 @@ export default async function ProfilePage() {
             fullName: profile.full_name,
             phone: profile.phone ?? "",
             defaultAddress: profile.default_address ?? "",
-            addressDetails: addr?.address_details ?? null,
+            addressDetails: asAddressDetails(addr?.address_details),
             prefs: profile.notification_prefs ?? {},
           }}
           players={players ?? []}

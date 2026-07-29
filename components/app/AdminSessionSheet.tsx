@@ -33,12 +33,14 @@ import { ActionResult } from "@/components/app/ActionResult";
 import { ClassDetailFields, generateClassTitle, type ClassFormState } from "./ClassFields";
 import { TimeSelect12h } from "./TimeSelect12h";
 import {
-  arrivalSourceLabel,
-  clockTime,
-  fmtDistance,
-  fmtWhen,
+  formatClock,
+  formatSessionDate,
   wallDate,
   wallTime,
+} from "@/lib/academy-time";
+import {
+  arrivalSourceLabel,
+  fmtDistance,
   weekdayOfDate,
   WEEKDAY_NAME,
   type ClientOption,
@@ -306,7 +308,7 @@ export function AdminSessionSheet({
                   Just this {WEEKDAY_NAME[weekdayOfDate(wallDate(session.starts_at))] ?? "day"}
                 </span>
                 <span className="block text-sm text-fg-2">
-                  Only {fmtWhen(session.starts_at)} changes. Other weeks stay as they are.
+                  Only {formatSessionDate(session.starts_at)} changes. Other weeks stay as they are.
                 </span>
               </span>
             </label>
@@ -354,7 +356,7 @@ export function AdminSessionSheet({
         <div className="space-y-4">
           {/* ── Header block: the facts a founder checks courtside ── */}
           <div>
-            <p className="tnum font-display text-3xl">{fmtWhen(session.starts_at)}</p>
+            <p className="tnum font-display text-3xl">{formatSessionDate(session.starts_at)}</p>
             <p className="mt-1 text-fg-2">
               {session.venueName ?? "Private address"} · {session.capacity} spots
             </p>
@@ -369,7 +371,7 @@ export function AdminSessionSheet({
               )}
               {session.coachId &&
                 (session.coachArrivedAt ? (
-                  <Badge tone="ok">Coach arrived {clockTime(session.coachArrivedAt)}</Badge>
+                  <Badge tone="ok">Coach arrived {formatClock(session.coachArrivedAt)}</Badge>
                 ) : (
                   <Badge tone="neutral">Coach not arrived yet</Badge>
                 ))}

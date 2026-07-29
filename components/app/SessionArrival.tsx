@@ -12,20 +12,13 @@ import { Button } from "@/components/ui/Button";
 import { CheckIcon, LockIcon, MapPinIcon } from "@/components/ui/icons";
 import { ComingAction, ArriveAction } from "@/components/app/ArrivalActions";
 import { markArrived, undoArrival } from "@/app/coach/session/[id]/actions";
-import { ACADEMY_TZ, nowMs } from "@/lib/academy-time";
+import { formatClock, nowMs } from "@/lib/academy-time";
 import { haversineMeters } from "@/lib/geo";
 
 const GEOFENCE_M = 150;
 const UNDO_WINDOW_MS = 10 * 60000;
 
-function fmtClock(iso: string | number) {
-  return new Intl.DateTimeFormat("en-GB", {
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true,
-    timeZone: ACADEMY_TZ,
-  }).format(new Date(iso));
-}
+const fmtClock = formatClock;
 
 export function SessionArrival({
   sessionId,

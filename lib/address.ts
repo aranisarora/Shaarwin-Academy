@@ -63,8 +63,11 @@ function orNull(v: string | null | undefined): string | null {
  * (`address`, `postcode`, `lat`, `lng`, and optionally `access_notes`). Used
  * on the read side so rows written before the migration — or by paths that
  * only fill the flat line — still render through the shared display.
+ *
+ * Internal to this module: callers reach it through `fromDetails(details,
+ * fallback)`, which decides when the legacy columns are the right source.
  */
-export function fromLegacy(row: {
+function fromLegacy(row: {
   address?: string | null;
   postcode?: string | null;
   lat?: number | null;
@@ -103,6 +106,21 @@ export function applyGeocode(
     lat,
     lng,
   };
+}
+
+/**
+ * Narrow an `address_details` jsonb column to the shape we write into it.
+ *
+ * The generated schema types give every jsonb column the honest `Json` type —
+ * Postgres hands back whatever is in the column, including rows written before
+ * the structured format existed. Anything that isn't a plain object reads as
+ * "no structured address", sending `fromDetails` to its flat legacy fallback
+ * rather than producing a half-built address.
+ */
+export function asAddressDetails(json: unknown): Partial<StructuredAddress> | null {
+  return json !== null && typeof json === "object" && !Array.isArray(json)
+    ? (json as Partial<StructuredAddress>)
+    : null;
 }
 
 /** Normalize a possibly-partial persisted JSONB back into a full address. */

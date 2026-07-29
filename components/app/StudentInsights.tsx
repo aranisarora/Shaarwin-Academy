@@ -1,5 +1,5 @@
 import { Badge } from "@/components/ui/Badge";
-import { ACADEMY_TZ } from "@/lib/academy-time";
+import { formatDateFull, formatSessionDate } from "@/lib/academy-time";
 import type { AttendanceEntry, StudentInsightsData } from "@/lib/student-insights";
 
 const STATUS_LABELS: Record<string, { label: string; tone: "neutral" | "ember" | "ok" | "err" }> = {
@@ -11,26 +11,8 @@ const STATUS_LABELS: Record<string, { label: string; tone: "neutral" | "ember" |
   cancelled_by_academy: { label: "cancelled by academy", tone: "neutral" },
 };
 
-function fmtDateTime(iso: string) {
-  return new Intl.DateTimeFormat("en-GB", {
-    weekday: "short",
-    day: "numeric",
-    month: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: true,
-    timeZone: ACADEMY_TZ,
-  }).format(new Date(iso));
-}
-
-function fmtDate(iso: string) {
-  return new Intl.DateTimeFormat("en-GB", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-    timeZone: ACADEMY_TZ,
-  }).format(new Date(iso));
-}
+const fmtDateTime = formatSessionDate;
+const fmtDate = formatDateFull;
 
 function Stat({ label, value }: { label: string; value: React.ReactNode }) {
   return (

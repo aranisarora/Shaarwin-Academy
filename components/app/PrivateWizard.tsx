@@ -2,6 +2,12 @@
 
 import { useEffect, useState, useTransition } from "react";
 import Link from "next/link";
+import {
+  formatDate,
+  formatSessionDate,
+  formatWeeklySlot,
+  wallWeekdayTime,
+} from "@/lib/academy-time";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
@@ -33,48 +39,13 @@ export type PrivatePlanLimits = {
 // more time commuting than coaching.
 const DURATIONS = [60, 90] as const;
 
-function fmtSlot(iso: string) {
-  return new Intl.DateTimeFormat("en-GB", {
-    weekday: "short",
-    day: "numeric",
-    month: "short",
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true,
-    timeZone: "Asia/Kolkata",
-  }).format(new Date(iso));
-}
-
+const fmtSlot = formatSessionDate;
 /** "Every Tue, 5:00 pm" — the weekly identity of a slot. */
-function fmtWeekly(iso: string) {
-  return new Intl.DateTimeFormat("en-GB", {
-    weekday: "long",
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true,
-    timeZone: "Asia/Kolkata",
-  }).format(new Date(iso));
-}
-
+const fmtWeekly = formatWeeklySlot;
 /** "4 Aug" — the date a weekly series' first session lands on. */
-function fmtStartDate(iso: string) {
-  return new Intl.DateTimeFormat("en-GB", {
-    day: "numeric",
-    month: "short",
-    timeZone: "Asia/Kolkata",
-  }).format(new Date(iso));
-}
-
+const fmtStartDate = formatDate;
 /** IST weekday+time key so two dates of the same weekly slot collide. */
-function weeklyKey(iso: string) {
-  return new Intl.DateTimeFormat("en-GB", {
-    weekday: "short",
-    hour: "2-digit",
-    minute: "2-digit",
-    hour12: false,
-    timeZone: "Asia/Kolkata",
-  }).format(new Date(iso));
-}
+const weeklyKey = wallWeekdayTime;
 
 export function PrivateWizard({
   players,

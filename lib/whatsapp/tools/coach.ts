@@ -141,7 +141,7 @@ const roster: WaTool = {
       .in("status", ["confirmed", "waitlisted", "attended", "no_show"]);
     return ok(
       (data ?? []).map((b) => ({
-        player: (b.players as unknown as { full_name: string } | null)?.full_name ?? "?",
+        player: (b.players)?.full_name ?? "?",
         status: b.status,
         waitlist_position: b.waitlist_position,
       }))
@@ -314,8 +314,12 @@ const markAttendance: WaTool = {
     required: ["session_id", "player_name", "status"],
   },
   run: async (input, ctx) => {
-    const status = String(input.status);
-    if (!["attended", "no_show", "confirmed"].includes(status)) {
+    // `find` rather than `includes` so the result is typed as the booking_status
+    // enum the column expects, not a bare string the model chose.
+    const attendance = ["attended", "no_show", "confirmed"] as const;
+    const raw = String(input.status);
+    const status = attendance.find((s) => s === raw);
+    if (!status) {
       return fail("status must be attended, no_show or confirmed.");
     }
     const { data: session } = await ctx.supabase!
@@ -337,7 +341,7 @@ const markAttendance: WaTool = {
       .eq("session_id", input.session_id)
       .in("status", ["confirmed", "attended", "no_show"]);
     const matches = (bookings ?? []).filter((b) =>
-      ((b.players as unknown as { full_name: string } | null)?.full_name ?? "")
+      ((b.players)?.full_name ?? "")
         .toLowerCase()
         .includes(needle)
     );

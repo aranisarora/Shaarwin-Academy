@@ -1,4 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import type { Database } from "@/lib/database.types";
+import { formatDate } from "@/lib/academy-time";
 
 export type PlanSummary = {
   planId: string;
@@ -74,7 +76,7 @@ function isAlive(status: string, periodEnd: string | null, graceDays: number): b
  * household can hold a group plan and a private plan at the same time.
  */
 export async function getSubscriptionSummary(
-  supabase: SupabaseClient,
+  supabase: SupabaseClient<Database>,
   clientId: string,
   graceDays = 7
 ): Promise<SubscriptionSummary> {
@@ -110,7 +112,7 @@ export async function getSubscriptionSummary(
   );
 
   const toPlanSummary = (row: SubRow): PlanSummary | null => {
-    const plan = row.plans as unknown as SubRow["plans"];
+    const plan = row.plans;
     if (!plan) return null;
     return {
       planId: plan.id,
@@ -128,7 +130,7 @@ export async function getSubscriptionSummary(
 
   let groupPlan: PlanSummary | null = null;
   let privatePlan: PlanSummary | null = null;
-  for (const row of (subs ?? []) as unknown as SubRow[]) {
+  for (const row of (subs ?? [])) {
     const summary = toPlanSummary(row);
     if (!summary) continue;
     const isGroup =
@@ -171,10 +173,5 @@ export async function getSubscriptionSummary(
 }
 
 export function formatRenewalDate(iso: string | null): string {
-  if (!iso) return "—";
-  return new Intl.DateTimeFormat("en-GB", {
-    day: "numeric",
-    month: "short",
-    timeZone: "Asia/Kolkata",
-  }).format(new Date(iso));
+  return iso ? formatDate(iso) : "—";
 }

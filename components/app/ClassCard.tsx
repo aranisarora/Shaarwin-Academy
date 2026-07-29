@@ -18,10 +18,8 @@
 import Link from "next/link";
 import { Badge } from "@/components/ui/Badge";
 import { time12h } from "./ClassFields";
+import { formatClock, formatSessionDate, sessionTimeStatus } from "@/lib/academy-time";
 import {
-  clockTime,
-  fmtWhen,
-  sessionTimeStatus,
   WEEKDAY_NAME,
   type ClassRow,
   type SessionRow,
@@ -54,7 +52,7 @@ function SessionBadges({ session }: { session: SessionRow }) {
       {status === "in_progress" && <Badge tone="ember">● In progress</Badge>}
       {status === "completed" && <Badge>✓ Completed</Badge>}
       {status !== "completed" && session.coachId && session.coachArrivedAt && (
-        <Badge tone="ok">✓ Arrived {clockTime(session.coachArrivedAt)}</Badge>
+        <Badge tone="ok">✓ Arrived {formatClock(session.coachArrivedAt)}</Badge>
       )}
     </span>
   );
@@ -110,8 +108,8 @@ export function SessionCard({
     <>
       <p className="font-semibold">{session.venueName ?? "Location TBC"}</p>
       <p className="tnum text-fg-2">
-        {showDay ? fmtWhen(session.starts_at) : clockTime(session.starts_at)} –{" "}
-        {clockTime(session.ends_at)}
+        {showDay ? formatSessionDate(session.starts_at) : formatClock(session.starts_at)} –{" "}
+        {formatClock(session.ends_at)}
       </p>
       <p className="text-xs text-fg-2">
         {sessionTypeLine(session)}

@@ -3,6 +3,7 @@ import { requireUser } from "@/lib/auth";
 import {
   academyToday,
   academyWallToUtc,
+  formatDate,
   shiftWallDate,
   utcToAcademyWall,
 } from "@/lib/academy-time";
@@ -13,8 +14,8 @@ import type {
   InviteOption,
   SessionRow,
 } from "@/components/app/admin-calendar-types";
-import { fromDetails, type StructuredAddress } from "@/lib/address";
-import { makeVenueResolver } from "@/lib/venue-display";
+import { asAddressDetails, fromDetails, type StructuredAddress } from "@/lib/address";
+import { makeVenueResolver, withVenueAddress } from "@/lib/venue-display";
 
 export const metadata: Metadata = { title: "Schedule" };
 
@@ -88,50 +89,13 @@ export default async function AdminCalendarPage({
   // both depend on round-1 data — run them in parallel.
   const classIds = (classes ?? []).map((c) => c.id);
 
-  type PrivDetail = {
-    client_id: string | null;
-    address: string;
-    postcode: string;
-    lat: number;
-    lng: number;
-    access_notes: string | null;
-    address_details: Partial<StructuredAddress> | null;
-  };
-  type ClsShape = {
-    id: string;
-    title: string;
-    description: string | null;
-    skill_level: string;
-    capacity: number;
-    duration_minutes: number;
-    recurrence_rule: string | null;
-    active: boolean;
-    venue_id: string | null;
-    class_type: string;
-    is_school: boolean;
-    venues: {
-      name: string;
-      address: string;
-      postcode: string;
-      lat: number;
-      lng: number;
-      address_details: Partial<StructuredAddress> | null;
-    } | null;
-    private_class_details: PrivDetail | PrivDetail[] | null;
-  };
-
-  const privOf = (cls: ClsShape): PrivDetail | null => {
-    const d = cls.private_class_details;
-    return Array.isArray(d) ? (d[0] ?? null) : (d ?? null);
-  };
-
   const privateClientIds = [
     ...new Set(
       (sessions ?? [])
         .map((s) => {
-          const cls = s.classes as unknown as ClsShape;
+          const cls = s.classes;
           return cls.class_type === "private"
-            ? (privOf(cls)?.client_id ?? null)
+            ? (cls.private_class_details?.client_id ?? null)
             : null;
         })
         .filter((id): id is string => id !== null)
@@ -174,17 +138,17 @@ export default async function AdminCalendarPage({
   const resolveVenueName = makeVenueResolver(venues ?? []);
 
   const rows: SessionRow[] = (sessions ?? []).map((s) => {
-    const cls = s.classes as unknown as ClsShape;
-    const priv = privOf(cls);
+    const cls = s.classes;
+    const priv = cls.private_class_details;
     const address: StructuredAddress | null = cls.venues
-      ? fromDetails(cls.venues.address_details, {
+      ? fromDetails(asAddressDetails(cls.venues.address_details), {
           address: cls.venues.address,
           postcode: cls.venues.postcode,
           lat: cls.venues.lat,
           lng: cls.venues.lng,
         })
       : priv
-        ? fromDetails(priv.address_details, {
+        ? fromDetails(asAddressDetails(priv.address_details), {
             address: priv.address,
             postcode: priv.postcode,
             lat: priv.lat,
@@ -226,7 +190,7 @@ export default async function AdminCalendarPage({
 
   const coachList = (coaches ?? []).map((c) => ({
     id: c.id,
-    name: (c.profiles as unknown as { full_name: string }).full_name,
+    name: c.profiles.full_name,
   }));
 
   const clientRows: ClientOption[] = (clients ?? []).map((c) => ({
@@ -244,14 +208,9 @@ export default async function AdminCalendarPage({
     phone: i.phone,
   }));
 
-  const fmt = new Intl.DateTimeFormat("en-GB", {
-    day: "numeric",
-    month: "short",
-    timeZone: "Asia/Kolkata",
-  });
   // The "(this week)" suffix is owned by AdminCalendarNav so SSR and
   // client-side week navigation render the label identically.
-  const rangeLabel = `${fmt.format(from)} – ${fmt.format(new Date(to.getTime() - 86400000))}`;
+  const rangeLabel = `${formatDate(from)} – ${formatDate(to.getTime() - 86400000)}`;
 
   // Serialise the Map to a plain object for the client component prop.
   const nextByClassObj = Object.fromEntries(nextByClass);
@@ -265,7 +224,7 @@ export default async function AdminCalendarPage({
         initialRangeLabel={rangeLabel}
         nextByClass={nextByClassObj}
         coaches={coachList}
-        venues={venues ?? []}
+        venues={withVenueAddress(venues)}
         clients={clientRows}
         invites={inviteRows}
         openSessionId={openSessionId ?? null}

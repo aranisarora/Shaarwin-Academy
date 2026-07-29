@@ -5,7 +5,9 @@
 // what's actually allowed — tool availability is UX, RLS is security.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import type { Database } from "@/lib/database.types";
 import type { Profile } from "@/lib/auth";
+import { formatSessionDate } from "@/lib/academy-time";
 
 export type ToolContext = {
   /** E.164 phone of the sender, e.g. "+919812345678". */
@@ -13,9 +15,9 @@ export type ToolContext = {
   /** Linked profile, or null for unknown numbers (guest mode). */
   profile: Profile | null;
   /** User-scoped client (RLS applies). Null for guests. */
-  supabase: SupabaseClient | null;
+  supabase: SupabaseClient<Database> | null;
   /** Service-role client. Identity/link operations and public reads only. */
-  admin: SupabaseClient;
+  admin: SupabaseClient<Database>;
 };
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -41,17 +43,7 @@ export function fail(error: string, detail?: unknown): string {
 }
 
 /** "Sat 12 Jul, 6:30 pm" in academy time — what users should always see. */
-export function fmtIST(iso: string): string {
-  return new Intl.DateTimeFormat("en-IN", {
-    timeZone: "Asia/Kolkata",
-    weekday: "short",
-    day: "numeric",
-    month: "short",
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true,
-  }).format(new Date(iso));
-}
+export const fmtIST = formatSessionDate;
 
 // Mirrors lib/data.ts formatPrice. `pence` holds paise (minor unit of INR).
 export function formatPricePence(pence: number): string {

@@ -24,7 +24,7 @@ export default async function CoachPlayersPage() {
     { id: string; name: string; sessions: number; attended: number; noShows: number }
   >();
   for (const row of rows ?? []) {
-    const player = row.players as unknown as { full_name: string } | null;
+    const player = row.players;
     if (!player) continue;
     const entry = unique.get(row.player_id) ?? {
       id: row.player_id,

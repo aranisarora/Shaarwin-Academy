@@ -14,17 +14,9 @@ export function Card({
   );
 }
 
-export function CardHeader({
-  className = "",
-  children,
-}: {
-  className?: string;
-  children: React.ReactNode;
-}) {
-  return <div className={`p-5 pb-0 ${className}`}>{children}</div>;
-}
-
-export function CardContent({
+// Only ever spelled `Card.Content` at the call sites, so it isn't exported
+// separately — one component, one way to reach it.
+function CardContent({
   className = "",
   children,
 }: {
@@ -34,5 +26,4 @@ export function CardContent({
   return <div className={`p-5 ${className}`}>{children}</div>;
 }
 
-Card.Header = CardHeader;
 Card.Content = CardContent;

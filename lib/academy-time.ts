@@ -76,3 +76,157 @@ export function shiftWallDate(dateStr: string, days: number): string {
   const pad = (n: number) => String(n).padStart(2, "0");
   return `${shifted.getUTCFullYear()}-${pad(shifted.getUTCMonth() + 1)}-${pad(shifted.getUTCDate())}`;
 }
+
+// ── Formatting ───────────────────────────────────────────────────────────────
+// Every user-facing timestamp goes through one of the helpers below, so "what a
+// session time looks like" is decided once. This module imports nothing, which
+// is what lets client components use it — lib/data.ts pulls the server Supabase
+// client and can't be imported from the client, which is why these formatters
+// used to be copy-pasted into ~20 components.
+//
+// Formatters are built once at module load rather than per call: constructing
+// an Intl.DateTimeFormat is the expensive part, and list views format a
+// timestamp per row.
+
+const opts = (o: Intl.DateTimeFormatOptions, locale = "en-GB") =>
+  new Intl.DateTimeFormat(locale, { timeZone: ACADEMY_TZ, ...o });
+
+const CLOCK = opts({ hour: "numeric", minute: "2-digit", hour12: true });
+const WEEKDAY = opts({ weekday: "short" });
+const WEEKDAY_LONG = opts({ weekday: "long" });
+const DATE = opts({ day: "numeric", month: "short" });
+const DATE_FULL = opts({ day: "numeric", month: "short", year: "numeric" });
+const DAY = opts({ weekday: "short", day: "numeric", month: "short" });
+const DAY_LONG = opts({ weekday: "long", day: "numeric", month: "long" });
+const SESSION_TIME = opts({
+  weekday: "short",
+  hour: "numeric",
+  minute: "2-digit",
+  hour12: true,
+});
+const SESSION_DATE = opts({
+  weekday: "short",
+  day: "numeric",
+  month: "short",
+  hour: "numeric",
+  minute: "2-digit",
+  hour12: true,
+});
+const DATE_CLOCK = opts({
+  day: "numeric",
+  month: "short",
+  hour: "numeric",
+  minute: "2-digit",
+  hour12: true,
+});
+const WEEKLY_SLOT = opts({
+  weekday: "long",
+  hour: "numeric",
+  minute: "2-digit",
+  hour12: true,
+});
+
+/** "6:30 pm" */
+export function formatClock(iso: string | number | Date): string {
+  return CLOCK.format(new Date(iso));
+}
+
+/** "Sat" */
+export function formatWeekday(iso: string | number | Date): string {
+  return WEEKDAY.format(new Date(iso));
+}
+
+/** "Saturday" */
+export function formatWeekdayLong(iso: string | number | Date): string {
+  return WEEKDAY_LONG.format(new Date(iso));
+}
+
+/** "12 Jul" */
+export function formatDate(iso: string | number | Date): string {
+  return DATE.format(new Date(iso));
+}
+
+/** "12 Jul 2026" */
+export function formatDateFull(iso: string | number | Date): string {
+  return DATE_FULL.format(new Date(iso));
+}
+
+/** "Sat 12 Jul" */
+export function formatDay(iso: string | number | Date): string {
+  return DAY.format(new Date(iso));
+}
+
+/** "Saturday 12 July" */
+export function formatDayLong(iso: string | number | Date): string {
+  return DAY_LONG.format(new Date(iso));
+}
+
+/** "Sat, 6:30 pm" — weekday + time, when the date is already known. */
+export function formatSessionTime(iso: string | number | Date): string {
+  return SESSION_TIME.format(new Date(iso));
+}
+
+/** "Sat 12 Jul, 6:30 pm" — the default way to name a session. */
+export function formatSessionDate(iso: string | number | Date): string {
+  return SESSION_DATE.format(new Date(iso));
+}
+
+/** "12 Jul, 6:30 pm" — no weekday, for dense lists like the notification feed. */
+export function formatDateClock(iso: string | number | Date): string {
+  return DATE_CLOCK.format(new Date(iso));
+}
+
+/** "Saturday, 6:30 pm" — the recurring identity of a weekly slot. */
+export function formatWeeklySlot(iso: string | number | Date): string {
+  return WEEKLY_SLOT.format(new Date(iso));
+}
+
+/**
+ * "Sat 12 Jul" for a bare "YYYY-MM-DD" wall date. Distinct from `formatDay`,
+ * which takes an instant: a wall date has no time, so it is formatted in UTC to
+ * keep the day from shifting under the academy offset.
+ */
+export function formatWallDay(dateStr: string): string {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: "UTC",
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+  }).format(new Date(Date.UTC(y, m - 1, d)));
+}
+
+// ── Machine-readable wall-clock values ───────────────────────────────────────
+
+const WALL_DATE = opts(
+  { year: "numeric", month: "2-digit", day: "2-digit" },
+  "en-CA" // en-CA is the locale that yields "YYYY-MM-DD" directly.
+);
+const WALL_TIME = opts({ hour: "2-digit", minute: "2-digit", hour12: false });
+const WALL_HOUR = opts({ hour: "2-digit", hour12: false });
+const WALL_WEEKDAY_TIME = opts({
+  weekday: "short",
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+});
+
+/** "2026-07-12" — academy wall date; feeds `<input type="date">`. */
+export function wallDate(iso: string | number | Date): string {
+  return WALL_DATE.format(new Date(iso));
+}
+
+/** "18:30" — 24-hour academy wall time; `<input type="time">` requires this. */
+export function wallTime(iso: string | number | Date): string {
+  return WALL_TIME.format(new Date(iso));
+}
+
+/** 0–23 — academy wall hour, for morning/afternoon/evening bucketing. */
+export function wallHour(iso: string | number | Date): number {
+  return Number(WALL_HOUR.format(new Date(iso)));
+}
+
+/** "Sat, 18:30" — stable key so two dates on the same weekly slot collide. */
+export function wallWeekdayTime(iso: string | number | Date): string {
+  return WALL_WEEKDAY_TIME.format(new Date(iso));
+}

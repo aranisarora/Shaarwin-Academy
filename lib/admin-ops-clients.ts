@@ -2,12 +2,13 @@
 // Shared by the admin actions and the WhatsApp bot; RLS enforces.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import type { Database } from "@/lib/database.types";
 import { normalizePhone } from "@/lib/whatsapp/phone";
 import { adminClient, autoProvisionClient, linkPhoneToUser } from "@/lib/whatsapp/identity";
 import type { OpResult } from "@/lib/admin-ops-types";
 
 export async function updateClientCore(
-  supabase: SupabaseClient,
+  supabase: SupabaseClient<Database>,
   founderId: string,
   clientId: string,
   fullName: string,
@@ -68,7 +69,7 @@ export type ClientInviteDetails = {
  * profiles-phone trigger claims the invite and applies the name/notes.
  */
 export async function addClientInviteCore(
-  supabase: SupabaseClient,
+  supabase: SupabaseClient<Database>,
   founderId: string,
   d: ClientInviteDetails
 ): Promise<OpResult> {
@@ -112,7 +113,7 @@ export async function addClientInviteCore(
 
 /** Edit a not-yet-claimed client invite. */
 export async function savePendingClientCore(
-  supabase: SupabaseClient,
+  supabase: SupabaseClient<Database>,
   founderId: string,
   id: string,
   d: ClientInviteDetails
@@ -148,7 +149,7 @@ export async function savePendingClientCore(
  * is renamed to the invite's name so it reads sensibly in rosters.
  */
 export async function materializeInviteCore(
-  supabase: SupabaseClient,
+  supabase: SupabaseClient<Database>,
   founderId: string,
   inviteId: string
 ): Promise<OpResult & { clientId?: string }> {
@@ -189,7 +190,7 @@ export async function materializeInviteCore(
 
 /** Remove a not-yet-claimed client invite. */
 export async function deletePendingClientCore(
-  supabase: SupabaseClient,
+  supabase: SupabaseClient<Database>,
   founderId: string,
   id: string
 ): Promise<OpResult> {
@@ -214,7 +215,7 @@ export async function deletePendingClientCore(
  * email per each user's preferences.
  */
 export async function broadcastNotificationCore(
-  supabase: SupabaseClient,
+  supabase: SupabaseClient<Database>,
   founderId: string,
   audience: "coaches" | "clients",
   message: string,
@@ -253,7 +254,7 @@ export async function broadcastNotificationCore(
 
 /** Payment-dispute freeze: a blocked client can sign in but can't book. */
 export async function setClientBlockedCore(
-  supabase: SupabaseClient,
+  supabase: SupabaseClient<Database>,
   founderId: string,
   clientId: string,
   blocked: boolean
@@ -275,7 +276,7 @@ export async function setClientBlockedCore(
 
 /** Archive hides the client from lists; nothing is lost and it's reversible. */
 export async function setClientArchivedCore(
-  supabase: SupabaseClient,
+  supabase: SupabaseClient<Database>,
   founderId: string,
   clientId: string,
   archived: boolean

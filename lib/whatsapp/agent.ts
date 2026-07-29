@@ -3,7 +3,9 @@
 // survives serverless cold starts.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import type { Database } from "@/lib/database.types";
 import type { Profile } from "@/lib/auth";
+import { ACADEMY_TZ } from "@/lib/academy-time";
 import { getVertexToken, vertexUrl } from "@/lib/vertex";
 import { toolsForRole, type ToolContext, type WaTool } from "./tools";
 
@@ -83,8 +85,10 @@ Guardrails:
  * and across users of the same role.
  */
 function dynamicContext(profile: Profile | null): string {
+  // The one place a full "Saturday, 12 July 2026 at 18:30" reading is wanted,
+  // so it builds its own formatter rather than joining lib/academy-time's set.
   const now = new Intl.DateTimeFormat("en-IN", {
-    timeZone: "Asia/Kolkata",
+    timeZone: ACADEMY_TZ,
     dateStyle: "full",
     timeStyle: "short",
   }).format(new Date());
@@ -155,7 +159,7 @@ async function callGemini(
 }
 
 /** History as alternating turns; consecutive same-role rows get merged. */
-async function loadHistory(admin: SupabaseClient, phone: string): Promise<ApiMessage[]> {
+async function loadHistory(admin: SupabaseClient<Database>, phone: string): Promise<ApiMessage[]> {
   const { data } = await admin
     .from("wa_messages")
     .select("role,content")
@@ -186,8 +190,8 @@ export async function runAgent(opts: {
   phone: string;
   userText: string;
   profile: Profile | null;
-  supabase: SupabaseClient | null;
-  admin: SupabaseClient;
+  supabase: SupabaseClient<Database> | null;
+  admin: SupabaseClient<Database>;
 }): Promise<string> {
   const { phone, userText, profile, supabase, admin } = opts;
   const ctx: ToolContext = { phone, profile, supabase, admin };

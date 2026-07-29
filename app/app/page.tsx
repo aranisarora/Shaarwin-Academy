@@ -3,7 +3,7 @@ import Link from "next/link";
 import { requireUser } from "@/lib/auth";
 import { getSubscriptionSummary, formatRenewalDate } from "@/lib/billing";
 import { getMyBookings } from "@/lib/booking";
-import { formatSessionDate } from "@/lib/data";
+import { formatSessionDate } from "@/lib/academy-time";
 import { ClientShell } from "@/components/app/ClientShell";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ButtonLink } from "@/components/ui/Button";

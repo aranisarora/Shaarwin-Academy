@@ -108,7 +108,14 @@ export async function bookSession(
   if (!error && data) {
     revalidatePath("/app");
     revalidatePath("/app/schedule");
-    return { ok: true, status: data.status, bookingId: data.id };
+    // book_session returns a full bookings row, so its status is typed as the
+    // whole booking_status enum; the function only ever hands back a fresh
+    // booking, which is confirmed or (when the class is full) waitlisted.
+    return {
+      ok: true,
+      status: data.status === "waitlisted" ? "waitlisted" : "confirmed",
+      bookingId: data.id,
+    };
   }
 
   if (error) {

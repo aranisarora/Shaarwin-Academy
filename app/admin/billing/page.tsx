@@ -69,7 +69,7 @@ export default async function AdminBillingPage() {
             <p className="label mb-3">Payment overdue</p>
             <ul className="divide-y divide-line rounded-[12px] border border-err bg-surface-2">
               {dunning.map((s) => {
-                const profile = s.profiles as unknown as { full_name: string; email: string } | null;
+                const profile = s.profiles;
                 const daysLeft = s.current_period_end
                   ? Math.max(
                       0,
@@ -99,8 +99,8 @@ export default async function AdminBillingPage() {
           <p className="label mb-3">Subscriptions</p>
           <ul className="divide-y divide-line rounded-[12px] border border-line bg-surface-2">
             {(subs ?? []).map((s) => {
-              const profile = s.profiles as unknown as { full_name: string } | null;
-              const plan = s.plans as unknown as { name: string } | null;
+              const profile = s.profiles;
+              const plan = s.plans;
               return (
                 <li key={s.id} className="flex items-center justify-between gap-3 px-4 py-3">
                   <div>

@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/Button";
 import { addStudentNote } from "@/app/coach/players/[playerId]/actions";
-import { ACADEMY_TZ } from "@/lib/academy-time";
+import { formatDateFull } from "@/lib/academy-time";
 
 type Note = {
   id: string;
@@ -12,14 +12,7 @@ type Note = {
   author: string;
 };
 
-function fmtDate(iso: string) {
-  return new Intl.DateTimeFormat("en-GB", {
-    day: "numeric",
-    month: "short",
-    year: "numeric",
-    timeZone: ACADEMY_TZ,
-  }).format(new Date(iso));
-}
+const fmtDate = formatDateFull;
 
 export function StudentNotes({
   playerId,

@@ -10,27 +10,18 @@ import {
   CoachScheduleDays,
   type ScheduleDay,
 } from "@/components/app/CoachScheduleDays";
-import { ACADEMY_TZ, nowMs, sessionTimeStatus } from "@/lib/academy-time";
+import {
+  formatClock,
+  formatDayLong,
+  nowMs,
+  sessionTimeStatus,
+} from "@/lib/academy-time";
 
 export const metadata: Metadata = { title: "Schedule" };
 
-function fmtTime(iso: string) {
-  return new Intl.DateTimeFormat("en-GB", {
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true,
-    timeZone: ACADEMY_TZ,
-  }).format(new Date(iso));
-}
-
-function dayLabel(iso: string) {
-  return new Intl.DateTimeFormat("en-GB", {
-    weekday: "long",
-    day: "numeric",
-    month: "long",
-    timeZone: ACADEMY_TZ,
-  }).format(new Date(iso));
-}
+const fmtTime = formatClock;
+// Doubles as the day-grouping key: "Saturday 12 July" is unique per day.
+const dayLabel = formatDayLong;
 
 /** Card's third line: the client's name for a private, else "Group class". */
 function classTypeLine(s: CoachSession): string {

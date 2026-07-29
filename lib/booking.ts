@@ -1,5 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { fromDetails, type StructuredAddress } from "@/lib/address";
+import type { Database } from "@/lib/database.types";
+import { asAddressDetails, fromDetails, type StructuredAddress } from "@/lib/address";
 
 export type BrowseSession = {
   id: string;
@@ -19,7 +20,7 @@ export type BrowseSession = {
 
 /** Sessions for the browse screen with live seat counts. */
 export async function getBrowseSessions(
-  supabase: SupabaseClient,
+  supabase: SupabaseClient<Database>,
   clientId: string,
   days = 14
 ): Promise<BrowseSession[]> {
@@ -52,7 +53,7 @@ export async function getBrowseSessions(
       .in("status", ["confirmed", "waitlisted"]),
     getCoachNames(
       supabase,
-      sessions.map((s) => s.coach_id).filter(Boolean) as string[]
+      sessions.map((s) => s.coach_id).filter((id): id is string => !!id)
     ),
   ]);
 
@@ -76,14 +77,7 @@ export async function getBrowseSessions(
   }
 
   return sessions.map((s) => {
-    const cls = s.classes as unknown as {
-      id: string;
-      title: string;
-      skill_level: string;
-      capacity: number;
-      duration_minutes: number;
-      venues: { id: string; name: string; postcode: string; lat: number; lng: number };
-    };
+    const cls = s.classes;
     return {
       id: s.id,
       classId: cls.id,
@@ -101,7 +95,7 @@ export async function getBrowseSessions(
   });
 }
 
-async function getCoachNames(supabase: SupabaseClient, ids: string[]) {
+async function getCoachNames(supabase: SupabaseClient<Database>, ids: string[]) {
   const map = new Map<string, string>();
   if (ids.length === 0) return map;
   const { data } = await supabase
@@ -134,7 +128,7 @@ export type MyBooking = {
 };
 
 export async function getMyBookings(
-  supabase: SupabaseClient,
+  supabase: SupabaseClient<Database>,
   clientId: string
 ): Promise<MyBooking[]> {
   const { data } = await supabase
@@ -149,49 +143,23 @@ export async function getMyBookings(
   if (!data) return [];
 
   const coachIds = data
-    .map((b) => (b.class_sessions as unknown as { coach_id: string | null }).coach_id)
-    .filter(Boolean) as string[];
+    .map((b) => b.class_sessions.coach_id)
+    .filter((id): id is string => !!id);
   const coachNames = await getCoachNames(supabase, coachIds);
 
   return data.map((b) => {
-    const s = b.class_sessions as unknown as {
-      id: string;
-      starts_at: string;
-      ends_at: string;
-      coach_id: string | null;
-      classes: {
-        title: string;
-        class_type: string;
-        venues: {
-          name: string;
-          address: string;
-          postcode: string;
-          lat: number;
-          lng: number;
-          address_details: Partial<StructuredAddress> | null;
-        } | null;
-        private_class_details:
-          | {
-              address: string;
-              postcode: string;
-              lat: number;
-              lng: number;
-              address_details: Partial<StructuredAddress> | null;
-            }[]
-          | null;
-      };
-    };
+    const s = b.class_sessions;
     const v = s.classes.venues;
-    const priv = s.classes.private_class_details?.[0] ?? null;
+    const priv = s.classes.private_class_details;
     const address = v
-      ? fromDetails(v.address_details, {
+      ? fromDetails(asAddressDetails(v.address_details), {
           address: v.address,
           postcode: v.postcode,
           lat: v.lat,
           lng: v.lng,
         })
       : priv
-        ? fromDetails(priv.address_details, {
+        ? fromDetails(asAddressDetails(priv.address_details), {
             address: priv.address,
             postcode: priv.postcode,
             lat: priv.lat,
@@ -202,13 +170,10 @@ export async function getMyBookings(
       id: b.id,
       status: b.status,
       waitlist_position: b.waitlist_position,
-      seriesId: (b as unknown as { series_id: string | null }).series_id ?? null,
-      privateSeriesId:
-        (b as unknown as { private_series_id: string | null }).private_series_id ?? null,
-      playerId:
-        (b.players as unknown as { id: string } | null)?.id ?? null,
-      playerName:
-        (b.players as unknown as { full_name: string } | null)?.full_name ?? "",
+      seriesId: b.series_id,
+      privateSeriesId: b.private_series_id,
+      playerId: b.players?.id ?? null,
+      playerName: b.players?.full_name ?? "",
       session: {
         id: s.id,
         starts_at: s.starts_at,

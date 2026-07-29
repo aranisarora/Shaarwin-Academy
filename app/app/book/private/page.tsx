@@ -26,7 +26,7 @@ export default async function PrivateBookingPage({
 
   const coaches = (coachesRes.data ?? []).map((c) => ({
     id: c.id,
-    name: (c.profiles as unknown as { full_name: string }).full_name,
+    name: (c.profiles).full_name,
     lat: c.base_lat,
     lng: c.base_lng,
   }));

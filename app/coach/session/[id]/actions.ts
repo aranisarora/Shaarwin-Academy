@@ -39,10 +39,7 @@ export async function setAttendance(
     .maybeSingle();
   if (!booking) return { ok: false, error: "Booking not found." };
 
-  const session = booking.class_sessions as unknown as {
-    coach_id: string;
-    starts_at: string;
-  };
+  const session = booking.class_sessions;
   if (session.coach_id !== user.id) return { ok: false, error: "Not your session." };
 
   // Server-side window: 15 min before start → 48h after.
@@ -81,7 +78,10 @@ export async function addSchoolPlayer(
   const { data: playerId, error } = await supabase.rpc("add_school_player", {
     p_session: sessionId,
     p_full_name: fullName.trim(),
-    p_grade: grade,
+    // p_grade is a smallint with no DEFAULT, so the generated Args type marks it
+    // required and non-null — it can't express "required, but NULL is valid".
+    // Giving the SQL argument a DEFAULT NULL would drop this cast.
+    p_grade: grade as number,
   });
   if (error) return { ok: false, error: "Couldn't add the player. Try again." };
 
@@ -137,7 +137,8 @@ export async function markArrived(
     p_session: sessionId,
     p_late: false,
     p_source: opts?.source ?? "tap",
-    p_distance_m: opts?.distanceM ?? null,
+    // Omitted rather than passed as null — the SQL argument defaults to NULL.
+    p_distance_m: opts?.distanceM ?? undefined,
   });
   if (error) return { ok: false, error: "Couldn't send. Try again." };
   revalidatePath(`/coach/session/${sessionId}`);

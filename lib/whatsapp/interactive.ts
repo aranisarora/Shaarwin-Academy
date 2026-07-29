@@ -14,7 +14,9 @@
 // `id` fields in those template definitions.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import type { Database, Json } from "@/lib/database.types";
 import type { Profile } from "@/lib/auth";
+import { formatClock } from "@/lib/academy-time";
 
 export const WA_BUTTON = {
   COACH_CONFIRM: "coach_confirm",
@@ -107,8 +109,8 @@ function appUrl(): string {
  * cross.
  */
 export async function handleInteractiveReply(opts: {
-  admin: SupabaseClient;
-  supabase: SupabaseClient;
+  admin: SupabaseClient<Database>;
+  supabase: SupabaseClient<Database>;
   profile: Profile;
   payload: string;
   text: string;
@@ -125,8 +127,8 @@ export async function handleInteractiveReply(opts: {
 // ---------------------------------------------------------------------------
 
 async function handleCoachReply(opts: {
-  admin: SupabaseClient;
-  supabase: SupabaseClient;
+  admin: SupabaseClient<Database>;
+  supabase: SupabaseClient<Database>;
   profile: Profile;
   payload: string;
   text: string;
@@ -237,8 +239,8 @@ function resolveCoachLoose(text: string): ButtonId | null {
  * their tap opened a service window, so this follow-up is free-form.
  */
 async function startAbsentPrompt(
-  admin: SupabaseClient,
-  supabase: SupabaseClient,
+  admin: SupabaseClient<Database>,
+  supabase: SupabaseClient<Database>,
   coachId: string,
   sessionId: string,
   sessionLink: string
@@ -284,8 +286,8 @@ async function startAbsentPrompt(
  * live prompt (so the caller treats the number as ordinary chat).
  */
 async function handleAbsentDigits(
-  admin: SupabaseClient,
-  supabase: SupabaseClient,
+  admin: SupabaseClient<Database>,
+  supabase: SupabaseClient<Database>,
   profile: Profile,
   text: string
 ): Promise<string | null> {
@@ -328,7 +330,7 @@ async function handleAbsentDigits(
   }
 
   // Clear the prompt so a later stray number isn't misread.
-  const cleared = { ...(note.data as Record<string, unknown>) };
+  const cleared = { ...(note.data as Record<string, Json>) };
   delete cleared.absent_prompt;
   delete cleared.absent_prompt_at;
   await admin.from("notifications").update({ data: cleared }).eq("id", note.id);
@@ -343,7 +345,7 @@ async function handleAbsentDigits(
 
 /** Confirmed bookings for a session, ordered by player name. */
 async function sessionRoster(
-  supabase: SupabaseClient,
+  supabase: SupabaseClient<Database>,
   sessionId: string
 ): Promise<{ id: string; name: string }[]> {
   const { data } = await supabase
@@ -355,18 +357,18 @@ async function sessionRoster(
     .map((b) => ({
       id: b.id as string,
       name:
-        ((b.players as unknown as { full_name?: string } | null)?.full_name ?? "Player").trim() ||
+        ((b.players)?.full_name ?? "Player").trim() ||
         "Player",
     }))
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 /** Player names for a set of booking ids (for the confirmation reply). */
-async function bookingNames(supabase: SupabaseClient, ids: string[]): Promise<string[]> {
+async function bookingNames(supabase: SupabaseClient<Database>, ids: string[]): Promise<string[]> {
   const { data } = await supabase.from("bookings").select("id,players(full_name)").in("id", ids);
   return (data ?? []).map(
     (b) =>
-      ((b.players as unknown as { full_name?: string } | null)?.full_name ?? "").trim().split(
+      ((b.players)?.full_name ?? "").trim().split(
         /\s+/
       )[0] || "Player"
   );
@@ -378,7 +380,7 @@ async function bookingNames(supabase: SupabaseClient, ids: string[]): Promise<st
  * they replied to). Returns false when there's no row to anchor it on.
  */
 async function armCantPrompt(
-  admin: SupabaseClient,
+  admin: SupabaseClient<Database>,
   coachId: string,
   sessionId: string
 ): Promise<boolean> {
@@ -405,9 +407,9 @@ async function armCantPrompt(
 }
 
 async function clearCantPrompt(
-  admin: SupabaseClient,
+  admin: SupabaseClient<Database>,
   noteId: string,
-  data: Record<string, unknown>
+  data: Record<string, Json>
 ): Promise<void> {
   const cleared = { ...data };
   delete cleared.cant_prompt;
@@ -423,8 +425,8 @@ async function clearCantPrompt(
  * there's no live prompt at all.
  */
 async function handleCantConfirm(
-  admin: SupabaseClient,
-  supabase: SupabaseClient,
+  admin: SupabaseClient<Database>,
+  supabase: SupabaseClient<Database>,
   profile: Profile,
   text: string
 ): Promise<string | null> {
@@ -444,7 +446,7 @@ async function handleCantConfirm(
   const at = data.cant_prompt_at ? new Date(data.cant_prompt_at).getTime() : 0;
 
   // Single-shot: clear the prompt whatever the reply is.
-  await clearCantPrompt(admin, note.id, note.data as Record<string, unknown>);
+  await clearCantPrompt(admin, note.id, note.data as Record<string, Json>);
 
   if (!sessionId || Date.now() - at > 30 * 60000) return null; // expired → fall through
   const t = (text || "").trim().toLowerCase().replace(/[.!]+$/, "");
@@ -468,7 +470,7 @@ async function handleCantConfirm(
 
 /** Class title + IST clock time for a session, for the cancel confirmation copy. */
 async function sessionTitleTime(
-  supabase: SupabaseClient,
+  supabase: SupabaseClient<Database>,
   sessionId: string
 ): Promise<{ title: string; time: string }> {
   const { data } = await supabase
@@ -478,14 +480,7 @@ async function sessionTitleTime(
     .maybeSingle();
   const c = data?.classes as { title?: string } | { title?: string }[] | null;
   const title = (Array.isArray(c) ? c[0]?.title : c?.title) ?? "your session";
-  const time = data?.starts_at
-    ? new Intl.DateTimeFormat("en-GB", {
-        hour: "numeric",
-        minute: "2-digit",
-        hour12: true,
-        timeZone: "Asia/Kolkata",
-      }).format(new Date(data.starts_at))
-    : "the session";
+  const time = data?.starts_at ? formatClock(data.starts_at) : "the session";
   return { title, time };
 }
 
@@ -494,8 +489,8 @@ async function sessionTitleTime(
 // ---------------------------------------------------------------------------
 
 async function handleClientReply(opts: {
-  admin: SupabaseClient;
-  supabase: SupabaseClient;
+  admin: SupabaseClient<Database>;
+  supabase: SupabaseClient<Database>;
   profile: Profile;
   payload: string;
   text: string;
@@ -570,7 +565,7 @@ function resolveClientExact(payload: string, text: string, originalSid: string):
 
 /** The notification whose outbound Twilio SID matches, for this user, recent. */
 async function noteBySid(
-  admin: SupabaseClient,
+  admin: SupabaseClient<Database>,
   originalSid: string,
   userId: string
 ): Promise<{ id: string; data: Record<string, unknown> } | null> {
@@ -599,8 +594,8 @@ async function noteBySid(
  * session, so auth.uid() = founder and the RPC's founder guard passes.
  */
 async function handleFounderReply(opts: {
-  admin: SupabaseClient;
-  supabase: SupabaseClient;
+  admin: SupabaseClient<Database>;
+  supabase: SupabaseClient<Database>;
   profile: Profile;
   payload: string;
   text: string;
@@ -651,7 +646,7 @@ function resolveFounderExact(payload: string, text: string, originalSid: string)
 /** The notification whose outbound Twilio SID matches, of a given type, recent
  *  — not scoped to a user (the founder acts on the applicant's request row). */
 async function noteBySidAnyUser(
-  admin: SupabaseClient,
+  admin: SupabaseClient<Database>,
   originalSid: string,
   type: string
 ): Promise<{ id: string; data: Record<string, unknown> } | null> {
@@ -685,8 +680,8 @@ function errorReply(message: string): string {
  * the coach's nearest session for the button's phase (before/after class).
  */
 async function resolveSession(
-  admin: SupabaseClient,
-  supabase: SupabaseClient,
+  admin: SupabaseClient<Database>,
+  supabase: SupabaseClient<Database>,
   coachId: string,
   group: "before" | "after",
   originalSid: string

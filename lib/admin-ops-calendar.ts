@@ -3,23 +3,14 @@
 // client.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { academyWallToUtc } from "@/lib/academy-time";
+import type { Database, Json } from "@/lib/database.types";
+import { academyWallToUtc, formatSessionDate } from "@/lib/academy-time";
 import type { OpResult } from "@/lib/admin-ops-types";
 
-function whenIST(d: Date): string {
-  return new Intl.DateTimeFormat("en-GB", {
-    weekday: "short",
-    day: "numeric",
-    month: "short",
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true,
-    timeZone: "Asia/Kolkata",
-  }).format(d);
-}
+const whenIST = formatSessionDate;
 
 export async function reassignSessionCore(
-  supabase: SupabaseClient,
+  supabase: SupabaseClient<Database>,
   founderId: string,
   sessionId: string,
   coachId: string,
@@ -85,7 +76,7 @@ export async function reassignSessionCore(
 
 /** Move one session to a new day/time; everyone booked (and the coach) is told. */
 export async function moveSessionCore(
-  supabase: SupabaseClient,
+  supabase: SupabaseClient<Database>,
   founderId: string,
   sessionId: string,
   date: string, // YYYY-MM-DD academy wall clock
@@ -98,7 +89,7 @@ export async function moveSessionCore(
     .eq("status", "scheduled")
     .maybeSingle();
   if (!session) return { ok: false, error: "Session not found." };
-  const cls = session.classes as unknown as { title: string; duration_minutes: number };
+  const cls = session.classes;
 
   const newStart = academyWallToUtc(date, time);
   if (!(newStart > new Date())) return { ok: false, error: "Pick a time in the future." };
@@ -131,6 +122,8 @@ export async function moveSessionCore(
   const when = whenIST(newStart);
   const notified = new Set<string>();
   for (const b of bookings ?? []) {
+    // A school player's booking has no account behind it — nobody to notify.
+    if (b.client_id === null) continue;
     if (notified.has(b.client_id)) continue;
     notified.add(b.client_id);
     await supabase.from("notifications").insert({
@@ -163,7 +156,7 @@ export async function moveSessionCore(
 
 /** One-off capacity change for a single session (null = back to class default). */
 export async function setSessionCapacityCore(
-  supabase: SupabaseClient,
+  supabase: SupabaseClient<Database>,
   founderId: string,
   sessionId: string,
   capacity: number | null
@@ -203,7 +196,8 @@ export type PrivateSessionInput = {
   lng: number;
   hasTable?: boolean;
   accessNotes?: string;
-  addressDetails?: Record<string, unknown> | null;
+  /** Structured address, written straight to the `address_details` jsonb column. */
+  addressDetails?: Json | null;
   coachId?: string;
   /** Founder comp: skip the client's plan duration/weekly-frequency checks. */
   overridePlanLimits?: boolean;
@@ -248,7 +242,7 @@ function istWeekWindow(d: Date): { from: Date; to: Date } {
  * any week fails.
  */
 export async function createPrivateSessionCore(
-  supabase: SupabaseClient,
+  supabase: SupabaseClient<Database>,
   founderId: string,
   input: PrivateSessionInput
 ): Promise<OpResult> {
@@ -380,7 +374,10 @@ export async function createPrivateSessionCore(
   }
 
   // Stand up the standing series first, so every occurrence below links to it.
-  if (recurring) {
+  // `recurring` already implies a client (it's `!isOpen`), and a client always
+  // resolved a player above — the ids are restated here so the non-null columns
+  // below are guaranteed by the type system rather than by that reasoning.
+  if (recurring && clientId && playerId) {
     const { data: series, error: seriesErr } = await supabase
       .from("private_booking_series")
       .insert({
@@ -472,7 +469,7 @@ export async function createPrivateSessionCore(
 
     // Open slot: no client yet, so no booking and no minutes debit. The empty
     // held session is filled later via assignPrivateSessionClientCore.
-    if (clientId) {
+    if (clientId && playerId) {
       const { data: booking, error: bookErr } = await supabase
         .from("bookings")
         .insert({
@@ -555,7 +552,7 @@ export async function createPrivateSessionCore(
  * held sessions, never a standing series).
  */
 export async function assignPrivateSessionClientCore(
-  supabase: SupabaseClient,
+  supabase: SupabaseClient<Database>,
   founderId: string,
   sessionId: string,
   clientId: string,
@@ -573,12 +570,7 @@ export async function assignPrivateSessionClientCore(
   if (session.status !== "scheduled")
     return { ok: false, error: "That session isn't open for booking." };
 
-  const cls = session.classes as unknown as {
-    id: string;
-    class_type: string;
-    duration_minutes: number;
-    private_class_details: { client_id: string | null }[] | { client_id: string | null } | null;
-  };
+  const cls = session.classes;
   if (cls.class_type !== "private") return { ok: false, error: "Not a private session." };
   const det = cls.private_class_details;
   const existing = Array.isArray(det) ? det[0]?.client_id : det?.client_id;
@@ -725,7 +717,7 @@ export async function assignPrivateSessionClientCore(
  * Used by the admin "Cancel all upcoming sessions" action on the session sheet.
  */
 export async function cancelFuturePrivateSessionsCore(
-  supabase: SupabaseClient,
+  supabase: SupabaseClient<Database>,
   founderId: string,
   sessionId: string
 ): Promise<OpResult & { cancelled?: number }> {
@@ -737,10 +729,7 @@ export async function cancelFuturePrivateSessionsCore(
     .maybeSingle();
   if (!anchor) return { ok: false, error: "Session not found." };
 
-  const cls = anchor.classes as unknown as {
-    class_type: string;
-    private_class_details: { client_id: string }[] | { client_id: string } | null;
-  };
+  const cls = anchor.classes;
   if (cls.class_type !== "private") return { ok: false, error: "Not a private session." };
   const det = cls.private_class_details;
   const clientId = Array.isArray(det) ? det[0]?.client_id : det?.client_id;
@@ -783,7 +772,7 @@ export async function cancelFuturePrivateSessionsCore(
   const durationBySession = new Map<string, number>(
     sessions.map((s) => [
       s.id,
-      (s.classes as unknown as { duration_minutes: number }).duration_minutes,
+      (s.classes).duration_minutes,
     ])
   );
 
@@ -797,6 +786,8 @@ export async function cancelFuturePrivateSessionsCore(
       })
       .eq("id", b.id);
 
+    // No account holder (school player) means no minutes ledger to refund into.
+    if (b.client_id === null) continue;
     const mins = durationBySession.get(b.session_id) ?? 60;
     await supabase.from("private_credit_ledger").insert({
       client_id: b.client_id,
@@ -843,7 +834,7 @@ export async function cancelFuturePrivateSessionsCore(
 
 /** Add a single extra session to an existing class (e.g. a holiday special). */
 export async function createOneOffSessionCore(
-  supabase: SupabaseClient,
+  supabase: SupabaseClient<Database>,
   founderId: string,
   classId: string,
   date: string,

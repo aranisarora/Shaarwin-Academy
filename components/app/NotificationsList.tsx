@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { formatDateClock } from "@/lib/academy-time";
 import { createClient } from "@/lib/supabase/client";
 import { EmptyState } from "@/components/ui/EmptyState";
 
@@ -9,10 +10,21 @@ type Row = {
   type: string;
   title: string;
   body: string;
-  data: { url?: string };
+  // jsonb — the notify function writes `{ url }` on the rows that deep-link,
+  // but the column is free-form, so read it defensively (see `deepLink`).
+  data: unknown;
   read_at: string | null;
   created_at: string;
 };
+
+/** The in-app link a notification points at, or the app home when it has none. */
+function deepLink(data: unknown): string {
+  if (data && typeof data === "object" && !Array.isArray(data)) {
+    const url = (data as { url?: unknown }).url;
+    if (typeof url === "string" && url) return url;
+  }
+  return "/app";
+}
 
 export function NotificationsList({ rows }: { rows: Row[] }) {
   const supabase = createClient();
@@ -35,7 +47,7 @@ export function NotificationsList({ rows }: { rows: Row[] }) {
       {rows.map((row) => (
         <li key={row.id}>
           <Link
-            href={row.data?.url ?? "/app"}
+            href={deepLink(row.data)}
             onClick={() => markRead(row.id)}
             className="flex items-start gap-3 px-4 py-3.5 hover:bg-surface"
           >
@@ -49,14 +61,7 @@ export function NotificationsList({ rows }: { rows: Row[] }) {
               <span className="block font-medium">{row.title}</span>
               <span className="block text-sm text-fg-2">{row.body}</span>
               <span className="mt-0.5 block text-xs text-fg-2">
-                {new Intl.DateTimeFormat("en-GB", {
-                  day: "numeric",
-                  month: "short",
-                  hour: "numeric",
-                  minute: "2-digit",
-                  hour12: true,
-                  timeZone: "Asia/Kolkata",
-                }).format(new Date(row.created_at))}
+                {formatDateClock(row.created_at)}
               </span>
             </span>
           </Link>

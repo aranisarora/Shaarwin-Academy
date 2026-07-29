@@ -27,10 +27,7 @@ export default async function AdminStudentPage({
     .maybeSingle();
   if (!player) notFound();
 
-  const parent = player.profiles as unknown as {
-    full_name: string;
-    email: string;
-  } | null;
+  const parent = player.profiles;
 
   const [insights, { data: notes }, { data: categories }, { data: skills }, { data: ratingRows }, masteryMap] =
     await Promise.all([

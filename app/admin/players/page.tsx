@@ -78,24 +78,33 @@ export default async function AdminPlayersPage({
   const subByClient = new Map(
     (subs ?? []).map((s) => [
       s.client_id,
-      { status: s.status, plan: (s.plans as unknown as { name: string } | null)?.name },
+      { status: s.status, plan: (s.plans)?.name },
     ])
   );
   const ltv = new Map<string, number>();
   for (const inv of invoices ?? []) {
     ltv.set(inv.client_id, (ltv.get(inv.client_id) ?? 0) + inv.amount_pence);
   }
+  // `bookings.client_id` and `players.client_id` are nullable — an account-less
+  // school player owns neither. Both queries above filter `.in("client_id", ids)`,
+  // so these rows always have an owner; the guards narrow the column and keep a
+  // stray null out of the per-client tallies rather than bucketing it under one
+  // shared `null` key.
   const noShows = new Map<string, number>();
   const attended = new Map<string, number>();
   for (const b of bookings ?? []) {
+    if (b.client_id === null) continue;
     const bucket = b.status === "no_show" ? noShows : attended;
     bucket.set(b.client_id, (bucket.get(b.client_id) ?? 0) + 1);
   }
+  const householdPlayers = (players ?? []).filter(
+    (p): p is typeof p & { client_id: string } => p.client_id !== null
+  );
   const studentsByClient = new Map<
     string,
     { id: string; name: string; level: string }[]
   >();
-  for (const p of players ?? []) {
+  for (const p of householdPlayers) {
     const list = studentsByClient.get(p.client_id) ?? [];
     list.push({ id: p.id, name: p.full_name, level: p.skill_level });
     studentsByClient.set(p.client_id, list);
@@ -135,7 +144,7 @@ export default async function AdminPlayersPage({
   ]);
 
   const clientById = new Map((clients ?? []).map((c) => [c.id, c]));
-  const householdRows = (players ?? [])
+  const householdRows = householdPlayers
     .filter((p) => {
       const c = clientById.get(p.client_id);
       return c && c.deleted_at === null;
@@ -171,7 +180,7 @@ export default async function AdminPlayersPage({
     clientName: "",
     clientEmail: "",
     clientPhone: null,
-    school: (p.venues as unknown as { name: string } | null)?.name ?? "School",
+    school: (p.venues)?.name ?? "School",
   }));
 
   const playerRows = [...householdRows, ...schoolRows].sort((a, b) =>

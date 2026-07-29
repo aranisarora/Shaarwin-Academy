@@ -2,6 +2,11 @@
 
 import { useMemo, useState, useTransition } from "react";
 import Link from "next/link";
+import {
+  formatClock,
+  formatSessionDate,
+  formatWeekdayLong,
+} from "@/lib/academy-time";
 import { VenueMap } from "@/components/marketing/VenueMap";
 import { Sheet } from "@/components/ui/Sheet";
 import { Badge } from "@/components/ui/Badge";
@@ -19,33 +24,12 @@ import type { Venue } from "@/lib/data";
 const LEVELS = ["all", "beginner", "intermediate", "advanced", "elite"] as const;
 const WEEKDAYS = ["all", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
 
-const TZ = "Asia/Kolkata";
-
-function fmtDate(iso: string) {
-  return new Intl.DateTimeFormat("en-GB", {
-    weekday: "short",
-    day: "numeric",
-    month: "short",
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true,
-    timeZone: TZ,
-  }).format(new Date(iso));
-}
+const fmtDate = formatSessionDate;
 
 /** Wall-clock parts of a session in the academy timezone. */
 function slotParts(iso: string) {
-  const parts = new Intl.DateTimeFormat("en-GB", {
-    weekday: "long",
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true,
-    timeZone: TZ,
-  }).formatToParts(new Date(iso));
-  const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
-  const weekday = get("weekday"); // "Monday"
-  const time = `${get("hour")}:${get("minute")} ${get("dayPeriod")}`; // "5:00 pm"
-  return { weekday, weekdayShort: weekday.slice(0, 3), time };
+  const weekday = formatWeekdayLong(iso); // "Monday"
+  return { weekday, weekdayShort: weekday.slice(0, 3), time: formatClock(iso) };
 }
 
 const PLURAL: Record<string, string> = {

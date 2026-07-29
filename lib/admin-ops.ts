@@ -3,8 +3,9 @@
 // (founder policies) is the enforcement layer regardless of entry point.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import type { Database } from "@/lib/database.types";
 import { academyOffsetMinutes, academyWallToUtc } from "@/lib/academy-time";
-import type { OpResult } from "@/lib/admin-ops-types";
+import { toSkillLevel, type OpResult } from "@/lib/admin-ops-types";
 
 // OpResult lives in a leaf module (admin-ops-types) so the domain cores can
 // import it without pointing back at this barrel — see admin-ops-types.ts.
@@ -33,7 +34,7 @@ export type NewClass = {
 };
 
 export async function createGroupClassCore(
-  supabase: SupabaseClient,
+  supabase: SupabaseClient<Database>,
   founderId: string,
   input: NewClass
 ): Promise<OpResult> {
@@ -44,7 +45,7 @@ export async function createGroupClassCore(
       is_school: input.isSchool ?? false,
       title: input.title,
       description: input.description || null,
-      skill_level: input.skillLevel,
+      skill_level: toSkillLevel(input.skillLevel),
       capacity: input.capacity,
       duration_minutes: input.durationMinutes,
       venue_id: input.venueId,
@@ -122,7 +123,7 @@ export type NewOneOffClass = {
  * date and time.
  */
 export async function createOneOffClassCore(
-  supabase: SupabaseClient,
+  supabase: SupabaseClient<Database>,
   founderId: string,
   input: NewOneOffClass
 ): Promise<OpResult> {
@@ -139,7 +140,7 @@ export async function createOneOffClassCore(
       is_school: input.isSchool ?? false,
       title: input.title,
       description: input.description || null,
-      skill_level: input.skillLevel,
+      skill_level: toSkillLevel(input.skillLevel),
       capacity: input.capacity,
       duration_minutes: input.durationMinutes,
       venue_id: input.venueId,
@@ -184,7 +185,7 @@ export async function createOneOffClassCore(
 
 /** Cancel one session with credits + notifications (C8 single-session case). */
 export async function cancelSessionCore(
-  supabase: SupabaseClient,
+  supabase: SupabaseClient<Database>,
   founderId: string,
   sessionId: string,
   reason: string
@@ -195,11 +196,7 @@ export async function cancelSessionCore(
     .eq("id", sessionId)
     .maybeSingle();
   if (!session) return { ok: false, error: "Session not found." };
-  const cls = session.classes as unknown as {
-    title: string;
-    class_type: string;
-    duration_minutes: number;
-  };
+  const cls = session.classes;
 
   const { data: bookings } = await supabase
     .from("bookings")
@@ -221,6 +218,9 @@ export async function cancelSessionCore(
         cancel_reason: reason,
       })
       .eq("id", b.id);
+    // The booking is cancelled either way; the refund and the notification both
+    // need an account holder, which a school player's booking doesn't have.
+    if (b.client_id === null) continue;
     if (cls.class_type === "private") {
       await supabase.from("private_credit_ledger").insert({
         client_id: b.client_id,
@@ -260,7 +260,7 @@ export async function cancelSessionCore(
 }
 
 export async function grantCompCore(
-  supabase: SupabaseClient,
+  supabase: SupabaseClient<Database>,
   founderId: string,
   clientId: string,
   planId: string
@@ -303,7 +303,7 @@ export async function grantCompCore(
 }
 
 export async function adjustCreditsCore(
-  supabase: SupabaseClient,
+  supabase: SupabaseClient<Database>,
   founderId: string,
   clientId: string,
   deltaMinutes: number,
@@ -328,7 +328,7 @@ export async function adjustCreditsCore(
 }
 
 export async function decideTimeOffCore(
-  supabase: SupabaseClient,
+  supabase: SupabaseClient<Database>,
   founderId: string,
   timeOffId: string,
   approve: boolean

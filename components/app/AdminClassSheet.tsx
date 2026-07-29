@@ -27,9 +27,8 @@ import { AddressDisplay } from "@/components/app/AddressDisplay";
 import { fromDetails } from "@/lib/address";
 import { ClassDetailFields, generateClassTitle, time12h, type ClassFormState } from "./ClassFields";
 import { TimeSelect12h } from "./TimeSelect12h";
+import { formatSessionDate, wallDate } from "@/lib/academy-time";
 import {
-  fmtWhen,
-  wallDate,
   WEEKDAY_NAME,
   WEEKDAYS,
   type ClassRow,
@@ -170,7 +169,7 @@ export function AdminClassSheet({
               href={`/admin/schedule?date=${wallDate(cls.nextSessionStart)}&session=${cls.nextSessionId}`}
               className="mt-3 block text-sm text-ember hover:underline"
             >
-              Open this week&apos;s session ({fmtWhen(cls.nextSessionStart)}) →
+              Open this week&apos;s session ({formatSessionDate(cls.nextSessionStart)}) →
             </Link>
           )}
           {cls.nextCoachId && (

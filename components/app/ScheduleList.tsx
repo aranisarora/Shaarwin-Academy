@@ -18,19 +18,9 @@ const RescheduleSheet = dynamic(
 );
 import { AddressDisplay } from "@/components/app/AddressDisplay";
 import type { MyBooking } from "@/lib/booking";
-import { nowMs } from "@/lib/academy-time";
+import { formatSessionDate, nowMs } from "@/lib/academy-time";
 
-function fmt(iso: string) {
-  return new Intl.DateTimeFormat("en-GB", {
-    weekday: "short",
-    day: "numeric",
-    month: "short",
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true,
-    timeZone: "Asia/Kolkata",
-  }).format(new Date(iso));
-}
+const fmt = formatSessionDate;
 
 function BookingCard({
   booking,

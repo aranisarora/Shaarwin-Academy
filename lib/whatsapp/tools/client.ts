@@ -3,6 +3,8 @@
 // booking RPCs enforce subscription, capacity, and household rules server-side.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import type { Database } from "@/lib/database.types";
+import type { TableUpdate } from "@/lib/admin-ops-types";
 import { getBrowseSessions, getMyBookings } from "@/lib/booking";
 import { getSubscriptionSummary } from "@/lib/billing";
 import { getRazorpay } from "@/lib/razorpay";
@@ -31,7 +33,7 @@ function friendlyRpcError(message: string): string {
   return key ? RPC_ERROR_COPY[key] : `The action failed: ${message}`;
 }
 
-async function householdPlayers(supabase: SupabaseClient, clientId: string) {
+async function householdPlayers(supabase: SupabaseClient<Database>, clientId: string) {
   const { data } = await supabase
     .from("players")
     .select("id,full_name")
@@ -544,7 +546,7 @@ const updateProfile: WaTool = {
     },
   },
   run: async (input, ctx) => {
-    const patch: Record<string, string> = {};
+    const patch: TableUpdate<"profiles"> = {};
     if (input.full_name != null && String(input.full_name).trim().length >= 2) {
       patch.full_name = String(input.full_name).trim();
     }

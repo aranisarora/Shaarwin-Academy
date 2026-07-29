@@ -2,8 +2,8 @@
 
 import { revalidatePath, revalidateTag } from "next/cache";
 import { requireFounder } from "@/lib/founder";
-import { academyWallToUtc, utcToAcademyWall } from "@/lib/academy-time";
-import { fromDetails, type StructuredAddress } from "@/lib/address";
+import { academyWallToUtc, formatDate, utcToAcademyWall } from "@/lib/academy-time";
+import { asAddressDetails, fromDetails, type StructuredAddress } from "@/lib/address";
 import { makeVenueResolver } from "@/lib/venue-display";
 import type { SessionRow } from "@/components/app/admin-calendar-types";
 import {
@@ -224,7 +224,9 @@ export async function addSchoolPlayer(
   const { error } = await supabase.rpc("add_school_player", {
     p_session: sessionId,
     p_full_name: fullName.trim(),
-    p_grade: grade,
+    // See the coach-side caller: p_grade is required-but-nullable in SQL, which
+    // the generated Args type can't express.
+    p_grade: grade as number,
   });
   if (error) return { ok: false, error: "Couldn't add the player. Try again." };
   refresh();
@@ -309,7 +311,7 @@ export async function getSessionRoster(sessionId: string): Promise<RosterEntry[]
     .map((b) => ({
       id: b.id,
       name:
-        (b.players as unknown as { full_name: string } | null)?.full_name ?? "Unknown player",
+        b.players?.full_name ?? "Unknown player",
       status: b.status as RosterEntry["status"],
     }))
     .sort((a, b) => a.name.localeCompare(b.name));
@@ -317,42 +319,6 @@ export async function getSessionRoster(sessionId: string): Promise<RosterEntry[]
 
 // ── Week data for client-side navigation ─────────────────────────────────────
 
-type PrivDetail = {
-  client_id: string | null;
-  address: string;
-  postcode: string;
-  lat: number;
-  lng: number;
-  access_notes: string | null;
-  address_details: Partial<StructuredAddress> | null;
-};
-type ClsShape = {
-  id: string;
-  title: string;
-  description: string | null;
-  skill_level: string;
-  capacity: number;
-  duration_minutes: number;
-  recurrence_rule: string | null;
-  active: boolean;
-  venue_id: string | null;
-  class_type: string;
-  is_school: boolean;
-  venues: {
-    name: string;
-    address: string;
-    postcode: string;
-    lat: number;
-    lng: number;
-    address_details: Partial<StructuredAddress> | null;
-  } | null;
-  private_class_details: PrivDetail | PrivDetail[] | null;
-};
-
-function privOf(cls: ClsShape): PrivDetail | null {
-  const d = cls.private_class_details;
-  return Array.isArray(d) ? (d[0] ?? null) : (d ?? null);
-}
 
 /**
  * Fetches the 7-day window of sessions starting on `anchor` (a "YYYY-MM-DD"
@@ -394,8 +360,8 @@ export async function fetchWeekSessions(
     ...new Set(
       (rawSessions ?? [])
         .map((s) => {
-          const cls = s.classes as unknown as ClsShape;
-          return cls.class_type === "private" ? (privOf(cls)?.client_id ?? null) : null;
+          const cls = s.classes;
+          return cls.class_type === "private" ? (cls.private_class_details?.client_id ?? null) : null;
         })
         .filter((id): id is string => id !== null)
     ),
@@ -416,17 +382,17 @@ export async function fetchWeekSessions(
   };
 
   const sessions: SessionRow[] = (rawSessions ?? []).map((s) => {
-    const cls = s.classes as unknown as ClsShape;
-    const priv = privOf(cls);
+    const cls = s.classes;
+    const priv = cls.private_class_details;
     const address: StructuredAddress | null = cls.venues
-      ? fromDetails(cls.venues.address_details, {
+      ? fromDetails(asAddressDetails(cls.venues.address_details), {
           address: cls.venues.address,
           postcode: cls.venues.postcode,
           lat: cls.venues.lat,
           lng: cls.venues.lng,
         })
       : priv
-        ? fromDetails(priv.address_details, {
+        ? fromDetails(asAddressDetails(priv.address_details), {
             address: priv.address,
             postcode: priv.postcode,
             lat: priv.lat,
@@ -466,12 +432,7 @@ export async function fetchWeekSessions(
     };
   });
 
-  const fmt = new Intl.DateTimeFormat("en-GB", {
-    day: "numeric",
-    month: "short",
-    timeZone: "Asia/Kolkata",
-  });
-  const rangeLabel = `${fmt.format(from)} – ${fmt.format(new Date(to.getTime() - 86400000))}`;
+  const rangeLabel = `${formatDate(from)} – ${formatDate(to.getTime() - 86400000)}`;
 
   return { sessions, rangeLabel };
 }

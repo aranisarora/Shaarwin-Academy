@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { requireUser } from "@/lib/auth";
-import { academyToday, utcToAcademyWall } from "@/lib/academy-time";
+import { academyToday, formatSessionDate, utcToAcademyWall } from "@/lib/academy-time";
 import { AdminShell } from "@/components/app/AdminShell";
 import { Card } from "@/components/ui/Card";
 import { Badge } from "@/components/ui/Badge";
@@ -135,15 +135,7 @@ export default async function AdminTodayPage() {
                       {(s.classes as unknown as { title: string } | null)?.title}
                     </p>
                     <p className="tnum text-sm text-fg-2">
-                      {new Intl.DateTimeFormat("en-GB", {
-                        weekday: "short",
-                        day: "numeric",
-                        month: "short",
-                        hour: "numeric",
-                        minute: "2-digit",
-                        hour12: true,
-                        timeZone: "Asia/Kolkata",
-                      }).format(new Date(s.starts_at))}
+                      {formatSessionDate(s.starts_at)}
                     </p>
                   </div>
                   <Badge tone="err">Assign</Badge>

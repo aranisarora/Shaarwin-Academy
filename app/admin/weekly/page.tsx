@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { requireUser } from "@/lib/auth";
 import { utcToAcademyWall } from "@/lib/academy-time";
-import { makeVenueResolver } from "@/lib/venue-display";
+import { makeVenueResolver, withVenueAddress } from "@/lib/venue-display";
 import { AdminShell } from "@/components/app/AdminShell";
 import { AdminWeeklyClasses } from "@/components/app/AdminWeeklyClasses";
 import type {
@@ -252,7 +252,7 @@ export default async function AdminWeeklyPage({
         classes={classRows}
         privateSeries={privateSeriesRows}
         coaches={coachList}
-        venues={venues ?? []}
+        venues={withVenueAddress(venues)}
         clients={clientRows}
         invites={inviteRows}
         openClassId={openClassId ?? null}

@@ -32,6 +32,15 @@ import { utcToAcademyWall } from "@/lib/academy-time";
 import { geocode } from "@/lib/whatsapp/geocode";
 import { fail, fmtIST, ok, type ToolContext, type WaTool } from "./types";
 
+const SUBSCRIPTION_STATUSES = [
+  "incomplete",
+  "trialing",
+  "active",
+  "past_due",
+  "canceled",
+  "paused",
+] as const;
+
 const SETTING_KEYS = [
   "cancellation_window_hours",
   "booking_cutoff_minutes",
@@ -62,7 +71,7 @@ const listClasses: WaTool = {
         capacity: c.capacity,
         duration_minutes: c.duration_minutes,
         weekday: /BYDAY=([A-Z]{2})/.exec(c.recurrence_rule ?? "")?.[1] ?? null,
-        venue: (c.venues as unknown as { name: string } | null)?.name ?? null,
+        venue: (c.venues)?.name ?? null,
         active: c.active,
       }))
     );
@@ -584,10 +593,7 @@ const clientAttendance: WaTool = {
 
     const byPlayer = new Map<string, { status: string; when: string; title: string }[]>();
     for (const b of bookings ?? []) {
-      const s = b.class_sessions as unknown as {
-        starts_at: string;
-        classes: { title: string } | null;
-      };
+      const s = b.class_sessions;
       const list = byPlayer.get(b.player_id) ?? [];
       list.push({ status: b.status, when: s.starts_at, title: s.classes?.title ?? "Session" });
       byPlayer.set(b.player_id, list);
@@ -695,7 +701,7 @@ const clientPayments: WaTool = {
       .reduce((sum, i) => sum + i.amount_pence, 0);
     return ok({
       memberships: (subs ?? []).map((s) => ({
-        plan: (s.plans as unknown as { name: string } | null)?.name ?? "?",
+        plan: (s.plans)?.name ?? "?",
         status: s.status,
         source: s.source,
         renews: s.current_period_end ? fmtIST(s.current_period_end) : null,
@@ -708,7 +714,7 @@ const clientPayments: WaTool = {
         when: fmtIST(i.paid_at ?? i.created_at),
       })),
       recent_purchases: (orders ?? []).map((o) => ({
-        product: (o.products as unknown as { name: string } | null)?.name ?? "?",
+        product: (o.products)?.name ?? "?",
         amount_inr: Math.round(o.amount_pence / 100),
         status: o.status,
         when: fmtIST(o.created_at),
@@ -927,12 +933,19 @@ const listSubscriptions: WaTool = {
       .select("id,status,current_period_end,client_id,plans(name),profiles(full_name)")
       .order("current_period_end", { ascending: false })
       .limit(50);
-    if (input.status) q = q.eq("status", String(input.status));
+    if (input.status) {
+      // The model supplies this as free text; only a real subscription_status
+      // can reach the query, so a typo filters nothing instead of erroring.
+      const raw = String(input.status);
+      const status = SUBSCRIPTION_STATUSES.find((s) => s === raw);
+      if (!status) return fail(`Unknown status "${raw}".`);
+      q = q.eq("status", status);
+    }
     const { data } = await q;
     return ok(
       (data ?? []).map((s) => ({
-        client: (s.profiles as unknown as { full_name: string } | null)?.full_name ?? "?",
-        plan: (s.plans as unknown as { name: string } | null)?.name ?? "?",
+        client: (s.profiles)?.full_name ?? "?",
+        plan: (s.plans)?.name ?? "?",
         status: s.status,
         renews: s.current_period_end ? fmtIST(s.current_period_end) : null,
       }))
@@ -952,11 +965,11 @@ const listDunning: WaTool = {
       .order("current_period_end");
     return ok(
       (data ?? []).map((s) => {
-        const p = s.profiles as unknown as { full_name: string; phone: string | null } | null;
+        const p = s.profiles;
         return {
           client: p?.full_name ?? "?",
           phone: p?.phone ?? null,
-          plan: (s.plans as unknown as { name: string } | null)?.name ?? "?",
+          plan: (s.plans)?.name ?? "?",
           since: s.current_period_end ? fmtIST(s.current_period_end) : null,
         };
       })

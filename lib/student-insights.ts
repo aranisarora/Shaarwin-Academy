@@ -47,11 +47,7 @@ export async function getStudentInsights(
 
   const now = nowMs();
   const rows = (data ?? []).map((b) => {
-    const session = b.class_sessions as unknown as {
-      starts_at: string;
-      status: string;
-      classes: { title: string; class_type: "private" | "group" } | null;
-    };
+    const session = b.class_sessions;
     return {
       id: b.id as string,
       status: b.status as string,

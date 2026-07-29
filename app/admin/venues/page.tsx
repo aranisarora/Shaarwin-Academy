@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { requireUser } from "@/lib/auth";
 import { AdminShell } from "@/components/app/AdminShell";
 import { VenueManager } from "@/components/app/VenueManager";
+import { withVenueAddress } from "@/lib/venue-display";
 
 export const metadata: Metadata = { title: "Venues" };
 
@@ -15,7 +16,7 @@ export default async function AdminVenuesPage() {
   return (
     <AdminShell title="Venues">
       <div className="mx-auto max-w-3xl">
-        <VenueManager venues={venues ?? []} />
+        <VenueManager venues={withVenueAddress(venues)} />
       </div>
     </AdminShell>
   );

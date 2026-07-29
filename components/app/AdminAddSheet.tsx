@@ -11,6 +11,7 @@
 // day/date carries its own time.
 
 import { useState, useTransition } from "react";
+import { formatWallDay } from "@/lib/academy-time";
 import { Sheet } from "@/components/ui/Sheet";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
@@ -74,14 +75,7 @@ function firstOccurrenceOnOrAfter(startDate: string, weekdayCode: string): strin
 }
 
 /** "2025-07-14" → "Mon 14 Jul" */
-function fmtDateTag(iso: string): string {
-  const [y, m, d] = iso.split("-").map(Number);
-  return new Intl.DateTimeFormat("en-GB", {
-    weekday: "short",
-    day: "numeric",
-    month: "short",
-  }).format(new Date(y, m - 1, d));
-}
+const fmtDateTag = formatWallDay;
 
 export function AdminAddSheet({
   variant = "create",
