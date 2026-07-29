@@ -14,6 +14,7 @@ import {
   type StructuredAddress,
 } from "@/lib/address";
 import { saveVenue, setVenueActive, deleteVenue } from "@/app/admin/actions";
+import { BENGALURU } from "@/lib/coverage";
 
 type Venue = {
   id: string;
@@ -27,8 +28,6 @@ type Venue = {
 };
 
 type Editing = { id?: string; name: string; addr: StructuredAddress };
-
-const BENGALURU = { lat: 12.9716, lng: 77.5946 };
 
 export function VenueManager({ venues }: { venues: Venue[] }) {
   const [editing, setEditing] = useState<Editing | null>(null);

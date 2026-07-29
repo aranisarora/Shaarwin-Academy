@@ -29,6 +29,7 @@ import {
   saveSettingsCore,
 } from "@/lib/admin-ops";
 import { formatSessionDate, utcToAcademyWall } from "@/lib/academy-time";
+import { BENGALURU } from "@/lib/coverage";
 import { geocode } from "@/lib/whatsapp/geocode";
 import { fail, ok, type ToolContext, type WaTool } from "./types";
 
@@ -463,8 +464,8 @@ const addCoach: WaTool = {
       phone: input.phone != null ? String(input.phone) : "",
       bio: input.bio != null ? String(input.bio) : "",
       baseAddress: input.base_address != null ? String(input.base_address) : "",
-      baseLat: input.base_lat != null ? Number(input.base_lat) : 12.9716,
-      baseLng: input.base_lng != null ? Number(input.base_lng) : 77.5946,
+      baseLat: input.base_lat != null ? Number(input.base_lat) : BENGALURU.lat,
+      baseLng: input.base_lng != null ? Number(input.base_lng) : BENGALURU.lng,
     });
     if (!result.ok) return fail(result.error ?? "Failed.");
     return ok({

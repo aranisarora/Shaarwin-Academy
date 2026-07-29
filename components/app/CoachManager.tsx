@@ -20,6 +20,7 @@ import {
   setCoachActive,
 } from "@/app/admin/coaches/actions";
 import { viewAsCoach } from "@/app/coach/preview-actions";
+import { BENGALURU } from "@/lib/coverage";
 
 export type CoachRow = {
   id: string;
@@ -69,8 +70,8 @@ const EMPTY_FORM: Form = {
   quote: "",
   credentials: "",
   baseAddress: "",
-  baseLat: 12.9716,
-  baseLng: 77.5946,
+  baseLat: BENGALURU.lat,
+  baseLng: BENGALURU.lng,
 };
 
 function toForm(c: CoachRow | PendingCoachRow): Form {

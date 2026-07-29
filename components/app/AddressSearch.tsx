@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Input } from "@/components/ui/Input";
+import { BENGALURU_PROXIMITY } from "@/lib/coverage";
 
 export type GeocodeHit = {
   name?: string; // short POI name (e.g., "La Plazzo") — only set for poi results
@@ -24,9 +25,9 @@ type Suggestion = {
 };
 
 const BASE = "https://api.mapbox.com/search/searchbox/v1";
-// Bengaluru city centre — biases the typeahead toward local results so a
-// bare "windmills" surfaces the Bengaluru venue, not a windmill in Pune.
-const PROXIMITY = "77.5946,12.9716";
+// Biases the typeahead toward local results so a bare "windmills" surfaces
+// the Bengaluru venue, not a windmill in Pune.
+const PROXIMITY = BENGALURU_PROXIMITY;
 
 /**
  * Parse one Search Box feature (from /retrieve or /reverse) into a GeocodeHit.

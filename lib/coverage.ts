@@ -3,7 +3,18 @@
 // a generous metro radius of the city centre is served by every active coach;
 // anything outside shows "we don't cover this area yet".
 
-const BENGALURU = { lat: 12.9716, lng: 77.5946 };
+/**
+ * Bengaluru city centre. The origin of the service-radius check below, and also
+ * the map centre / default coach base elsewhere — one coordinate for the one
+ * city the academy operates in, so the three uses can never drift apart.
+ */
+export const BENGALURU = { lat: 12.9716, lng: 77.5946 };
+
+/**
+ * "lng,lat" — the same centre in the order Mapbox wants, for biasing geocoding
+ * and typeahead toward local results.
+ */
+export const BENGALURU_PROXIMITY = `${BENGALURU.lng},${BENGALURU.lat}`;
 
 /** Metro radius (km) around the Bengaluru centre we treat as serviceable. */
 const BENGALURU_RADIUS_KM = 40;

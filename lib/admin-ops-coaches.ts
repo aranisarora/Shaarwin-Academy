@@ -6,8 +6,7 @@ import type { Database } from "@/lib/database.types";
 import { normalizePhoneInput } from "@/lib/whatsapp/phone";
 import { reassignSessionCore } from "@/lib/admin-ops-calendar";
 import type { OpResult, TableUpdate } from "@/lib/admin-ops-types";
-
-const BENGALURU = { lat: 12.9716, lng: 77.5946 };
+import { BENGALURU } from "@/lib/coverage";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 

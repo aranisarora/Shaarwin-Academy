@@ -8,6 +8,7 @@ import { AvailabilityEditor } from "@/components/app/AvailabilityEditor";
 import { WhatsAppAssistantCard } from "@/components/app/WhatsAppAssistantCard";
 import { InstallAppCard } from "@/components/app/InstallAppCard";
 import { SignOutButton } from "@/components/app/SignOutButton";
+import { BENGALURU } from "@/lib/coverage";
 
 export const metadata: Metadata = { title: "More" };
 
@@ -41,8 +42,8 @@ export default async function CoachMorePage() {
         <CoachProfileEditor
           fullName={profile.full_name}
           bio={coach?.bio ?? ""}
-          baseLat={coach?.base_lat ?? 12.9716}
-          baseLng={coach?.base_lng ?? 77.5946}
+          baseLat={coach?.base_lat ?? BENGALURU.lat}
+          baseLng={coach?.base_lng ?? BENGALURU.lng}
           baseAddress={coach?.base_address ?? ""}
         />
         <AvailabilityEditor windows={windows ?? []} timeOff={timeOff ?? []} />

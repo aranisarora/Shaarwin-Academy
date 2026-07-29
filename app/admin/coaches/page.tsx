@@ -9,6 +9,7 @@ import {
   type CoachRow,
   type PendingCoachRow,
 } from "@/components/app/CoachManager";
+import { BENGALURU } from "@/lib/coverage";
 
 export const metadata: Metadata = { title: "Coaches" };
 
@@ -68,8 +69,8 @@ export default async function AdminCoachesPage({
     phone: i.phone ?? "",
     bio: i.bio ?? "",
     baseAddress: (i as unknown as { base_address: string | null }).base_address ?? "",
-    baseLat: Number((i as unknown as { base_lat: number | null }).base_lat) || 12.9716,
-    baseLng: Number((i as unknown as { base_lng: number | null }).base_lng) || 77.5946,
+    baseLat: Number((i as unknown as { base_lat: number | null }).base_lat) || BENGALURU.lat,
+    baseLng: Number((i as unknown as { base_lng: number | null }).base_lng) || BENGALURU.lng,
   }));
 
   return (

@@ -1,6 +1,8 @@
 // Shared Mapbox forward-geocoding for the bot's location-aware tools
 // (private-session addresses, venue creation).
 
+import { BENGALURU_PROXIMITY } from "@/lib/coverage";
+
 export type GeoHit = { lat: number; lng: number; place: string };
 
 export async function geocode(address: string): Promise<GeoHit | null> {
@@ -9,7 +11,7 @@ export async function geocode(address: string): Promise<GeoHit | null> {
   const res = await fetch(
     `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(
       address
-    )}.json?limit=1&country=in&proximity=77.5946,12.9716&access_token=${token}`
+    )}.json?limit=1&country=in&proximity=${BENGALURU_PROXIMITY}&access_token=${token}`
   );
   if (!res.ok) return null;
   const json = (await res.json()) as {
