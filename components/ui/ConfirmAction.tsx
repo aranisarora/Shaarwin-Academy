@@ -17,22 +17,42 @@ export function ConfirmAction({
   pending,
   variant = "destructive",
   keepLabel = "Keep",
+  fullWidth = true,
 }: {
   label: string;
   confirmLabel: string;
   prompt: string;
   onConfirm: () => void;
   pending: boolean;
-  /** Trigger button style; the confirm button is always destructive. */
-  variant?: "destructive" | "ghost";
+  /**
+   * Trigger style; the confirm button is always destructive. "subtle" is the
+   * underlined text link used for an action that should be hard to hit by
+   * accident (deleting a class outright, as opposed to ending it).
+   */
+  variant?: "destructive" | "ghost" | "subtle";
   keepLabel?: string;
+  /** False lets the trigger sit inline beside other buttons in a row. */
+  fullWidth?: boolean;
 }) {
   const [armed, setArmed] = useState(false);
   if (!armed) {
+    if (variant === "subtle") {
+      return (
+        <button
+          disabled={pending}
+          className={`text-center text-sm text-fg-2 underline-offset-4 hover:underline ${
+            fullWidth ? "w-full" : ""
+          }`}
+          onClick={() => setArmed(true)}
+        >
+          {label}
+        </button>
+      );
+    }
     return (
       <Button
         variant={variant}
-        className="w-full"
+        className={fullWidth ? "w-full" : ""}
         disabled={pending}
         onClick={() => setArmed(true)}
       >
@@ -41,7 +61,7 @@ export function ConfirmAction({
     );
   }
   return (
-    <div className="space-y-2 rounded-[8px] border border-line p-3">
+    <div className="w-full space-y-2 rounded-[8px] border border-line p-3">
       <p className="text-sm text-fg-2">{prompt}</p>
       <div className="grid grid-cols-2 gap-2">
         <Button variant="ghost" disabled={pending} onClick={() => setArmed(false)}>

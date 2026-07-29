@@ -1,8 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Button } from "@/components/ui/Button";
-import { Spinner } from "@/components/ui/Spinner";
+import { ConfirmAction } from "@/components/ui/ConfirmAction";
 
 /**
  * Razorpay has no hosted customer portal, so "managing billing" for a member
@@ -20,7 +19,6 @@ export function ManageBillingButton({
   className?: string;
 }) {
   const [busy, setBusy] = useState(false);
-  const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
 
@@ -35,7 +33,6 @@ export function ManageBillingButton({
     setBusy(false);
     if (res.ok) {
       setDone(true);
-      setConfirming(false);
       return;
     }
     setError("Couldn't cancel right now — please message us on WhatsApp.");
@@ -51,24 +48,16 @@ export function ManageBillingButton({
 
   return (
     <div className={className}>
-      {confirming ? (
-        <div className="flex flex-wrap items-center gap-3">
-          <Button onClick={cancel} disabled={busy} variant="ghost">
-            {busy ? <Spinner /> : "Confirm cancel"}
-          </Button>
-          <button
-            onClick={() => setConfirming(false)}
-            className="text-sm text-fg-2 underline"
-            disabled={busy}
-          >
-            Keep membership
-          </button>
-        </div>
-      ) : (
-        <Button onClick={() => setConfirming(true)} variant="ghost">
-          {label}
-        </Button>
-      )}
+      <ConfirmAction
+        variant="ghost"
+        fullWidth={false}
+        label={label}
+        prompt="Cancel your membership? It stays active until the end of the month you've already paid for."
+        confirmLabel="Confirm cancel"
+        keepLabel="Keep membership"
+        pending={busy}
+        onConfirm={cancel}
+      />
       {error && <p className="mt-2 text-sm text-err">{error}</p>}
     </div>
   );

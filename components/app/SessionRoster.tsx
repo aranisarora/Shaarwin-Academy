@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRef, useState, useTransition } from "react";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
+import { ConfirmAction } from "@/components/ui/ConfirmAction";
 import { nowMs } from "@/lib/academy-time";
 import { Input } from "@/components/ui/Input";
 import {
@@ -41,7 +42,6 @@ export function SessionRoster({
   const [noteStatus, setNoteStatus] = useState<"idle" | "saving" | "saved">("idle");
   const [message, setMessage] = useState<string | null>(null);
   // "Can't make it" confirms in two taps (native confirm looks broken in a PWA).
-  const [cantArmed, setCantArmed] = useState(false);
   const [pending, startTransition] = useTransition();
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -292,57 +292,38 @@ export function SessionRoster({
       </div>
 
       <div className="border-t border-line pt-5">
-        {cantArmed ? (
-          <div className="space-y-2 rounded-[8px] border border-line p-3">
-            <p className="text-sm text-fg-2">
-              Can&apos;t make it? We&apos;ll find cover automatically.
-            </p>
-            <div className="grid grid-cols-2 gap-2">
-              <Button variant="ghost" disabled={pending} onClick={() => setCantArmed(false)}>
-                Back
-              </Button>
-              <Button
-                variant="destructive"
-                disabled={pending}
-                onClick={() =>
-                  startTransition(async () => {
-                    const r = await cantMakeIt(sessionId);
-                    setCantArmed(false);
-                    setMessage(
-                      r.ok ? "We're on it — cover is being arranged." : r.error ?? null
-                    );
-                  })
-                }
-              >
-                Yes, find cover
-              </Button>
-            </div>
-          </div>
-        ) : (
-          <div className="flex flex-wrap gap-3">
-            <Button
-              variant="ghost"
-              disabled={pending}
-              onClick={() =>
-                startTransition(async () => {
-                  const r = await reportProblem(sessionId);
-                  setMessage(
-                    r.ok ? "Reported — the founder will follow up." : r.error ?? null
-                  );
-                })
-              }
-            >
-              Report a problem
-            </Button>
-            <Button
-              variant="destructive"
-              disabled={pending}
-              onClick={() => setCantArmed(true)}
-            >
-              Can&apos;t make it
-            </Button>
-          </div>
-        )}
+        <div className="flex flex-wrap gap-3">
+          <Button
+            variant="ghost"
+            disabled={pending}
+            onClick={() =>
+              startTransition(async () => {
+                const r = await reportProblem(sessionId);
+                setMessage(
+                  r.ok ? "Reported — the founder will follow up." : r.error ?? null
+                );
+              })
+            }
+          >
+            Report a problem
+          </Button>
+          <ConfirmAction
+            fullWidth={false}
+            label="Can't make it"
+            prompt="Can't make it? We'll find cover automatically."
+            confirmLabel="Yes, find cover"
+            keepLabel="Back"
+            pending={pending}
+            onConfirm={() =>
+              startTransition(async () => {
+                const r = await cantMakeIt(sessionId);
+                setMessage(
+                  r.ok ? "We're on it — cover is being arranged." : r.error ?? null
+                );
+              })
+            }
+          />
+        </div>
       </div>
       {message && <p className="text-sm text-fg-2">{message}</p>}
     </div>

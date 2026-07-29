@@ -75,7 +75,6 @@ export function AdminClassSheet({
   const [coachOverride, setCoachOverride] = useState<string | null>(null);
   // The "Delete completely" text-link arms in place rather than via a native
   // confirm — keeps its subtle affordance while dropping window.confirm.
-  const [deleteArmed, setDeleteArmed] = useState(false);
   const [pending, startTransition] = useTransition();
 
   const ended = !cls.active && !!cls.endsOn;
@@ -368,39 +367,20 @@ export function AdminClassSheet({
             }
           />
         )}
-        {deleteArmed ? (
-          <div className="space-y-2 rounded-[8px] border border-line p-3">
-            <p className="text-sm text-fg-2">
-              Delete this class completely? Only works if nobody ever booked it.
-            </p>
-            <div className="grid grid-cols-2 gap-2">
-              <Button variant="ghost" disabled={pending} onClick={() => setDeleteArmed(false)}>
-                Keep
-              </Button>
-              <Button
-                variant="destructive"
-                disabled={pending}
-                onClick={() =>
-                  startTransition(async () => {
-                    const r = await deleteGroupClass(cls.id);
-                    if (r.ok) onDone("Class deleted.");
-                    else setMessage(r.error ?? "Failed.");
-                  })
-                }
-              >
-                {pending ? <Spinner /> : "Delete class"}
-              </Button>
-            </div>
-          </div>
-        ) : (
-          <button
-            disabled={pending}
-            className="w-full text-center text-sm text-fg-2 underline-offset-4 hover:underline"
-            onClick={() => setDeleteArmed(true)}
-          >
-            Delete completely (mistakes only)
-          </button>
-        )}
+        <ConfirmAction
+          variant="subtle"
+          label="Delete completely (mistakes only)"
+          prompt="Delete this class completely? Only works if nobody ever booked it."
+          confirmLabel="Delete class"
+          pending={pending}
+          onConfirm={() =>
+            startTransition(async () => {
+              const r = await deleteGroupClass(cls.id);
+              if (r.ok) onDone("Class deleted.");
+              else setMessage(r.error ?? "Failed.");
+            })
+          }
+        />
         {message && <p className="text-sm text-err">{message}</p>}
       </div>
     </Sheet>
