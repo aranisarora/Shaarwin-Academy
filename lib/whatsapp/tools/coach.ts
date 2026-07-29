@@ -60,6 +60,85 @@ const mySessions: WaTool = {
   },
 };
 
+/**
+ * K8 — take an offered uncovered session. First tap wins, so the honest failure
+ * mode ("someone beat you to it") matters as much as the success path.
+ */
+const claimCover: WaTool = {
+  name: "claim_cover_session",
+  description:
+    "Claim an uncovered session the coach was offered (session_id from the cover offer, or from list_cover_offers). First coach to claim it takes it. Use when the coach says they can cover / take / pick up an offered session.",
+  input_schema: {
+    type: "object",
+    properties: { session_id: { type: "string" } },
+    required: ["session_id"],
+  },
+  run: async (input, ctx) => {
+    const { error } = await ctx.supabase!.rpc("claim_cover_session", {
+      p_session: input.session_id,
+    });
+    if (error) {
+      if (error.message.includes("already_taken")) {
+        return fail("Another coach already picked that one up — it's covered.");
+      }
+      if (error.message.includes("session_started")) {
+        return fail("That session has already started.");
+      }
+      if (error.message.includes("session_not_available")) {
+        return fail("That session isn't open for cover any more.");
+      }
+      if (error.message.includes("filter_failed")) {
+        const reason = error.message.split("filter_failed_")[1] ?? "";
+        return fail(
+          `They can't take that one: ${
+            {
+              time_off: "it's during their approved time off",
+              unavailable: "it's outside their availability hours",
+              overlap: "it clashes with another session",
+              level_too_high: "the class level is above what they teach",
+              inactive: "their account is paused",
+            }[reason] ?? reason
+          }.`
+        );
+      }
+      return fail("Couldn't claim that session.");
+    }
+    return ok({
+      claimed: true,
+      note: "It's yours — the founder and the booked families have been told, and you're marked as confirmed.",
+    });
+  },
+};
+
+/** The offers still open to this coach, so they can ask "what needs cover?". */
+const coverOffers: WaTool = {
+  name: "list_cover_offers",
+  description:
+    "Uncovered sessions currently offered to this coach, with session_id values for claim_cover_session.",
+  input_schema: { type: "object", properties: {} },
+  run: async (_input, ctx) => {
+    const { data } = await ctx.supabase!
+      .from("notifications")
+      .select("body,data,created_at")
+      .eq("user_id", ctx.profile!.id)
+      .eq("type", "cover_offer")
+      .is("read_at", null)
+      .order("created_at", { ascending: false })
+      .limit(10);
+
+    const offers = (data ?? []).map((n) => {
+      const d = (n.data ?? {}) as Record<string, unknown>;
+      return {
+        session_id: d.session_id,
+        title: d.class_title,
+        when: d.time_str,
+        where: d.location_str,
+      };
+    });
+    return ok(offers.length ? { offers } : { offers: [], note: "Nothing needs cover right now." });
+  },
+};
+
 const confirmSession: WaTool = {
   name: "confirm_session",
   description:
@@ -439,6 +518,8 @@ const cantMakeSession: WaTool = {
 export const coachTools: WaTool[] = [
   mySessions,
   roster,
+  coverOffers,
+  claimCover,
   confirmSession,
   markArrival,
   myAvailability,

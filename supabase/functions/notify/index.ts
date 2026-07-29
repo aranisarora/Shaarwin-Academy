@@ -86,6 +86,8 @@ const FEED_ONLY = new Set([
   "ops_wa_linked",
   "ops_credit_used",
   "ops_coach_change",
+  // Cover was picked up by a coach — an outcome, not a task.
+  "ops_cover_claimed",
   // Data-integrity alert: a session whose assigned coach isn't a coach. Feed +
   // digest rather than an interrupt — it needs fixing, not acting on mid-class.
   "ops_session_coach_invalid",
@@ -143,6 +145,8 @@ const CAP_EXEMPT = new Set([
   "coach_after_class",
   "new_private_session",
   "session_unassigned",
+  // A class with no coach is an emergency for whoever can fix it.
+  "cover_offer",
   // Parent: did my child turn up, where is their coach, is the session still on.
   // Both outcome types are at most one per player per session, so a family with
   // three children legitimately gets three — the Progress toggle is the right
@@ -322,6 +326,7 @@ Deno.serve(async () => {
   // Post-delivery sweeps. Each is isolated so one failure can't break the
   // others or the delivery loop above.
   await safeSweep("waitlist-offers", sweepWaitlistOffers);
+  await safeSweep("cover-offers", sweepCoverOffers);
   await safeSweep("before-class", sweepBeforeClass);
   await safeSweep("coach-confirm-nudge", sweepCoachConfirmNudge);
   await safeSweep("arrival-check", sweepArrivalCheck);
@@ -814,6 +819,7 @@ const OPS_DIGEST_LABELS: Record<string, [string, string]> = {
   ops_wa_linked: ["WhatsApp link", "WhatsApp links"],
   ops_credit_used: ["credit used", "credits used"],
   ops_coach_change: ["coach change", "coach changes"],
+  ops_cover_claimed: ["cover claimed", "covers claimed"],
   ops_session_coach_invalid: ["session with a bad coach", "sessions with a bad coach"],
 };
 
@@ -1015,6 +1021,36 @@ async function sweepWaitlistOffers() {
  * (notification-fix-plan 1.5.)
  */
 type Attempt = { ok: boolean; channel: string; error?: string };
+
+/**
+ * K8 — offer any uncovered upcoming session to every eligible coach.
+ *
+ * handle_coach_dropout already offers cover when its own cascade can't refill a
+ * session, but sessions arrive with no coach by other routes too (a move that
+ * cleared the coach, an engine pass that found nobody, a founder unassigning
+ * one). This sweep is the catch-all, so an uncovered session is never sitting
+ * silently waiting for the founder to notice it.
+ *
+ * offer_cover_session is idempotent per (coach, session) and returns 0 for a
+ * session that's since been covered, so re-sweeping is free.
+ */
+async function sweepCoverOffers() {
+  const now = Date.now();
+  const { data: sessions } = await supabase
+    .from("class_sessions")
+    .select("id")
+    .eq("status", "scheduled")
+    .is("coach_id", null)
+    // Not the far future: a session three weeks out has time to be assigned
+    // normally, and offering it now just adds noise.
+    .gt("starts_at", new Date(now + 60 * 60000).toISOString())
+    .lt("starts_at", new Date(now + 48 * 3600000).toISOString())
+    .limit(25);
+
+  for (const s of sessions ?? []) {
+    await supabase.rpc("offer_cover_session", { p_session: s.id });
+  }
+}
 
 async function deliver(row: {
   id: string;

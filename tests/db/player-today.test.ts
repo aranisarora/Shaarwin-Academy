@@ -16,6 +16,7 @@ import {
   coachMarkArrival,
   hoursFromNow,
 } from "../../e2e/lib/scenario";
+import { istDayBounds } from "../../lib/academy-time";
 import { clientTools } from "../../lib/whatsapp/tools/client";
 import type { ToolContext } from "../../lib/whatsapp/tools/types";
 
@@ -44,9 +45,12 @@ async function todaysSession() {
     playerId: parent.playerIds[0],
   });
 
-  // Pull it back to an hour ago — still today in IST for all but a one-hour
-  // window after midnight, which the harness never runs in.
-  const started = new Date(Date.now() - 60 * 60_000);
+  // Pull it into the past, but never past the start of the IST day — "an hour
+  // ago" is YESTERDAY when the suite runs just after IST midnight, and the tool
+  // would then be right to exclude it. Clamping keeps the test about the
+  // already-started case rather than about the clock.
+  const dayStart = new Date(istDayBounds().start).getTime();
+  const started = new Date(Math.max(Date.now() - 60 * 60_000, dayStart));
   await db
     .from("class_sessions")
     .update({

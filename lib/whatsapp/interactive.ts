@@ -31,7 +31,25 @@ const WA_BUTTON = {
   WL_PASS: "wl_pass",
   SU_APPROVE: "su_approve",
   SU_DENY: "su_deny",
+  COVER_CLAIM: "cover_claim",
 } as const;
+
+// Ways a coach says yes to a cover offer (K8). Loose matching is safe here in a
+// way it isn't elsewhere, because the handler only acts when this coach has an
+// OPEN cover offer — without one, "cover" is just a word and falls through to
+// the assistant.
+const COVER_WORDS = new Set([
+  "claim",
+  "claim it",
+  "cover",
+  "i'll cover",
+  "ill cover",
+  "i can cover",
+  "i'll take it",
+  "ill take it",
+  "i'll take that",
+  "take it",
+]);
 
 type ButtonId = (typeof WA_BUTTON)[keyof typeof WA_BUTTON];
 
@@ -126,6 +144,86 @@ export async function handleInteractiveReply(opts: {
 // Coach
 // ---------------------------------------------------------------------------
 
+/**
+ * K8 — a coach taking an offered uncovered session. Returns the reply, or null
+ * when this isn't a cover claim (so ordinary handling continues).
+ *
+ * Session resolution deliberately differs from every other coach action: the
+ * session is read from the OFFER, because the coach doesn't own it yet. We
+ * prefer the offer they actually replied to; failing that, their single open
+ * offer. With several open we ask rather than guess — claiming the wrong
+ * session commits them to being somewhere.
+ */
+async function handleCoverClaim(
+  admin: SupabaseClient<Database>,
+  supabase: SupabaseClient<Database>,
+  profile: Profile,
+  opts: { payload: string; text: string; originalSid: string }
+): Promise<string | null> {
+  const isClaim =
+    opts.payload === WA_BUTTON.COVER_CLAIM ||
+    COVER_WORDS.has(opts.text.trim().toLowerCase().replace(/[.!]+$/, ""));
+  if (!isClaim) return null;
+
+  let sessionId: string | null = null;
+
+  if (opts.originalSid) {
+    const { data } = await admin
+      .from("notifications")
+      .select("data")
+      .eq("user_id", profile.id)
+      .eq("type", "cover_offer")
+      .eq("data->>twilio_sid", opts.originalSid)
+      .limit(1)
+      .maybeSingle();
+    sessionId = ((data?.data ?? {}) as { session_id?: string }).session_id ?? null;
+  }
+
+  if (!sessionId) {
+    const { data } = await admin
+      .from("notifications")
+      .select("data,created_at")
+      .eq("user_id", profile.id)
+      .eq("type", "cover_offer")
+      .is("read_at", null)
+      .order("created_at", { ascending: false })
+      .limit(3);
+    const open = data ?? [];
+    if (open.length === 1) {
+      sessionId = ((open[0].data ?? {}) as { session_id?: string }).session_id ?? null;
+    } else if (open.length > 1) {
+      const list = open
+        .map((o) => {
+          const d = (o.data ?? {}) as { class_title?: string; time_str?: string };
+          return `${d.class_title ?? "a session"} (${d.time_str ?? "?"})`;
+        })
+        .join(", ");
+      return `You've got a few open right now — which one? ${list}`;
+    }
+  }
+
+  // No open offer: they weren't asked to cover anything, so this is just chat.
+  if (!sessionId) return null;
+
+  const { error } = await supabase.rpc("claim_cover_session", { p_session: sessionId });
+  if (error) {
+    if (error.message.includes("already_taken")) {
+      return "Ah — another coach got there first, so that one's covered. Thanks for offering!";
+    }
+    if (error.message.includes("session_started")) {
+      return "That session has already started, so it's too late to pick it up.";
+    }
+    if (error.message.includes("session_not_available")) {
+      return "That session isn't open for cover any more.";
+    }
+    if (error.message.includes("filter_failed")) {
+      return "That one clashes with something on your schedule, so I can't assign it to you.";
+    }
+    return errorReply(error.message);
+  }
+  return "✅ It's yours — thanks for covering! You're marked as confirmed, and the families have been told.";
+}
+
 async function handleCoachReply(opts: {
   admin: SupabaseClient<Database>;
   supabase: SupabaseClient<Database>;
@@ -149,6 +247,12 @@ async function handleCoachReply(opts: {
   // anything else clears the prompt and falls through to normal handling.
   const cant = await handleCantConfirm(admin, supabase, profile, opts.text);
   if (cant !== null) return cant;
+
+  // Cover claim (K8). Checked before the class actions because it resolves its
+  // session from the OFFER, not from the coach's own schedule — they don't have
+  // this session yet, which is the entire point.
+  const cover = await handleCoverClaim(admin, supabase, profile, opts);
+  if (cover !== null) return cover;
 
   const exact = resolveCoachExact(opts.payload, opts.text);
   const loose = exact ? null : resolveCoachLoose(opts.text);

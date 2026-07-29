@@ -2121,6 +2121,7 @@ export type Database = {
         Args: { p_phone: string; p_user: string }
         Returns: boolean
       }
+      claim_cover_session: { Args: { p_session: string }; Returns: undefined }
       claim_waitlist_spot: { Args: { p_booking: string }; Returns: string }
       class_is_public_group: { Args: { p_class: string }; Returns: boolean }
       client_owns_private_class: { Args: { p_class: string }; Returns: boolean }
@@ -2217,6 +2218,7 @@ export type Database = {
         Args: { p_body: string; p_data?: Json; p_title: string; p_type: string }
         Returns: undefined
       }
+      offer_cover_session: { Args: { p_session: string }; Returns: number }
       private_minutes_balance: { Args: { p_client: string }; Returns: number }
       private_plan_limits: {
         Args: { p_client: string }
