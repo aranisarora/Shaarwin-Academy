@@ -77,6 +77,25 @@ export function shiftWallDate(dateStr: string, days: number): string {
   return `${shifted.getUTCFullYear()}-${pad(shifted.getUTCMonth() + 1)}-${pad(shifted.getUTCDate())}`;
 }
 
+/**
+ * Absolute instants bounding `days` whole academy days, starting at 00:00 today
+ * on the academy wall clock. `days = 1` is today only.
+ *
+ * The reason this exists: asking "do I have coaching today?" must not mean
+ * "from this instant onwards". A coach who asks at 3pm about a 10am session —
+ * or one that started five minutes ago — was previously told they had nothing
+ * on, because the window began at `new Date()`. Production caught exactly that:
+ * a coach was told "no coaching today" and pushed back naming the venue.
+ * (notification-fix-plan, Bot changes.)
+ */
+export function istDayBounds(days = 1): { start: string; end: string } {
+  const today = academyToday();
+  return {
+    start: academyWallToUtc(today, "00:00").toISOString(),
+    end: academyWallToUtc(shiftWallDate(today, Math.max(days, 1)), "00:00").toISOString(),
+  };
+}
+
 // ── Formatting ───────────────────────────────────────────────────────────────
 // Every user-facing timestamp goes through one of the helpers below, so "what a
 // session time looks like" is decided once. This module imports nothing, which

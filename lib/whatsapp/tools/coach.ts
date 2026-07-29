@@ -2,7 +2,7 @@
 // windows, and time-off requests. Runs as the coach's own session (RLS).
 
 import { getCoachSessions } from "@/lib/coach-data";
-import { academyWallToUtc, formatSessionDate } from "@/lib/academy-time";
+import { academyWallToUtc, formatSessionDate, istDayBounds } from "@/lib/academy-time";
 import { fail, ok, type WaTool } from "./types";
 
 const WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
@@ -10,18 +10,24 @@ const WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Satur
 const mySessions: WaTool = {
   name: "my_coach_sessions",
   description:
-    "The coach's assigned sessions with venue/address, headcount and whether they've confirmed they're taking each one. Default window is the next 7 days (max 28).",
+    "The coach's assigned sessions — group, private AND school — with venue/address, headcount and whether they've confirmed they're taking each one. Covers WHOLE academy days starting at 00:00 today, so sessions earlier today are included. Default window is 7 days (max 28).",
   input_schema: {
     type: "object",
-    properties: { days: { type: "number", description: "Days ahead (default 7)" } },
+    properties: { days: { type: "number", description: "Days covered, including today (default 7)" } },
   },
   run: async (input, ctx) => {
     const days = Math.min(Math.max(Number(input.days) || 7, 1), 28);
+    // Whole IST days, not a window starting at this instant. Previously a coach
+    // asking "do I have coaching today?" at 3pm was told no when their session
+    // had already started — production caught exactly that, with the coach
+    // pushing back and naming the venue. getCoachSessions applies no class_type
+    // filter, so private and school sessions are already included.
+    const { start, end } = istDayBounds(days);
     const sessions = await getCoachSessions(
       ctx.supabase!,
       ctx.profile!.id,
-      new Date(),
-      new Date(Date.now() + days * 86400000)
+      new Date(start),
+      new Date(end)
     );
     // Confirmation/arrival state lives on class_sessions; fetch it alongside.
     const flags = new Map<string, { confirmed: boolean; arrived: boolean }>();

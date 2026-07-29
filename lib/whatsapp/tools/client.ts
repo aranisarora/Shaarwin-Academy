@@ -9,7 +9,7 @@ import { getBrowseSessions, getMyBookings } from "@/lib/booking";
 import { getSubscriptionSummary } from "@/lib/billing";
 import { getRazorpay } from "@/lib/razorpay";
 import { geocode } from "@/lib/whatsapp/geocode";
-import { formatSessionDate } from "@/lib/academy-time";
+import { formatSessionDate, istDayBounds } from "@/lib/academy-time";
 import { formatPrice } from "@/lib/format";
 import { fail, ok, type ToolContext, type WaTool } from "./types";
 
@@ -86,6 +86,125 @@ const mySchedule: WaTool = {
         session_id: b.session.id,
       }))
     );
+  },
+};
+
+/**
+ * "Where is he?" — the live-status question a parent actually asks.
+ *
+ * The audit caught this conversation happening for real: a parent asked the bot
+ * about their child mid-day and it had nothing to answer with, because
+ * my_schedule only knows what was BOOKED, not what is HAPPENING. This tool adds
+ * the three facts that make the difference — has the coach arrived, is the coach
+ * running late, and has attendance been marked yet.
+ *
+ * Day bounds are IST, computed as absolute instants, so "today" means the
+ * parent's today and not the server's. (notification-fix-plan, Bot changes.)
+ */
+const playerToday: WaTool = {
+  name: "get_player_today",
+  description:
+    "Live status of the household's sessions TODAY: each player's sessions, whether the coach has confirmed/arrived or is running late, and attendance once the coach has marked it. Use this for any 'where is my child', 'has the coach arrived', 'did they attend', 'is the class on' question — my_schedule only shows what was booked, not what is happening.",
+  input_schema: {
+    type: "object",
+    properties: {
+      player_name: {
+        type: "string",
+        description: "Optional — narrow to one player when the household has several.",
+      },
+    },
+  },
+  run: async (input, ctx) => {
+    const { start, end } = istDayBounds();
+
+    const { data, error } = await ctx
+      .supabase!.from("bookings")
+      // One string literal on purpose: concatenation erases the literal type
+      // PostgREST needs to infer the row shape.
+      .select(
+        "id,status,players(full_name),class_sessions!inner(id,starts_at,ends_at,coach_id,coach_confirmed_at,coach_arrived_at,classes!inner(title,venues(name)))"
+      )
+      .eq("client_id", ctx.profile!.id)
+      .in("status", ["confirmed", "attended", "no_show", "waitlisted"])
+      .gte("class_sessions.starts_at", start)
+      .lt("class_sessions.starts_at", end);
+
+    if (error) return fail("Couldn't read today's sessions.", error.message);
+
+    type TodaySession = {
+      id: string;
+      starts_at: string;
+      ends_at: string;
+      coach_id: string | null;
+      coach_confirmed_at: string | null;
+      coach_arrived_at: string | null;
+      classes: { title: string; venues: { name: string } | { name: string }[] | null };
+    };
+
+    // Coach names via public_coach_roster(), not a direct profiles read: RLS
+    // does not let a client see another member's profile row, so reading
+    // profiles here returns null and the parent is told their coach has no
+    // name. The roster function is SECURITY DEFINER and exposes exactly the
+    // public coach fields, which is what a parent should see.
+    const coachIds = new Set(
+      (data ?? [])
+        .map((b) => (b.class_sessions as unknown as TodaySession).coach_id)
+        .filter((id): id is string => !!id)
+    );
+    const coachNames = new Map<string, string>();
+    if (coachIds.size) {
+      const { data: roster } = await ctx.supabase!.rpc("public_coach_roster");
+      for (const c of roster ?? []) {
+        if (coachIds.has(c.id)) coachNames.set(c.id, c.full_name ?? "");
+      }
+    }
+
+    const wanted = String(input.player_name ?? "").trim().toLowerCase();
+    const rows = (data ?? [])
+      .map((b) => {
+        const s = b.class_sessions as unknown as TodaySession;
+        const venue = Array.isArray(s.classes.venues) ? s.classes.venues[0] : s.classes.venues;
+        const player =
+          (b.players as { full_name: string } | { full_name: string }[] | null) ?? null;
+        const playerName = (Array.isArray(player) ? player[0]?.full_name : player?.full_name) ?? "";
+
+        // Attendance is only meaningful once the coach has marked it; until
+        // then say so explicitly rather than implying "not attended".
+        const attendance =
+          b.status === "attended"
+            ? "attended"
+            : b.status === "no_show"
+              ? "marked absent"
+              : "not marked yet";
+
+        return {
+          player: playerName,
+          booking_status: b.status,
+          session_id: s.id,
+          title: s.classes.title,
+          venue: venue?.name ?? null,
+          coach: s.coach_id ? (coachNames.get(s.coach_id) ?? null) : null,
+          when: formatSessionDate(s.starts_at),
+          starts_at: s.starts_at,
+          started: new Date(s.starts_at).getTime() <= Date.now(),
+          finished: new Date(s.ends_at).getTime() <= Date.now(),
+          coach_confirmed: !!s.coach_confirmed_at,
+          coach_arrived: !!s.coach_arrived_at,
+          attendance,
+        };
+      })
+      .filter((r) => !wanted || r.player.toLowerCase().includes(wanted))
+      .sort((a, b) => a.starts_at.localeCompare(b.starts_at));
+
+    if (!rows.length) {
+      return ok({
+        sessions: [],
+        note: wanted
+          ? `No sessions today for anyone matching "${input.player_name}".`
+          : "Nobody in this household has a session today.",
+      });
+    }
+    return ok({ sessions: rows });
   },
 };
 
@@ -617,6 +736,7 @@ const renamePlayer: WaTool = {
 
 export const clientTools: WaTool[] = [
   mySchedule,
+  playerToday,
   browseSessions,
   bookGroup,
   cancelBooking,
