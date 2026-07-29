@@ -6,23 +6,28 @@ Active, execution-ready plans live here. Each is written for an implementing mod
 
 | Plan | Status | What it delivers |
 | --- | --- | --- |
-| [navigation-performance.md](navigation-performance.md) | not started | Instant-feeling navigation in the signed-in app: streaming, router cache, halved auth round trips |
-| [codebase-cleanup.md](codebase-cleanup.md) | **Phases 1–3 shipped**, 4–5 remain | Dead code deleted, redundant fallbacks removed, formatting/confirm/phone duplication collapsed |
+| [instant-navigation.md](instant-navigation.md) | **NOT STARTED — start here** | Finishes the streaming work: shell paints before auth resolves, remaining 31 routes, then measure |
+| [navigation-performance.md](navigation-performance.md) | **Steps 1–6 shipped**, 7 out of scope | Streaming, router cache, halved auth round trips |
+| [codebase-cleanup.md](codebase-cleanup.md) | **COMPLETE** except `ui/DateInput` | Dead code deleted, redundant fallbacks removed, formatting/confirm/phone duplication collapsed |
 
-All work lands on the branch `chore/cleanup-and-perf`, not `main`. See the execution log
-at the top of `codebase-cleanup.md` for corrections found while implementing — including
-one row of its Phase 1.2 table that is factually wrong.
+All work lands on the branch `chore/cleanup-and-perf`, not `main` — now 28 commits ahead
+and **unmerged**, pending the owner's `npm run dev` check.
+
+**Read the execution log at the top of each plan before trusting its body.** Both finished
+plans had a load-bearing error that only surfaced during implementation:
+`codebase-cleanup.md` has a factually wrong row in its Phase 1.2 table, and
+`navigation-performance.md` misdiagnosed the cause of the freeze (a segment-root
+`loading.tsx` already covers every child route — the ~30 "missing" ones were never a gap).
 
 ## Execution order
 
-1. **codebase-cleanup Phase 1–2** (dead code + redundant fallbacks) — small, safe,
-   shrinks the surface the other plan touches.
-2. **navigation-performance Steps 1+3, then 2, then 4** — the user-facing win.
-3. **codebase-cleanup Phases 3–5** — correctness fixes, then consolidation, then guards.
-
-The two plans are independent; interleave freely. Where they overlap (`select("*")`
-narrowing, client-component audit) the work lives in navigation-performance Step 6 and
-codebase-cleanup only cross-references it.
+1. **instant-navigation.md Phase A** — make the shell paint before `requireUser` resolves.
+   This is the actual remaining win, and a hard prerequisite for its Phase C.
+2. **Phase B** — the other 31 routes, folding in the Step 5 query re-audit per file.
+3. **Phase D** — deploy and measure. Nothing in either performance plan has been validated
+   against real latency yet, and `npm run e2e:flows` has never run against this work.
+4. **Phase C** (Cache Components + `unstable_instant`) — only if the measurements justify
+   a large migration against a draft API. Owner's call, with numbers in hand.
 
 ## House rules (from `AGENTS.md` — non-negotiable)
 
@@ -45,3 +50,8 @@ codebase-cleanup only cross-references it.
 - `docs/navigation-performance-plan.md` — **deleted**; superseded by
   [navigation-performance.md](navigation-performance.md), which corrects two false claims
   (see its changelog).
+- [navigation-performance.md](navigation-performance.md) and
+  [codebase-cleanup.md](codebase-cleanup.md) are both **done** but kept in place, not
+  archived: their execution logs are the record of what was corrected and what was
+  deliberately skipped, and [instant-navigation.md](instant-navigation.md) references
+  both.
