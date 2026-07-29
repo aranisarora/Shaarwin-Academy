@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import Link from "next/link";
 import { DeepLinkFocus } from "@/components/app/DeepLinkFocus";
 import { ActionSection } from "@/components/ui/ActionSection";
+import { Checkbox } from "@/components/ui/Checkbox";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
@@ -289,11 +290,9 @@ export function ClientManager({
 
       {archivedCount > 0 && (
         <label className="flex items-center gap-2 text-sm text-fg-2">
-          <input
-            type="checkbox"
+          <Checkbox
             checked={showArchived}
             onChange={(e) => setShowArchived(e.target.checked)}
-            className="h-4 w-4 accent-[var(--ember)]"
           />
           Show archived ({archivedCount})
         </label>

@@ -7,6 +7,7 @@
 import Link from "next/link";
 import { useEffect, useState, useTransition } from "react";
 import { Sheet } from "@/components/ui/Sheet";
+import { Checkbox } from "@/components/ui/Checkbox";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Select } from "@/components/ui/Select";
@@ -297,12 +298,7 @@ export function AdminClassSheet({
               ))}
             </Select>
             <label className="flex items-center gap-3 text-sm">
-              <input
-                type="checkbox"
-                checked={lock}
-                onChange={(e) => setLock(e.target.checked)}
-                className="h-5 w-5 accent-[var(--ember)]"
-              />
+              <Checkbox size="md" checked={lock} onChange={(e) => setLock(e.target.checked)} />
               Keep this coach — don&apos;t swap them automatically
             </label>
             {coachOverride ? (

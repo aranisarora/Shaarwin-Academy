@@ -13,6 +13,7 @@
 import { useState, useTransition } from "react";
 import { formatWallDay } from "@/lib/academy-time";
 import { Sheet } from "@/components/ui/Sheet";
+import { Checkbox, Radio } from "@/components/ui/Checkbox";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
@@ -674,22 +675,18 @@ export function AdminAddSheet({
             <fieldset className="space-y-2">
               <legend className="label">Repeat</legend>
               <label className="flex min-h-11 cursor-pointer items-center gap-3 rounded-[12px] border border-line bg-surface-2 px-4 py-3">
-                <input
-                  type="radio"
+                <Radio
                   name="priv-repeat"
                   checked={!priv.recurring}
                   onChange={() => setPriv((p) => ({ ...p, recurring: false }))}
-                  className="h-4 w-4 accent-[var(--ember,#c2410c)]"
                 />
                 <span className="text-sm">Just this once</span>
               </label>
               <label className="flex min-h-11 cursor-pointer items-center gap-3 rounded-[12px] border border-line bg-surface-2 px-4 py-3">
-                <input
-                  type="radio"
+                <Radio
                   name="priv-repeat"
                   checked={priv.recurring}
                   onChange={() => setPriv((p) => ({ ...p, recurring: true }))}
-                  className="h-4 w-4 accent-[var(--ember,#c2410c)]"
                 />
                 <span className="flex items-center gap-2 text-sm">
                   Every week for
@@ -801,11 +798,10 @@ export function AdminAddSheet({
                 {showAdvanced && (
                   <div className="mt-3 rounded-[12px] border border-line bg-surface-2 p-4">
                     <label className="flex cursor-pointer items-start gap-3">
-                      <input
-                        type="checkbox"
+                      <Checkbox
                         checked={priv.overrideLimits}
                         onChange={(e) => setPriv({ ...priv, overrideLimits: e.target.checked })}
-                        className="mt-0.5 h-4 w-4 accent-[var(--ember,#c2410c)]"
+                        className="mt-0.5"
                       />
                       <span className="text-sm">
                         <span className="font-medium">Override plan restrictions</span>

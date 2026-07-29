@@ -7,6 +7,7 @@
 import Link from "next/link";
 import { useEffect, useState, useTransition } from "react";
 import { Sheet } from "@/components/ui/Sheet";
+import { Checkbox, Radio } from "@/components/ui/Checkbox";
 import { ActionSection } from "@/components/ui/ActionSection";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -295,10 +296,9 @@ export function AdminSessionSheet({
                     : "cursor-pointer border-line hover:border-ember"
               }`}
             >
-              <input
-                type="radio"
+              <Radio
                 name="scope"
-                className="mt-1 h-4 w-4 accent-[var(--ember)]"
+                className="mt-1"
                 checked={scope === "session"}
                 disabled={classChanged}
                 onChange={() => setScope("session")}
@@ -319,10 +319,9 @@ export function AdminSessionSheet({
                   : "cursor-pointer border-line hover:border-ember"
               }`}
             >
-              <input
-                type="radio"
+              <Radio
                 name="scope"
-                className="mt-1 h-4 w-4 accent-[var(--ember)]"
+                className="mt-1"
                 checked={scope === "class"}
                 onChange={() => setScope("class")}
               />
@@ -471,11 +470,10 @@ export function AdminSessionSheet({
                 </Select>
               )}
               <label className="flex cursor-pointer items-start gap-3 text-sm">
-                <input
-                  type="checkbox"
+                <Checkbox
                   checked={assignOverride}
                   onChange={(e) => setAssignOverride(e.target.checked)}
-                  className="mt-0.5 h-4 w-4 accent-[var(--ember)]"
+                  className="mt-0.5"
                 />
                 <span>
                   <span className="font-medium">Ignore plan limits</span>
@@ -584,12 +582,7 @@ export function AdminSessionSheet({
               ))}
             </Select>
             <label className="flex items-center gap-3 text-sm">
-              <input
-                type="checkbox"
-                checked={lock}
-                onChange={(e) => setLock(e.target.checked)}
-                className="h-5 w-5 accent-[var(--ember)]"
-              />
+              <Checkbox size="md" checked={lock} onChange={(e) => setLock(e.target.checked)} />
               Keep this coach — don&apos;t swap them automatically
             </label>
             {coachOverride ? (
