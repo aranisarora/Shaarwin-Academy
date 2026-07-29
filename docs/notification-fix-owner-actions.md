@@ -141,7 +141,7 @@ from the function.
 
 ---
 
-## 1.3 — The founder accounts (STILL YOUR CALL — but not a deletion)
+## 1.3 — The founder accounts ✅ RESOLVED — leave as is
 
 The original recommendation was "demote or retire the Sharwin Table Tennis
 Academy profile". **Do not delete it, and demoting it is not free either.**
@@ -180,19 +180,28 @@ account, the one that did the bulk of the setup work, and someone still signs
 into it.** It has no phone because nobody ever linked one, not because it's a
 stray.
 
-**What actually fixes the pain, without touching the account:** its 316 failures
-were the Resend bug, now fixed. It has a valid email, so escalations will now
-reach `sharwinttacademy@gmail.com` instead of bouncing. The remaining question is
-only whether you *want* 3× fan-out — currently 1 WhatsApp (Stalin) + 2 emails.
-That is arguably reasonable redundancy rather than a bug.
+**The missing piece the audit didn't know:** `stalin@sharwinacademy.com` and
+`sharwinttacademy@gmail.com` are **both Stalin**. Only the first has a
+`wa_link`, so Stalin already receives every escalation on WhatsApp — nothing is
+ever missed. The academy account's rows are exact duplicates; both profiles
+receive an identical count every single day.
 
-**If you still want to cut the fan-out**, the clean way is a mute flag rather
-than a role change or a deletion: add `profiles.ops_alerts boolean not null
-default true`, filter the founder fan-out on it, and set it false for the
-academy profile. That touches `notify_founders()` plus ~7 inline
-`where p.role = 'founder'` sites in `schema.sql` and the worker's own escalation
-queries. Say the word and it's a contained change.
+Its 316 failures were the Resend bug, not the account. Now that the sender is
+fixed, those stop bouncing and start arriving — roughly **25 duplicate emails a
+day** (`ops_coach_not_arrived`, `ops_coach_unconfirmed`, `ops_daily_digest`,
+`signup_request`, `coach_late`), spiking to ~60 on busy days. The other ~96/week
+it receives are `FEED_ONLY` types that were never delivered to anyone.
 
-**Also worth linking:** your own profile has a phone but **no `wa_links` row**,
-so you receive escalations by email, not WhatsApp. If you expected WhatsApp,
-that needs linking.
+**Decision (2026-07-30): leave it as is.** Aranis was shown the duplicate-volume
+number and chose to accept it rather than mute the account. No further action.
+
+**If it is ever revisited**, the cheap lever already exists and needs no
+migration: set `profiles.wa_muted = true` on the academy profile. That is a hard
+channel gate the notify worker honours (`index.ts` ~line 273) for everything
+non-`TRANSACTIONAL` — one row, reversible, and the `/admin` ops feed still
+renders every row. Only `signup_request` (~1/day) would still email, since it is
+transactional. The heavier alternative is a new `profiles.ops_alerts` flag.
+
+**Still open — your own account:** your profile has a phone but **no `wa_links`
+row**, so you receive escalations by email, not WhatsApp. If you expected
+WhatsApp, that needs linking.
