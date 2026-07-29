@@ -13,6 +13,7 @@ import { Badge } from "@/components/ui/Badge";
 import { SessionCard } from "@/components/app/ClassCard";
 import { WhatsAppAssistantCard } from "@/components/app/WhatsAppAssistantCard";
 import { fetchWeekSessions } from "@/app/admin/schedule/actions";
+import { formatPrice } from "@/lib/format";
 
 export const metadata: Metadata = { title: "Today" };
 
@@ -206,7 +207,7 @@ export default async function AdminTodayPage() {
           <span aria-hidden>·</span>
           <span>
             <span className="tnum font-medium text-fg">
-              ₹{(revenue / 100).toLocaleString("en-IN")}
+              {formatPrice(revenue)}
             </span>{" "}
             this month
           </span>

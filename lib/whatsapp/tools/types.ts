@@ -41,11 +41,3 @@ export function fail(error: string, detail?: unknown): string {
   return JSON.stringify({ ok: false, error, detail });
 }
 
-// Mirrors lib/data.ts formatPrice. `pence` holds paise (minor unit of INR).
-export function formatPricePence(pence: number): string {
-  return new Intl.NumberFormat("en-IN", {
-    style: "currency",
-    currency: "INR",
-    maximumFractionDigits: 0,
-  }).format(pence / 100);
-}

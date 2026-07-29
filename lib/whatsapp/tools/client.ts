@@ -10,7 +10,8 @@ import { getSubscriptionSummary } from "@/lib/billing";
 import { getRazorpay } from "@/lib/razorpay";
 import { geocode } from "@/lib/whatsapp/geocode";
 import { formatSessionDate } from "@/lib/academy-time";
-import { fail, formatPricePence, ok, type ToolContext, type WaTool } from "./types";
+import { formatPrice } from "@/lib/format";
+import { fail, ok, type ToolContext, type WaTool } from "./types";
 
 const RPC_ERROR_COPY: Record<string, string> = {
   no_active_subscription: "No active membership — buy one on the website pricing page first.",
@@ -360,7 +361,7 @@ const listPlans: WaTool = {
         plan_id: p.id,
         name: p.name,
         description: p.description,
-        price_per_month: formatPricePence(p.price_pence),
+        price_per_month: formatPrice(p.price_pence),
         kind:
           p.group_sessions_per_week === 0
             ? "private"
@@ -397,7 +398,7 @@ const listOneOffs: WaTool = {
           name: p.name,
           description: p.description,
           kind: p.kind,
-          price: formatPricePence(amount),
+          price: formatPrice(amount),
           member_price_applied: amount < p.price_pence,
           is_promo: p.kind === "private_intro",
         };
@@ -478,7 +479,7 @@ const oneOffPaymentLink: WaTool = {
       if (!link.short_url) return fail("Couldn't create the payment link — try the website.");
       return ok({
         product: product.name,
-        amount: formatPricePence(amount),
+        amount: formatPrice(amount),
         payment_url: link.short_url,
         note: "Send them this link. The class credit / minutes appear on their account automatically once paid.",
       });

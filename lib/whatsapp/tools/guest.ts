@@ -5,7 +5,8 @@
 
 import { getBrowseSessions } from "@/lib/booking";
 import { formatSessionDate } from "@/lib/academy-time";
-import { formatPricePence, ok, type WaTool } from "./types";
+import { formatPrice } from "@/lib/format";
+import { ok, type WaTool } from "./types";
 
 export const academyInfo: WaTool = {
   name: "get_academy_info",
@@ -31,7 +32,7 @@ export const academyInfo: WaTool = {
         plan_id: p.id,
         name: p.name,
         description: p.description,
-        price_per_month: formatPricePence(p.price_pence),
+        price_per_month: formatPrice(p.price_pence),
         group_sessions_per_week: p.group_sessions_per_week,
         private_minutes_per_month: p.private_minutes_per_cycle,
       })),
