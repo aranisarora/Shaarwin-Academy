@@ -6,12 +6,18 @@ Active, execution-ready plans live here. Each is written for an implementing mod
 
 | Plan | Status | What it delivers |
 | --- | --- | --- |
-| [instant-navigation.md](instant-navigation.md) | **NOT STARTED — start here** | Finishes the streaming work: shell paints before auth resolves, remaining 31 routes, then measure |
+| [instant-navigation.md](instant-navigation.md) | **Phases A + B shipped**; **D is next and needs you** | Shell paints before auth resolves on all 26 streamable protected routes |
 | [navigation-performance.md](navigation-performance.md) | **Steps 1–6 shipped**, 7 out of scope | Streaming, router cache, halved auth round trips |
 | [codebase-cleanup.md](codebase-cleanup.md) | **COMPLETE** except `ui/DateInput` | Dead code deleted, redundant fallbacks removed, formatting/confirm/phone duplication collapsed |
 
-All work lands on the branch `chore/cleanup-and-perf`, not `main` — now 28 commits ahead
+All work lands on the branch `chore/cleanup-and-perf`, not `main` — now 33 commits ahead
 and **unmerged**, pending the owner's `npm run dev` check.
+
+**The one thing blocking progress is Phase D, and only the owner can unblock it.**
+Nothing in any of these three plans has been measured against real latency. The e2e
+flows have still never run against this work, because `npm run e2e:flows` refuses to
+start while a dev server is up — and it must not be pointed at the one on :3000, whose
+database is live. Stop the dev server, then run it.
 
 **Read the execution log at the top of each plan before trusting its body.** Both finished
 plans had a load-bearing error that only surfaced during implementation:
@@ -21,13 +27,18 @@ plans had a load-bearing error that only surfaced during implementation:
 
 ## Execution order
 
-1. **instant-navigation.md Phase A** — make the shell paint before `requireUser` resolves.
-   This is the actual remaining win, and a hard prerequisite for its Phase C.
-2. **Phase B** — the other 31 routes, folding in the Step 5 query re-audit per file.
-3. **Phase D** — deploy and measure. Nothing in either performance plan has been validated
-   against real latency yet, and `npm run e2e:flows` has never run against this work.
+1. ~~**instant-navigation.md Phase A**~~ — done (`21ba501`, `ffa3201`). The membership
+   gates moved into the proxy, so `requireUser` is a pure read and every shell paints
+   before auth resolves.
+2. ~~**Phase B**~~ — done (`ab08434`, `e69b9a5`, `4c06af8`). 26 routes stream; the Step 5
+   re-audit is folded in, with three real overlap wins and two non-findings commented
+   so they aren't re-audited.
+3. **Phase D** — deploy and measure. **This is the next step and it needs the owner**;
+   see the note above.
 4. **Phase C** (Cache Components + `unstable_instant`) — only if the measurements justify
-   a large migration against a draft API. Owner's call, with numbers in hand.
+   a large migration against a draft API. Owner's call, with numbers in hand. Note that
+   Phase A has now removed its hard prerequisite: no protected page reads cookies outside
+   a `<Suspense>` boundary any more.
 
 ## House rules (from `AGENTS.md` — non-negotiable)
 

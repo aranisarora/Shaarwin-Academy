@@ -1,6 +1,88 @@
 # Instant navigation plan — finish the streaming work
 
-**Status:** not started. Written 2026-07-29, immediately after
+## Execution log — 2026-07-29
+
+**Phases A and B are done.** Phase D is unstarted and needs the owner (see below);
+Phase C remains the owner's call, and nothing here changes that recommendation.
+
+Five commits on `chore/cleanup-and-perf`:
+
+| Commit | What |
+|---|---|
+| `21ba501` | Phase A option 1 — membership gates moved from `requireUser` into `proxy.ts` via a pure `lib/access-gates.ts`, with 11 unit specs |
+| `ffa3201` | Phase A — shell-first on `/app`, `/app/schedule`, `/app/book`; profile read wrapped in React `cache` |
+| `ab08434` | Phase B — all six real `/coach` routes |
+| `e69b9a5` | Phase B — all eleven real `/admin` routes |
+| `4c06af8` | Phase B — the remaining seven `/app` routes |
+
+Final coverage of the 34 files under `app/app`, `app/coach`, `app/admin`:
+**26 stream**, 4 are bare `redirect()` stubs, 3 are gate screens left blocking
+deliberately, and 1 (`/admin/more`) became fully static.
+
+Gate run on the branch head: `npx tsc --noEmit`, `npm run lint`,
+`npm run test` (26, up from 15), `npm run test:db` (16) and `npm run build` all pass.
+
+### Corrections and decisions worth carrying forward
+
+1. **Phase A option 1 was taken**, as recommended. The gates live in `proxy.ts`,
+   which already read `profiles` for its role check — widening that select to
+   `role,approval_status,onboarded_at` costs no extra round trip. The decision
+   logic is a *pure function* in `lib/access-gates.ts` rather than inline in the
+   proxy, because `npm run test` only collects `lib/**/*.test.ts`; that is what
+   made 11 unit specs possible without a request, a DB or a server. The plan's
+   suggestion of a `tests/db/` spec did not fit — no Postgres function changed,
+   so per `AGENTS.md` nothing there was owed.
+
+2. **The plan missed a consequence of its own recommendation.** Calling
+   `requireUser` below a boundary means calling it from *several* children of one
+   page (`/app` calls it from both `Greeting` and `HomeBody`). Uncached, that
+   trades one blocking round trip for two concurrent ones — a wash at best. The
+   profile read is now wrapped in React `cache` (`lib/auth.ts`), so every caller
+   in a request shares one select. Any future route that streams a title *and* a
+   body depends on this.
+
+3. **`/admin/more` needed no streaming at all — it needed deleting.** Its
+   `requireUser` was a guard, not a fetch: the page renders a fixed list of links.
+   The proxy already performs that guard, so the call bought nothing and cost a
+   round trip per visit. The page is now prerendered static in the build output.
+   Worth checking for this shape before reaching for `<Suspense>`.
+
+4. **Three Step 5 findings were real, and two were not.** Real: `/coach` (the
+   takeover-sheet query needed only `coachId`), `/admin/players` (three of its
+   four "dependent" queries read no client id — three serial trips became two),
+   and both `players/[playerId]` pages plus `/coach/session/[id]` (a row fetched
+   ahead of a batch that never reads it). Not findings: `/coach/players` and
+   `/admin/schedule`, whose second round genuinely needs the first's ids — both
+   now carry a comment saying so, so the next reader doesn't re-audit them.
+
+5. **Two redundant queries surfaced that the plan didn't predict**, both
+   re-fetching what `requireUser` already returns: `/app/profile` re-selected
+   `address_details`, and it is in `PROFILE_COLUMNS`. Worth grepping for others.
+
+6. **`notFound()` inherits the redirect trap.** On the dynamic routes it now
+   fires inside a boundary, so a stale deep link renders the not-found body under
+   the shell with a 200 rather than a 404. These are noindex authenticated screens
+   reached from the app's own links, and the alternative is making every valid
+   load wait on the lookup — but it is a real behaviour change, recorded here
+   rather than buried.
+
+7. **The three gate screens are deliberately still blocking:** `/app/pending`,
+   `/app/onboarding`, `/app/onboarding/done`. They render no shell, and each one's
+   first act is a `redirect()` decision on the profile it just read. Streaming a
+   page whose purpose is to decide whether you belong on it is the exact trap
+   Phase A moved the membership gates into the proxy to avoid.
+
+### What Phase D still needs from the owner
+
+Nothing below has been measured — that was true when this plan was written and is
+still true. The blocker is unchanged: `npm run e2e:flows` cannot run while a dev
+server is up (`⨯ Another next dev server is already running`), and it must not be
+pointed at :3000, whose database is **live**. **Stop the dev server, then run it.**
+
+---
+
+**Status:** Phases A and B shipped 2026-07-29 (see the execution log above).
+Written 2026-07-29, immediately after
 `docs/plans/navigation-performance.md` Steps 1–6 shipped on `chore/cleanup-and-perf`.
 **Audience:** implementing model, starting from a cold context.
 **Branch:** continue on `chore/cleanup-and-perf` (see the branch note in
@@ -70,7 +152,7 @@ waits one Supabase round trip**. That is the gap this plan closes.
 
 ---
 
-## Phase A — make the shell paint before auth resolves
+## Phase A — make the shell paint before auth resolves  ✅ done (`21ba501`, `ffa3201`)
 
 The highest-value remaining work, and a prerequisite for Phase C.
 
@@ -137,7 +219,11 @@ frame, with a skeleton where data will land — before any Supabase call complet
 
 ---
 
-## Phase B — finish streaming the remaining 31 routes
+## Phase B — finish streaming the remaining 31 routes  ✅ done (`ab08434`, `e69b9a5`, `4c06af8`)
+
+> The "31" was the count before triage: 4 of those files are bare `redirect()`
+> stubs, and 3 gate screens were left blocking on purpose. 26 routes stream.
+
 
 Mechanical once Phase A sets the pattern. Establish it on one route per role app first,
 then repeat.
@@ -206,7 +292,7 @@ starting it speculatively.
 
 ---
 
-## Phase D — measure and verify (nothing here has been measured)
+## Phase D — measure and verify (nothing here has been measured)  ⬅ **next, needs the owner**
 
 **No change from either performance plan has been validated against production latency.**
 Everything so far is reasoning from the docs plus a green build.
