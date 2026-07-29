@@ -38,10 +38,19 @@ export async function proxy(request: NextRequest) {
     }
   );
 
-  // Refresh the session — required for SSR auth to stay alive.
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  // Verify the session — and refresh it, which is required for SSR auth to stay
+  // alive. `getClaims()` with no argument calls `getSession()` internally, so an
+  // expiring token is still refreshed and the `setAll` writer above still
+  // persists the rotated cookies. Unlike `getUser()` it then verifies the token
+  // locally against the public JWKS (the project signs with asymmetric ES256)
+  // instead of asking the auth server — turning a ~150ms Tokyo round trip on
+  // *every* request, including public marketing pages, into local crypto.
+  //
+  // Note it falls back to a full `getUser()` call, silently, if the token's alg
+  // is HS*, it carries no `kid`, or WebCrypto is missing. None apply here, but
+  // the symptom of a regression would be lost speed rather than an error.
+  const { data: claimsData } = await supabase.auth.getClaims();
+  const userId = claimsData?.claims?.sub ?? null;
 
   const { pathname } = request.nextUrl;
   const wanted = PROTECTED_PREFIXES.find(
@@ -50,17 +59,21 @@ export async function proxy(request: NextRequest) {
 
   if (!wanted) return response;
 
-  if (!user) {
+  if (!userId) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
     url.search = `?next=${encodeURIComponent(pathname)}`;
     return NextResponse.redirect(url);
   }
 
+  // The app's role lives in `profiles`, not in the JWT — the `role` claim on a
+  // Supabase token is the Postgres role ("authenticated"), which says nothing
+  // about client/coach/founder. This select stays, and stays after the `wanted`
+  // check so public routes never touch PostgREST.
   const { data: profile } = await supabase
     .from("profiles")
     .select("role")
-    .eq("id", user.id)
+    .eq("id", userId)
     .maybeSingle();
 
   const role = profile?.role ?? "client";

@@ -5,15 +5,24 @@ import type { StructuredAddress } from "@/lib/address";
 
 /**
  * The current auth user, or null. Wrapped in React `cache` so multiple callers
- * within the same request (e.g. a page body and the shell header) share a
- * single getUser round-trip instead of each hitting the auth server.
+ * within the same request (e.g. a page body and the shell header) share one
+ * lookup instead of each re-verifying the token.
+ *
+ * Uses `getClaims()`, not `getUser()`. The project signs tokens with asymmetric
+ * ES256, so the access token can be verified locally against the public JWKS —
+ * no call to the auth server. `getUser()` is a network round trip to Tokyo on
+ * every render, and users are in India, so that was ~150ms before any page
+ * query could start.
+ *
+ * Only `id` and `email` are returned because they are all any caller reads;
+ * widening this back to the full `User` would mean going back to the network.
  */
 export const getCurrentUser = cache(async () => {
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  return user;
+  const { data } = await supabase.auth.getClaims();
+  const claims = data?.claims;
+  if (!claims?.sub) return null;
+  return { id: claims.sub, email: typeof claims.email === "string" ? claims.email : "" };
 });
 
 export type Profile = {
