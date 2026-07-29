@@ -1,5 +1,6 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
+import { gateRedirect, GATE_COLUMNS } from "@/lib/access-gates";
 
 const PROTECTED_PREFIXES = ["/app", "/coach", "/admin"] as const;
 
@@ -69,10 +70,12 @@ export async function proxy(request: NextRequest) {
   // The app's role lives in `profiles`, not in the JWT — the `role` claim on a
   // Supabase token is the Postgres role ("authenticated"), which says nothing
   // about client/coach/founder. This select stays, and stays after the `wanted`
-  // check so public routes never touch PostgREST.
+  // check so public routes never touch PostgREST. It also carries the two
+  // membership-gate columns, so enforcing those gates here costs no extra round
+  // trip (see lib/access-gates.ts for why they left `requireUser`).
   const { data: profile } = await supabase
     .from("profiles")
-    .select("role")
+    .select(GATE_COLUMNS)
     .eq("id", userId)
     .maybeSingle();
 
@@ -94,6 +97,20 @@ export async function proxy(request: NextRequest) {
     url.pathname = home;
     url.search = "";
     return NextResponse.redirect(url);
+  }
+
+  // Membership gates: unapproved → /app/pending, un-onboarded → /app/onboarding.
+  // Skipped when the row is missing, so that stays `requireUser`'s loud error
+  // about the on_auth_user_created trigger rather than a silent bounce to the
+  // pending screen.
+  if (profile) {
+    const gate = gateRedirect(pathname, profile);
+    if (gate) {
+      const url = request.nextUrl.clone();
+      url.pathname = gate;
+      url.search = "";
+      return NextResponse.redirect(url);
+    }
   }
 
   return response;

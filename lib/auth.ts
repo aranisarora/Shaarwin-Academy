@@ -63,6 +63,15 @@ export type Profile = {
  * Uses the request-cached `getCurrentUser` so the auth-server round-trip is
  * shared with any other caller in the same render (e.g. shell chrome like
  * PlayerRailLinks) instead of each one re-verifying the token independently.
+ *
+ * It is otherwise a pure read: the approval and onboarding gates that used to
+ * redirect from here now run in the proxy (proxy.ts via lib/access-gates.ts).
+ * That is what lets pages call this *below* a `<Suspense>` boundary — a gate
+ * that fired mid-stream would flash the destination chrome at a user who is
+ * about to be bounced, since neither the status nor the destination can change
+ * once the response has begun. The `/login` redirect below is a backstop for
+ * the same reason the proxy checks first: on a protected route the proxy has
+ * already redirected a signed-out visitor before this runs.
  */
 export async function requireUser(nextPath: string) {
   const supabase = await createClient();
@@ -87,31 +96,5 @@ export async function requireUser(nextPath: string) {
     );
   }
 
-  // Closed membership: a self-signup client who isn't approved yet is held at
-  // the pending screen (request form → waiting → approved) before any other
-  // /app page. Existing clients and founder-invited clients are 'approved', so
-  // they never see it. Coaches and founders are exempt from every branch below.
-  const p = profile as Profile;
-  if (
-    p.role === "client" &&
-    p.approval_status !== "approved" &&
-    nextPath.startsWith("/app") &&
-    nextPath !== "/app/pending"
-  ) {
-    redirect("/app/pending");
-  }
-
-  // Clients who haven't completed household onboarding (including accounts
-  // created before the flow existed) are routed there before any /app page.
-  if (
-    p.role === "client" &&
-    p.approval_status === "approved" &&
-    !p.onboarded_at &&
-    nextPath.startsWith("/app") &&
-    nextPath !== "/app/onboarding"
-  ) {
-    redirect("/app/onboarding");
-  }
-
-  return { supabase, user, profile: p };
+  return { supabase, user, profile: profile as Profile };
 }
