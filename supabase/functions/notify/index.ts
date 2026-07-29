@@ -108,6 +108,48 @@ const DEFERRABLE = new Set([
   "signup_approved",
 ]);
 
+// ── Per-user daily cap (notification-fix-plan 2.2) ──────────────────────────
+//
+// The structural guarantee behind "don't spam anyone", designed to survive
+// every message type added later: nobody receives more than DAILY_SEND_CAP
+// non-essential messages in one IST day. Overflow is held to the next morning
+// rather than dropped, so nothing is silently lost.
+//
+// CAP_EXEMPT is the important half. The plan states the rule as "max 3
+// non-transactional sends per user per day", but applied literally that muzzles
+// the flow production shows working best: a coach teaching four classes needs
+// four before-class prompts and four after-class summaries, and a parent needs
+// to hear their coach is running late whether or not it's their fourth message.
+// Suppressing any of these causes a real-world failure, not just a quieter
+// phone — so time-critical and session-operational types are exempt, and the
+// cap bites on the informational tail (schedule changes, receipts, progress
+// updates, offers) where a fourth message in a day is genuinely noise.
+const DAILY_SEND_CAP = 3;
+
+const CAP_EXEMPT = new Set([
+  // Coach: running their own class.
+  "coach_before_class",
+  "coach_confirm_nudge_2",
+  "coach_arrival_check",
+  "coach_after_class",
+  "new_private_session",
+  "session_unassigned",
+  // Parent: where is my child's coach, and is my session still on.
+  "coach_arrived",
+  "coach_late",
+  "reminder_upcoming",
+  "waitlist_spot",
+  // Founder: act-now escalations and the once-a-day digest.
+  "ops_coach_unconfirmed",
+  "ops_coach_not_arrived",
+  "ops_daily_digest",
+]);
+
+// Capped rows this old are past being worth holding — a "your coach changed"
+// for a session that already happened helps nobody. Dropped (claimed, never
+// delivered) rather than deferred forever.
+const CAP_DROP_AFTER_MS = 3 * 86400000;
+
 Deno.serve(async () => {
   const { data: due } = await supabase
     .from("notifications")
@@ -153,18 +195,44 @@ Deno.serve(async () => {
       }
     }
 
-    // Prefs: non-transactional types respect profiles.notification_prefs.
+    // Prefs: non-transactional types respect profiles.notification_prefs, and
+    // a member who sent STOP is muted for everything non-transactional
+    // regardless of type — including types added after they opted out. (2.3.)
     if (!TRANSACTIONAL.has(row.type)) {
       const { data: profile } = await supabase
         .from("profiles")
-        .select("notification_prefs")
+        .select("notification_prefs,wa_muted")
         .eq("id", row.user_id)
         .maybeSingle();
+      if (profile?.wa_muted) {
+        await markSent(row.id);
+        continue;
+      }
       if (profile?.notification_prefs?.[row.type] === false) {
         await markSent(row.id);
         continue;
       }
     }
+
+    // Per-user daily cap (2.2). Checked after prefs so a muted type never
+    // consumes someone's allowance, and before the claim so a deferred row
+    // stays pending.
+    if (!TRANSACTIONAL.has(row.type) && !CAP_EXEMPT.has(row.type)) {
+      const alreadySent = await deliveredTodayCount(row.user_id);
+      if (alreadySent >= DAILY_SEND_CAP) {
+        if (Date.now() - new Date(row.created_at).getTime() > CAP_DROP_AFTER_MS) {
+          await markSent(row.id); // stale — claim it and move on
+        } else {
+          await supabase
+            .from("notifications")
+            .update({ scheduled_for: nextMorningIst() })
+            .eq("id", row.id)
+            .eq("status", "pending");
+        }
+        continue;
+      }
+    }
+
     // Claim: only proceed if we flip pending → sent first (idempotent workers).
     const { data: claimed } = await supabase
       .from("notifications")
@@ -256,6 +324,50 @@ function quietHoursDefer(): string | null {
   const eightAm = new Date(`${istDate}T08:00:00+05:30`);
   // Before 08:00 IST → today's 08:00; after 21:30 IST → tomorrow's 08:00.
   return (mins >= 8 * 60 ? new Date(eightAm.getTime() + 86400000) : eightAm).toISOString();
+}
+
+/** Start of the current IST calendar day, as an ISO instant. */
+function istDayStart(): string {
+  const istDate = new Intl.DateTimeFormat("en-CA", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    timeZone: IST,
+  }).format(new Date());
+  return new Date(`${istDate}T00:00:00+05:30`).toISOString();
+}
+
+/** The next 08:00 IST strictly in the future. Used to hold capped overflow. */
+function nextMorningIst(): string {
+  const now = new Date();
+  const istDate = new Intl.DateTimeFormat("en-CA", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    timeZone: IST,
+  }).format(now);
+  const eight = new Date(`${istDate}T08:00:00+05:30`);
+  return (eight.getTime() > now.getTime()
+    ? eight
+    : new Date(eight.getTime() + 86400000)
+  ).toISOString();
+}
+
+/**
+ * How many messages we have actually pushed to this user so far today. Counts
+ * only rows that reached a channel — `channel_attempted` is null for feed-only
+ * rows (claimed, never delivered) and for pref-muted rows, so neither eats into
+ * anyone's daily allowance. (notification-fix-plan 2.2.)
+ */
+async function deliveredTodayCount(userId: string): Promise<number> {
+  const { count } = await supabase
+    .from("notifications")
+    .select("id", { count: "exact", head: true })
+    .eq("user_id", userId)
+    .eq("status", "sent")
+    .not("channel_attempted", "is", null)
+    .gte("sent_at", istDayStart());
+  return count ?? 0;
 }
 
 // ---------------------------------------------------------------------------
