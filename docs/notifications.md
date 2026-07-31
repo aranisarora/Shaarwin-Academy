@@ -122,26 +122,48 @@ Reconstructed from the July 2026 rework (migrations `0041`–`0049`).
 
 A private session carries **no `venue_id`** — the address the picker geocoded
 lands in `private_class_details.address`. But most privates are held at academy
-venues, so the raw address is the wrong thing to show. Resolution lives in two
-places that must agree:
+venues, so the raw address is the wrong thing to show.
 
-- **SQL** — `location_label(classes)`, used by `offer_cover_session`,
-  `coach_mark_arrival` and `ops_notify_booking_created`, and exposed to the
-  notify worker as a **PostgREST computed field**
-  (`select=classes(title,location_label)`). Exact normalised address match only.
-- **TypeScript** — `lib/venue-display.ts` → `makeVenueResolver`, used by the
-  admin schedule, the weekly tab, and `lib/coach-data.ts`. Richer: exact match →
-  geocoded POI name → nearest venue within ~150m → first address segment.
+**Resolution order** (migration `0050`), most trustworthy first:
 
-**This duplication is known and temporary.** The durable fix is to store the
-venue reference at booking time rather than re-derive it on every read; the
-blocker is that a villa or flat inside a large complex geocodes to its own pin,
-so neither exact-address nor a 150m radius reliably identifies the complex.
-Until that lands, treat `makeVenueResolver` as the reference behaviour and keep
-`location_label` in step with it.
+1. `venues.name` via `classes.venue_id` — a real venue booking
+2. `venues.name` via exact normalised address match — a private *at* a venue
+3. `address_details.name` — the geocoded POI ("Windmills of your mind, Back Gate")
+4. the first address segment, **if informative** — a home needs its street
+5. `address_details.locality` — the rescue when the head is junk
+6. the address head, then the raw address
 
-Do **not** auto-create a venue for a private location: 35 of the 167 privates
-are genuine client homes, and venues feed the admin manager and the public
+Implemented twice and they must agree: **SQL** `location_label(classes)` (used by
+`offer_cover_session`, `coach_mark_arrival`, `ops_notify_booking_created`, and
+read by the notify worker as a **PostgREST computed field**,
+`select=classes(title,location_label)`) and **TypeScript**
+`lib/venue-display.ts` → `makeVenueResolver` (admin schedule, weekly tab,
+`lib/coach-data.ts`, coach home). Both are covered by tests —
+`tests/db/venue-label.test.ts` and `lib/venue-display.test.ts`.
+
+### Three things not to undo
+
+- **No distance tier.** "Nearest venue within 150m" was removed, not
+  reimplemented: **APR Tower 1 and APR Villas are 36 metres apart**, and four
+  APR venues sit within 1.3km. The academy runs several distinct venues inside
+  one complex, so any radius wide enough to catch a villa names the wrong
+  building.
+- **Tier 4 sits above tier 5 deliberately.** Putting locality above the street
+  improved 34 labels and regressed 6 — "Prestige Mayberry Road 34" became
+  "Chansandra". Ordered as above, all 40 changed labels improve and none regress.
+- **Addresses are split on U+060C ARABIC COMMA as well as `,`.** A third of the
+  book is geocoded with it; an ASCII-only split returns the entire address as
+  one "segment", which is how `"Phase 3 ، 560035 Bengaluru، India"` passed for a
+  place name.
+
+Mapbox models a gated complex as a **locality** — reverse-geocoding all four APR
+pins returns `locality: "Adarsh Palm Retreat"` for the three inside it. It cannot
+tell the villas from the towers, but for a label it does not need to: that is the
+name the coach and the parent use, and the flat/tower detail is on the session
+page. This is why no extra wizard step was added.
+
+Do **not** auto-create a venue for a private location: 35 of the 167 privates are
+genuine client homes, and venues feed the admin manager and the public
 `/locations` page.
 
 ---

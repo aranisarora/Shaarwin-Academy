@@ -1417,6 +1417,28 @@ begin
 end;
 $function$;
 
+CREATE OR REPLACE FUNCTION public.address_head(p_address text)
+ RETURNS text
+ LANGUAGE sql
+ IMMUTABLE
+ SET search_path TO 'public'
+AS $function$
+  select nullif(btrim(split_part(replace(coalesce(p_address, ''), U&'\060C', ','), ',', 1)), '');
+$function$;
+
+CREATE OR REPLACE FUNCTION public.is_informative_place(p_segment text, p_city text)
+ RETURNS boolean
+ LANGUAGE sql
+ IMMUTABLE
+ SET search_path TO 'public'
+AS $function$
+  select p_segment is not null
+     and p_segment ~ '[A-Za-z]'
+     and lower(p_segment) not in ('india', 'bengaluru', 'bangalore', 'karnataka')
+     and lower(p_segment) is distinct from lower(coalesce(p_city, ''))
+     and p_segment !~* '^(phase|lane|block|tower|wing|sector|sy\.?\s*no|survey\s*no)[\s.:-]*[0-9a-z/-]{0,6}$';
+$function$;
+
 CREATE OR REPLACE FUNCTION public.location_label(c classes)
  RETURNS text
  LANGUAGE sql
@@ -1434,7 +1456,15 @@ AS $function$
         and btrim(coalesce(pcd.address, '')) <> ''
       order by v.active desc, v.name
       limit 1),
-    (select nullif(btrim(pcd.address), '')
+    (select coalesce(
+              nullif(btrim(pcd.address_details->>'name'), ''),
+              case when is_informative_place(address_head(pcd.address),
+                                             pcd.address_details->>'city')
+                   then address_head(pcd.address) end,
+              nullif(btrim(pcd.address_details->>'locality'), ''),
+              address_head(pcd.address),
+              nullif(btrim(pcd.address), '')
+            )
        from private_class_details pcd where pcd.class_id = c.id)
   );
 $function$;
