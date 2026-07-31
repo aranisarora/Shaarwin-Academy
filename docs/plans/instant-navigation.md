@@ -83,7 +83,7 @@ pointed at :3000, whose database is **live**. **Stop the dev server, then run it
 
 **Status:** Phases A and B shipped 2026-07-29 (see the execution log above).
 Written 2026-07-29, immediately after
-`docs/plans/navigation-performance.md` Steps 1–6 shipped on `chore/cleanup-and-perf`.
+The navigation-performance plan's Steps 1–6 shipped and are merged to `main` (that plan has since been deleted; see `git log --grep=perf:`).
 **Audience:** implementing model, starting from a cold context.
 **Branch:** continue on `chore/cleanup-and-perf` (see the branch note in
 `docs/plans/README.md`). `main` stays untouched until the owner verifies with
@@ -99,7 +99,7 @@ implementation.
 
 ## What already shipped (do not redo)
 
-From `docs/plans/navigation-performance.md`, all on `chore/cleanup-and-perf`:
+From the navigation-performance work, all merged to `main`:
 
 | Commit | What |
 |---|---|
@@ -319,7 +319,7 @@ Everything so far is reasoning from the docs plus a green build.
 
 ## Leftovers from the two finished plans
 
-- **`ui/DateInput`** (`docs/plans/codebase-cleanup.md` Phase 5) — deliberately not built.
+- **`ui/DateInput`** (codebase-cleanup Phase 5, since deleted) — deliberately not built.
   It is a design job, not a dedup: the point is to stop `<input type="date">` following
   the OS locale, mirroring the reasoning in `components/app/TimeSelect12h.tsx`. Six call
   sites: `AdminAddSheet` (:580, :716, :762), `AdminCalendarNav` (:113),

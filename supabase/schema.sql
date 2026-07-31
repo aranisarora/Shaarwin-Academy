@@ -1417,6 +1417,37 @@ begin
 end;
 $function$;
 
+CREATE OR REPLACE FUNCTION public.location_label(c classes)
+ RETURNS text
+ LANGUAGE sql
+ STABLE
+ SET search_path TO 'public'
+AS $function$
+  select coalesce(
+    (select v.name from venues v where v.id = c.venue_id),
+    (select v.name
+       from private_class_details pcd
+       join venues v
+         on lower(regexp_replace(btrim(v.address), '\s+', ' ', 'g'))
+          = lower(regexp_replace(btrim(pcd.address), '\s+', ' ', 'g'))
+      where pcd.class_id = c.id
+        and btrim(coalesce(pcd.address, '')) <> ''
+      order by v.active desc, v.name
+      limit 1),
+    (select nullif(btrim(pcd.address), '')
+       from private_class_details pcd where pcd.class_id = c.id)
+  );
+$function$;
+
+CREATE OR REPLACE FUNCTION public.class_location_label(p_class uuid)
+ RETURNS text
+ LANGUAGE sql
+ STABLE
+ SET search_path TO 'public'
+AS $function$
+  select location_label(c) from classes c where c.id = p_class;
+$function$;
+
 CREATE OR REPLACE FUNCTION public.class_is_public_group(p_class uuid)
  RETURNS boolean
  LANGUAGE sql
@@ -1952,12 +1983,12 @@ AS $function$
   select coalesce((select (value)::text::int from settings where key = p_key), p_default);
 $function$;
 
-create or replace function public.offer_cover_session(p_session uuid)
-returns integer
-language plpgsql
-security definer
-set search_path to 'public'
-as $function$
+CREATE OR REPLACE FUNCTION public.offer_cover_session(p_session uuid)
+ RETURNS integer
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
 declare
   v_session class_sessions%rowtype;
   v_class   classes%rowtype;
@@ -1973,21 +2004,12 @@ begin
 
   select * into v_class from classes where id = v_session.class_id;
 
-  select coalesce(v.name, pcd.address, 'the venue')
-    into v_where
-    from classes c
-    left join venues v on v.id = c.venue_id
-    left join private_class_details pcd on pcd.class_id = c.id
-   where c.id = v_session.class_id
-   limit 1;
+  v_where := coalesce(class_location_label(v_session.class_id), 'the venue');
 
   v_when := fmt_ist(v_session.starts_at);
 
-  -- rank_coaches applies the hard eligibility filters (availability, overlap,
-  -- level, time off), so anyone it returns can actually take this session.
   for r in select rc.coach_id from rank_coaches(p_session) rc limit 10
   loop
-    -- One offer per (coach, session), however many times the sweep runs.
     if exists (
       select 1 from notifications
       where type = 'cover_offer'
@@ -3130,13 +3152,7 @@ begin
     into v_name
     from profiles where id = v_coach;
 
-  select coalesce(v.name, pcd.address, 'the venue')
-    into v_location
-    from classes c
-    left join venues v on v.id = c.venue_id
-    left join private_class_details pcd on pcd.class_id = c.id
-    where c.id = v_class
-    limit 1;
+  v_location := coalesce(class_location_label(v_class), 'the venue');
 
   v_time := to_char(v_starts at time zone 'Asia/Kolkata', 'FMHH12:MI AM');
 
@@ -3532,11 +3548,7 @@ begin
     end if;
   end if;
 
-  if v_class.class_type = 'private' then
-    select address into v_where from private_class_details where class_id = v_class.id;
-  else
-    select name into v_where from venues where id = v_class.venue_id;
-  end if;
+  v_where := class_location_label(v_class.id);
 
   v_cap := coalesce(v_session.capacity_override, v_class.capacity);
   select count(*) into v_confirmed

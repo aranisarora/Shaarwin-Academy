@@ -500,20 +500,22 @@ async function alertInvalidCoach(coachId: string, sessionId: string) {
   );
 }
 
-/** Class title + location strings for a swept session (venue name or private address). */
+/**
+ * Class title + location strings for a swept session. `location_label` is a
+ * PostgREST computed field backed by public.location_label(classes) — the same
+ * resolver offer_cover/coach_mark_arrival use, so a private held at a known
+ * venue reads "APR Apartments" rather than the geocoded address behind it. The
+ * old venues(name) ?? private_class_details(address) fallback lived here and
+ * drifted from the SQL callers; keeping one definition in the database is what
+ * stops it drifting again.
+ */
+const CLASS_LOCATION_SELECT = "title,location_label";
+
 function locationOf(classes: unknown): { title: string; location: string } {
-  const cls = classes as {
-    title?: string;
-    venues?: { name: string } | { name: string }[] | null;
-    private_class_details?: { address: string } | { address: string }[] | null;
-  } | null;
-  const venue = Array.isArray(cls?.venues) ? cls?.venues[0] : cls?.venues;
-  const priv = Array.isArray(cls?.private_class_details)
-    ? cls?.private_class_details[0]
-    : cls?.private_class_details;
+  const cls = classes as { title?: string; location_label?: string | null } | null;
   return {
     title: cls?.title ?? "your class",
-    location: venue?.name ?? priv?.address ?? "",
+    location: cls?.location_label ?? "",
   };
 }
 
@@ -530,7 +532,7 @@ async function sweepBeforeClass() {
   const { data: sessions } = await supabase
     .from("class_sessions")
     .select(
-      "id,starts_at,coach_id,classes!inner(title,venues(name),private_class_details(address))"
+      `id,starts_at,coach_id,classes!inner(${CLASS_LOCATION_SELECT})`
     )
     .eq("status", "scheduled")
     .not("coach_id", "is", null)
@@ -618,7 +620,7 @@ async function sweepArrivalCheck() {
   const { data: sessions } = await supabase
     .from("class_sessions")
     .select(
-      "id,starts_at,coach_id,classes!inner(title,venues(name),private_class_details(address))"
+      `id,starts_at,coach_id,classes!inner(${CLASS_LOCATION_SELECT})`
     )
     .eq("status", "scheduled")
     .not("coach_id", "is", null)

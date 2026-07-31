@@ -18,6 +18,7 @@ import {
   nowMs,
   sessionTimeStatus,
 } from "@/lib/academy-time";
+import { makeVenueResolver, type PrivLocation } from "@/lib/venue-display";
 
 export const metadata: Metadata = { title: "Schedule" };
 
@@ -39,6 +40,14 @@ type ActionRow = {
   classes: unknown;
 };
 
+type VenueEmbed = { name: string; lat: number | null; lng: number | null };
+type PrivEmbed = {
+  address: string | null;
+  lat: number | null;
+  lng: number | null;
+  address_details: unknown;
+};
+
 /** The one action to surface in the takeover sheet, or null. Rows are ordered by
  *  starts_at, so `find` returns the soonest match. Arrive (in-window, unmarked)
  *  outranks a coming-check (within 12h, neither confirmed nor arrived). */
@@ -46,13 +55,14 @@ function pickCoachAction(
   rows: ActionRow[],
   now: number,
   todayKey: string,
-  tomorrowKey: string
+  tomorrowKey: string,
+  resolveVenueName: (priv: PrivLocation) => string | null
 ): CoachAction | null {
   const toAction = (r: ActionRow, phase: "confirm" | "arrive"): CoachAction => {
     const cls = r.classes as {
       title?: string;
-      venues?: { name: string; lat: number | null; lng: number | null } | { name: string; lat: number | null; lng: number | null }[] | null;
-      private_class_details?: { lat: number | null; lng: number | null } | { lat: number | null; lng: number | null }[] | null;
+      venues?: VenueEmbed | VenueEmbed[] | null;
+      private_class_details?: PrivEmbed | PrivEmbed[] | null;
     };
     const venue = Array.isArray(cls.venues) ? cls.venues[0] : cls.venues;
     const priv = Array.isArray(cls.private_class_details)
@@ -64,7 +74,10 @@ function pickCoachAction(
       sessionId: r.id,
       title: cls.title ?? "Session",
       whenLabel: `${dayName} · ${formatClock(r.starts_at)}`,
-      venueName: venue?.name ?? null,
+      // A private used to leave this null, so the sheet that tells a coach where
+      // to go named no place at all. Resolve it the way the schedule cards below
+      // and the admin surfaces already do, rather than inventing a third answer.
+      venueName: venue?.name ?? (priv ? resolveVenueName(priv) : null),
       phase,
       venueLat: venue?.lat ?? priv?.lat ?? null,
       venueLng: venue?.lng ?? priv?.lng ?? null,
@@ -99,19 +112,21 @@ async function Schedule() {
   // coachId and the clock, both known here — so the two overlap instead of
   // running back to back. Supabase builders are lazy; `Promise.all` awaiting
   // them is what dispatches both.
-  const [sessions, { data: actRows }] = await Promise.all([
+  const [sessions, { data: actRows }, { data: venues }] = await Promise.all([
     getCoachSessions(supabase, coachId, from, to),
     supabase
       .from("class_sessions")
       .select(
-        "id,starts_at,ends_at,coach_confirmed_at,coach_arrived_at,classes!inner(title,venues(name,lat,lng),private_class_details(address,lat,lng))"
+        "id,starts_at,ends_at,coach_confirmed_at,coach_arrived_at,classes!inner(title,venues(name,lat,lng),private_class_details(address,lat,lng,address_details))"
       )
       .eq("coach_id", coachId)
       .eq("status", "scheduled")
       .gte("starts_at", new Date(now - 3 * 3600000).toISOString())
       .lte("starts_at", new Date(now + 12 * 3600000).toISOString())
       .order("starts_at", { ascending: true }),
+    supabase.from("venues").select("name,address,lat,lng").eq("active", true),
   ]);
+  const resolveVenueName = makeVenueResolver(venues ?? []);
 
   const todayKey = dayLabel(new Date().toISOString());
   const tomorrowKey = dayLabel(new Date(now + 86400000).toISOString());
@@ -185,7 +200,13 @@ async function Schedule() {
   // The single next action to surface as a takeover sheet: an "arrived?" for a
   // session already in the window, else a "coming?" for one starting within 12h
   // that the coach has neither confirmed nor arrived. Most-urgent first.
-  const coachAction = pickCoachAction(actRows ?? [], now, todayKey, tomorrowKey);
+  const coachAction = pickCoachAction(
+    actRows ?? [],
+    now,
+    todayKey,
+    tomorrowKey,
+    resolveVenueName
+  );
 
   return (
     <>

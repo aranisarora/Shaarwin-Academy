@@ -100,12 +100,23 @@ async function ensureTemplate(def) {
   return json.sid;
 }
 
-/** Submit the template for WhatsApp approval as a UTILITY template. */
+/**
+ * Submit the template for WhatsApp approval as a UTILITY template.
+ *
+ * `allow_category_change: false` is the load-bearing part. Meta re-categorised
+ * `client_waitlist_spot` to MARKETING on the first pass — a category that is
+ * billed higher AND withheld from anyone who opted out of marketing, which for
+ * a time-boxed "a spot opened, claim it" offer means the message silently never
+ * arrives. Refusing the change makes Meta reject the template outright instead,
+ * which is a failure you can see and fix rather than one you discover months
+ * later. Copy therefore has to read as purely transactional: no "Good news",
+ * no offer framing, no adjectives Meta can read as promotional.
+ */
 async function requestApproval(sid, name) {
   const { ok, status, json } = await api(
     "POST",
     `/v1/Content/${sid}/ApprovalRequests/whatsapp`,
-    { name, category: "UTILITY" }
+    { name, category: "UTILITY", allow_category_change: false }
   );
   if (ok) {
     console.log(`  ↳ approval submitted (${json.whatsapp?.status ?? "received"})`);
@@ -175,22 +186,30 @@ const TEMPLATES = [
     },
   },
   {
+    // v2 of the waitlist offer. v1 (`client_waitlist_spot`,
+    // HXa77dad95b34944dfbf2fd456502b06f5) was approved as MARKETING because
+    // "Good news" + "First to claim it gets it" reads as promotional — so it is
+    // withheld from marketing opt-outs, which is fatal for a 15-minute offer.
+    // This copy states only the fact and the deadline: the recipient asked to be
+    // on this waitlist, so telling them their turn came up is transactional.
+    // v1 stays registered and stays the live SID until this is approved; then
+    // swap TWILIO_WA_CLIENT_WAITLIST_SID over and delete v1.
     key: "TWILIO_WA_CLIENT_WAITLIST_SID",
-    approvalName: "client_waitlist_spot",
+    approvalName: "client_waitlist_spot_v2",
     def: {
-      friendly_name: "client_waitlist_spot",
+      friendly_name: "client_waitlist_spot_v2",
       language: "en",
       variables: { 1: "Priya", 2: "Beginners Batch", 3: "15" },
       types: {
         "twilio/quick-reply": {
-          body: "Good news {{1}} — a spot just opened in {{2}}. First to claim it gets it (offer expires in {{3}} minutes).",
+          body: "Hello {{1}}, a place has become available in {{2}}, which you are on the waiting list for. Your place is held for {{3}} minutes and is then released to the next person on the list. Please confirm below whether you would like it.",
           actions: [
             { title: "Claim spot", id: "wl_claim" },
             { title: "Pass", id: "wl_pass" },
           ],
         },
         "twilio/text": {
-          body: 'Good news {{1}} — a spot just opened in {{2}}. Reply "claim" within {{3}} minutes to take it.',
+          body: 'Hello {{1}}, a place has become available in {{2}}, which you are on the waiting list for. Your place is held for {{3}} minutes and is then released to the next person. Reply "claim" to take it.',
         },
       },
     },
