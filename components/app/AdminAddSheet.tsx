@@ -41,6 +41,7 @@ import {
   type InviteOption,
   type Venue,
 } from "./admin-calendar-types";
+import { composeLocationLabel, venueDisplayName } from "@/lib/venue-display";
 
 type Mode = "weekly" | "school" | "private";
 type Variant = "create" | "oneoff";
@@ -154,6 +155,10 @@ export function AdminAddSheet({
     duration: 60,
     coachId: "",
     venueId: venues[0]?.id ?? "",
+    /** Where inside the venue. Optional here — a venue with its own table
+     *  needs no further directions — but it's the only way to say "the villas'
+     *  clubhouse" rather than a clubhouse the coach may not be let into. */
+    unit: "",
     overrideLimits: false,
     // On the Weekly classes tab a private class repeats by default; the
     // Schedule tab only ever books one-offs.
@@ -238,6 +243,7 @@ export function AdminAddSheet({
         duration: 60,
         coachId: "",
         venueId: venues[0]?.id ?? "",
+        unit: "",
         overrideLimits: false,
         recurring: variant === "create",
         recurWeeks: 4,
@@ -321,9 +327,12 @@ export function AdminAddSheet({
           postcode: venue.postcode,
           lat: venue.lat,
           lng: venue.lng,
-          addressDetails: venue.address_details
-            ? { ...venue.address_details, name: venue.name }
-            : { name: venue.name },
+          addressDetails: venue.address_details ?? null,
+          // The id, not a copy of the venue's address. Copying it is what used
+          // to force every read-time surface to parse a display name back out
+          // of a geocoded string.
+          venueId: venue.id,
+          unitLabel: priv.unit.trim() || undefined,
           coachId: priv.coachId || undefined,
           overridePlanLimits: priv.overrideLimits,
         };
@@ -771,7 +780,9 @@ export function AdminAddSheet({
               >
                 {venues.map((v) => (
                   <option key={v.id} value={v.id}>
-                    {v.active ? v.name : `${v.name} (hidden)`}
+                    {v.active
+                      ? venueDisplayName(v)
+                      : `${venueDisplayName(v)} (hidden)`}
                   </option>
                 ))}
               </Select>
@@ -785,6 +796,25 @@ export function AdminAddSheet({
                 ))}
               </Select>
             </div>
+
+            <Input
+              label="Where inside (optional)"
+              value={priv.unit}
+              onChange={(e) => setPriv({ ...priv, unit: e.target.value })}
+              placeholder="Clubhouse · Villa 659 · Tower 1, flat 171"
+            />
+            <p className="-mt-3 text-sm text-fg-2">
+              Goes into the coach&apos;s message as{" "}
+              <span className="font-medium">
+                {composeLocationLabel(
+                  venues.find((v) => v.id === priv.venueId)
+                    ? venueDisplayName(venues.find((v) => v.id === priv.venueId)!)
+                    : null,
+                  priv.unit
+                ) ?? "—"}
+              </span>
+              .
+            </p>
 
             {!isOpen && (
               <div>

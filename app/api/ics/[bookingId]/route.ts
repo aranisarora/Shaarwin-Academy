@@ -16,7 +16,7 @@ export async function GET(
   const { data: booking } = await supabase
     .from("bookings")
     .select(
-      "id,client_id,class_sessions!inner(starts_at,ends_at,classes!inner(title,venues(name,address,postcode)))"
+      "id,client_id,class_sessions!inner(starts_at,ends_at,classes!inner(title,location_label,venues(name,address,postcode)))"
     )
     .eq("id", bookingId)
     .eq("client_id", user.id)
@@ -28,8 +28,15 @@ export async function GET(
 
   const toIcs = (iso: string) =>
     new Date(iso).toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
+  // The venue plus the unit inside it, then the postal address — a calendar
+  // entry is often the only thing someone reads on the way, so the name a
+  // human uses leads and the geocoded line backs it up.
   const venue = session.classes.venues;
-  const location = venue ? `${venue.name}, ${venue.address}, ${venue.postcode}` : "Your address";
+  const place = session.classes.location_label ?? venue?.name ?? null;
+  const location =
+    place && venue
+      ? `${place}, ${venue.address}, ${venue.postcode}`
+      : (place ?? "Your address");
 
   const ics = [
     "BEGIN:VCALENDAR",

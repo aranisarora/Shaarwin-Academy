@@ -5,6 +5,7 @@ import Link from "next/link";
 import type { Venue } from "@/lib/data";
 import { VenueMap } from "@/components/marketing/VenueMap";
 import { Badge } from "@/components/ui/Badge";
+import { venueDisplayName } from "@/lib/venue-display";
 import { ButtonLink } from "@/components/ui/Button";
 
 type VenueClassInfo = {
@@ -75,7 +76,7 @@ export function NearbyVenues({ venues }: { venues: EnrichedVenue[] }) {
               key={venue.id}
               className="rounded-[12px] border border-line bg-ink-2 p-5"
             >
-              <h2 className="font-display text-xl">{venue.name}</h2>
+              <h2 className="font-display text-xl">{venueDisplayName(venue)}</h2>
               <p className="mt-1 text-sm text-smoke">
                 {venue.address} · {venue.postcode}
               </p>

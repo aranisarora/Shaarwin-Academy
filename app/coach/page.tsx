@@ -18,7 +18,6 @@ import {
   nowMs,
   sessionTimeStatus,
 } from "@/lib/academy-time";
-import { makeVenueResolver, type PrivLocation } from "@/lib/venue-display";
 
 export const metadata: Metadata = { title: "Schedule" };
 
@@ -55,12 +54,12 @@ function pickCoachAction(
   rows: ActionRow[],
   now: number,
   todayKey: string,
-  tomorrowKey: string,
-  resolveVenueName: (priv: PrivLocation) => string | null
+  tomorrowKey: string
 ): CoachAction | null {
   const toAction = (r: ActionRow, phase: "confirm" | "arrive"): CoachAction => {
     const cls = r.classes as {
       title?: string;
+      location_label?: string | null;
       venues?: VenueEmbed | VenueEmbed[] | null;
       private_class_details?: PrivEmbed | PrivEmbed[] | null;
     };
@@ -74,10 +73,10 @@ function pickCoachAction(
       sessionId: r.id,
       title: cls.title ?? "Session",
       whenLabel: `${dayName} · ${formatClock(r.starts_at)}`,
-      // A private used to leave this null, so the sheet that tells a coach where
-      // to go named no place at all. Resolve it the way the schedule cards below
-      // and the admin surfaces already do, rather than inventing a third answer.
-      venueName: venue?.name ?? (priv ? resolveVenueName(priv) : null),
+      // The sheet that tells a coach where to go reads the same computed field
+      // as the schedule cards, the admin surfaces and the WhatsApp reminder —
+      // one string, so none of them can name a different place.
+      venueName: cls.location_label ?? null,
       phase,
       venueLat: venue?.lat ?? priv?.lat ?? null,
       venueLng: venue?.lng ?? priv?.lng ?? null,
@@ -112,21 +111,19 @@ async function Schedule() {
   // coachId and the clock, both known here — so the two overlap instead of
   // running back to back. Supabase builders are lazy; `Promise.all` awaiting
   // them is what dispatches both.
-  const [sessions, { data: actRows }, { data: venues }] = await Promise.all([
+  const [sessions, { data: actRows }] = await Promise.all([
     getCoachSessions(supabase, coachId, from, to),
     supabase
       .from("class_sessions")
       .select(
-        "id,starts_at,ends_at,coach_confirmed_at,coach_arrived_at,classes!inner(title,venues(name,lat,lng),private_class_details(address,lat,lng,address_details))"
+        "id,starts_at,ends_at,coach_confirmed_at,coach_arrived_at,classes!inner(title,location_label,venues(name,lat,lng),private_class_details(address,lat,lng,address_details))"
       )
       .eq("coach_id", coachId)
       .eq("status", "scheduled")
       .gte("starts_at", new Date(now - 3 * 3600000).toISOString())
       .lte("starts_at", new Date(now + 12 * 3600000).toISOString())
       .order("starts_at", { ascending: true }),
-    supabase.from("venues").select("name,address,lat,lng").eq("active", true),
   ]);
-  const resolveVenueName = makeVenueResolver(venues ?? []);
 
   const todayKey = dayLabel(new Date().toISOString());
   const tomorrowKey = dayLabel(new Date(now + 86400000).toISOString());
@@ -171,14 +168,9 @@ async function Schedule() {
           !!prev &&
           (prev.venueName ?? prev.privateAddress) !==
             (s.venueName ?? s.privateAddress);
-        // Venue name for group classes; for privates, the area (POI name or
-        // neighbourhood) — never the exact street, which "Open maps" covers.
-        const locationName =
-          s.venueName ??
-          s.address?.name ??
-          s.address?.locality ??
-          s.address?.subLocality ??
-          "Private session";
+        // venueName is location_label — venue plus the unit inside it. The
+        // exact street stays off the card; "Open maps" covers that.
+        const locationName = s.venueName ?? "Private session";
         return {
           id: s.id,
           locationName,
@@ -200,13 +192,7 @@ async function Schedule() {
   // The single next action to surface as a takeover sheet: an "arrived?" for a
   // session already in the window, else a "coming?" for one starting within 12h
   // that the coach has neither confirmed nor arrived. Most-urgent first.
-  const coachAction = pickCoachAction(
-    actRows ?? [],
-    now,
-    todayKey,
-    tomorrowKey,
-    resolveVenueName
-  );
+  const coachAction = pickCoachAction(actRows ?? [], now, todayKey, tomorrowKey);
 
   return (
     <>

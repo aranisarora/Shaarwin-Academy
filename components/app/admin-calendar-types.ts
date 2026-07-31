@@ -89,6 +89,9 @@ export type Coach = { id: string; name: string };
 export type Venue = {
   id: string;
   name: string;
+  /** Which part of a complex this is ("Villas", "Apartments"). Null when the
+   *  venue is the whole place. Always render via venueDisplayName. */
+  unit: string | null;
   active: boolean;
   address: string;
   postcode: string;

@@ -1,7 +1,6 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/database.types";
 import { asAddressDetails, fromDetails, type StructuredAddress } from "@/lib/address";
-import { makeVenueResolver } from "@/lib/venue-display";
 
 export type CoachSession = {
   id: string;
@@ -34,7 +33,7 @@ export async function getCoachSessions(
   const { data: sessions } = await supabase
     .from("class_sessions")
     .select(
-      "id,starts_at,ends_at,status,capacity_override,classes!inner(id,title,skill_level,capacity,class_type,venues(name,address,postcode,lat,lng,address_details),private_class_details(address,postcode,lat,lng,access_notes,address_details,profiles!client_id(full_name)))"
+      "id,starts_at,ends_at,status,capacity_override,classes!inner(id,title,skill_level,capacity,class_type,location_label,venues(name,address,postcode,lat,lng,address_details),private_class_details(address,postcode,lat,lng,access_notes,address_details,profiles!client_id(full_name)))"
     )
     .eq("coach_id", coachId)
     .in("status", ["scheduled", "completed"])
@@ -43,16 +42,6 @@ export async function getCoachSessions(
     .order("starts_at");
 
   if (!sessions || sessions.length === 0) return [];
-
-  // Private classes store a raw client address, but most sit at (or near) a
-  // known venue. Resolve to the venue's title so a private card shows
-  // "La Palazzo" — or at least the first address segment — rather than falling
-  // through to "Private session". Mirrors the admin schedule + session sheet.
-  const { data: venues } = await supabase
-    .from("venues")
-    .select("name,address,lat,lng")
-    .eq("active", true);
-  const resolveVenueName = makeVenueResolver(venues ?? []);
 
   const ids = sessions.map((s) => s.id);
   const { data: bookingRows } = await supabase
@@ -95,7 +84,10 @@ export async function getCoachSessions(
       capacity: s.capacity_override ?? cls.capacity,
       confirmed: counts.get(s.id) ?? 0,
       playerName: priv?.profiles?.full_name ?? null,
-      venueName: cls.venues?.name ?? (priv ? resolveVenueName(priv) : null),
+      // The same string the coach's WhatsApp reminder carries: location_label
+      // is a computed field over public.location_label(classes), so the card
+      // and the message can't drift apart.
+      venueName: cls.location_label ?? null,
       venueAddress: cls.venues?.address ?? null,
       venuePostcode: cls.venues?.postcode ?? null,
       privateAddress: priv?.address ?? null,

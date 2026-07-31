@@ -122,7 +122,7 @@ const playerToday: WaTool = {
       // One string literal on purpose: concatenation erases the literal type
       // PostgREST needs to infer the row shape.
       .select(
-        "id,status,players(full_name),class_sessions!inner(id,starts_at,ends_at,coach_id,coach_confirmed_at,coach_arrived_at,classes!inner(title,venues(name)))"
+        "id,status,players(full_name),class_sessions!inner(id,starts_at,ends_at,coach_id,coach_confirmed_at,coach_arrived_at,classes!inner(title,location_label,venues(name)))"
       )
       .eq("client_id", ctx.profile!.id)
       .in("status", ["confirmed", "attended", "no_show", "waitlisted"])
@@ -138,7 +138,11 @@ const playerToday: WaTool = {
       coach_id: string | null;
       coach_confirmed_at: string | null;
       coach_arrived_at: string | null;
-      classes: { title: string; venues: { name: string } | { name: string }[] | null };
+      classes: {
+        title: string;
+        location_label: string | null;
+        venues: { name: string } | { name: string }[] | null;
+      };
     };
 
     // Coach names via public_coach_roster(), not a direct profiles read: RLS
@@ -163,7 +167,6 @@ const playerToday: WaTool = {
     const rows = (data ?? [])
       .map((b) => {
         const s = b.class_sessions as unknown as TodaySession;
-        const venue = Array.isArray(s.classes.venues) ? s.classes.venues[0] : s.classes.venues;
         const player =
           (b.players as { full_name: string } | { full_name: string }[] | null) ?? null;
         const playerName = (Array.isArray(player) ? player[0]?.full_name : player?.full_name) ?? "";
@@ -182,7 +185,7 @@ const playerToday: WaTool = {
           booking_status: b.status,
           session_id: s.id,
           title: s.classes.title,
-          venue: venue?.name ?? null,
+          venue: s.classes.location_label ?? null,
           coach: s.coach_id ? (coachNames.get(s.coach_id) ?? null) : null,
           when: formatSessionDate(s.starts_at),
           starts_at: s.starts_at,

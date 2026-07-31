@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { Suspense } from "react";
 import { requireUser } from "@/lib/auth";
 import { utcToAcademyWall } from "@/lib/academy-time";
-import { makeVenueResolver, withVenueAddress } from "@/lib/venue-display";
+import { venueDisplayName, withVenueAddress } from "@/lib/venue-display";
 import { AdminShell } from "@/components/app/AdminShell";
 import { PageSkeleton } from "@/components/ui/Skeleton";
 import { AdminWeeklyClasses } from "@/components/app/AdminWeeklyClasses";
@@ -39,7 +39,7 @@ async function Weekly({ searchParams }: { searchParams: SearchParams }) {
     supabase
       .from("classes")
       .select(
-        "id,title,description,skill_level,capacity,duration_minutes,recurrence_rule,active,ends_on,venue_id,is_school,venues(name)"
+        "id,title,description,skill_level,capacity,duration_minutes,recurrence_rule,active,ends_on,venue_id,is_school,venues(name,unit)"
       )
       .eq("class_type", "group")
       .not("recurrence_rule", "is", null)
@@ -48,7 +48,7 @@ async function Weekly({ searchParams }: { searchParams: SearchParams }) {
       .from("coaches")
       .select("id,active,profiles!inner(full_name)")
       .eq("active", true),
-    supabase.from("venues").select("id,name,active,address,postcode,lat,lng,address_details").order("name"),
+    supabase.from("venues").select("id,name,unit,active,address,postcode,lat,lng,address_details").order("name"),
     supabase
       .from("profiles")
       .select("id,full_name,players(id,full_name)")
@@ -65,6 +65,7 @@ async function Weekly({ searchParams }: { searchParams: SearchParams }) {
       .from("private_booking_series")
       .select(
         "id,weekday,start_time,duration_minutes,address,lat,lng,address_details,preferred_coach," +
+          "venue_id,venue_label,unit_label,venues(name,unit)," +
           "player:players!private_booking_series_player_id_fkey(full_name)," +
           "client:profiles!private_booking_series_client_id_fkey(full_name)"
       )
@@ -151,7 +152,10 @@ async function Weekly({ searchParams }: { searchParams: SearchParams }) {
       active: c.active,
       endsOn: c.ends_on,
       venueId: c.venue_id,
-      venueName: (c.venues as unknown as { name: string } | null)?.name ?? null,
+      venueName: (() => {
+        const v = c.venues as unknown as { name: string; unit: string | null } | null;
+        return v ? venueDisplayName(v) : null;
+      })(),
       isSchool: c.is_school,
       coachName: next?.coachName ?? null,
       bookedCount: next ? (bookedBySession.get(next.sessionId) ?? 0) : 0,
@@ -179,6 +183,10 @@ async function Weekly({ searchParams }: { searchParams: SearchParams }) {
     lng: number;
     address_details: { name?: string | null } | null;
     preferred_coach: string | null;
+    venue_id: string | null;
+    venue_label: string | null;
+    unit_label: string | null;
+    venues: { name: string; unit: string | null } | null;
     player: { full_name: string } | null;
     client: { full_name: string } | null;
   };
@@ -205,26 +213,18 @@ async function Weekly({ searchParams }: { searchParams: SearchParams }) {
     }
   }
 
-  // Resolve each series' display location the same way every stakeholder
-  // surface does — exact venue-address match, then POI name, then a venue pin
-  // within ~150 m, else the client-home address. A series booked at a known
-  // venue therefore nests under that venue's group; only genuine new locations
-  // (client homes) spawn their own group.
-  const resolveVenue = makeVenueResolver(
-    (venues ?? []).map((v) => ({ name: v.name, address: v.address, lat: v.lat, lng: v.lng }))
-  );
+  // A series stores its own location (migration 0054) — the same venue_id the
+  // booking picker set, so it nests under that venue's group here and the
+  // nightly generator materialises every future week with the same label.
+  // Only a location we hold no venue row for falls back to venue_label.
   const knownVenueNames = new Set(
-    (venues ?? []).map((v) => v.name.toLowerCase())
+    (venues ?? []).map((v) => venueDisplayName(v).toLowerCase())
   );
 
   const privateSeriesRows: PrivateSeriesRow[] = seriesRows.map((s) => {
     const venueName =
-      resolveVenue({
-        address: s.address,
-        lat: s.lat,
-        lng: s.lng,
-        address_details: s.address_details,
-      }) ?? "Private location";
+      (s.venues ? venueDisplayName(s.venues) : s.venue_label?.trim()) ??
+      "Private location";
     const next = nextBySeriesId.get(s.id);
     return {
       id: s.id,

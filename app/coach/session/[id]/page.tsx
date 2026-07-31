@@ -30,7 +30,7 @@ const loadSession = cache(async (id: string) => {
     supabase
       .from("class_sessions")
       .select(
-        "id,starts_at,ends_at,coach_id,coach_notes,coach_arrived_at,coach_confirmed_at,classes!inner(title,skill_level,class_type,is_school,venues(name,address,postcode,lat,lng,address_details),private_class_details(address,postcode,lat,lng,access_notes,has_table,address_details))"
+        "id,starts_at,ends_at,coach_id,coach_notes,coach_arrived_at,coach_confirmed_at,classes!inner(title,skill_level,class_type,is_school,location_label,venues(name,address,postcode,lat,lng,address_details),private_class_details(address,postcode,lat,lng,access_notes,has_table,address_details))"
       )
       .eq("id", id)
       .maybeSingle(),
@@ -97,7 +97,9 @@ async function SessionBody({ params }: { params: Promise<{ id: string }> }) {
     <>
       <div>
         <p className="tnum font-display text-3xl">{when}</p>
-        {cls.venues && <p className="mt-1 font-medium">{cls.venues.name}</p>}
+        {cls.location_label && (
+          <p className="mt-1 font-medium">{cls.location_label}</p>
+        )}
         {address ? (
           <AddressDisplay address={address} audience="staff" className="mt-1" />
         ) : (
@@ -127,7 +129,7 @@ async function SessionBody({ params }: { params: Promise<{ id: string }> }) {
         coachConfirmedAt={session.coach_confirmed_at}
         venueLat={cls.venues?.lat ?? priv?.lat ?? null}
         venueLng={cls.venues?.lng ?? priv?.lng ?? null}
-        venueName={cls.venues?.name ?? null}
+        venueName={cls.location_label ?? null}
       />
 
       <SessionRoster

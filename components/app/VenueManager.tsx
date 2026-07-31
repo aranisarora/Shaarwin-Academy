@@ -15,10 +15,12 @@ import {
 } from "@/lib/address";
 import { saveVenue, setVenueActive, deleteVenue } from "@/app/admin/actions";
 import { BENGALURU } from "@/lib/coverage";
+import { venueDisplayName, venueNeedsUnit } from "@/lib/venue-display";
 
 type Venue = {
   id: string;
   name: string;
+  unit: string | null;
   address: string;
   postcode: string;
   lat: number;
@@ -27,7 +29,12 @@ type Venue = {
   address_details?: Partial<StructuredAddress> | null;
 };
 
-type Editing = { id?: string; name: string; addr: StructuredAddress };
+type Editing = {
+  id?: string;
+  name: string;
+  unit: string;
+  addr: StructuredAddress;
+};
 
 export function VenueManager({ venues }: { venues: Venue[] }) {
   const [editing, setEditing] = useState<Editing | null>(null);
@@ -35,13 +42,14 @@ export function VenueManager({ venues }: { venues: Venue[] }) {
   const [pending, startTransition] = useTransition();
 
   function openNew() {
-    setEditing({ name: "", addr: EMPTY_ADDRESS });
+    setEditing({ name: "", unit: "", addr: EMPTY_ADDRESS });
   }
 
   function openEdit(v: Venue) {
     setEditing({
       id: v.id,
       name: v.name,
+      unit: v.unit ?? "",
       addr: fromDetails(v.address_details, {
         address: v.address,
         postcode: v.postcode,
@@ -51,13 +59,24 @@ export function VenueManager({ venues }: { venues: Venue[] }) {
     });
   }
 
+  // Mirrors the server-side guard in saveVenueCore, so the founder sees why the
+  // save is blocked before pressing it rather than after.
+  const needsUnit =
+    editing !== null &&
+    venueNeedsUnit(
+      { name: editing.name, unit: editing.unit },
+      venues.filter((v) => v.id !== editing.id)
+    );
+
   function submit() {
     if (!editing || !editing.name.trim() || !isAddressComplete(editing.addr)) return;
+    if (needsUnit) return;
     startTransition(async () => {
       const a = editing.addr;
       const r = await saveVenue({
         id: editing.id,
         name: editing.name,
+        unit: editing.unit,
         address: a.formatted,
         postcode: a.postcode ?? "",
         lat: a.lat ?? BENGALURU.lat,
@@ -90,7 +109,7 @@ export function VenueManager({ venues }: { venues: Venue[] }) {
           {venues.map((v) => (
             <li key={v.id} className="flex items-center justify-between gap-3 px-4 py-3">
             <button onClick={() => openEdit(v)} className="text-left hover:text-ember">
-              <p className="font-medium">{v.name}</p>
+              <p className="font-medium">{venueDisplayName(v)}</p>
               <p className="text-sm text-fg-2">
                 {v.address} · {v.postcode}
               </p>
@@ -127,7 +146,31 @@ export function VenueManager({ venues }: { venues: Venue[] }) {
               label="Name"
               value={editing.name}
               onChange={(e) => setEditing({ ...editing, name: e.target.value })}
+              placeholder="Adarsh Palm Retreat"
             />
+            <Input
+              label="Which part (optional)"
+              value={editing.unit}
+              onChange={(e) => setEditing({ ...editing, unit: e.target.value })}
+              placeholder="Villas · Apartments · Lakefront"
+            />
+            <p className="-mt-2 text-sm text-fg-2">
+              {needsUnit ? (
+                <span className="text-ember">
+                  Another venue is already called &ldquo;{editing.name.trim()}
+                  &rdquo;. Say which part this one is — coaches need to know
+                  which entrance to use.
+                </span>
+              ) : (
+                <>
+                  Shows as{" "}
+                  <span className="font-medium">
+                    {venueDisplayName({ name: editing.name || "Venue", unit: editing.unit })}
+                  </span>
+                  . Use this when one complex has several places you coach at.
+                </>
+              )}
+            </p>
             <AddressForm
               value={editing.addr}
               onChange={(addr) => setEditing({ ...editing, addr })}
@@ -135,7 +178,7 @@ export function VenueManager({ venues }: { venues: Venue[] }) {
               searchPlaceholder="Start typing the venue address…"
               showAccessNotes
             />
-            <Button onClick={submit} disabled={pending} className="w-full">
+            <Button onClick={submit} disabled={pending || needsUnit} className="w-full">
               {pending ? <Spinner /> : "Save venue"}
             </Button>
             {editing.id && (

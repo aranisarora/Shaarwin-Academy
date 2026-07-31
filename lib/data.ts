@@ -63,6 +63,9 @@ export type Product = {
 export type Venue = {
   id: string;
   name: string;
+  /** Which part of a complex — always render through venueDisplayName, or the
+   *  three Adarsh Palm Retreat rows read as one repeated venue. */
+  unit: string | null;
   address: string;
   postcode: string;
   lat: number;
@@ -123,7 +126,7 @@ export const getVenues = unstable_cache(
     const supabase = publicClient();
     const { data } = await supabase
       .from("venues")
-      .select("id,name,address,postcode,lat,lng,photo_url")
+      .select("id,name,unit,address,postcode,lat,lng,photo_url")
       .eq("active", true)
       .order("name");
     return data ?? [];

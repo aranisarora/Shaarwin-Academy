@@ -17,7 +17,7 @@ import type {
   SessionRow,
 } from "@/components/app/admin-calendar-types";
 import { asAddressDetails, fromDetails, type StructuredAddress } from "@/lib/address";
-import { makeVenueResolver, withVenueAddress } from "@/lib/venue-display";
+import { withVenueAddress } from "@/lib/venue-display";
 
 export const metadata: Metadata = { title: "Schedule" };
 
@@ -57,7 +57,7 @@ async function Schedule({ searchParams }: { searchParams: SearchParams }) {
     supabase
       .from("class_sessions")
       .select(
-        "id,starts_at,ends_at,coach_id,coach_arrived_at,coach_arrival_source,coach_arrival_distance_m,capacity_override,classes!inner(id,title,description,skill_level,capacity,duration_minutes,recurrence_rule,active,venue_id,class_type,is_school,venues(name,address,postcode,lat,lng,address_details),private_class_details(client_id,address,postcode,lat,lng,access_notes,address_details))"
+        "id,starts_at,ends_at,coach_id,coach_arrived_at,coach_arrival_source,coach_arrival_distance_m,capacity_override,classes!inner(id,title,description,skill_level,capacity,duration_minutes,recurrence_rule,active,venue_id,class_type,is_school,location_label,venues(name,address,postcode,lat,lng,address_details),private_class_details(client_id,address,postcode,lat,lng,access_notes,address_details))"
       )
       .in("status", ["scheduled", "completed"])
       .gte("starts_at", from.toISOString())
@@ -70,11 +70,11 @@ async function Schedule({ searchParams }: { searchParams: SearchParams }) {
     supabase
       .from("classes")
       .select(
-        "id,title,description,skill_level,capacity,duration_minutes,recurrence_rule,active,ends_on,venue_id,is_school,venues(name)"
+        "id,title,description,skill_level,capacity,duration_minutes,recurrence_rule,active,ends_on,venue_id,is_school,venues(name,unit)"
       )
       .eq("class_type", "group")
       .order("title"),
-    supabase.from("venues").select("id,name,active,address,postcode,lat,lng,address_details").order("name"),
+    supabase.from("venues").select("id,name,unit,active,address,postcode,lat,lng,address_details").order("name"),
     supabase
       .from("profiles")
       .select("id,full_name,players(id,full_name)")
@@ -136,11 +136,6 @@ async function Schedule({ searchParams }: { searchParams: SearchParams }) {
   const clientNameMap = new Map<string, string>();
   for (const p of privProfiles ?? []) clientNameMap.set(p.id, p.full_name);
 
-  // Private classes store a raw client address, but most point at a known
-  // venue — resolve to the venue's title so cards show "La Palazzo" rather than
-  // "47/1, Bengaluru…". Shared with the session sheet + week refetch.
-  const resolveVenueName = makeVenueResolver(venues ?? []);
-
   const rows: SessionRow[] = (sessions ?? []).map((s) => {
     const cls = s.classes;
     const priv = cls.private_class_details;
@@ -161,8 +156,6 @@ async function Schedule({ searchParams }: { searchParams: SearchParams }) {
           })
         : null;
 
-    const privLocationName = priv ? resolveVenueName(priv) : null;
-
     return {
       id: s.id,
       starts_at: s.starts_at,
@@ -175,7 +168,7 @@ async function Schedule({ searchParams }: { searchParams: SearchParams }) {
       capacity: s.capacity_override ?? cls.capacity,
       isPrivate: cls.class_type === "private",
       isSchool: cls.is_school,
-      venueName: cls.venues?.name ?? privLocationName,
+      venueName: cls.location_label ?? null,
       playerName: priv?.client_id ? (clientNameMap.get(priv.client_id) ?? null) : null,
       privateClientId: priv?.client_id ?? null,
       address,

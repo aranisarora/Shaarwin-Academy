@@ -73,6 +73,13 @@ export type PrivateRequest = {
   accessNotes: string;
   preferredCoach?: string;
   details?: StructuredAddress | null;
+  /** A saved venue the client picked instead of typing an address. Preferred
+   *  over venueLabel: renaming the venue corrects every message it appears in. */
+  venueId?: string | null;
+  /** What this place is called, when it isn't one of our venues. */
+  venueLabel?: string | null;
+  /** Where inside it — flat, villa, tower, clubhouse. Required by the wizard. */
+  unitLabel?: string | null;
 };
 
 export type PrivateResult =
@@ -157,6 +164,9 @@ export async function requestPrivateClass(req: PrivateRequest): Promise<PrivateR
     access_notes: req.accessNotes,
     preferred_coach: req.preferredCoach ?? "",
     address_details: req.details ?? null,
+    venue_id: req.venueId ?? "",
+    venue_label: req.venueLabel ?? null,
+    unit_label: req.unitLabel ?? null,
   };
 
   const { data, error } = await supabase.rpc("request_private_class", { payload });
@@ -215,6 +225,9 @@ export async function requestPrivateSeries(
     access_notes: req.accessNotes,
     preferred_coach: req.preferredCoach ?? "",
     address_details: req.details ?? null,
+    venue_id: req.venueId ?? "",
+    venue_label: req.venueLabel ?? null,
+    unit_label: req.unitLabel ?? null,
     starts_at_list: slots,
   };
 

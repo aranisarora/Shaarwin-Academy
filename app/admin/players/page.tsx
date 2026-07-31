@@ -1,3 +1,4 @@
+import { venueDisplayName } from "@/lib/venue-display";
 import type { Metadata } from "next";
 import { Suspense } from "react";
 import { requireUser } from "@/lib/auth";
@@ -39,7 +40,7 @@ async function People({ searchParams }: { searchParams: SearchParams }) {
       // to the school (venue) they attend.
       supabase
         .from("players")
-        .select("id,full_name,skill_level,date_of_birth,notes,created_at,grade,venues(name)")
+        .select("id,full_name,skill_level,date_of_birth,notes,created_at,grade,venues(name,unit)")
         .is("client_id", null)
         .order("created_at"),
     ]);
@@ -184,7 +185,7 @@ async function People({ searchParams }: { searchParams: SearchParams }) {
     clientName: "",
     clientEmail: "",
     clientPhone: null,
-    school: (p.venues)?.name ?? "School",
+    school: p.venues ? venueDisplayName(p.venues) : "School",
   }));
 
   const playerRows = [...householdRows, ...schoolRows].sort((a, b) =>

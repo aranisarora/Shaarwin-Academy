@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import type { Venue } from "@/lib/data";
+import { venueDisplayName } from "@/lib/venue-display";
 
 /** Dark Mapbox map with ember venue pins. Tap pin → mini card. Locate-me button shows user position. */
 export function VenueMap({
@@ -63,7 +64,7 @@ export function VenueMap({
         const bounds = new mapboxgl.LngLatBounds();
         for (const venue of venues) {
           const el = document.createElement("button");
-          el.setAttribute("aria-label", venue.name);
+          el.setAttribute("aria-label", venueDisplayName(venue));
           el.style.cssText =
             "width:16px;height:16px;border-radius:999px;background:#E8590C;border:2px solid #F4F1EA;cursor:pointer;box-shadow:0 0 0 4px rgb(232 89 12 / 0.25)";
           el.addEventListener("click", () => setSelected(venue));
@@ -149,7 +150,7 @@ export function VenueMap({
           <ul className="space-y-1 text-sm">
             {venues.map((v) => (
               <li key={v.id}>
-                {v.name} · {v.postcode}
+                {venueDisplayName(v)} · {v.postcode}
               </li>
             ))}
           </ul>
@@ -194,7 +195,9 @@ export function VenueMap({
         <div className="absolute inset-x-4 bottom-4 rounded-[12px] border border-line-d bg-ink-2 p-4 sm:left-auto sm:w-80">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <p className="font-display text-lg text-ivory">{selected.name}</p>
+              <p className="font-display text-lg text-ivory">
+                {venueDisplayName(selected)}
+              </p>
               <p className="text-sm text-smoke">
                 {selected.address} · {selected.postcode}
               </p>

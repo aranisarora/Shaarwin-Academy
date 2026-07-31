@@ -31,6 +31,7 @@ import {
 import { formatSessionDate, utcToAcademyWall } from "@/lib/academy-time";
 import { BENGALURU } from "@/lib/coverage";
 import { geocode } from "@/lib/whatsapp/geocode";
+import { venueDisplayName } from "@/lib/venue-display";
 import { fail, ok, type ToolContext, type WaTool } from "./types";
 
 const SUBSCRIPTION_STATUSES = [
@@ -61,7 +62,7 @@ const listClasses: WaTool = {
   run: async (_input, ctx) => {
     const { data } = await ctx.supabase!
       .from("classes")
-      .select("id,title,skill_level,capacity,duration_minutes,recurrence_rule,active,class_type,venues(name)")
+      .select("id,title,skill_level,capacity,duration_minutes,recurrence_rule,active,class_type,venues(name,unit)")
       .eq("class_type", "group")
       .order("title");
     return ok(
@@ -72,7 +73,7 @@ const listClasses: WaTool = {
         capacity: c.capacity,
         duration_minutes: c.duration_minutes,
         weekday: /BYDAY=([A-Z]{2})/.exec(c.recurrence_rule ?? "")?.[1] ?? null,
-        venue: (c.venues)?.name ?? null,
+        venue: c.venues ? venueDisplayName(c.venues) : null,
         active: c.active,
       }))
     );
@@ -332,6 +333,7 @@ const createPrivate: WaTool = {
       },
       venue_id: { type: "string", description: "A saved venue (from list_venues) — used instead of address" },
       address: { type: "string", description: "Free-text address to geocode — omit if venue_id is given" },
+      unit: { type: "string", description: "Where inside the venue — \"Clubhouse\", \"Villa 659\", \"Tower 1, flat 171\". Matters when a complex has several: the villas' clubhouse and the apartments' clubhouse are different places." },
       access_notes: { type: "string", description: "Entry instructions, if any" },
       has_table: { type: "boolean", description: "Does the address have a table? Default true" },
       coach_id: { type: "string" },
@@ -348,14 +350,14 @@ const createPrivate: WaTool = {
     if (input.venue_id) {
       const { data: venue } = await ctx.supabase!
         .from("venues")
-        .select("name,address,lat,lng")
+        .select("name,unit,address,lat,lng")
         .eq("id", String(input.venue_id))
         .maybeSingle();
       if (!venue) return fail("No venue with that id — check list_venues.");
       address = venue.address;
       lat = Number(venue.lat);
       lng = Number(venue.lng);
-      resolvedPlace = venue.name;
+      resolvedPlace = venueDisplayName(venue);
     } else if (input.address) {
       const geo = await geocode(String(input.address));
       if (!geo) return fail("Couldn't locate that address — ask for a fuller address.");
@@ -403,6 +405,12 @@ const createPrivate: WaTool = {
         accessNotes: input.access_notes ?? null,
         label: input.venue_id ? "venue" : "home",
       },
+      // Keep the venue id rather than only its copied address: that is what
+      // makes the coach's message say "Adarsh Palm Retreat Villas" without
+      // anything downstream parsing the address back into a name.
+      venueId: input.venue_id ? String(input.venue_id) : undefined,
+      venueLabel: input.venue_id ? undefined : resolvedPlace,
+      unitLabel: input.unit ? String(input.unit) : undefined,
       coachId: input.coach_id ? String(input.coach_id) : undefined,
     });
     if (!result.ok) return fail(result.error ?? "Failed.");

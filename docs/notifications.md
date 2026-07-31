@@ -118,28 +118,54 @@ Reconstructed from the July 2026 rework (migrations `0041`–`0049`).
 
 ---
 
-## 5. Locations: one resolver, two implementations (for now)
+## 5. Locations: venue + unit, stored not derived
 
-A private session carries **no `venue_id`** — the address the picker geocoded
-lands in `private_class_details.address`. But most privates are held at academy
-venues, so the raw address is the wrong thing to show.
+A location is **two stored fields, chosen by a human at booking** — not a label
+parsed out of an address string. Migrations `0052`–`0054`; design notes in
+`docs/plans/location-model.md`.
 
-**Resolution order** (migration `0050`), most trustworthy first:
+| part | source | example |
+| --- | --- | --- |
+| venue name | `venues.name` via `classes.venue_id` | `Adarsh Palm Retreat` |
+| venue unit | `venues.unit` | `Villas` |
+| session unit | `private_class_details.unit_label` | `Clubhouse` |
 
-1. `venues.name` via `classes.venue_id` — a real venue booking
-2. `venues.name` via exact normalised address match — a private *at* a venue
-3. `address_details.name` — the geocoded POI ("Windmills of your mind, Back Gate")
-4. the first address segment, **if informative** — a home needs its street
-5. `address_details.locality` — the rescue when the head is junk
-6. the address head, then the raw address
+Composed by `location_label(classes)` as `"<name> <venue unit>, <session unit>"`
+→ **`Adarsh Palm Retreat Villas, Clubhouse`**. A private with no venue row falls
+back to `private_class_details.venue_label`.
 
-Implemented twice and they must agree: **SQL** `location_label(classes)` (used by
+**Prefer `venue_id` over a stored string.** All 167 privates carry one, so
+renaming a venue corrects every message it has ever appeared in — no backfill.
+`venue_label` exists only for somewhere we hold no venue row for.
+
+### The venue unit is a safety field
+
+Within one complex the parts can be **mutually inaccessible**: a villa resident
+cannot enter the towers' clubhouse, or the reverse. So the rule is that a
+session's unit is never shown without its venue's unit — which holds by
+construction, since `location_label` composes `venue_display` (carrying
+`venues.unit`) before appending the session's own. The remaining hole is closed
+in `saveVenueCore`: **if a venue shares its `name` with another, `unit` is
+required**, so a bare `Adarsh Palm Retreat` is never selectable.
+
+### Where it's read
+
+**SQL** `location_label(classes)` is the authority — used by
 `offer_cover_session`, `coach_mark_arrival`, `ops_notify_booking_created`,
-`_create_private_occurrence`, and read by the notify worker as a **PostgREST
-computed field**, `select=classes(title,location_label)`) and **TypeScript**
-`lib/venue-display.ts` → `makeVenueResolver` (admin schedule, weekly tab,
-`lib/coach-data.ts`, coach home). Both are covered by tests —
+`_create_private_occurrence`, and read by the notify worker and every app page
+as a **PostgREST computed field** (`select=classes(title,location_label)`).
+
+**TypeScript** `lib/venue-display.ts` no longer resolves anything. It holds only
+the spelling helpers — `venueDisplayName`, `composeLocationLabel`,
+`composeUnitLabel`, `venueNeedsUnit` — for the venue picker and the booking
+preview, which have no class row to read. They mirror `venue_display(venues)`
+and `location_label(classes)`; change one, change the other. Covered by
 `tests/db/venue-label.test.ts` and `lib/venue-display.test.ts`.
+
+`location_maps_url(classes)` gives directions for the message. It uses the
+**private's own pin, not its venue's**, matching what `coach_mark_arrival`
+geofences against — a map pointing elsewhere would send a coach to a spot that
+then fails the arrival check.
 
 ### Read-time vs write-time — the distinction that hid a bug for a day
 
@@ -156,36 +182,36 @@ It also means the six writers had to be fixed in two different ways:
 | At read/sweep time | `offer_cover_session`, `coach_mark_arrival`, `ops_notify_booking_created`, notify worker sweeps | calling `location_label` |
 | At **booking** time | `_create_private_occurrence` (SQL), `lib/admin-ops-calendar.ts` (TS) | resolving *before* writing the body |
 
-The last one is the one that matters most in practice: **~96% of privates are
-booked from `/admin`**, and that path is TypeScript that interpolated
-`input.address` straight into the body. It now calls the
-`class_location_label` RPC rather than re-deriving the label, so the string is
-byte-identical to what every other path produces.
+The last one matters most in practice: **~96% of privates are booked from
+`/admin`**. That path had a `venue_id` in hand from its own dropdown and threw
+it away, copying the venue's address onto the private instead — which is what
+forced a resolver to exist at all. It now passes `venueId` through, and reads
+`class_location_label` / `class_location_maps_url` rather than re-deriving
+anything, so its string is byte-identical to every other path's.
 
-### Three things not to undo
+### The series carries the location too
 
-- **No distance tier.** "Nearest venue within 150m" was removed, not
-  reimplemented: **APR Tower 1 and APR Villas are 36 metres apart**, and four
-  APR venues sit within 1.3km. The academy runs several distinct venues inside
-  one complex, so any radius wide enough to catch a villa names the wrong
-  building.
-- **Tier 4 sits above tier 5 deliberately.** Putting locality above the street
-  improved 34 labels and regressed 6 — "Prestige Mayberry Road 34" became
-  "Chansandra". Ordered as above, all 40 changed labels improve and none regress.
-- **Addresses are split on U+060C ARABIC COMMA as well as `,`.** A third of the
-  book is geocoded with it; an ASCII-only split returns the entire address as
-  one "segment", which is how `"Phase 3 ، 560035 Bengaluru، India"` passed for a
-  place name.
+`private_booking_series` stores `venue_id` / `venue_label` / `unit_label`
+(migration `0054`). Without it, the nightly `generate_private_sessions` would
+re-derive a location for every week it materialises, so a correction made on a
+series would silently revert on the next roll of the horizon.
 
-Mapbox models a gated complex as a **locality** — reverse-geocoding all four APR
-pins returns `locality: "Adarsh Palm Retreat"` for the three inside it. It cannot
-tell the villas from the towers, but for a label it does not need to: that is the
-name the coach and the parent use, and the flat/tower detail is on the session
-page. This is why no extra wizard step was added.
+### Four things not to undo
 
-Do **not** auto-create a venue for a private location: 35 of the 167 privates are
-genuine client homes, and venues feed the admin manager and the public
-`/locations` page.
+- **No distance tier in the resolver.** "Nearest venue within 150m" is gone and
+  must not come back: **APR Tower 1 and APR Villas are 36 metres apart**. The
+  booking wizard *does* offer venues within 500m — but as tappable suggestions a
+  human confirms, never as a silent guess.
+- **The venue unit is required when a name repeats.** See above: it's what stops
+  "Clubhouse" naming two different, mutually inaccessible places.
+- **Don't fold the maps URL into the location string.** The two templates that
+  carry a location interpolate it mid-sentence, so a URL there is followed by a
+  full stop that some clients swallow into the link. It rides as its own
+  trailing `{{4}}`, and can't be a button — both are `twilio/quick-reply`
+  templates, where a URL action can't sit alongside Yes/No buttons.
+- **Don't auto-create a venue per private location.** Venues feed the admin
+  manager and the public `/locations` page, so a client's own home must not
+  become one. A place is promoted to a venue by a human, deliberately.
 
 ---
 

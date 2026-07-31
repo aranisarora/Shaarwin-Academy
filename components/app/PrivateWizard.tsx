@@ -17,6 +17,12 @@ import { AddressForm, isAddressComplete } from "@/components/app/AddressForm";
 import { SlotPicker } from "@/components/app/SlotPicker";
 import { WhatsAppSayHi } from "@/components/app/WhatsAppSayHi";
 import { fromDetails, type StructuredAddress } from "@/lib/address";
+import { haversineMeters } from "@/lib/geo";
+import {
+  composeLocationLabel,
+  composeUnitLabel,
+  venueDisplayName,
+} from "@/lib/venue-display";
 import {
   checkCoverage,
   recordAreaInterest,
@@ -28,6 +34,15 @@ import {
 } from "@/app/app/book/private/actions";
 
 type Coach = { id: string; name: string; lat: number; lng: number };
+
+/** A place the academy already coaches at — offered by name near the pin. */
+export type WizardVenue = {
+  id: string;
+  name: string;
+  unit: string | null;
+  lat: number;
+  lng: number;
+};
 
 export type PrivatePlanLimits = {
   /** Weekly cap; null = legacy minutes-only (one-off booking). */
@@ -48,6 +63,7 @@ const weeklyKey = wallWeekdayTime;
 export function PrivateWizard({
   players,
   coaches,
+  venues,
   minutesBalance,
   defaultAddress,
   defaultAddressDetails = null,
@@ -56,6 +72,7 @@ export function PrivateWizard({
 }: {
   players: { id: string; full_name: string }[];
   coaches: Coach[];
+  venues: WizardVenue[];
   minutesBalance: number;
   defaultAddress: string | null;
   /** The saved structured default address (profiles.address_details), if any —
@@ -108,6 +125,16 @@ export function PrivateWizard({
   const [prefetch, setPrefetch] = useState<{ key: string; slots: Slot[] } | null>(
     null
   );
+
+  // Which place this is. A coach is told the venue plus the unit inside it, and
+  // nothing downstream re-derives either — so it's answered once, here.
+  //
+  // `venueId` is preferred over a typed name: renaming the venue later corrects
+  // every message it has ever appeared in. Null means "somewhere else", and
+  // then `venueLabel` carries what the client calls it.
+  const [venueId, setVenueId] = useState<string | null>(null);
+  const [venueLabel, setVenueLabel] = useState("");
+  const [venuePicked, setVenuePicked] = useState(false);
 
   const [error, setError] = useState<string | null>(null);
   const [parked, setParked] = useState(false);
@@ -213,6 +240,30 @@ export function PrivateWizard({
 
   const sortedSelected = [...selected].sort();
 
+  // Venues close enough to the pin to be worth offering by name. Offered, not
+  // assumed: two APR venues sit 36 metres apart, so no radius can pick between
+  // them — but the person standing there can, in one tap.
+  const nearbyVenues = pin
+    ? venues
+        .map((v) => ({ v, m: haversineMeters(pin.lat, pin.lng, v.lat, v.lng) }))
+        .filter(({ m }) => m <= 500)
+        .sort((a, b) => a.m - b.m)
+        .slice(0, 4)
+        .map(({ v }) => v)
+    : [];
+
+  // What to call somewhere that isn't one of ours — the client's own words
+  // first (they typed the complex name), then the geocoder's.
+  const suggestedLabel =
+    addr.building?.trim() || addr.name?.trim() || addr.locality?.trim() || "";
+
+  const unitLabel = composeUnitLabel(addr.floorTower, addr.flat);
+  const chosenVenue = venues.find((v) => v.id === venueId) ?? null;
+  const locationPreview = composeLocationLabel(
+    chosenVenue ? venueDisplayName(chosenVenue) : venueLabel || suggestedLabel,
+    unitLabel
+  );
+
   function confirm() {
     if (!pin || selected.length === 0 || !addr.formatted) return;
     setError(null);
@@ -226,6 +277,9 @@ export function PrivateWizard({
       hasTable,
       accessNotes: addr.accessNotes ?? "",
       details: addr,
+      venueId,
+      venueLabel: venueId ? null : venueLabel.trim() || suggestedLabel || null,
+      unitLabel,
       preferredCoach: preferredCoach || undefined,
     };
     startTransition(async () => {
@@ -265,7 +319,11 @@ export function PrivateWizard({
     ? "Search your address or use your current location to drop a pin."
     : !addr.flat?.trim()
       ? "Add your flat / unit number."
-      : null;
+      : !venuePicked
+        ? "Tell us what this place is called."
+        : !venueId && !(venueLabel.trim() || suggestedLabel)
+          ? "Name the building or complex, so your coach knows where to head."
+          : null;
 
   // A compact one-line summary for the returning-client saved-address card,
   // e.g. "Home — Prestige Lakeside, flat 402".
@@ -337,6 +395,69 @@ export function PrivateWizard({
               </span>
               <span className="shrink-0 text-sm font-medium text-ember">Change</span>
             </button>
+          )}
+
+          {pin && (
+            <div className="rounded-[12px] border border-line bg-surface-2 p-4">
+              <p className="font-medium">What&apos;s this place called?</p>
+              <p className="mt-1 text-sm text-fg-2">
+                It&apos;s what your coach is told, so they head to the right
+                gate.
+              </p>
+
+              <div className="mt-3 flex flex-wrap gap-2">
+                {nearbyVenues.map((v) => (
+                  <button
+                    key={v.id}
+                    type="button"
+                    onClick={() => {
+                      setVenueId(v.id);
+                      setVenuePicked(true);
+                    }}
+                    className={`min-h-11 rounded-[8px] border px-3 text-sm font-medium ${
+                      venueId === v.id
+                        ? "border-ember bg-ember text-ivory"
+                        : "border-line hover:border-ember"
+                    }`}
+                  >
+                    {venueDisplayName(v)}
+                  </button>
+                ))}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setVenueId(null);
+                    setVenuePicked(true);
+                    if (!venueLabel) setVenueLabel(suggestedLabel);
+                  }}
+                  className={`min-h-11 rounded-[8px] border px-3 text-sm font-medium ${
+                    venuePicked && venueId === null
+                      ? "border-ember bg-ember text-ivory"
+                      : "border-line hover:border-ember"
+                  }`}
+                >
+                  {nearbyVenues.length > 0 ? "Somewhere else" : "Name it"}
+                </button>
+              </div>
+
+              {venuePicked && venueId === null && (
+                <div className="mt-3">
+                  <Input
+                    label="Building or complex"
+                    value={venueLabel}
+                    onChange={(e) => setVenueLabel(e.target.value)}
+                    placeholder="Prestige Mayberry"
+                  />
+                </div>
+              )}
+
+              {locationPreview && venuePicked && (
+                <p className="mt-3 text-sm text-fg-2">
+                  Your coach will see{" "}
+                  <span className="font-medium text-fg">{locationPreview}</span>.
+                </p>
+              )}
+            </div>
           )}
 
           {covered === false && (

@@ -319,6 +319,9 @@ create table public.private_booking_series (
   has_table boolean default true not null,
   access_notes text,
   address_details jsonb,
+  venue_id uuid,
+  venue_label text,
+  unit_label text,
   active boolean default true not null,
   created_at timestamptz default now() not null,
   cancelled_at timestamptz
@@ -334,7 +337,9 @@ create table public.private_class_details (
   lng float8 not null,
   has_table boolean default true not null,
   access_notes text,
-  address_details jsonb
+  address_details jsonb,
+  venue_label text,
+  unit_label text
 );
 
 create table public.private_credit_ledger (
@@ -443,6 +448,7 @@ create table public.skill_ratings (
 create table public.venues (
   id uuid default gen_random_uuid() not null,
   name text not null,
+  unit text,
   address text not null,
   postcode text not null,
   lat float8 not null,
@@ -570,6 +576,7 @@ ALTER TABLE public.private_booking_series ADD CONSTRAINT private_booking_series_
 ALTER TABLE public.private_booking_series ADD CONSTRAINT private_booking_series_player_id_fkey FOREIGN KEY (player_id) REFERENCES players(id) ON DELETE CASCADE;
 ALTER TABLE public.private_booking_series ADD CONSTRAINT private_booking_series_preferred_coach_fkey FOREIGN KEY (preferred_coach) REFERENCES coaches(id) ON DELETE SET NULL;
 ALTER TABLE public.private_booking_series ADD CONSTRAINT private_booking_series_weekday_check CHECK (((weekday >= 1) AND (weekday <= 7)));
+ALTER TABLE public.private_booking_series ADD CONSTRAINT private_booking_series_venue_id_fkey FOREIGN KEY (venue_id) REFERENCES venues(id) ON DELETE SET NULL;
 ALTER TABLE public.private_class_details ADD CONSTRAINT private_class_details_pkey PRIMARY KEY (class_id);
 ALTER TABLE public.private_class_details ADD CONSTRAINT private_class_details_class_id_fkey FOREIGN KEY (class_id) REFERENCES classes(id) ON DELETE CASCADE;
 ALTER TABLE public.private_class_details ADD CONSTRAINT private_class_details_client_id_fkey FOREIGN KEY (client_id) REFERENCES profiles(id) ON DELETE CASCADE;
@@ -816,7 +823,7 @@ begin
 end;
 $function$;
 
-CREATE OR REPLACE FUNCTION public._create_private_occurrence(p_client uuid, p_player uuid, p_start timestamp with time zone, p_duration integer, p_address text, p_postcode text, p_lat double precision, p_lng double precision, p_has_table boolean, p_access_notes text, p_address_details jsonb, p_preferred uuid DEFAULT NULL::uuid, p_series uuid DEFAULT NULL::uuid, p_notify boolean DEFAULT true)
+CREATE OR REPLACE FUNCTION public._create_private_occurrence(p_client uuid, p_player uuid, p_start timestamp with time zone, p_duration integer, p_address text, p_postcode text, p_lat double precision, p_lng double precision, p_has_table boolean, p_access_notes text, p_address_details jsonb, p_preferred uuid DEFAULT NULL::uuid, p_series uuid DEFAULT NULL::uuid, p_notify boolean DEFAULT true, p_venue_id uuid DEFAULT NULL::uuid, p_venue_label text DEFAULT NULL::text, p_unit_label text DEFAULT NULL::text)
  RETURNS uuid
  LANGUAGE plpgsql
  SECURITY DEFINER
@@ -827,6 +834,7 @@ declare
   v_session_id uuid;
   v_booking bookings%rowtype;
   v_coach uuid;
+  v_where text;
 begin
   -- Minutes are the entitlement: they arrive from a private plan's monthly
   -- grant or a one-off purchase. No subscription requirement.
@@ -836,13 +844,15 @@ begin
 
   perform _assert_private_plan_allows(p_client, p_start, p_duration);
 
-  insert into classes (class_type, title, skill_level, capacity, duration_minutes, starts_on, created_by)
-  values ('private', 'Private session', 'beginner', 1, p_duration, (p_start at time zone 'Asia/Kolkata')::date, p_client)
+  insert into classes (class_type, title, skill_level, capacity, duration_minutes, starts_on, created_by, venue_id)
+  values ('private', 'Private session', 'beginner', 1, p_duration, (p_start at time zone 'Asia/Kolkata')::date, p_client, p_venue_id)
   returning id into v_class_id;
 
-  insert into private_class_details (class_id, client_id, player_id, address, postcode, lat, lng, has_table, access_notes, address_details)
+  insert into private_class_details (class_id, client_id, player_id, address, postcode, lat, lng, has_table, access_notes, address_details, venue_label, unit_label)
   values (v_class_id, p_client, p_player, p_address, coalesce(p_postcode, ''), p_lat, p_lng,
-          coalesce(p_has_table, true), p_access_notes, p_address_details);
+          coalesce(p_has_table, true), p_access_notes, p_address_details,
+          case when p_venue_id is null then nullif(btrim(coalesce(p_venue_label, '')), '') end,
+          nullif(btrim(coalesce(p_unit_label, '')), ''));
 
   insert into class_sessions (class_id, starts_at, ends_at)
   values (v_class_id, p_start, p_start + make_interval(mins => p_duration))
@@ -877,15 +887,21 @@ begin
         'Coach confirmed for ' || to_char(p_start at time zone 'Asia/Kolkata', 'Dy DD Mon FMHH12:MI am') || '.',
         jsonb_build_object('session_id', v_session_id, 'coach_id', v_coach, 'url', '/app/schedule'));
     end if;
-    -- The venue's name, not the geocoded address behind it. Falls back to the
-    -- raw address so a location the resolver can't name still tells the coach
-    -- where to go. location_str mirrors the other coach-facing types.
+
+    -- Venue plus the unit inside it, from the stored columns above — the same
+    -- string location_label() hands the read-time paths, so the booking message
+    -- and the reminder three hours before it name the same place. Falls back to
+    -- the raw address so an unlabelled location still tells the coach where to
+    -- go. A notification body is frozen at INSERT, which is why this composes
+    -- here rather than relying on a read-time fix.
+    v_where := coalesce(class_location_label(v_class_id), p_address);
+
     insert into notifications (user_id, type, title, body, data)
     values (v_coach, 'new_private_session', 'New private session',
-      to_char(p_start at time zone 'Asia/Kolkata', 'Dy DD Mon FMHH12:MI am')
-        || ' — ' || coalesce(class_location_label(v_class_id), p_address),
+      to_char(p_start at time zone 'Asia/Kolkata', 'Dy DD Mon FMHH12:MI am') || ' — ' || v_where,
       jsonb_build_object('session_id', v_session_id,
-        'location_str', coalesce(class_location_label(v_class_id), p_address),
+        'location_str', v_where,
+        'maps_url', class_location_maps_url(v_class_id),
         'time_str', to_char(p_start at time zone 'Asia/Kolkata', 'Dy DD Mon FMHH12:MI am'),
         'url', '/coach/session/' || v_session_id));
   else
@@ -1424,26 +1440,39 @@ begin
 end;
 $function$;
 
-CREATE OR REPLACE FUNCTION public.address_head(p_address text)
+
+
+
+CREATE OR REPLACE FUNCTION public.venue_display(v venues)
  RETURNS text
  LANGUAGE sql
- IMMUTABLE
+ STABLE
  SET search_path TO 'public'
 AS $function$
-  select nullif(btrim(split_part(replace(coalesce(p_address, ''), U&'\060C', ','), ',', 1)), '');
+  select btrim(v.name) || coalesce(' ' || nullif(btrim(v.unit), ''), '');
 $function$;
 
-CREATE OR REPLACE FUNCTION public.is_informative_place(p_segment text, p_city text)
- RETURNS boolean
+CREATE OR REPLACE FUNCTION public.location_venue(c classes)
+ RETURNS text
  LANGUAGE sql
- IMMUTABLE
+ STABLE
  SET search_path TO 'public'
 AS $function$
-  select p_segment is not null
-     and p_segment ~ '[A-Za-z]'
-     and lower(p_segment) not in ('india', 'bengaluru', 'bangalore', 'karnataka')
-     and lower(p_segment) is distinct from lower(coalesce(p_city, ''))
-     and p_segment !~* '^(phase|lane|block|tower|wing|sector|sy\.?\s*no|survey\s*no)[\s.:-]*[0-9a-z/-]{0,6}$';
+  select coalesce(
+    (select venue_display(v) from venues v where v.id = c.venue_id),
+    (select nullif(btrim(pcd.venue_label), '')
+       from private_class_details pcd where pcd.class_id = c.id)
+  );
+$function$;
+
+CREATE OR REPLACE FUNCTION public.location_unit(c classes)
+ RETURNS text
+ LANGUAGE sql
+ STABLE
+ SET search_path TO 'public'
+AS $function$
+  select nullif(btrim(pcd.unit_label), '')
+    from private_class_details pcd where pcd.class_id = c.id;
 $function$;
 
 CREATE OR REPLACE FUNCTION public.location_label(c classes)
@@ -1452,28 +1481,30 @@ CREATE OR REPLACE FUNCTION public.location_label(c classes)
  STABLE
  SET search_path TO 'public'
 AS $function$
-  select coalesce(
-    (select v.name from venues v where v.id = c.venue_id),
-    (select v.name
-       from private_class_details pcd
-       join venues v
-         on lower(regexp_replace(btrim(v.address), '\s+', ' ', 'g'))
-          = lower(regexp_replace(btrim(pcd.address), '\s+', ' ', 'g'))
-      where pcd.class_id = c.id
-        and btrim(coalesce(pcd.address, '')) <> ''
-      order by v.active desc, v.name
-      limit 1),
-    (select coalesce(
-              nullif(btrim(pcd.address_details->>'name'), ''),
-              case when is_informative_place(address_head(pcd.address),
-                                             pcd.address_details->>'city')
-                   then address_head(pcd.address) end,
-              nullif(btrim(pcd.address_details->>'locality'), ''),
-              address_head(pcd.address),
-              nullif(btrim(pcd.address), '')
-            )
-       from private_class_details pcd where pcd.class_id = c.id)
+  select location_venue(c) || coalesce(', ' || location_unit(c), '');
+$function$;
+
+CREATE OR REPLACE FUNCTION public.location_maps_url(c classes)
+ RETURNS text
+ LANGUAGE sql
+ STABLE
+ SET search_path TO 'public'
+AS $function$
+  select 'https://maps.google.com/?q=' || coalesce(
+    (select pcd.lat::text || ',' || pcd.lng::text
+       from private_class_details pcd where pcd.class_id = c.id),
+    (select v.lat::text || ',' || v.lng::text
+       from venues v where v.id = c.venue_id)
   );
+$function$;
+
+CREATE OR REPLACE FUNCTION public.class_location_maps_url(p_class uuid)
+ RETURNS text
+ LANGUAGE sql
+ STABLE
+ SET search_path TO 'public'
+AS $function$
+  select location_maps_url(c) from classes c where c.id = p_class;
 $function$;
 
 CREATE OR REPLACE FUNCTION public.class_location_label(p_class uuid)
@@ -1613,6 +1644,9 @@ declare
   v_duration int := (payload->>'duration_minutes')::int;
   v_preferred uuid := nullif(payload->>'preferred_coach', '')::uuid;
   v_weeks int := least(coalesce((payload->>'weeks')::int, 4), 8);
+  v_venue uuid := nullif(payload->>'venue_id', '')::uuid;
+  v_venue_label text := payload->>'venue_label';
+  v_unit_label text := payload->>'unit_label';
   v_spw int; v_mins int;
   v_active_series int;
   v_slots timestamptz[];
@@ -1658,7 +1692,8 @@ begin
 
     insert into private_booking_series (
       client_id, player_id, preferred_coach, weekday, start_time, duration_minutes,
-      address, postcode, lat, lng, has_table, access_notes, address_details)
+      address, postcode, lat, lng, has_table, access_notes, address_details,
+      venue_id, venue_label, unit_label)
     values (
       v_client, v_player, v_preferred,
       extract(isodow from (v_first at time zone 'Asia/Kolkata'))::int,
@@ -1667,7 +1702,10 @@ begin
       payload->>'address', coalesce(payload->>'postcode', ''),
       (payload->>'lat')::float8, (payload->>'lng')::float8,
       coalesce((payload->>'has_table')::boolean, true),
-      payload->>'access_notes', payload->'address_details')
+      payload->>'access_notes', payload->'address_details',
+      v_venue,
+      case when v_venue is null then nullif(btrim(coalesce(v_venue_label, '')), '') end,
+      nullif(btrim(coalesce(v_unit_label, '')), ''))
     returning id into v_series;
     v_series_ids := v_series_ids || v_series;
 
@@ -1680,7 +1718,8 @@ begin
           (payload->>'lat')::float8, (payload->>'lng')::float8,
           coalesce((payload->>'has_table')::boolean, true),
           payload->>'access_notes', payload->'address_details',
-          v_preferred, v_series, i = 0);
+          v_preferred, v_series, i = 0,
+          v_venue, v_venue_label, v_unit_label);
         v_booked := v_booked + 1;
       exception when others then
         -- The first week must book (that's the promise the client tapped);
@@ -1931,7 +1970,8 @@ begin
               r.client_id, r.player_id, v_start, r.duration_minutes,
               r.address, r.postcode, r.lat, r.lng, r.has_table,
               r.access_notes, r.address_details,
-              r.preferred_coach, r.id, false);
+              r.preferred_coach, r.id, false,
+              r.venue_id, r.venue_label, r.unit_label);
             v_count := v_count + 1;
           exception when others then
             if sqlerrm = 'insufficient_minutes'
@@ -2894,7 +2934,9 @@ begin
     (payload->>'lat')::float8, (payload->>'lng')::float8,
     coalesce((payload->>'has_table')::boolean, true),
     payload->>'access_notes', payload->'address_details',
-    v_preferred, nullif(payload->>'series_id', '')::uuid, true);
+    v_preferred, nullif(payload->>'series_id', '')::uuid, true,
+    nullif(payload->>'venue_id', '')::uuid,
+    payload->>'venue_label', payload->>'unit_label');
 end;
 $function$;
 

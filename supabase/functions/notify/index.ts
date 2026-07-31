@@ -501,22 +501,54 @@ async function alertInvalidCoach(coachId: string, sessionId: string) {
 }
 
 /**
- * Class title + location strings for a swept session. `location_label` is a
- * PostgREST computed field backed by public.location_label(classes) — the same
- * resolver offer_cover/coach_mark_arrival use, so a private held at a known
- * venue reads "APR Apartments" rather than the geocoded address behind it. The
- * old venues(name) ?? private_class_details(address) fallback lived here and
- * drifted from the SQL callers; keeping one definition in the database is what
- * stops it drifting again.
+ * Class title + location strings for a swept session. `location_label` and
+ * `location_maps_url` are PostgREST computed fields backed by
+ * public.location_label(classes) / public.location_maps_url(classes) — the same
+ * ones offer_cover and coach_mark_arrival read, so every surface names the
+ * place identically. The old venues(name) ?? private_class_details(address)
+ * fallback lived here and drifted from the SQL callers; keeping one definition
+ * in the database is what stops it drifting again.
  */
-const CLASS_LOCATION_SELECT = "title,location_label";
+const CLASS_LOCATION_SELECT = "title,location_label,location_maps_url";
 
-function locationOf(classes: unknown): { title: string; location: string } {
-  const cls = classes as { title?: string; location_label?: string | null } | null;
+function locationOf(classes: unknown): {
+  title: string;
+  location: string;
+  mapsUrl: string | null;
+} {
+  const cls = classes as {
+    title?: string;
+    location_label?: string | null;
+    location_maps_url?: string | null;
+  } | null;
   return {
     title: cls?.title ?? "your class",
     location: cls?.location_label ?? "",
+    mapsUrl: cls?.location_maps_url ?? null,
   };
+}
+
+/**
+ * Directions as their own trailing line. The name is what a coach reads; the
+ * link is the safety net for when it isn't enough — a wrong-gate arrival at a
+ * gated complex costs the whole session.
+ *
+ * Deliberately NOT folded into the location value. The two templates that carry
+ * a location (coach_coming_check, coach_arrival_check) interpolate it
+ * mid-sentence, so a URL there would be followed by a full stop — which some
+ * clients swallow into the link — and reads badly besides. It also can't be a
+ * template BUTTON: both are `twilio/quick-reply` templates, and a URL action
+ * can't sit alongside their Yes/No buttons.
+ *
+ * So it goes in as its own trailing variable ({{4}}, see
+ * scripts/whatsapp/provision-templates.mjs) and, for the plain-text and in-app
+ * paths, its own line. Templates still on the 3-variable version simply ignore
+ * the extra value, so this degrades to today's behaviour until the v2
+ * templates are approved and their SIDs swapped in.
+ */
+function mapsLine(mapsUrl: string | null): string {
+  return mapsUrl ? `
+Directions: ${mapsUrl}` : "";
 }
 
 /**
@@ -543,7 +575,7 @@ async function sweepBeforeClass() {
   for (const s of await withValidCoaches(sessions ?? [])) {
     if (await alreadyFired("coach_before_class", s.id, s.coach_id)) continue;
 
-    const { title, location } = locationOf(s.classes);
+    const { title, location, mapsUrl } = locationOf(s.classes);
     const loc = location ? ` at ${location}` : "";
     const time = fmtClock(s.starts_at);
     const firstName = await firstNameOf(s.coach_id);
@@ -552,7 +584,7 @@ async function sweepBeforeClass() {
       user_id: s.coach_id,
       type: "coach_before_class",
       title: "Class reminder",
-      body: `Hi ${firstName}! ${title} starts at ${time}${loc}. Are you coming? Reply "coming" or "can't make it".`,
+      body: `Hi ${firstName}! ${title} starts at ${time}${loc}. Are you coming? Reply "coming" or "can't make it".${mapsLine(mapsUrl)}`,
       data: {
         session_id: s.id,
         kind: "before_class",
@@ -560,6 +592,7 @@ async function sweepBeforeClass() {
         class_title: title,
         time_str: time,
         location_str: loc,
+        maps_url: mapsUrl,
         url: `/coach/session/${s.id}`,
       },
     });
@@ -632,7 +665,7 @@ async function sweepArrivalCheck() {
   for (const s of await withValidCoaches(sessions ?? [])) {
     if (await alreadyFired("coach_arrival_check", s.id, s.coach_id)) continue;
 
-    const { title, location } = locationOf(s.classes);
+    const { title, location, mapsUrl } = locationOf(s.classes);
     const where = location || "the venue";
     const time = fmtClock(s.starts_at);
     const firstName = await firstNameOf(s.coach_id);
@@ -641,13 +674,14 @@ async function sweepArrivalCheck() {
       user_id: s.coach_id,
       type: "coach_arrival_check",
       title: "Have you reached?",
-      body: `${title} is starting. Have you reached ${where}? Reply "arrived" or "running late".`,
+      body: `${title} is starting. Have you reached ${where}? Reply "arrived" or "running late".${mapsLine(mapsUrl)}`,
       data: {
         session_id: s.id,
         first_name: firstName,
         class_title: title,
         time_str: time,
         location_str: where,
+        maps_url: mapsUrl,
         url: `/coach/session/${s.id}`,
       },
     });
@@ -1225,6 +1259,10 @@ function interactiveContentFor(
         "1": firstName,
         "2": String(d.class_title ?? "your class"),
         "3": `${String(d.time_str ?? "")}${String(d.location_str ?? "")}`.trim() || "soon",
+        // Trailing directions link. Ignored by the v1 templates (3 variables),
+        // rendered by v2 — see mapsLine() above for why it isn't folded into
+        // {{3}} or added as a button.
+        "4": String(d.maps_url ?? ""),
       }),
     };
   }
@@ -1236,6 +1274,7 @@ function interactiveContentFor(
         "1": firstName,
         "2": String(d.class_title ?? "your class"),
         "3": String(d.location_str ?? "the venue"),
+        "4": String(d.maps_url ?? ""),
       }),
     };
   }

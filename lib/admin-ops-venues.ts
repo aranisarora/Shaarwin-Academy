@@ -8,6 +8,8 @@ import type { StructuredAddress } from "@/lib/address";
 export type VenueInput = {
   id?: string;
   name: string;
+  /** Which part of a complex this is — "Villas", "Apartments", "Lakefront". */
+  unit?: string | null;
   address: string;
   postcode: string;
   lat: number;
@@ -23,8 +25,30 @@ export async function saveVenueCore(
   if (!input.name.trim() || !input.address.trim()) {
     return { ok: false, error: "Venue needs a name and address." };
   }
+
+  // Two venues sharing a name must each say which part of the complex they are.
+  // Within one complex the parts can be mutually inaccessible — a resident of
+  // the villas can't get into the towers' clubhouse — so "Adarsh Palm Retreat,
+  // Clubhouse" would send a coach to a gate that won't open. Requiring the unit
+  // here is what makes an ambiguous label unconstructible downstream.
+  if (!input.unit?.trim()) {
+    const { data: clash } = await supabase
+      .from("venues")
+      .select("id,name,unit")
+      .ilike("name", input.name.trim())
+      .neq("id", input.id ?? "00000000-0000-0000-0000-000000000000")
+      .limit(1);
+    if (clash && clash.length > 0) {
+      return {
+        ok: false,
+        error: `Another venue is already called "${input.name.trim()}". Add which part this one is (Villas, Apartments, Clubhouse…) so coaches know which entrance to use.`,
+      };
+    }
+  }
+
   const row = {
     name: input.name,
+    unit: input.unit?.trim() || null,
     address: input.address,
     postcode: input.postcode,
     lat: input.lat,

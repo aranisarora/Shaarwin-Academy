@@ -22,12 +22,17 @@ async function Header({ searchParams }: { searchParams: SearchParams }) {
 async function Wizard({ searchParams }: { searchParams: SearchParams }) {
   const { onboarding } = await searchParams;
   const { supabase, user, profile } = await requireUser("/app/book/private");
-  const [summary, playersRes, coachesRes] = await Promise.all([
+  const [summary, playersRes, coachesRes, venuesRes] = await Promise.all([
     getSubscriptionSummary(supabase, user.id),
     supabase.from("players").select("id,full_name").eq("client_id", user.id),
     // Clients can't read other people's `profiles` rows, so the coach name has
     // to come from the definer-rights roster function, not a join.
     supabase.rpc("public_coach_roster"),
+    // Places we already coach at, offered by name when the client's pin lands
+    // near one. Active venues are world-readable (RLS), and naming one is
+    // strictly better than a typed guess: it sets venue_id, so a later rename
+    // corrects every message rather than leaving frozen copies.
+    supabase.from("venues").select("id,name,unit,lat,lng").eq("active", true),
   ]);
 
   const coaches = ((coachesRes.data ?? []) as CoachRosterRow[]).map((c) => ({
@@ -48,6 +53,7 @@ async function Wizard({ searchParams }: { searchParams: SearchParams }) {
     <PrivateWizard
       players={playersRes.data ?? []}
       coaches={coaches}
+      venues={venuesRes.data ?? []}
       minutesBalance={summary.minutesBalance}
       defaultAddress={profile.default_address}
       defaultAddressDetails={profile.address_details}

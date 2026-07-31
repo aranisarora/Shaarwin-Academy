@@ -337,21 +337,37 @@ const TEMPLATES = [
   {
     // Coach: "Are you coming?" at T-60 — one question, two buttons. Replaces the
     // three-button coach_class_reminder in the coach flow (arrival-flow-plan).
+    // v2 adds {{4}}, a directions link, as its own trailing sentence.
+    //
+    // Not folded into {{3}}: that variable lands mid-sentence, so a URL there
+    // is followed by a full stop, which some clients swallow into the link. Not
+    // a button either — this is a `twilio/quick-reply` template, and a URL
+    // action can't sit alongside the Yes/No buttons.
+    //
+    // v1 (coach_coming_check) stays the live SID until v2 is approved. The
+    // worker already sends "4", and a 3-variable template ignores the extra, so
+    // nothing breaks in between — swap TWILIO_WA_COACH_COMING_SID after
+    // approval.
     key: "TWILIO_WA_COACH_COMING_SID",
-    approvalName: "coach_coming_check",
+    approvalName: "coach_coming_check_v2",
     def: {
-      friendly_name: "coach_coming_check",
+      friendly_name: "coach_coming_check_v2",
       language: "en",
       // {{3}} folds time + venue into one value ("6:30 pm at La Plazza").
-      variables: { 1: "Augustine", 2: "Beginners Batch", 3: "6:30 pm at La Plazza" },
+      variables: {
+        1: "Augustine",
+        2: "Beginners Batch",
+        3: "6:30 pm at Adarsh Palm Retreat Villas, Clubhouse",
+        4: "https://maps.google.com/?q=12.921,77.688",
+      },
       types: {
         // Meta rejects a body with too many variables for its length
         // (subCode 2388293) — the terse "Hi {{1}}! {{2}} starts at {{3}}. Are
-        // you coming?" was refused. Keep enough literal text around the three
+        // you coming?" was refused. Keep enough literal text around the four
         // variables to clear that ratio.
         "twilio/quick-reply": {
           body:
-            "Hi {{1}}, this is a quick check from Sharwin Table Tennis Academy about your upcoming session. Your class {{2}} is scheduled to start at {{3}}. Please let us know whether you are coming, so we can arrange cover in good time if you cannot.",
+            "Hi {{1}}, this is a quick check from Sharwin Table Tennis Academy about your upcoming session. Your class {{2}} is scheduled to start at {{3}}. Please let us know whether you are coming, so we can arrange cover in good time if you cannot. Directions to the venue are here: {{4}} — see you at the table.",
           actions: [
             { title: "Yes, I'm coming", id: "coach_confirm" },
             { title: "Can't make it", id: "coach_cant" },
@@ -359,7 +375,7 @@ const TEMPLATES = [
         },
         "twilio/text": {
           body:
-            'Hi {{1}}, a quick check about your upcoming session. Your class {{2}} is scheduled to start at {{3}}. Reply "coming" if you are on your way, or "can\'t make it" so we can arrange cover.',
+            'Hi {{1}}, a quick check about your upcoming session. Your class {{2}} is scheduled to start at {{3}}. Reply "coming" if you are on your way, or "can\'t make it" so we can arrange cover. Directions: {{4}} — thank you.',
         },
       },
     },
@@ -367,18 +383,27 @@ const TEMPLATES = [
   {
     // Coach: "Have you reached?" at start time — asked only if arrival is still
     // missing. I've arrived / Running late.
+    // v2 adds the same trailing {{4}} directions link as coach_coming_check_v2,
+    // and matters most here: this fires at start time, so a coach standing at
+    // the wrong gate of a gated complex has minutes, not hours, to fix it.
+    // Same rollout — v1 stays live until v2 is approved.
     key: "TWILIO_WA_COACH_ARRIVAL_SID",
-    approvalName: "coach_arrival_check",
+    approvalName: "coach_arrival_check_v2",
     def: {
-      friendly_name: "coach_arrival_check",
+      friendly_name: "coach_arrival_check_v2",
       language: "en",
-      variables: { 1: "Augustine", 2: "Beginners Batch", 3: "La Plazza" },
+      variables: {
+        1: "Augustine",
+        2: "Beginners Batch",
+        3: "Adarsh Palm Retreat Villas, Clubhouse",
+        4: "https://maps.google.com/?q=12.921,77.688",
+      },
       types: {
         // Lengthened for the same Meta variables-to-length rule as
-        // coach_coming_check above.
+        // coach_coming_check_v2 above.
         "twilio/quick-reply": {
           body:
-            "Hi {{1}}, your session at Sharwin Table Tennis Academy is about to begin. The class {{2}} is starting now, and we would like to confirm that you have reached {{3}}. Please let us know so we can keep the parents updated.",
+            "Hi {{1}}, your session at Sharwin Table Tennis Academy is about to begin. The class {{2}} is starting now, and we would like to confirm that you have reached {{3}}. Please let us know so we can keep the parents updated. If you need directions, they are here: {{4}} — thank you.",
           actions: [
             { title: "I've arrived", id: "coach_arrived" },
             { title: "Running late", id: "coach_late" },
@@ -386,7 +411,7 @@ const TEMPLATES = [
         },
         "twilio/text": {
           body:
-            'Hi {{1}}, your session is about to begin. The class {{2}} is starting now — have you reached {{3}}? Reply "arrived" or "running late" so we can keep the parents updated.',
+            'Hi {{1}}, your session is about to begin. The class {{2}} is starting now — have you reached {{3}}? Reply "arrived" or "running late" so we can keep the parents updated. Directions: {{4}} — thank you.',
         },
       },
     },

@@ -290,6 +290,10 @@ export async function createPrivateSession(opts: {
   hasTable?: boolean;
   locationName?: string;
   fullName?: string;
+  /** Attach to a saved venue, the way the booking picker does. */
+  venueId?: string;
+  /** Where inside the venue — "Clubhouse", "Villa 659". */
+  unitLabel?: string;
 } = {}): Promise<CreatedPrivateSession> {
   const db = admin();
   const duration = opts.durationMinutes ?? 60;
@@ -323,6 +327,7 @@ export async function createPrivateSession(opts: {
       duration_minutes: duration,
       starts_on: startsOn,
       created_by: client.id,
+      venue_id: opts.venueId ?? null,
     })
     .select("id")
     .single();
@@ -338,6 +343,10 @@ export async function createPrivateSession(opts: {
     lng,
     has_table: opts.hasTable ?? true,
     access_notes: "Gate code 4321; park inside the compound.",
+    // Where the coach is told to go. venue_id wins when set; venue_label covers
+    // somewhere we hold no venue row for. Nothing derives either from `address`.
+    venue_label: opts.venueId ? null : locationName,
+    unit_label: opts.unitLabel ?? null,
     address_details: {
       name: locationName,
       formatted: address,

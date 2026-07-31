@@ -414,6 +414,13 @@ export type Database = {
           timezone: string
           title: string
           venue_id: string | null
+          // Computed fields (PostgREST exposes any function taking a `classes`
+          // row as a selectable column). `supabase gen types` does not emit
+          // these, so they are maintained by hand — see migration 0052.
+          location_label: string | null
+          location_venue: string | null
+          location_unit: string | null
+          location_maps_url: string | null
         }
         Insert: {
           active?: boolean
@@ -1168,6 +1175,9 @@ export type Database = {
           preferred_coach: string | null
           start_time: string
           weekday: number
+          venue_id: string | null
+          venue_label: string | null
+          unit_label: string | null
         }
         Insert: {
           access_notes?: string | null
@@ -1187,6 +1197,9 @@ export type Database = {
           preferred_coach?: string | null
           start_time: string
           weekday: number
+          venue_id?: string | null
+          venue_label?: string | null
+          unit_label?: string | null
         }
         Update: {
           access_notes?: string | null
@@ -1206,6 +1219,9 @@ export type Database = {
           preferred_coach?: string | null
           start_time?: string
           weekday?: number
+          venue_id?: string | null
+          venue_label?: string | null
+          unit_label?: string | null
         }
         Relationships: [
           {
@@ -1250,6 +1266,8 @@ export type Database = {
           lng: number
           player_id: string | null
           postcode: string
+          venue_label: string | null
+          unit_label: string | null
         }
         Insert: {
           access_notes?: string | null
@@ -1262,6 +1280,8 @@ export type Database = {
           lng: number
           player_id?: string | null
           postcode: string
+          venue_label?: string | null
+          unit_label?: string | null
         }
         Update: {
           access_notes?: string | null
@@ -1274,6 +1294,8 @@ export type Database = {
           lng?: number
           player_id?: string | null
           postcode?: string
+          venue_label?: string | null
+          unit_label?: string | null
         }
         Relationships: [
           {
@@ -1842,6 +1864,7 @@ export type Database = {
           lat: number
           lng: number
           name: string
+          unit: string | null
           notes: string | null
           photo_url: string | null
           postcode: string
@@ -1855,6 +1878,7 @@ export type Database = {
           lat: number
           lng: number
           name: string
+          unit?: string | null
           notes?: string | null
           photo_url?: string | null
           postcode: string
@@ -1868,6 +1892,7 @@ export type Database = {
           lat?: number
           lng?: number
           name?: string
+          unit?: string | null
           notes?: string | null
           photo_url?: string | null
           postcode?: string
@@ -2081,7 +2106,6 @@ export type Database = {
         Args: { p_full_name: string; p_grade: number; p_session: string }
         Returns: string
       }
-      address_head: { Args: { p_address: string }; Returns: string }
       assign_coach: {
         Args: { p_preferred?: string; p_session: string }
         Returns: string
@@ -2126,6 +2150,7 @@ export type Database = {
       claim_waitlist_spot: { Args: { p_booking: string }; Returns: string }
       class_is_public_group: { Args: { p_class: string }; Returns: boolean }
       class_location_label: { Args: { p_class: string }; Returns: string }
+      class_location_maps_url: { Args: { p_class: string }; Returns: string }
       client_owns_private_class: { Args: { p_class: string }; Returns: boolean }
       coach_confirm_session: { Args: { p_session: string }; Returns: string }
       coach_filter_failure: {
@@ -2216,12 +2241,24 @@ export type Database = {
       is_approved: { Args: never; Returns: boolean }
       is_coach: { Args: never; Returns: boolean }
       is_founder: { Args: never; Returns: boolean }
-      is_informative_place: {
-        Args: { p_city: string; p_segment: string }
-        Returns: boolean
-      }
       location_label: {
         Args: { c: Database["public"]["Tables"]["classes"]["Row"] }
+        Returns: string
+      }
+      location_venue: {
+        Args: { c: Database["public"]["Tables"]["classes"]["Row"] }
+        Returns: string
+      }
+      location_unit: {
+        Args: { c: Database["public"]["Tables"]["classes"]["Row"] }
+        Returns: string
+      }
+      location_maps_url: {
+        Args: { c: Database["public"]["Tables"]["classes"]["Row"] }
+        Returns: string
+      }
+      venue_display: {
+        Args: { v: Database["public"]["Tables"]["venues"]["Row"] }
         Returns: string
       }
       notify_founders: {

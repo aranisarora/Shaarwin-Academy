@@ -1,19 +1,14 @@
-// One place that turns a private class's raw client address into the short,
-// trustworthy venue/POI name every surface shows ("La Palazzo", not
-// "47/1, Bengaluru…"). Used by the schedule card, the session sheet header and
-// the client-side week refetch so they never disagree.
+// How a location is spelled, everywhere. There is no resolver here any more:
+// the venue and the unit inside it are chosen by a human at booking and stored
+// (migrations 0052-0054), so every surface reads the same two fields rather
+// than each parsing its own answer out of a geocoded address string.
+//
+// The authority is `location_label(classes)` in Postgres, which the notify
+// worker and the app pages both read as a PostgREST computed field. These
+// helpers exist for the two cases that have no class row to read it from:
+// rendering a venue picker, and previewing a label before the session exists.
 
 import { asAddressDetails, type StructuredAddress } from "@/lib/address";
-
-export type VenueLike = {
-  name: string;
-  address: string | null;
-  /** Unused by the resolver since the distance tier was removed (see
-   *  makeVenueResolver). Kept optional so the callers that select coordinates
-   *  for geofencing can pass their rows straight through. */
-  lat?: number | null;
-  lng?: number | null;
-};
 
 /**
  * Narrow the `address_details` jsonb on a venue row selected straight from
@@ -31,101 +26,75 @@ export function withVenueAddress<T extends { address_details: unknown }>(
   }));
 }
 
-export type PrivLocation = {
-  address: string | null;
-  /** As on VenueLike: no longer read, kept so callers can pass rows through. */
-  lat?: number | null;
-  lng?: number | null;
-  /** Raw jsonb — narrowed here; `name`, `locality` and `city` are read. */
-  address_details?: unknown;
-};
+/** The venue fields that decide how it's named. */
+export type VenueNameParts = { name: string; unit?: string | null };
 
-/** Lowercase, collapse whitespace, strip trailing commas/spaces — so a stray
- * space or trailing comma doesn't defeat the exact-address match. */
-function normAddress(s: string): string {
-  return s
-    .toLowerCase()
-    .replace(/\s+/g, " ")
-    .replace(/[,\s]+$/g, "")
-    .trim();
+/**
+ * "Adarsh Palm Retreat" + "Villas" → "Adarsh Palm Retreat Villas".
+ *
+ * The unit reads as a suffix of the name, so it joins with a space. Mirrors
+ * `venue_display(venues)` in SQL — change one, change the other.
+ *
+ * The unit is not decoration. One complex can hold several venues that are
+ * mutually inaccessible: a resident of the villas cannot get into the towers'
+ * clubhouse, or the reverse. A venue that shares its name with another must
+ * therefore carry a unit, which `venueNeedsUnit` below enforces at the point of
+ * editing.
+ */
+export function venueDisplayName(v: VenueNameParts): string {
+  const unit = v.unit?.trim();
+  return unit ? `${v.name.trim()} ${unit}` : v.name.trim();
 }
 
 /**
- * First segment of an address. Splits on the ASCII comma AND U+060C ARABIC
- * COMMA: a third of the addresses on the book are geocoded with the latter, and
- * an ASCII-only split hands back the whole address as one "segment".
+ * Venue plus where inside it — the string a coach reads. Mirrors
+ * `location_label(classes)`.
  */
-export function addressHead(address: string | null | undefined): string | null {
-  const head = (address ?? "").replace(/،/g, ",").split(",")[0].trim();
-  return head || null;
+export function composeLocationLabel(
+  venue: string | null | undefined,
+  unit?: string | null
+): string | null {
+  const v = venue?.trim();
+  if (!v) return null;
+  const u = unit?.trim();
+  return u ? `${v}, ${u}` : v;
 }
 
-/** City/state/country names that are never a useful location label on their own. */
-const NOT_A_PLACE = new Set(["india", "bengaluru", "bangalore", "karnataka"]);
+/**
+ * Turn the fields a client fills in — floor/tower and flat — into the unit
+ * string stored on the session. Mirrors step 4 of migration 0053, so a session
+ * booked today reads the same as one backfilled from the old data.
+ *
+ * A bare number reads as a flat ("171" → "flat 171"); anything else is already
+ * a noun and is left alone ("Villa 659", "clubhouse"). Only the first character
+ * of the whole phrase is capitalised, so "flat" leads as "Flat 171" but reads
+ * as prose mid-phrase ("Tower 1, flat 171").
+ */
+export function composeUnitLabel(
+  floorTower?: string | null,
+  flat?: string | null
+): string | null {
+  const tower = floorTower?.trim();
+  const raw = flat?.trim();
+  const unit = raw ? (/^\d+$/.test(raw) ? `flat ${raw}` : raw) : null;
+  const phrase = [tower, unit].filter(Boolean).join(", ");
+  if (!phrase) return null;
+  return phrase.charAt(0).toUpperCase() + phrase.slice(1);
+}
 
 /**
- * A bare sub-unit designator inside a complex — "Phase 3", "Lane 1", "Sy No
- * 36/3". Real text, but meaningless without the complex name around it, so it
- * loses to the locality.
+ * Would saving this venue leave two venues sharing a name with no unit to tell
+ * them apart? `others` is every OTHER venue (exclude the one being edited).
+ *
+ * This is the guard behind the clubhouse problem: as soon as a complex has more
+ * than one venue, a bare complex name can't be selected, so a session there can
+ * never be labelled with an ambiguous unit like "Clubhouse" alone.
  */
-const SUB_UNIT = /^(phase|lane|block|tower|wing|sector|sy\.?\s*no|survey\s*no)[\s.:-]*[0-9a-z/-]{0,6}$/i;
-
-/** Is this segment worth showing on its own — i.e. somewhere a coach could drive to? */
-export function isInformativePlace(
-  segment: string | null,
-  city: string | null | undefined
+export function venueNeedsUnit(
+  candidate: VenueNameParts,
+  others: VenueNameParts[]
 ): boolean {
-  if (!segment) return false;
-  if (!/[A-Za-z]/.test(segment)) return false; // "51/3"
-  const lower = segment.toLowerCase();
-  if (NOT_A_PLACE.has(lower)) return false;
-  if (city && lower === city.trim().toLowerCase()) return false;
-  return !SUB_UNIT.test(segment);
-}
-
-/**
- * Build a resolver from the known venues. Resolution order, most trustworthy
- * first:
- *   1. exact (normalised) address match against a known venue
- *   2. geocoded POI name (`address_details.name`) — "Windmills of your mind"
- *   3. the first address segment, IF it names somewhere — a home private needs
- *      its street, so "Prestige Mayberry Road 34" beats the neighbourhood
- *   4. `address_details.locality` — the rescue when the address head is junk.
- *      Mapbox models a gated complex as a locality, so this is what turns
- *      "Bengaluru, 560103, India" into "Adarsh Palm Retreat".
- *   5. the address head, then the raw address
- *
- * **There is deliberately no distance tier.** The old "nearest venue within
- * ~150m" step is unsafe on this book: APR Tower 1 and APR Villas are 36 METRES
- * apart and four APR venues sit within 1.3km, so any radius wide enough to
- * catch a villa is wide enough to name the wrong building.
- *
- * `location_label(classes)` in the database mirrors this exactly (migration
- * 0050) — the notify worker reads it as a PostgREST computed field. Change one,
- * change the other.
- */
-export function makeVenueResolver(venues: VenueLike[]) {
-  const byAddress = new Map<string, string>();
-  for (const v of venues) {
-    if (v.address) byAddress.set(normAddress(v.address), v.name);
-  }
-
-  return function resolve(priv: PrivLocation): string | null {
-    const addr = (priv.address ?? "").trim();
-    if (addr) {
-      const exact = byAddress.get(normAddress(addr));
-      if (exact) return exact;
-    }
-    const details = asAddressDetails(priv.address_details);
-    const poi = details?.name?.trim();
-    if (poi) return poi;
-
-    const head = addressHead(addr);
-    if (isInformativePlace(head, details?.city)) return head;
-
-    const locality = details?.locality?.trim();
-    if (locality) return locality;
-
-    return head ?? (addr || null);
-  };
+  if (candidate.unit?.trim()) return false;
+  const name = candidate.name.trim().toLowerCase();
+  return others.some((o) => o.name.trim().toLowerCase() === name);
 }

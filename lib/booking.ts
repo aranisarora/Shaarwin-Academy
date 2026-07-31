@@ -134,7 +134,7 @@ export async function getMyBookings(
   const { data } = await supabase
     .from("bookings")
     .select(
-      "id,status,waitlist_position,series_id,private_series_id,players(id,full_name),class_sessions!inner(id,starts_at,ends_at,coach_id,classes!inner(title,class_type,venues(name,address,postcode,lat,lng,address_details),private_class_details(address,postcode,lat,lng,address_details)))"
+      "id,status,waitlist_position,series_id,private_series_id,players(id,full_name),class_sessions!inner(id,starts_at,ends_at,coach_id,classes!inner(title,class_type,location_label,venues(name,address,postcode,lat,lng,address_details),private_class_details(address,postcode,lat,lng,address_details)))"
     )
     .eq("client_id", clientId)
     .in("status", ["confirmed", "waitlisted", "attended", "no_show"])
@@ -180,7 +180,7 @@ export async function getMyBookings(
         ends_at: s.ends_at,
         classTitle: s.classes.title,
         isPrivate: s.classes.class_type === "private",
-        venueName: s.classes.venues?.name ?? null,
+        venueName: s.classes.location_label ?? null,
         coachName: s.coach_id ? (coachNames.get(s.coach_id) ?? null) : null,
         address,
       },

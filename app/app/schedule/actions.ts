@@ -59,7 +59,7 @@ export async function getRescheduleTargets(
   const { data: sessions } = await supabase
     .from("class_sessions")
     .select(
-      "id,class_id,starts_at,capacity_override,classes!inner(id,title,skill_level,class_type,capacity,venues(name))"
+      "id,class_id,starts_at,capacity_override,classes!inner(id,title,skill_level,class_type,capacity,location_label,venues(name))"
     )
     .eq("status", "scheduled")
     .eq("classes.class_type", "group")
@@ -93,6 +93,7 @@ export async function getRescheduleTargets(
         id: string;
         title: string;
         capacity: number;
+        location_label: string | null;
         venues: { name: string } | null;
       };
       const capacity = s.capacity_override ?? cls.capacity;
@@ -100,7 +101,7 @@ export async function getRescheduleTargets(
         sessionId: s.id,
         starts_at: s.starts_at,
         classTitle: cls.title,
-        venueName: cls.venues?.name ?? null,
+        venueName: cls.location_label ?? null,
         seatsLeft: capacity - (counts.get(s.id) ?? 0),
         sameClass: (s.classes as unknown as { id: string }).id === current.class_id,
       };
