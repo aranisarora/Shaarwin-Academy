@@ -134,12 +134,33 @@ venues, so the raw address is the wrong thing to show.
 6. the address head, then the raw address
 
 Implemented twice and they must agree: **SQL** `location_label(classes)` (used by
-`offer_cover_session`, `coach_mark_arrival`, `ops_notify_booking_created`, and
-read by the notify worker as a **PostgREST computed field**,
-`select=classes(title,location_label)`) and **TypeScript**
+`offer_cover_session`, `coach_mark_arrival`, `ops_notify_booking_created`,
+`_create_private_occurrence`, and read by the notify worker as a **PostgREST
+computed field**, `select=classes(title,location_label)`) and **TypeScript**
 `lib/venue-display.ts` → `makeVenueResolver` (admin schedule, weekly tab,
 `lib/coach-data.ts`, coach home). Both are covered by tests —
 `tests/db/venue-label.test.ts` and `lib/venue-display.test.ts`.
+
+### Read-time vs write-time — the distinction that hid a bug for a day
+
+**A notification's `body` is frozen at INSERT.** Fixing a resolver repairs only
+messages composed *after* the fix; anything already queued keeps its old text,
+and old rows in the table keep it forever. So "I saw a message with a raw
+address" is usually a message from before the fix, not a live bug — check
+`created_at` before chasing it.
+
+It also means the six writers had to be fixed in two different ways:
+
+| Composed | Where | Fixed by |
+| --- | --- | --- |
+| At read/sweep time | `offer_cover_session`, `coach_mark_arrival`, `ops_notify_booking_created`, notify worker sweeps | calling `location_label` |
+| At **booking** time | `_create_private_occurrence` (SQL), `lib/admin-ops-calendar.ts` (TS) | resolving *before* writing the body |
+
+The last one is the one that matters most in practice: **~96% of privates are
+booked from `/admin`**, and that path is TypeScript that interpolated
+`input.address` straight into the body. It now calls the
+`class_location_label` RPC rather than re-deriving the label, so the string is
+byte-identical to what every other path produces.
 
 ### Three things not to undo
 

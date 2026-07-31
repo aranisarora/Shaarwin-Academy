@@ -10,15 +10,20 @@
 // the message is useful to the coach.
 
 import { describe, it, expect } from "vitest";
-import { admin } from "../../e2e/lib/supabase";
+import { admin, asUser } from "../../e2e/lib/supabase";
 import {
   coachMarkArrival,
+  createClient,
   createCoach,
   createGroupSession,
   createPrivateSession,
   hoursFromNow,
 } from "../../e2e/lib/scenario";
+import { createPrivateSessionCore } from "../../lib/admin-ops-calendar";
 import { expectNotification } from "../../e2e/lib/notifications";
+
+const FOUNDER_EMAIL = "founder@sharwin.example";
+const FOUNDER_ID = "00000000-0000-4000-8000-000000000001";
 
 /** A venue seeded by migration 0009, with the address a picker would geocode. */
 const SEEDED_VENUE = {
@@ -160,6 +165,40 @@ describe("location_label — venue name over raw address", () => {
       .single();
 
     expect(await labelOf(session.classId)).toBe((venue as { name: string }).name);
+  });
+
+  it("reaches the coach at booking time: 'New private session' names the venue", async () => {
+    // The fifth call site (migration 0051). Unlike the other four this one
+    // composes its body when the booking is made, from the raw address argument
+    // it was handed — so a read-time resolver never touched it, and the coach
+    // was told to go to "24th Main Rd, Bengaluru, 560102, India". A
+    // notification's body is frozen at INSERT, so this had to be fixed at the
+    // point of writing, not the point of sending.
+    const parent = await createClient({ children: 1 });
+    const coach = await createCoach();
+    const founder = await asUser(FOUNDER_EMAIL);
+
+    const result = await createPrivateSessionCore(founder, FOUNDER_ID, {
+      clientId: parent.id,
+      playerId: parent.playerIds[0],
+      date: new Date(Date.now() + 86400_000).toISOString().slice(0, 10),
+      time: "16:00",
+      durationMinutes: 60,
+      address: SEEDED_VENUE.address,
+      lat: 12.9268,
+      lng: 77.681,
+      coachId: coach.id,
+      overridePlanLimits: true,
+    } as Parameters<typeof createPrivateSessionCore>[2]);
+    expect(result.ok).toBe(true);
+
+    const msg = await expectNotification(admin(), {
+      type: "new_private_session",
+      userId: coach.id,
+    });
+    expect(String(msg.body)).toContain(SEEDED_VENUE.name);
+    expect(String(msg.body)).not.toContain("Bellandur");
+    expect(msg.data.location_str).toBe(SEEDED_VENUE.name);
   });
 
   it("reaches the parent: 'coach has arrived' names the venue, not the address", async () => {

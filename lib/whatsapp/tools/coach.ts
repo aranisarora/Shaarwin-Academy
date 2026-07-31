@@ -51,7 +51,13 @@ const mySessions: WaTool = {
         type: s.isPrivate ? "private" : "group",
         level: s.level,
         players: `${s.confirmed}/${s.capacity}`,
-        where: s.isPrivate ? s.privateAddress : `${s.venueName ?? "?"} — ${s.venueAddress ?? ""}`,
+        // Both halves for either kind: the name the coach recognises AND the
+        // address they navigate to. A private used to return the bare address,
+        // so the bot could only answer "where?" with a geocoded line even when
+        // getCoachSessions had already resolved it to "APR Apartments".
+        where: [s.venueName ?? "?", s.isPrivate ? s.privateAddress : s.venueAddress]
+          .filter(Boolean)
+          .join(" — "),
         status: s.status,
         confirmed_coming: flags.get(s.id)?.confirmed ?? false,
         marked_arrived: flags.get(s.id)?.arrived ?? false,

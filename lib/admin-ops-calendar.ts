@@ -558,16 +558,30 @@ export async function createPrivateSessionCore(
     // One message for the whole booking, not one per occurrence — a recurring
     // private over N weeks used to queue N messages to the same coach.
     const first = createdSessions[0];
+    // Name the venue, not the geocoded address behind it. This path books ~96%
+    // of the academy's privates and used to interpolate input.address raw, so a
+    // coach was told to go to "24th Main Rd, Bengaluru, 560102, India" when the
+    // place is called "Assetz Avenue HSR". Resolved through the database rather
+    // than makeVenueResolver so the label is byte-identical to the one the
+    // notify worker and the SQL triggers produce for the same session — one
+    // answer, not a fourth implementation. Falls back to the raw address if the
+    // call fails, since a wordy address beats no address.
+    const { data: label } = await supabase.rpc("class_location_label", {
+      p_class: createdClassIds[0],
+    });
+    const where = (label as string | null)?.trim() || input.address;
     await supabase.from("notifications").insert({
       user_id: input.coachId,
       type: "new_private_session",
       title: recurring ? "New weekly private session" : "New private session",
       body: recurring
-        ? `${createdSessions.length} sessions from ${whenIST(first.start)} — ${input.address}`
-        : `${whenIST(first.start)} — ${input.address}`,
+        ? `${createdSessions.length} sessions from ${whenIST(first.start)} — ${where}`
+        : `${whenIST(first.start)} — ${where}`,
       data: {
         session_id: first.id,
         session_count: createdSessions.length,
+        location_str: where,
+        time_str: whenIST(first.start),
         url: `/coach/session/${first.id}`,
       },
     });

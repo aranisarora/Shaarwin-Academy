@@ -877,10 +877,17 @@ begin
         'Coach confirmed for ' || to_char(p_start at time zone 'Asia/Kolkata', 'Dy DD Mon FMHH12:MI am') || '.',
         jsonb_build_object('session_id', v_session_id, 'coach_id', v_coach, 'url', '/app/schedule'));
     end if;
+    -- The venue's name, not the geocoded address behind it. Falls back to the
+    -- raw address so a location the resolver can't name still tells the coach
+    -- where to go. location_str mirrors the other coach-facing types.
     insert into notifications (user_id, type, title, body, data)
     values (v_coach, 'new_private_session', 'New private session',
-      to_char(p_start at time zone 'Asia/Kolkata', 'Dy DD Mon FMHH12:MI am') || ' — ' || p_address,
-      jsonb_build_object('session_id', v_session_id, 'url', '/coach/session/' || v_session_id));
+      to_char(p_start at time zone 'Asia/Kolkata', 'Dy DD Mon FMHH12:MI am')
+        || ' — ' || coalesce(class_location_label(v_class_id), p_address),
+      jsonb_build_object('session_id', v_session_id,
+        'location_str', coalesce(class_location_label(v_class_id), p_address),
+        'time_str', to_char(p_start at time zone 'Asia/Kolkata', 'Dy DD Mon FMHH12:MI am'),
+        'url', '/coach/session/' || v_session_id));
   else
     insert into notifications (user_id, type, title, body, data)
     select p.id, 'private_request_parked', 'Private request parked',

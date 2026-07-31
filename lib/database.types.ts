@@ -2081,6 +2081,7 @@ export type Database = {
         Args: { p_full_name: string; p_grade: number; p_session: string }
         Returns: string
       }
+      address_head: { Args: { p_address: string }; Returns: string }
       assign_coach: {
         Args: { p_preferred?: string; p_session: string }
         Returns: string
@@ -2124,6 +2125,7 @@ export type Database = {
       claim_cover_session: { Args: { p_session: string }; Returns: undefined }
       claim_waitlist_spot: { Args: { p_booking: string }; Returns: string }
       class_is_public_group: { Args: { p_class: string }; Returns: boolean }
+      class_location_label: { Args: { p_class: string }; Returns: string }
       client_owns_private_class: { Args: { p_class: string }; Returns: boolean }
       coach_confirm_session: { Args: { p_session: string }; Returns: string }
       coach_filter_failure: {
@@ -2214,6 +2216,14 @@ export type Database = {
       is_approved: { Args: never; Returns: boolean }
       is_coach: { Args: never; Returns: boolean }
       is_founder: { Args: never; Returns: boolean }
+      is_informative_place: {
+        Args: { p_city: string; p_segment: string }
+        Returns: boolean
+      }
+      location_label: {
+        Args: { c: Database["public"]["Tables"]["classes"]["Row"] }
+        Returns: string
+      }
       notify_founders: {
         Args: { p_body: string; p_data?: Json; p_title: string; p_type: string }
         Returns: undefined
