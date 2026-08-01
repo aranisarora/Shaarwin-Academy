@@ -3871,17 +3871,33 @@ AS $function$
 declare
   v_client text;
   v_plan   text;
+  v_until  text;
 begin
   -- One-off purchases are reported via the orders trigger; this covers renewals.
   if new.status <> 'paid' or new.subscription_id is null then return new; end if;
   select full_name into v_client from profiles where id = new.client_id;
-  select p.name into v_plan
+  select p.name, to_char(s.current_period_end at time zone 'Asia/Kolkata', 'FMDD Mon')
+    into v_plan, v_until
   from subscriptions s join plans p on p.id = s.plan_id
   where s.id = new.subscription_id;
   perform notify_founders('ops_payment', 'Payment received',
     fmt_inr(new.amount_pence) || ' from ' || coalesce(v_client, 'a client')
     || ' — ' || coalesce(v_plan, 'membership') || ' renewal.',
     jsonb_build_object('client_id', new.client_id, 'url', '/admin/billing'));
+
+  -- The client's own receipt (0048). Money previously only ever generated a
+  -- message when it FAILED.
+  if new.client_id is not null then
+    insert into notifications (user_id, type, title, body, data)
+    values (new.client_id, 'payment_receipt',
+      'Payment received — thank you!',
+      fmt_inr(new.amount_pence) || ' for ' || coalesce(v_plan, 'your membership')
+      || coalesce('. You''re covered through ' || v_until, '') || '.',
+      jsonb_build_object('amount_str', fmt_inr(new.amount_pence),
+                         'plan_name', v_plan,
+                         'covered_until', v_until,
+                         'url', '/app/billing'));
+  end if;
   return new;
 end;
 $function$;
@@ -3907,6 +3923,147 @@ begin
     || ' (' || fmt_inr(new.amount_pence) || ')'
     || coalesce(' for ' || v_player, '') || '.',
     jsonb_build_object('client_id', new.client_id, 'url', '/admin/billing'));
+
+  -- The client's own receipt (0048).
+  if new.client_id is not null then
+    insert into notifications (user_id, type, title, body, data)
+    values (new.client_id, 'payment_receipt',
+      'Payment received — thank you!',
+      fmt_inr(new.amount_pence) || ' for ' || coalesce(v_product, 'your purchase')
+      || coalesce(' (' || v_player || ')', '') || '.',
+      jsonb_build_object('amount_str', fmt_inr(new.amount_pence),
+                         'plan_name', v_product,
+                         'url', '/app/billing'));
+  end if;
+  return new;
+end;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.ops_notify_class_open()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare
+  v_venue text;
+  v_when  text;
+  v_body  text;
+begin
+  if not new.active or new.is_school or new.class_type <> 'group' then
+    return new;
+  end if;
+
+  select name into v_venue from venues where id = new.venue_id;
+  v_when := to_char(new.starts_on, 'FMDay FMDD Mon');
+
+  v_body := 'A new ' || new.skill_level || ' class is open: ' || new.title
+    || coalesce(' at ' || v_venue, '')
+    || ', starting ' || v_when || '. Book a spot while there''s room.';
+
+  insert into notifications (user_id, type, title, body, data)
+  select distinct pl.client_id, 'new_class_open', 'New class open', v_body,
+         jsonb_build_object('class_id', new.id,
+                            'class_title', new.title,
+                            'skill_level', new.skill_level,
+                            'venue_name', v_venue,
+                            'starts_on', new.starts_on,
+                            'url', '/app/book')
+    from players pl
+    join profiles pr on pr.id = pl.client_id
+   where pl.client_id is not null
+     and pr.role = 'client'
+     and pl.skill_level = new.skill_level
+     and pl.school_venue_id is null;
+
+  return new;
+end;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.ops_notify_assessment()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare
+  v_client uuid;
+  v_first  text;
+  v_coach  text;
+  v_skills int;
+begin
+  select client_id, split_part(full_name, ' ', 1) into v_client, v_first
+    from players where id = new.player_id;
+  if v_client is null then return new; end if;
+
+  if exists (
+    select 1 from notifications
+     where user_id = v_client
+       and type = 'assessment_ready'
+       and data->>'player_id' = new.player_id::text
+       and created_at > now() - interval '7 days'
+  ) then
+    return new;
+  end if;
+
+  select split_part(full_name, ' ', 1) into v_coach from profiles where id = new.coach_id;
+  select count(*) into v_skills from skill_ratings where assessment_id = new.id;
+
+  insert into notifications (user_id, type, title, body, data)
+  values (v_client, 'assessment_ready',
+    v_first || '''s progress was updated',
+    'Coach ' || coalesce(v_coach, 'your coach') || ' filed a new assessment for '
+    || v_first || coalesce(' across ' || nullif(v_skills, 0) || ' skills', '')
+    || '. See how they''re getting on.',
+    jsonb_build_object('player_id', new.player_id,
+                       'player_name', v_first,
+                       'coach_name', v_coach,
+                       'assessment_id', new.id,
+                       'skill_count', v_skills,
+                       'url', '/app/players'));
+  return new;
+end;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.ops_notify_student_note()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare
+  v_client uuid;
+  v_first  text;
+  v_author text;
+begin
+  select client_id, split_part(full_name, ' ', 1) into v_client, v_first
+    from players where id = new.player_id;
+  if v_client is null then return new; end if;
+  if new.author_id = v_client then return new; end if;
+
+  -- Don't duplicate a note session_outcome is already quoting.
+  if exists (
+    select 1 from notifications
+     where user_id = v_client
+       and type = 'session_outcome'
+       and data->>'player_id' = new.player_id::text
+       and created_at > now() - interval '6 hours'
+  ) then
+    return new;
+  end if;
+
+  select split_part(full_name, ' ', 1) into v_author from profiles where id = new.author_id;
+
+  insert into notifications (user_id, type, title, body, data)
+  values (v_client, 'student_note',
+    'A note about ' || v_first,
+    'Coach ' || coalesce(v_author, 'your coach') || ' left a note for ' || v_first
+    || ': "' || left(trim(new.body), 300) || '"',
+    jsonb_build_object('player_id', new.player_id,
+                       'player_name', v_first,
+                       'coach_name', v_author,
+                       'note_id', new.id,
+                       'url', '/app/players'));
   return new;
 end;
 $function$;
@@ -4004,6 +4161,9 @@ CREATE TRIGGER bookings_ops_feed_status AFTER UPDATE OF status ON public.booking
 CREATE TRIGGER class_credits_ops_feed AFTER UPDATE ON public.class_credits FOR EACH ROW EXECUTE FUNCTION ops_notify_credit_used();
 CREATE TRIGGER class_sessions_ops_feed AFTER UPDATE OF coach_id ON public.class_sessions FOR EACH ROW EXECUTE FUNCTION ops_notify_coach_change();
 CREATE TRIGGER class_sessions_reset_confirmation BEFORE UPDATE OF coach_id, starts_at ON public.class_sessions FOR EACH ROW EXECUTE FUNCTION reset_session_confirmation();
+CREATE TRIGGER classes_notify_open AFTER INSERT ON public.classes FOR EACH ROW EXECUTE FUNCTION ops_notify_class_open();
+CREATE TRIGGER skill_assessments_notify AFTER INSERT ON public.skill_assessments FOR EACH ROW EXECUTE FUNCTION ops_notify_assessment();
+CREATE TRIGGER student_notes_notify AFTER INSERT ON public.student_notes FOR EACH ROW EXECUTE FUNCTION ops_notify_student_note();
 CREATE TRIGGER invoices_ops_feed AFTER INSERT ON public.invoices FOR EACH ROW EXECUTE FUNCTION ops_notify_invoice();
 CREATE TRIGGER orders_ops_feed AFTER INSERT OR UPDATE OF status ON public.orders FOR EACH ROW EXECUTE FUNCTION ops_notify_order_paid();
 CREATE TRIGGER players_ops_feed AFTER INSERT ON public.players FOR EACH ROW EXECUTE FUNCTION ops_notify_new_player();

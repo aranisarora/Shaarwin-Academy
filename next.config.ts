@@ -51,6 +51,32 @@ const nextConfig: NextConfig = {
         destination: "/coach/players",
         permanent: true,
       },
+      // ── Two routes that only ever existed inside WhatsApp templates ──
+      //
+      // A CTA button URL is frozen into a Content template at provision time and
+      // a template cannot be edited, so a wrong path there is permanent until the
+      // template is deleted, recreated and re-approved. Both of these are baked
+      // into templates that are already approved AND into their pending v2s, so
+      // redirecting is the only fix that repairs the live ones. Do not "clean
+      // these up" by deleting them — check the template registry in
+      // scripts/whatsapp/provision-templates.mjs first.
+      {
+        // "Fix payment" on client_payment_issue — the button a parent taps when
+        // their card has failed. The app has /app/membership; /app/billing has
+        // never existed. Also the `url` on private_series_ended and
+        // private_minutes_low.
+        source: "/app/billing",
+        destination: "/app/membership",
+        permanent: false,
+      },
+      {
+        // The waitlist_spot deep link. `/app/book` has no per-session route, so
+        // the claim lands on the booking page. `waitlist_spot` has never fired in
+        // production, which is why this was never noticed.
+        source: "/app/book/class/:id",
+        destination: "/app/book",
+        permanent: false,
+      },
     ];
   },
 };

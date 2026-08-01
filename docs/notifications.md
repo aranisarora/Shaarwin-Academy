@@ -66,6 +66,37 @@ Escalations only — `ops_coach_unconfirmed` (T−10, coach fully silent) and
 `ops_coach_not_arrived` (start+10) — plus `signup_request` (Approve/Deny) and
 one `ops_daily_digest` at 21:00 IST. Everything else is the in-app feed.
 
+There is no separate "admin" role: `profiles.role` is `founder`, `coach` or
+`client`, and admin *is* founder.
+
+---
+
+## 2a. The digest — there is exactly one, and it is the evening
+
+A recurring point of confusion, so stated plainly (`sweepFounderDigest`):
+
+| | |
+| --- | --- |
+| How many | **One.** There is no morning digest, for anyone. |
+| When | 21:00 IST or later, once per IST calendar day |
+| Who gets it | **Founders only.** `role = 'founder'`, fanned out to all three. Coaches and clients receive no digest of any kind. |
+| What's in it | A count of that founder's own `FEED_ONLY` rows for the day, e.g. `3 bookings · 1 attendance update · 2 new clients` |
+| When it stays silent | Nothing happened → nothing is sent |
+
+Two consequences worth knowing before anyone redesigns it:
+
+- **It counts rows, not events.** `summariseOps()` groups `notifications.type`
+  and pluralises the label, so `2 membership changes` reads identically whether
+  two families joined or two quit.
+- **Escalations are excluded**, because it counts only `FEED_ONLY` types. On 29
+  Jul it reported `2 WhatsApp links` and omitted all 15 coach-reliability
+  incidents that day — the routine reported, the exceptions hidden.
+
+If you have read about a **morning briefing** (`founder_morning_brief`,
+`coach_day_ahead`, `household_day_ahead`), that is a **proposal** in
+`whatsapp-messaging.md` §10 and has never been built. The worker runs eight
+sweeps; none of them is a morning brief.
+
 ---
 
 ## 3. What changed, and what it fixed
@@ -91,30 +122,103 @@ Reconstructed from the July 2026 rework (migrations `0041`–`0049`).
 
 ## 4. Open, in priority order
 
-1. **The phone-less founder account is still failing daily.** "Sharwin Table
-   Tennis Academy" has no `phone` and no `wa_links`, so every escalation
-   fanned out to it fails — **41 of the 66 failures in the last three days**.
-   It is the original admin login and must not be deleted, so the fix is to
-   either give it a phone or stop fanning escalations to it.
-2. **Escalation volume is still high.** ~50/day on 2026-07-30 across the two
-   escalation types. The ladder only began working on the 30th, so this should
-   fall on its own — re-check before building anything to suppress it.
-3. **Two coaches fail delivery with a phone on file** (Augustine 9, Keerthana 8
-   in three days) — worth reading `error` on those rows now that it's recorded.
-4. **`ops_payment_issue` / `ops_private_series_paused`** are named like feed
-   items but are in neither `FEED_ONLY` nor the digest labels, so they interrupt
-   the founder *and* are invisible in the digest. One-line fix, needs a decision.
-5. **`getCoachNames()` in `lib/booking.ts`** reads `profiles` directly and hits
-   the RLS wall, so parents see a null coach name on `/app`. Fix is
-   `public_coach_roster()`, as the bot tool already does.
-6. **Six types are wired into the preferences UI but nothing ever sends them** —
-   `new_class_open`, `payment_receipt`, `renewal_upcoming`, `assessment_ready`,
-   `student_note`, `monthly_progress`. Members can toggle switches for messages
-   that have never existed. An unapplied migration
-   (`0048_dead_notification_types.sql`) builds four of the six; the two
-   time-driven ones belong in the worker.
-7. **`cover_offer` and `player_absent` have no Twilio template** — they degrade
-   to plain text.
+Re-verified against production, Twilio and the deployed worker on 2026-07-31
+(after the v31 deploy at 08:45 UTC).
+
+1. **Seven replacement templates are awaiting Meta approval — swap the SIDs when
+   they clear.** This is the only remaining step for items that were the two
+   worst defects found on 31 Jul. Nothing is broken while they are pending: the
+   secrets still point at the approved v1s, which deliver.
+
+   | Secret | Swap to | Fixes |
+   | --- | --- | --- |
+   | `TWILIO_WA_CLIENT_PAYMENT_SID` | `HX879441494fa9930038c36a5a2fb8d97b` | localhost "Fix payment" button |
+   | `TWILIO_WA_CLIENT_BOOKED_SID` | `HX332f153d408c4507df53a25aa3480669` | localhost button |
+   | `TWILIO_WA_COACH_PRIVATE_SID` | `HXe084673761a0f11ba9bd339521e656bf` | localhost button |
+   | `TWILIO_WA_FOUNDER_DIGEST_SID` | `HX63c20eab58f329c808ee32a79d4057d0` | localhost button |
+   | `TWILIO_WA_CLIENT_APPROVED_SID` | `HX2227fb519b2f87a20d511e6179b62227` | localhost button |
+   | `TWILIO_WA_COACH_COMING_SID` | `HXa82dec3d1a321eb8c92c1dcaad5ba4af` | adds the `{{4}}` directions link |
+   | `TWILIO_WA_COACH_ARRIVAL_SID` | `HX19dcfba57e024e8ed82294b02cafecce` | adds the `{{4}}` directions link |
+   | `TWILIO_WA_CLIENT_WAITLIST_SID` | `HX9042cca9baba283cb1de5f2362978ae5` | MARKETING → UTILITY (item 2) |
+
+   Check `category` as well as `status` on approval, then delete the v1s.
+   **Never point a secret at a pending template** — unset falls back to the
+   approved generic template, but an unapproved SID just fails.
+
+   <details><summary>What the defect was, and why it can't recur</summary>
+
+   Five approved templates had `http://localhost:3000` frozen into their button
+   URL, including **Fix payment** — the button a parent taps when their card has
+   failed. Dead for every recipient.
+
+   `provision-templates.mjs` read `NEXT_PUBLIC_APP_URL` out of `.env.local`.
+   That variable is set correctly in Vercel, but the script reads the file off
+   disk, so it only ever sees the *local* value and never Vercel's — on a
+   developer's machine that is always `http://localhost:3000`. It now reads a
+   dedicated `WA_TEMPLATE_APP_URL`, defaults to production, and **refuses to run**
+   against a non-https or localhost origin.
+
+   The general rule: **a URL passed as a template *variable* is resolved at send
+   time and is safe; a URL in a button `url:` is frozen at provision time.** That
+   is why `coach_class_complete`'s link always worked — it arrives as `{{3}}`,
+   built by the worker from its own (correct) `APP_URL` function secret.
+   </details>
+
+   Also verified while fixing this: Twilio **accepts extra `ContentVariables`**
+   that a template doesn't declare, so the worker sending `"4": maps_url` to a
+   3-variable v1 is harmless — confirmed by a clean send at 09:01 UTC and by 24
+   test messages, all delivered.
+2. **The live waitlist template is the MARKETING one.**
+   `TWILIO_WA_CLIENT_WAITLIST_SID` sha256-matches `HXa77dad95…` =
+   `client_waitlist_spot` v1, category **MARKETING** — billed higher *and*
+   withheld from anyone who opted out of marketing, which is fatal for a
+   15-minute offer. `client_waitlist_spot_v2` (UTILITY, transactional copy) is
+   submitted and `pending`. Swap the SID on approval and delete v1. Untestable
+   in production either way until item 8 fires.
+3. **The phone-less founder account is still failing daily.** "Sharwin Table
+   Tennis Academy" has no `phone` and no `wa_links`, so every escalation fanned
+   out to it fails — **316 failed against 636 sent, all-time**. It is the
+   original admin login and must not be deleted, so the fix is to either give it
+   a phone or stop fanning escalations to it.
+4. **Escalation volume is still high** — 120 in the 36h to 2026-07-31 (69
+   not-arrived, 51 unconfirmed). The ladder only began working on the 30th, so
+   this should fall on its own; re-check before building anything to suppress it.
+5. **Delivery diagnostics are empty.** `error` and `channel_attempted` are NULL
+   on *every* failed row, including today's, because the worker that writes them
+   only deployed at 08:45 UTC on 2026-07-31. Nothing is wrong — but the two
+   coaches failing with a phone on file (Keerthana 237, Augustine 79 all-time)
+   cannot be diagnosed until fresh failures accrue. Re-check in a day.
+6. **`0048_dead_notification_types.sql` is untracked and unapplied** — absent
+   from `supabase_migrations.schema_migrations` and still `??` in `git status`.
+   So all six phantom toggles (`new_class_open`, `payment_receipt`,
+   `renewal_upcoming`, `assessment_ready`, `student_note`, `monthly_progress`)
+   remain switches for messages that have never existed. The migration builds
+   four; the two time-driven ones belong in the worker.
+7. **`cover_offer`, `player_absent` and `session_outcome` have no Twilio
+   template** — they degrade to plain text, and none has fired in production yet.
+8. **`waitlist_spot` has never fired — not once.** The template, the expiry
+   sweep and the `Claim spot`/`Pass` buttons are entirely unexercised. Possibly
+   innocent (no class has filled and then freed a seat), but it means the whole
+   claim path is unproven.
+9. **`ops_payment_issue` / `ops_private_series_paused`** are named like feed
+   items but are in neither `FEED_ONLY` nor the digest labels, so they would
+   interrupt the founder *and* be invisible in the digest. **Neither has ever
+   fired**, so this is a latent decision, not a live problem.
+10. **`getCoachNames()` in `lib/booking.ts`** reads `profiles` directly and hits
+    the RLS wall, so parents see a null coach name on `/app`. Fix is
+    `public_coach_roster()`, as the bot tool already does.
+
+### Leads worth checking
+
+- **Group bookings may not be confirming.** 24 confirmed non-private bookings
+  with a real client; only **2** carry a `booking_confirmed` row. The admin
+  paths in `lib/admin-ops-calendar.ts` insert into `bookings` directly, bypassing
+  the RPCs that queue it — the same shape as the private-reminder gap fixed in
+  §3. Confirm before treating as a bug.
+- **The daily cap silently drops schedule changes.** Two `session_moved` rows
+  sit deferred to 08:00 IST on 1 Aug about a session on 30 Jul that has already
+  happened; `CAP_DROP_AFTER_MS` bins them at the 3-day mark. For a high-traffic
+  recipient the documented "held, not dropped" rule becomes "dropped".
 
 ---
 

@@ -8,6 +8,10 @@ than left behind marked COMPLETE.
 | --- | --- | --- |
 | [instant-navigation.md](instant-navigation.md) | **Phases A + B shipped**; **Phase D needs the owner** | Shell paints before auth resolves on the streamable protected routes |
 
+This is the only plan left. Notification and WhatsApp work is no longer tracked
+here — it lives in [`../notifications.md`](../notifications.md) (§4 is the open
+list).
+
 **Everything lands on `main`.** The old `chore/cleanup-and-perf` branch is gone:
 its commits were merged and the branch deleted. Any doc still telling you to
 work there is out of date.
@@ -52,7 +56,10 @@ Deleted once shipped and merged — `git log` is the record:
   **notification-fix-owner-actions** — folded into
   [`../notifications.md`](../notifications.md) (what we send, what changed,
   what's still open) and [`../whatsapp-messaging.md`](../whatsapp-messaging.md)
-  (how it's delivered).
+  (how it's delivered — now an audit kept for its reasoning, not a status).
+- **location-model** — shipped in `1a610ab` (migrations `0052`–`0054`). All 167
+  privates carry a `venue_id` and nothing derives a location from an address
+  string any more. The durable part is `../notifications.md` §5.
 
 Still live, outside this folder:
 

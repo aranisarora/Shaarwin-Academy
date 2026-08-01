@@ -312,7 +312,8 @@ async function handleCoachReply(opts: {
       if (error) return "Couldn't save attendance just now — please mark it in the app.";
       const n = data?.length ?? 0;
       const who = n === 0 ? "everyone" : n === 1 ? "the student" : `all ${n} students`;
-      return `✅ Marked ${who} present. Don't forget to add a quick assessment note for each: ${sessionLink}`;
+      const next = await nextAssessmentLink(supabase, sessionId, sessionLink);
+      return `✅ Marked ${who} present. ${next}`;
     }
     case WA_BUTTON.AC_ABSENT: {
       return startAbsentPrompt(admin, supabase, profile.id, sessionId, sessionLink);
@@ -572,6 +573,35 @@ async function handleCantConfirm(
   return "Thanks for letting us know — we're arranging cover so you're off this session.";
 }
 
+/**
+ * Where to send a coach once attendance is in. The assessment is the thing they
+ * still have to do, so link the first player who needs one rather than the
+ * session page they have just finished with — that page was the old link, and it
+ * left the assessment a further two taps away.
+ *
+ * `get_pending_assessments` is the same 7-day backlog the in-app prompt uses, so
+ * this can't offer an assessment that has already been filed. It only covers
+ * sessions that have ENDED, so a coach tapping "All present" early gets the
+ * session link back; that's the honest fallback rather than a dead deep link.
+ */
+async function nextAssessmentLink(
+  supabase: SupabaseClient<Database>,
+  sessionId: string,
+  sessionLink: string
+): Promise<string> {
+  const { data, error } = await supabase.rpc("get_pending_assessments");
+  if (error || !data?.length) {
+    return `Don't forget a quick assessment note for each: ${sessionLink}`;
+  }
+  // Prefer a player from the session just marked; otherwise the oldest pending.
+  const rows = data as { player_id: string; player_name: string; session_id: string }[];
+  const pick = rows.find((r) => r.session_id === sessionId) ?? rows[0];
+  const first = (pick.player_name ?? "").trim().split(/\s+/)[0] || "your next player";
+  const link = `${appUrl()}/coach/players/${pick.player_id}?session=${pick.session_id}`;
+  const more = rows.length > 1 ? ` (${rows.length - 1} more after that)` : "";
+  return `Next: rate ${first}${more} — ${link}`;
+}
+
 /** Class title + IST clock time for a session, for the cancel confirmation copy. */
 async function sessionTitleTime(
   supabase: SupabaseClient<Database>,
@@ -601,6 +631,13 @@ async function handleClientReply(opts: {
   originalSid: string;
 }): Promise<string | null> {
   const { admin, supabase, profile } = opts;
+
+  // A live "are you sure?" from a previous Can't-make-it tap is checked before
+  // anything else, because the YES that commits it is typed text and would
+  // otherwise fall through to the assistant.
+  const confirmed = await handleClientCancelConfirm(admin, supabase, profile, opts.text);
+  if (confirmed !== null) return confirmed;
+
   const action = resolveClientExact(opts.payload, opts.text, opts.originalSid);
   if (!action) return null; // typed free text → the assistant, as before
 
@@ -613,17 +650,19 @@ async function handleClientReply(opts: {
 
   if (action === WA_BUTTON.REM_NO) {
     const bookingId = note?.data?.booking_id as string | undefined;
-    if (!bookingId) {
+    if (!note || !bookingId) {
       return `No worries. Manage your bookings anytime here: ${appUrl()}/app/schedule`;
     }
-    const { error } = await supabase.rpc("cancel_booking", { p_booking: bookingId });
-    if (error) {
-      if (error.message.includes("booking_not_live")) {
-        return "That booking was already cancelled or changed — nothing more to do.";
-      }
-      return `Couldn't cancel that just now — please do it in the app: ${appUrl()}/app/schedule`;
+    // Cancelling frees the seat irreversibly and can cost a credit, so it is
+    // confirmed in two steps — the same guard the coach's "Can't make it" has
+    // had since it started triggering a cover search. A mis-tap on a phone in a
+    // pocket should not cost a family their session.
+    const armed = await armClientCancelPrompt(admin, note.id, note.data, bookingId);
+    if (!armed) {
+      return `To cancel, please do it in the app: ${appUrl()}/app/schedule`;
     }
-    return `Done — that spot's been freed up. Want to rebook another time? ${appUrl()}/app/schedule`;
+    const { title, time } = await bookingTitleTime(supabase, bookingId);
+    return `Are you sure you can't make ${title} at ${time}? Reply YES to cancel — the spot goes to the next family.`;
   }
 
   if (action === WA_BUTTON.WL_CLAIM) {
@@ -653,6 +692,101 @@ async function handleClientReply(opts: {
   }
 
   return null;
+}
+
+/**
+ * Arm the two-step cancel confirmation on the reminder the parent replied to.
+ * Mirrors the coach's armCantPrompt, but keyed by booking rather than session —
+ * a household can have two children in the same class, and only one booking is
+ * being cancelled.
+ */
+async function armClientCancelPrompt(
+  admin: SupabaseClient<Database>,
+  noteId: string,
+  data: Record<string, unknown>,
+  bookingId: string
+): Promise<boolean> {
+  const { error } = await admin
+    .from("notifications")
+    .update({
+      data: {
+        ...(data as Record<string, Json>),
+        cancel_prompt: bookingId,
+        cancel_prompt_at: new Date().toISOString(),
+      },
+    })
+    .eq("id", noteId);
+  return !error;
+}
+
+/**
+ * If the parent has a live cancel prompt (armed within 30 min), a YES commits
+ * cancel_booking. Single-shot: the prompt is cleared whatever the reply, so
+ * anything other than YES clears it and returns null so normal handling (and
+ * then the assistant) continues. Returns null when there's no live prompt.
+ *
+ * Deliberately does NOT accept the button title "Can't make it" as a
+ * confirmation — only a typed YES. Tapping the same button twice is exactly the
+ * mis-tap this guard exists to catch.
+ */
+async function handleClientCancelConfirm(
+  admin: SupabaseClient<Database>,
+  supabase: SupabaseClient<Database>,
+  profile: Profile,
+  text: string
+): Promise<string | null> {
+  const { data: note } = await admin
+    .from("notifications")
+    .select("id,data")
+    .eq("user_id", profile.id)
+    .not("data->cancel_prompt", "is", null)
+    .gt("created_at", new Date(Date.now() - 2 * 86400000).toISOString())
+    .order("created_at", { ascending: false })
+    .limit(1)
+    .maybeSingle();
+  if (!note) return null;
+
+  const data = note.data as { cancel_prompt?: string; cancel_prompt_at?: string };
+  const bookingId = data.cancel_prompt;
+  const at = data.cancel_prompt_at ? new Date(data.cancel_prompt_at).getTime() : 0;
+
+  // Single-shot: clear the prompt whatever the reply is.
+  const cleared = { ...(note.data as Record<string, Json>) };
+  delete cleared.cancel_prompt;
+  delete cleared.cancel_prompt_at;
+  await admin.from("notifications").update({ data: cleared }).eq("id", note.id);
+
+  if (!bookingId || Date.now() - at > 30 * 60000) return null; // expired → fall through
+  const t = (text || "").trim().toLowerCase().replace(/[.!]+$/, "");
+  if (t !== "yes" && t !== "y") return null; // not a confirmation → fall through
+
+  const { error } = await supabase.rpc("cancel_booking", { p_booking: bookingId });
+  if (error) {
+    if (error.message.includes("booking_not_live")) {
+      return "That booking was already cancelled or changed — nothing more to do.";
+    }
+    return `Couldn't cancel that just now — please do it in the app: ${appUrl()}/app/schedule`;
+  }
+  return `Done — that spot's been freed up. Want to rebook another time? ${appUrl()}/app/schedule`;
+}
+
+/** Class title + IST clock time for a booking, for the cancel confirmation copy. */
+async function bookingTitleTime(
+  supabase: SupabaseClient<Database>,
+  bookingId: string
+): Promise<{ title: string; time: string }> {
+  const { data } = await supabase
+    .from("bookings")
+    .select("class_sessions!inner(starts_at,classes!inner(title))")
+    .eq("id", bookingId)
+    .maybeSingle();
+  const s = data?.class_sessions as
+    | { starts_at?: string; classes?: { title?: string } | { title?: string }[] }
+    | null;
+  const c = s?.classes;
+  const title = (Array.isArray(c) ? c[0]?.title : c?.title) ?? "your session";
+  const time = s?.starts_at ? formatClock(s.starts_at) : "the session";
+  return { title, time };
 }
 
 // Clients get NO loose-word matching: only a tapped payload id, or an exact

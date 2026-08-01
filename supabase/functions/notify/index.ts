@@ -57,6 +57,13 @@ const TWILIO_WA_CLIENT_APPROVED_SID = Deno.env.get("TWILIO_WA_CLIENT_APPROVED_SI
 // until each SID is set the matching notification degrades to plain text.
 const TWILIO_WA_COACH_COMING_SID = Deno.env.get("TWILIO_WA_COACH_COMING_SID");
 const TWILIO_WA_COACH_ARRIVAL_SID = Deno.env.get("TWILIO_WA_COACH_ARRIVAL_SID");
+// The T-30 chase and the cover offer. Both were plain text until now, which
+// meant no buttons at all — and outside the 24h window they degraded to the
+// generic template, which records no twilio_sid, so a reply couldn't even be
+// mapped back to a session. That hit hardest on exactly the two messages meant
+// to reach someone who has gone quiet.
+const TWILIO_WA_COACH_NUDGE_SID = Deno.env.get("TWILIO_WA_COACH_NUDGE_SID");
+const TWILIO_WA_COACH_COVER_SID = Deno.env.get("TWILIO_WA_COACH_COVER_SID");
 const TWILIO_WA_CLIENT_ARRIVED_SID = Deno.env.get("TWILIO_WA_CLIENT_ARRIVED_SID");
 const TWILIO_WA_CLIENT_LATE_SID = Deno.env.get("TWILIO_WA_CLIENT_LATE_SID");
 const APP_URL = Deno.env.get("APP_URL") ?? "https://sharwinacademy.com";
@@ -123,6 +130,19 @@ const DEFERRABLE = new Set([
   // "You're approved" — nobody onboards at 2am, so hold it to 08:00 IST. The
   // signup *request* is deliberately absent: the applicant is waiting live.
   "signup_approved",
+  // The six types that were wired into the prefs UI with no sender (0048 +
+  // the two sweeps below). Every one is informational — a receipt, a progress
+  // note, a class that opened — so none of them earns waking anyone up.
+  "payment_receipt",
+  "renewal_upcoming",
+  "new_class_open",
+  "assessment_ready",
+  "student_note",
+  "monthly_progress",
+  // NOTE: coach_day_ahead and founder_morning_brief are deliberately absent.
+  // They fire at 07:00 IST, which is inside quiet hours [21:30, 08:00) — adding
+  // them here would push a 07:00 briefing to 08:00 and silently destroy the
+  // hour of lead time that is the entire reason the message exists.
 ]);
 
 // ── Per-user daily cap (notification-fix-plan 2.2) ──────────────────────────
@@ -167,6 +187,11 @@ const CAP_EXEMPT = new Set([
   "ops_coach_unconfirmed",
   "ops_coach_not_arrived",
   "ops_daily_digest",
+  // The morning briefings. Both are once per day and both are the message the
+  // whole day is planned from — a coach who doesn't get theirs drives to the
+  // wrong venue. Capping them would be capping the plan, not the noise.
+  "coach_day_ahead",
+  "founder_morning_brief",
 ]);
 
 // Capped rows this old are past being worth holding — a "your coach changed"
@@ -339,6 +364,10 @@ Deno.serve(async () => {
   await safeSweep("founder-escalations", sweepFounderEscalations);
   await safeSweep("after-class", sweepAfterClass);
   await safeSweep("founder-digest", sweepFounderDigest);
+  await safeSweep("coach-day-ahead", sweepCoachDayAhead);
+  await safeSweep("founder-morning-brief", sweepFounderMorningBrief);
+  await safeSweep("renewal-reminders", sweepRenewalReminders);
+  await safeSweep("monthly-progress", sweepMonthlyProgress);
 
   return new Response(JSON.stringify({ sent, failed }), {
     headers: { "Content-Type": "application/json" },
@@ -609,7 +638,7 @@ async function sweepCoachConfirmNudge() {
   const now = Date.now();
   const { data: sessions } = await supabase
     .from("class_sessions")
-    .select("id,starts_at,coach_id,classes!inner(title)")
+    .select(`id,starts_at,coach_id,classes!inner(${CLASS_LOCATION_SELECT})`)
     .eq("status", "scheduled")
     .not("coach_id", "is", null)
     .is("coach_confirmed_at", null)
@@ -621,20 +650,26 @@ async function sweepCoachConfirmNudge() {
   for (const s of await withValidCoaches(sessions ?? [])) {
     if (await alreadyFired("coach_confirm_nudge_2", s.id, s.coach_id)) continue;
 
-    const title = titleOf(s.classes);
+    // Carries the venue and directions like the other two rungs. It used to
+    // select only the title, which is why this rung could never fill a
+    // location-bearing template even once it had one.
+    const { title, location, mapsUrl } = locationOf(s.classes);
+    const where = location || "the venue";
     const time = fmtClock(s.starts_at);
     const firstName = await firstNameOf(s.coach_id);
 
     await supabase.from("notifications").insert({
       user_id: s.coach_id,
       type: "coach_confirm_nudge_2",
-      title: "Quick check",
-      body: `Quick check — are you coming to ${title} at ${time}? The founder gets alerted in 20 minutes if we haven't heard.`,
+      title: "Still need to hear from you",
+      body: `We haven't heard about ${title} at ${time}, ${where}. Are you coming? The founder is alerted in 20 minutes if we still don't know.${mapsLine(mapsUrl)}`,
       data: {
         session_id: s.id,
         first_name: firstName,
         class_title: title,
         time_str: time,
+        location_str: where,
+        maps_url: mapsUrl,
         url: `/coach/session/${s.id}`,
       },
     });
@@ -866,12 +901,24 @@ const OPS_DIGEST_LABELS: Record<string, [string, string]> = {
 };
 
 /**
- * Founder daily digest — the ops feed is delivered in-app only (FEED_ONLY), so
- * once per IST day at/after 21:00 IST we roll the day's activity into ONE line
- * ("12 bookings · 2 cancellations · 1 new client") and send that. A day with no
- * activity sends nothing. Single line on purpose: WhatsApp template variables
- * reject newlines, and outside the service window this rides the digest
- * template. (whatsapp-upgrade-plan Part 2.)
+ * Founder daily summary, once per IST day at/after 21:00 IST.
+ *
+ * This used to count FEED_ONLY notification rows and render one line ("12
+ * bookings · 2 cancellations · 1 new client"). That answered a question nobody
+ * was asking. It counted rows rather than events — "2 membership changes" reads
+ * the same whether two families joined or two quit — and, worse, the two coach
+ * escalations are not FEED_ONLY members, so the reliability incidents were
+ * structurally excluded. On 29 Jul it reported "2 WhatsApp links" and omitted
+ * all 15 coach incidents that day.
+ *
+ * It now reports what a founder actually needs at the end of a day: did the
+ * coaches turn up, were they on time, and did they file the roster. Source is
+ * founder_day_report() (migration 0056).
+ *
+ * On the shape: WhatsApp rejects newlines inside a template VARIABLE, but not in
+ * a template BODY. That distinction is why the old digest was stuck on one line
+ * — it had a single content variable. founder_daily_digest_v3 has a multi-line
+ * body with one variable per line, so each line below must stay newline-free.
  */
 async function sweepFounderDigest() {
   const now = new Date();
@@ -886,11 +933,18 @@ async function sweepFounderDigest() {
     day: "2-digit",
     timeZone: IST,
   }).format(now); // today's IST date, YYYY-MM-DD
-  const dayStart = new Date(`${istDate}T00:00:00+05:30`).toISOString();
-  const dayEnd = new Date(`${istDate}T23:59:59+05:30`).toISOString();
 
   const { data: founders } = await supabase.from("profiles").select("id").eq("role", "founder");
   if (!founders?.length) return;
+
+  const { data: report, error } = await supabase.rpc("founder_day_report", { p_date: istDate });
+  if (error) return; // leave the day unreported rather than send a wrong summary
+  const sessions = (report ?? []) as DayReportRow[];
+  // Silent only when nothing was scheduled. A day where every session ran
+  // cleanly is worth saying out loud — that is the founder's "all good".
+  if (!sessions.length) return;
+
+  const summary = summariseDay(sessions);
 
   for (const f of founders) {
     const { data: already } = await supabase
@@ -902,25 +956,86 @@ async function sweepFounderDigest() {
       .limit(1);
     if (already?.length) continue;
 
-    const { data: rows } = await supabase
-      .from("notifications")
-      .select("type")
-      .eq("user_id", f.id)
-      .in("type", [...FEED_ONLY])
-      .gte("created_at", dayStart)
-      .lte("created_at", dayEnd)
-      .limit(1000);
-    const line = summariseOps((rows ?? []).map((r) => r.type as string));
-    if (!line) continue; // nothing happened today → send nothing
-
     await supabase.from("notifications").insert({
       user_id: f.id,
       type: "ops_daily_digest",
       title: "Today at the academy",
-      body: line,
-      data: { date: istDate, summary: line, url: "/admin" },
+      // The in-app and plain-text paths get the whole thing; " · " rather than
+      // newlines so the generic template (one variable) stays legal too.
+      body: `Coaches: ${summary.coaches} · Attendance: ${summary.attendance} · ${summary.attention}`,
+      data: {
+        date: istDate,
+        coaches: summary.coaches,
+        attendance: summary.attendance,
+        attention: summary.attention,
+        url: "/admin/schedule",
+      },
     });
   }
+}
+
+type DayReportRow = {
+  class_title: string;
+  coach_name: string;
+  time_str: string;
+  arrived_at: string | null;
+  minutes_late: number | null;
+  arrival_source: string | null;
+  roster_size: number;
+  roster_marked: number;
+};
+
+/** How late a coach can be before it is worth the founder's attention. */
+const LATE_THRESHOLD_MIN = 5;
+
+/**
+ * Three newline-free lines: punctuality, roster completion, and the exceptions
+ * worth acting on. Names are used deliberately — "1 coach was late" is a
+ * statistic, "Augustine 12 min late (Beginners Batch)" is something you can ring
+ * someone about.
+ */
+function summariseDay(rows: DayReportRow[]): {
+  coaches: string;
+  attendance: string;
+  attention: string;
+} {
+  const total = rows.length;
+  const late = rows.filter((r) => (r.minutes_late ?? 0) >= LATE_THRESHOLD_MIN);
+  const missing = rows.filter((r) => r.arrived_at === null);
+  const onTime = total - late.length - missing.length;
+
+  const coaches =
+    `${onTime} of ${total} ${total === 1 ? "session" : "sessions"} started on time` +
+    (late.length
+      ? ` · ${late
+          .slice(0, 3)
+          .map((r) => `${r.coach_name} ${r.minutes_late} min late (${r.class_title})`)
+          .join(" · ")}${late.length > 3 ? ` · +${late.length - 3} more` : ""}`
+      : "");
+
+  // A session with nobody booked has no roster to mark, so it can't count
+  // against a coach — otherwise a quiet day reads as a day of neglect.
+  const withRoster = rows.filter((r) => r.roster_size > 0);
+  const marked = withRoster.filter((r) => r.roster_marked >= r.roster_size);
+  const blank = withRoster.filter((r) => r.roster_marked === 0);
+  const attendance = withRoster.length
+    ? `${marked.length} of ${withRoster.length} rosters marked` +
+      (blank.length ? ` · ${blank.length} left blank` : "")
+    : "no rosters to mark";
+
+  // Never marking arrival at all is the one that needs a name and a nudge: the
+  // parents were told nothing, and the founder was escalated at start+10.
+  const parts: string[] = [];
+  for (const r of missing.slice(0, 3)) {
+    parts.push(`${r.coach_name} never marked arrival (${r.class_title}, ${r.time_str})`);
+  }
+  if (missing.length > 3) parts.push(`+${missing.length - 3} more unmarked`);
+  for (const r of blank.slice(0, 2)) {
+    parts.push(`${r.class_title} roster still blank`);
+  }
+  const attention = parts.length ? parts.join(" · ") : "Nothing — a clean day.";
+
+  return { coaches, attendance, attention };
 }
 
 /** Count ops rows by type and render the one-line summary (zeros omitted). */
@@ -933,6 +1048,347 @@ function summariseOps(types: string[]): string {
     if (n > 0) parts.push(`${n} ${n === 1 ? one : many}`);
   }
   return parts.join(" · ");
+}
+
+// ── Morning briefings + the two time-driven dead types ──────────────────────
+//
+// Everything else the academy sends is a prompt to act NOW. The two briefings
+// below are the only messages that exist to *plan* a day with, which is why
+// they run at 07:00 IST and why both are deliberately absent from DEFERRABLE
+// (see the note there): holding a 07:00 briefing to 08:00 destroys the lead
+// time that is the entire reason for sending it.
+
+/** Today's IST calendar date plus the UTC bounds of that IST day. */
+function istDay(now: Date) {
+  const istDate = new Intl.DateTimeFormat("en-CA", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    timeZone: IST,
+  }).format(now);
+  return {
+    istDate,
+    dayStart: new Date(`${istDate}T00:00:00+05:30`).toISOString(),
+    dayEnd: new Date(`${istDate}T23:59:59+05:30`).toISOString(),
+  };
+}
+
+/** Hour on the IST clock, 0-23. */
+function istHour(now: Date): number {
+  return Number(
+    new Intl.DateTimeFormat("en-GB", { hour: "2-digit", hour12: false, timeZone: IST }).format(now)
+  );
+}
+
+/** "Sat 12 Jul" in IST. */
+function fmtDayIST(iso: string): string {
+  return new Intl.DateTimeFormat("en-GB", {
+    weekday: "short",
+    day: "numeric",
+    month: "short",
+    timeZone: IST,
+  }).format(new Date(iso));
+}
+
+/** True if this (user, type) already got a message stamped with this IST date. */
+async function alreadyBriefed(userId: string, type: string, stamp: string, key = "date") {
+  const { data } = await supabase
+    .from("notifications")
+    .select("id")
+    .eq("user_id", userId)
+    .eq("type", type)
+    .eq(`data->>${key}`, stamp)
+    .limit(1);
+  return !!data?.length;
+}
+
+/** Confirmed/attended headcount per session id, in one query rather than N. */
+async function headcounts(sessionIds: string[]): Promise<Map<string, number>> {
+  const counts = new Map<string, number>();
+  if (!sessionIds.length) return counts;
+  const { data } = await supabase
+    .from("bookings")
+    .select("session_id")
+    .in("session_id", sessionIds)
+    .in("status", ["confirmed", "attended"])
+    .limit(5000);
+  for (const b of (data ?? []) as { session_id: string }[]) {
+    counts.set(b.session_id, (counts.get(b.session_id) ?? 0) + 1);
+  }
+  return counts;
+}
+
+/**
+ * Coach morning briefing — 07:00 IST, one message per coach with sessions today.
+ *
+ * Closes the gap that a coach's earliest warning about any session is T-60,
+ * which is useless for planning travel between a venue, a school and a private
+ * address. Sends nothing on a day with no sessions.
+ */
+async function sweepCoachDayAhead() {
+  const now = new Date();
+  if (istHour(now) < 7) return;
+  const { istDate, dayStart, dayEnd } = istDay(now);
+
+  const { data: sessions } = await supabase
+    .from("class_sessions")
+    .select(`id,starts_at,coach_id,classes!inner(${CLASS_LOCATION_SELECT})`)
+    .eq("status", "scheduled")
+    .not("coach_id", "is", null)
+    .gte("starts_at", dayStart)
+    .lte("starts_at", dayEnd)
+    .order("starts_at")
+    .limit(500);
+  if (!sessions?.length) return;
+
+  const valid = await withValidCoaches(sessions);
+  const byCoach = new Map<string, typeof valid>();
+  for (const s of valid) {
+    const arr = byCoach.get(s.coach_id) ?? [];
+    arr.push(s);
+    byCoach.set(s.coach_id, arr);
+  }
+
+  const counts = await headcounts(valid.map((s) => s.id));
+
+  for (const [coachId, list] of byCoach) {
+    if (await alreadyBriefed(coachId, "coach_day_ahead", istDate)) continue;
+
+    const lines = list.map((s) => {
+      const { title, location } = locationOf(s.classes);
+      const n = counts.get(s.id) ?? 0;
+      return `${fmtClock(s.starts_at)} · ${title}${location ? ` · ${location}` : ""} · ${n} student${n === 1 ? "" : "s"}`;
+    });
+    const firstName = await firstNameOf(coachId);
+    const head = `${list.length} session${list.length === 1 ? "" : "s"} · first at ${fmtClock(list[0].starts_at)}`;
+
+    await supabase.from("notifications").insert({
+      user_id: coachId,
+      type: "coach_day_ahead",
+      title: `Your day — ${fmtDayIST(list[0].starts_at)}`,
+      body: `Hi ${firstName}! ${head}\n${lines.join("\n")}\nReply here if anything looks wrong.`,
+      data: {
+        date: istDate,
+        first_name: firstName,
+        session_count: list.length,
+        session_ids: list.map((s) => s.id),
+        summary: head,
+        schedule: lines.join(" · "),
+        url: "/coach",
+      },
+    });
+  }
+}
+
+/**
+ * Founder morning briefing — 07:00 IST. What's scheduled and what's missing,
+ * while both are still changeable. The 21:00 digest reports the same day after
+ * nothing can be done about it.
+ *
+ * "Needs you" leads because it is the only part that is actionable: sessions
+ * with no coach, and members still waiting on an approval decision.
+ */
+async function sweepFounderMorningBrief() {
+  const now = new Date();
+  if (istHour(now) < 7) return;
+  const { istDate, dayStart, dayEnd } = istDay(now);
+
+  const { data: founders } = await supabase.from("profiles").select("id").eq("role", "founder");
+  if (!founders?.length) return;
+
+  const { data: sessions } = await supabase
+    .from("class_sessions")
+    .select(`id,starts_at,coach_id,classes!inner(${CLASS_LOCATION_SELECT})`)
+    .eq("status", "scheduled")
+    .gte("starts_at", dayStart)
+    .lte("starts_at", dayEnd)
+    .order("starts_at")
+    .limit(500);
+
+  const { count: pendingSignups } = await supabase
+    .from("profiles")
+    .select("id", { count: "exact", head: true })
+    .eq("approval_status", "pending");
+
+  const list = sessions ?? [];
+  // Nothing scheduled and nobody waiting → say nothing at all.
+  if (!list.length && !pendingSignups) return;
+
+  const counts = await headcounts(list.map((s) => s.id));
+  const unassigned = list.filter((s) => !s.coach_id);
+  const students = list.reduce((n, s) => n + (counts.get(s.id) ?? 0), 0);
+
+  const problems: string[] = [];
+  for (const s of unassigned) {
+    const { title } = locationOf(s.classes);
+    problems.push(`${title} ${fmtClock(s.starts_at)} has NO coach`);
+  }
+  if (pendingSignups) {
+    problems.push(`${pendingSignups} signup${pendingSignups === 1 ? "" : "s"} waiting on you`);
+  }
+
+  const lines = list.map((s) => {
+    const { title, location } = locationOf(s.classes);
+    const n = counts.get(s.id) ?? 0;
+    return `${fmtClock(s.starts_at)} · ${title}${location ? ` · ${location}` : ""} · ${s.coach_id ? "" : "— "}${n} booked`;
+  });
+
+  const head = list.length
+    ? `${list.length} session${list.length === 1 ? "" : "s"} · ${students} student${students === 1 ? "" : "s"}`
+    : "No sessions today";
+
+  const body = [
+    head,
+    problems.length ? `Needs you: ${problems.join(" · ")}` : null,
+    ...lines,
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  for (const f of founders) {
+    if (await alreadyBriefed(f.id, "founder_morning_brief", istDate)) continue;
+    await supabase.from("notifications").insert({
+      user_id: f.id,
+      type: "founder_morning_brief",
+      title: `Today — ${istDate}`,
+      body,
+      data: {
+        date: istDate,
+        session_count: list.length,
+        student_count: students,
+        unassigned_count: unassigned.length,
+        pending_signups: pendingSignups ?? 0,
+        summary: head,
+        url: "/admin",
+      },
+    });
+  }
+}
+
+/**
+ * `renewal_upcoming` — 3 days before a plan renews. The toggle for this has
+ * existed in the profile UI since the grouped-prefs rework with nothing behind
+ * it. A heads-up is also the cheapest possible prevention for the
+ * `payment_failed` path that already exists.
+ *
+ * Deliberately skips `cancel_at_period_end` — telling someone who already
+ * cancelled that they're about to be charged is alarming and wrong.
+ */
+async function sweepRenewalReminders() {
+  const now = Date.now();
+  const { data: subs } = await supabase
+    .from("subscriptions")
+    .select("id,client_id,current_period_end,plans!inner(name)")
+    .eq("status", "active")
+    .eq("cancel_at_period_end", false)
+    .gte("current_period_end", new Date(now + 3 * 86400000).toISOString())
+    .lt("current_period_end", new Date(now + 4 * 86400000).toISOString())
+    .limit(200);
+
+  for (const s of (subs ?? []) as {
+    id: string;
+    client_id: string;
+    current_period_end: string;
+    plans: { name?: string } | null;
+  }[]) {
+    // Keyed on the period, not the day, so a retried sweep can't double-send.
+    if (await alreadyBriefed(s.client_id, "renewal_upcoming", s.current_period_end, "period_end")) {
+      continue;
+    }
+    const plan = s.plans?.name ?? "your plan";
+    const when = fmtDayIST(s.current_period_end);
+    await supabase.from("notifications").insert({
+      user_id: s.client_id,
+      type: "renewal_upcoming",
+      title: "Renewing soon",
+      body: `Your ${plan} renews on ${when}. Nothing to do if your card's still good.`,
+      data: {
+        subscription_id: s.id,
+        period_end: s.current_period_end,
+        plan_name: plan,
+        renews_on: when,
+        url: "/app/billing",
+      },
+    });
+  }
+}
+
+/**
+ * `monthly_progress` — one summary per player, in the first week of the month.
+ *
+ * The retention artefact: it turns a subscription into a story, and it is
+ * composed entirely from data that already exists. Runs from the 1st to the 7th
+ * IST so a missed cron day still delivers, and stamps `data.month` so a player
+ * gets exactly one per month however many times it runs.
+ */
+async function sweepMonthlyProgress() {
+  const now = new Date();
+  if (istHour(now) < 9) return; // not at 2am, and after the morning briefings
+  const { istDate } = istDay(now);
+  const [y, m, d] = istDate.split("-").map(Number);
+  if (d > 7) return;
+
+  // The month being reported on is the one that just ended.
+  const prevY = m === 1 ? y - 1 : y;
+  const prevM = m === 1 ? 12 : m - 1;
+  const stamp = `${prevY}-${String(prevM).padStart(2, "0")}`;
+  const from = new Date(`${stamp}-01T00:00:00+05:30`).toISOString();
+  const to = new Date(`${y}-${String(m).padStart(2, "0")}-01T00:00:00+05:30`).toISOString();
+
+  const { data: attended } = await supabase
+    .from("bookings")
+    .select("player_id,client_id,class_sessions!inner(starts_at)")
+    .eq("status", "attended")
+    .gte("class_sessions.starts_at", from)
+    .lt("class_sessions.starts_at", to)
+    .limit(5000);
+  if (!attended?.length) return;
+
+  const perPlayer = new Map<string, { client: string; n: number }>();
+  for (const b of attended as { player_id: string; client_id: string | null }[]) {
+    if (!b.client_id || !b.player_id) continue;
+    const cur = perPlayer.get(b.player_id) ?? { client: b.client_id, n: 0 };
+    cur.n++;
+    perPlayer.set(b.player_id, cur);
+  }
+
+  for (const [playerId, { client, n }] of perPlayer) {
+    if (await alreadyBriefed(client, "monthly_progress", `${stamp}:${playerId}`, "month_player")) {
+      continue;
+    }
+    const { data: player } = await supabase
+      .from("players")
+      .select("full_name")
+      .eq("id", playerId)
+      .maybeSingle();
+    const first = (player?.full_name ?? "Your player").split(" ")[0];
+
+    const { count: assessments } = await supabase
+      .from("skill_assessments")
+      .select("id", { count: "exact", head: true })
+      .eq("player_id", playerId)
+      .gte("created_at", from)
+      .lt("created_at", to);
+
+    await supabase.from("notifications").insert({
+      user_id: client,
+      type: "monthly_progress",
+      title: `${first}'s month at the academy`,
+      body:
+        `${first} attended ${n} session${n === 1 ? "" : "s"} last month` +
+        (assessments ? ` and was assessed ${assessments} time${assessments === 1 ? "" : "s"}` : "") +
+        `. See the full progress report in the app.`,
+      data: {
+        month: stamp,
+        month_player: `${stamp}:${playerId}`,
+        player_id: playerId,
+        player_name: first,
+        sessions_attended: n,
+        assessment_count: assessments ?? 0,
+        url: "/app/players",
+      },
+    });
+  }
 }
 
 /** True if a notification of `type` for this (session, user) already exists. */
@@ -1266,6 +1722,37 @@ function interactiveContentFor(
       }),
     };
   }
+  // Coach T-30 chase → the same Yes / Can't make it buttons as T-60. Distinct
+  // template rather than a reuse of coach_coming_check: this rung only fires
+  // when the coach has stayed silent, and it has to READ like a follow-up.
+  // Sending the identical wording twice, half an hour apart, is what made the
+  // ladder look broken even when it was working.
+  if (row.type === "coach_confirm_nudge_2" && TWILIO_WA_COACH_NUDGE_SID) {
+    return {
+      ContentSid: TWILIO_WA_COACH_NUDGE_SID,
+      ContentVariables: JSON.stringify({
+        "1": firstName,
+        "2": String(d.class_title ?? "your class"),
+        "3": `${String(d.time_str ?? "")}${d.location_str ? `, ${String(d.location_str)}` : ""}`.trim() || "soon",
+        "4": String(d.maps_url ?? ""),
+      }),
+    };
+  }
+  // Cover offer → one Claim button. The button id `cover_claim` has existed in
+  // lib/whatsapp/interactive.ts since cover offers shipped, but no template ever
+  // declared it, so claiming only ever worked by typing "claim". First tap still
+  // wins: claim_cover_session settles the race with SELECT ... FOR UPDATE.
+  if (row.type === "cover_offer" && TWILIO_WA_COACH_COVER_SID) {
+    return {
+      ContentSid: TWILIO_WA_COACH_COVER_SID,
+      ContentVariables: JSON.stringify({
+        "1": firstName,
+        "2": String(d.class_title ?? "a session"),
+        "3": `${String(d.time_str ?? "")}${d.location_str ? `, ${String(d.location_str)}` : ""}`.trim() || "soon",
+        "4": String(d.maps_url ?? ""),
+      }),
+    };
+  }
   // Coach "Have you reached?" at start → I've arrived / Running late buttons.
   if (row.type === "coach_arrival_check" && TWILIO_WA_COACH_ARRIVAL_SID) {
     return {
@@ -1315,6 +1802,8 @@ function interactiveContentFor(
     };
   }
   // Client: one consolidated reminder with "I'll be there / Can't make it".
+  // {{4}} is the venue, written by the notify_name_the_session trigger. v1 of
+  // the template declares only three variables and ignores it; v2 renders it.
   if (row.type === "reminder_upcoming" && TWILIO_WA_CLIENT_REMINDER_SID) {
     return {
       ContentSid: TWILIO_WA_CLIENT_REMINDER_SID,
@@ -1322,6 +1811,7 @@ function interactiveContentFor(
         "1": firstName,
         "2": String(d.class_title ?? "your session"),
         "3": String(d.time_str ?? "later today"),
+        "4": String(d.location_str ?? "the usual venue"),
       }),
     };
   }

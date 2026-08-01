@@ -1,5 +1,36 @@
 # WhatsApp messaging — full reference
 
+> ## Read this first — parts of this document are historical
+>
+> Re-verified 2026-07-31 against production. This file was written as an
+> **audit**, and most of what it flagged has since been fixed. It is kept for the
+> reasoning (§9–§11), which is still the best statement of *why* the system is
+> shaped this way — not as a status report.
+>
+> | Section | Trust it? |
+> | --- | --- |
+> | §1–§7 catalogue | Mostly. The rule sets in §2 are **out of date** — the worker now also has `DAILY_SEND_CAP`, `CAP_EXEMPT`, three grouped preference toggles, and the types `player_absent`, `session_outcome`, `cover_offer`, `private_session_booked`. |
+> | §8 gaps `G1`–`G14` | **Stale.** G1, G5, G8, G9, G12 are fixed; G3, G4 are open. See below. |
+> | §9 missing `M1`–`M26` | Partly built: **M1** (`player_absent`) and **M12** (`cover_offer`) shipped. The rest stand. |
+> | §10 briefings | **A proposal. Never built.** There is no morning briefing of any kind — see `notifications.md` §2a. |
+> | §11 reasoning | Current and load-bearing. Read before arguing about adding or muting anything. |
+> | §12 payload audit | **Stale in its headline finding** — see below. |
+>
+> **§12.5 is wrong now.** It reports `coach_confirm_nudge_2` and
+> `coach_arrival_check` as having *zero rows ever*. Both began firing
+> 2026-07-30 (18 and 23 rows). The five-rung coach ladder it describes as being
+> two rungs in practice is now running in full. `waitlist_spot` is still at zero.
+>
+> **What §12.3 got right and is still true:** `client_coach_late` has never once
+> been used (`coach_name` on 0 of 5 rows), `client_coach_arrived` falls back to
+> free-form on most sends (16 of 54 carry `coach_name`), and `payment_failed`
+> carries a genuinely empty payload so its template can never name the plan
+> (G3). G4 — the waitlist template can never name the class — is untestable
+> because the type has never fired.
+>
+> **For current status, read [`notifications.md`](notifications.md)** — what we
+> send, what changed, and what is actually open.
+
 Every message the academy sends or receives over WhatsApp, per role, with the
 actual copy that goes out. Written to be **reviewed**, in six passes:
 
