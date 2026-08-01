@@ -1680,8 +1680,17 @@ async function deliverWhatsApp(
     fields.Body = `*${row.title}*\n${row.body}`;
   } else if (TWILIO_TEMPLATE_SID) {
     // Business-initiated outside the window → approved Utility template.
+    //
+    // WhatsApp rejects newlines inside a template VARIABLE value (the body may
+    // contain them, the variable may not), and silently 63016s the send. Every
+    // message was single-line when this was written; the morning briefings are
+    // not, so an unflattened brief would never reach anyone outside the 24h
+    // window. Flatten to " · " and cap the length rather than lose the message.
     fields.ContentSid = TWILIO_TEMPLATE_SID;
-    fields.ContentVariables = JSON.stringify({ "1": firstName, "2": `${row.title} — ${row.body}` });
+    fields.ContentVariables = JSON.stringify({
+      "1": firstName,
+      "2": `${row.title} — ${row.body}`.replace(/\s*\n\s*/g, " · ").trim().slice(0, 900),
+    });
   } else {
     // No template configured and outside the window: can't send free-form. This
     // is the generic TWILIO_WA_TEMPLATE_SID gap from 1.4 — name it explicitly.
