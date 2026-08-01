@@ -2,7 +2,7 @@
 --
 -- GENERATED from the live database via the Supabase MCP server. Do not edit by
 -- hand. Regenerate after any schema change (see AGENTS.md -> Database).
--- Last verified: 2026-07-14 (migration 0028 is DML-only; DDL unchanged).
+-- Last verified: 2026-08-01 (migrations 0048, 0055, 0056 applied to prod).
 --
 -- This is a reference dump, grouped for readability (extensions, enums, tables,
 -- constraints, indexes, functions, view, RLS). It is not guaranteed to run
@@ -1776,6 +1776,7 @@ declare
   v_existing notifications%rowtype;
   v_count int;
   v_day_start timestamptz;
+  v_first text;
 begin
   if p_user is null then return; end if;
 
@@ -1794,6 +1795,7 @@ begin
   for update;
 
   if not found then
+    -- notify_name_the_session appends the session to the body on the way in.
     insert into notifications (user_id, type, title, body, data, scheduled_for)
     values (p_user, 'coach_changed', p_title, p_body,
             jsonb_build_object('session_id', p_session, 'url', p_url,
@@ -1804,11 +1806,20 @@ begin
 
   -- Second and subsequent changes today → one summary instead of N messages.
   v_count := coalesce((v_existing.data ->> 'change_count')::int, 1) + 1;
+  v_first := v_existing.data ->> 'session_label';
 
   update notifications
   set title = 'Schedule updated',
-      body  = 'Your schedule was updated — ' || v_count
-              || ' of your sessions have a new coach.',
+      body  = case
+                when v_first is null then
+                  'Your schedule was updated — ' || v_count
+                  || ' of your sessions have a new coach.'
+                else
+                  v_first || ' and ' || (v_count - 1)
+                  || case when v_count - 1 = 1 then ' other session'
+                          else ' other sessions' end
+                  || ' have a new coach.'
+              end,
       data  = v_existing.data
               || jsonb_build_object('change_count', v_count,
                                     'url', p_url,
@@ -1819,7 +1830,7 @@ end;
 $function$;
 
 comment on function public.queue_coach_changed is
-  'Queue a coach_changed notification, collapsing repeats for the same user on the same IST day into one summary row. See notification-fix-plan 2.1.';
+  'Queue a coach_changed notification, collapsing repeats for the same user on the same IST day into one summary row that names the first session and counts the rest. The per-session wording is added by notify_name_the_session.';
 
 CREATE OR REPLACE FUNCTION public.founder_reassign(p_session uuid, p_coach uuid, p_lock boolean DEFAULT false, p_force boolean DEFAULT false)
  RETURNS void
@@ -2071,6 +2082,7 @@ declare
   v_class   classes%rowtype;
   v_when    text;
   v_where   text;
+  v_maps    text;
   v_count   int := 0;
   r record;
 begin
@@ -2082,6 +2094,7 @@ begin
   select * into v_class from classes where id = v_session.class_id;
 
   v_where := coalesce(class_location_label(v_session.class_id), 'the venue');
+  v_maps  := class_location_maps_url(v_session.class_id);
 
   v_when := fmt_ist(v_session.starts_at);
 
@@ -2099,12 +2112,13 @@ begin
     insert into notifications (user_id, type, title, body, data)
     values (r.coach_id, 'cover_offer', 'Cover needed',
       coalesce(v_class.title, 'A session') || ' on ' || v_when || ' at ' || v_where
-      || ' needs a coach. First to claim it takes it — reply "claim" if you can cover.',
-      jsonb_build_object('session_id', p_session,
+      || ' needs a coach. First to claim it takes it — tap Claim, or reply "claim".',
+      jsonb_strip_nulls(jsonb_build_object('session_id', p_session,
                          'class_title', coalesce(v_class.title, 'a session'),
                          'time_str', v_when,
                          'location_str', v_where,
-                         'url', '/coach/calendar'));
+                         'maps_url', v_maps,
+                         'url', '/coach/calendar')));
     v_count := v_count + 1;
   end loop;
 
@@ -3455,6 +3469,141 @@ AS $function$
   where p.role = 'founder' and p.deleted_at is null;
 $function$;
 
+CREATE OR REPLACE FUNCTION public.session_label(p_session uuid)
+ RETURNS text
+ LANGUAGE sql
+ STABLE
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+  select c.title || ', ' || fmt_ist(s.starts_at)
+         || coalesce(' at ' || nullif(class_location_label(c.id), ''), '')
+  from class_sessions s
+  join classes c on c.id = s.class_id
+  where s.id = p_session;
+$function$;
+
+COMMENT ON FUNCTION public.session_label IS
+  'Human name for a session: title, IST start, and location_label. Used by the '
+  'notify_name_the_session trigger so a message never says "one of your sessions".';
+
+CREATE OR REPLACE FUNCTION public.notify_name_the_session()
+ RETURNS trigger
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare
+  v_session uuid;
+  v_label   text;
+  v_title   text;
+  v_time    text;
+  v_where   text;
+  v_coach   uuid;
+  v_coach_name text;
+begin
+  if new.type not in ('reminder_upcoming', 'coach_changed') then
+    return new;
+  end if;
+
+  v_session := nullif(new.data ->> 'session_id', '')::uuid;
+  if v_session is null then return new; end if;
+
+  select c.title,
+         to_char(s.starts_at at time zone 'Asia/Kolkata', 'FMHH12:MI am'),
+         nullif(class_location_label(c.id), ''),
+         s.coach_id
+    into v_title, v_time, v_where, v_coach
+  from class_sessions s
+  join classes c on c.id = s.class_id
+  where s.id = v_session;
+
+  if v_title is null then return new; end if;   -- session vanished; leave as-is
+
+  if new.type = 'reminder_upcoming' then
+    new.body := v_title || ' at ' || v_time
+                || coalesce(' — ' || v_where, '') || '.';
+    new.data := new.data || jsonb_strip_nulls(jsonb_build_object(
+      'class_title',  v_title,
+      'time_str',     v_time,
+      'location_str', v_where));
+    return new;
+  end if;
+
+  -- coach_changed
+  v_label := v_title || ', ' || fmt_ist(
+    (select starts_at from class_sessions where id = v_session))
+    || coalesce(' at ' || v_where, '');
+
+  new.body := rtrim(new.body, ' .') || ' — ' || v_label || '.';
+
+  if v_coach is not null and v_coach <> new.user_id then
+    select split_part(nullif(btrim(full_name), ''), ' ', 1)
+      into v_coach_name from profiles where id = v_coach;
+    if v_coach_name is not null then
+      new.body := new.body || ' New coach: ' || v_coach_name || '.';
+    end if;
+  end if;
+
+  new.data := new.data || jsonb_strip_nulls(jsonb_build_object(
+    'class_title',   v_title,
+    'time_str',      v_time,
+    'location_str',  v_where,
+    'session_label', v_label,
+    'coach_name',    v_coach_name));
+
+  return new;
+end;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.founder_day_report(p_date date DEFAULT (now() AT TIME ZONE 'Asia/Kolkata')::date)
+ RETURNS TABLE(session_id uuid, class_title text, coach_id uuid, coach_name text, starts_at timestamp with time zone, time_str text, confirmed_at timestamp with time zone, arrived_at timestamp with time zone, minutes_late integer, arrival_source text, distance_m integer, roster_size integer, roster_marked integer)
+ LANGUAGE sql
+ STABLE
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+  select
+    s.id,
+    c.title,
+    s.coach_id,
+    coalesce(nullif(btrim(p.full_name), ''), 'Unassigned'),
+    s.starts_at,
+    to_char(s.starts_at at time zone 'Asia/Kolkata', 'FMHH12:MI am'),
+    s.coach_confirmed_at,
+    s.coach_arrived_at,
+    -- NULL when they never marked arrival at all: "late" and "absent" are
+    -- different facts and the caller must be able to tell them apart.
+    case
+      when s.coach_arrived_at is null then null
+      else greatest(0, (extract(epoch from s.coach_arrived_at - s.starts_at) / 60)::int)
+    end,
+    s.coach_arrival_source,
+    s.coach_arrival_distance_m,
+    (select count(*)::int from bookings b
+      where b.session_id = s.id
+        and b.status in ('confirmed', 'attended', 'no_show')),
+    -- Attendance is bookings.status, so "marked" means moved off 'confirmed'.
+    (select count(*)::int from bookings b
+      where b.session_id = s.id
+        and b.status in ('attended', 'no_show'))
+  from class_sessions s
+  join classes c on c.id = s.class_id
+  left join profiles p on p.id = s.coach_id
+  where s.status <> 'cancelled'
+    and (s.starts_at at time zone 'Asia/Kolkata')::date = p_date
+  order by s.starts_at;
+$function$;
+
+COMMENT ON FUNCTION public.founder_day_report IS
+  'Per-session punctuality and roster-completion facts for one IST day. Backs '
+  'the 21:00 founder summary (sweepFounderDigest). Replaces a row count that '
+  'excluded every coach escalation.';
+
+-- Founders only; the digest sweep runs as service-role.
+REVOKE ALL ON FUNCTION public.founder_day_report(date) FROM public, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.founder_day_report(date) TO service_role;
+
 CREATE OR REPLACE FUNCTION public.coach_confirm_session(p_session uuid)
  RETURNS timestamp with time zone
  LANGUAGE plpgsql
@@ -4161,6 +4310,7 @@ CREATE TRIGGER bookings_ops_feed_status AFTER UPDATE OF status ON public.booking
 CREATE TRIGGER class_credits_ops_feed AFTER UPDATE ON public.class_credits FOR EACH ROW EXECUTE FUNCTION ops_notify_credit_used();
 CREATE TRIGGER class_sessions_ops_feed AFTER UPDATE OF coach_id ON public.class_sessions FOR EACH ROW EXECUTE FUNCTION ops_notify_coach_change();
 CREATE TRIGGER class_sessions_reset_confirmation BEFORE UPDATE OF coach_id, starts_at ON public.class_sessions FOR EACH ROW EXECUTE FUNCTION reset_session_confirmation();
+CREATE TRIGGER notifications_name_the_session BEFORE INSERT ON public.notifications FOR EACH ROW EXECUTE FUNCTION notify_name_the_session();
 CREATE TRIGGER classes_notify_open AFTER INSERT ON public.classes FOR EACH ROW EXECUTE FUNCTION ops_notify_class_open();
 CREATE TRIGGER skill_assessments_notify AFTER INSERT ON public.skill_assessments FOR EACH ROW EXECUTE FUNCTION ops_notify_assessment();
 CREATE TRIGGER student_notes_notify AFTER INSERT ON public.student_notes FOR EACH ROW EXECUTE FUNCTION ops_notify_student_note();

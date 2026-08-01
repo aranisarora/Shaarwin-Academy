@@ -63,7 +63,13 @@ describe("bulk reassignment (migration 0043)", () => {
     // ...and it reads as a summary, not as a single session's change.
     expect(rows[0].data.change_count).toBe(4);
     expect(rows[0].data.collapsed).toBe(true);
-    expect(rows[0].body).toContain("4 of your sessions");
+    // Migration 0055 replaced the countless "4 of your sessions" wording: the
+    // summary now names the first session (stashed as data.session_label by
+    // notify_name_the_session) and counts the rest, so the parent can tell
+    // which sessions moved. The guarantee under test is unchanged — one row,
+    // and a body that reports the whole burst rather than one occurrence.
+    expect(rows[0].body).toContain("3 other sessions");
+    expect(rows[0].body).toContain(rows[0].data.session_label);
   });
 
   it("collapses the receiving coach's copy too — they get one summary, not N", async () => {
