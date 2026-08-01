@@ -10,6 +10,10 @@
 // escalations, after-class summaries).
 
 import { createClient } from "jsr:@supabase/supabase-js@2";
+// The 21:00 founder summary. Pure and Deno-free so it can be unit-tested —
+// see digest.test.ts. (The PREF_GROUP_FOR_TYPE duplication further down is a
+// different case: that one is shared with lib/, across the Deno/Next boundary.)
+import { summariseDay, type DayReportRow } from "./digest.ts";
 
 const supabase = createClient(
   Deno.env.get("SUPABASE_URL")!,
@@ -47,6 +51,12 @@ const TWILIO_WA_CLIENT_PAYMENT_SID = Deno.env.get("TWILIO_WA_CLIENT_PAYMENT_SID"
 const TWILIO_WA_CLIENT_BOOKED_SID = Deno.env.get("TWILIO_WA_CLIENT_BOOKED_SID");
 const TWILIO_WA_COACH_PRIVATE_SID = Deno.env.get("TWILIO_WA_COACH_PRIVATE_SID");
 const TWILIO_WA_FOUNDER_DIGEST_SID = Deno.env.get("TWILIO_WA_FOUNDER_DIGEST_SID");
+// The digest split into four labelled lines (punctuality / rosters / per-coach
+// arrival marking / needs-you). v1 and v2 declare a single content variable, so
+// the whole summary arrived as one run-on paragraph — the reason this exists.
+// Set it and the four-line shape is used; leave it unset and the old one-line
+// shape keeps working. See interactiveContentFor.
+const TWILIO_WA_FOUNDER_DIGEST_V3_SID = Deno.env.get("TWILIO_WA_FOUNDER_DIGEST_V3_SID");
 // Signup-approval flow (new-user-approval-plan). Founder Approve/Deny buttons +
 // the client "you're approved" CTA. Optional until provisioned.
 const TWILIO_WA_FOUNDER_SIGNUP_SID = Deno.env.get("TWILIO_WA_FOUNDER_SIGNUP_SID");
@@ -882,24 +892,6 @@ async function sweepAfterClass() {
   }
 }
 
-// Ops feed types → singular/plural labels for the digest line. Order here is
-// the order they appear in the summary.
-const OPS_DIGEST_LABELS: Record<string, [string, string]> = {
-  ops_booking: ["booking", "bookings"],
-  ops_cancellation: ["cancellation", "cancellations"],
-  ops_attendance: ["attendance update", "attendance updates"],
-  ops_payment: ["payment", "payments"],
-  ops_membership: ["membership change", "membership changes"],
-  ops_new_client: ["new client", "new clients"],
-  ops_new_coach: ["new coach", "new coaches"],
-  ops_player_added: ["new player", "new players"],
-  ops_wa_linked: ["WhatsApp link", "WhatsApp links"],
-  ops_credit_used: ["credit used", "credits used"],
-  ops_coach_change: ["coach change", "coach changes"],
-  ops_cover_claimed: ["cover claimed", "covers claimed"],
-  ops_session_coach_invalid: ["session with a bad coach", "sessions with a bad coach"],
-};
-
 /**
  * Founder daily summary, once per IST day at/after 21:00 IST.
  *
@@ -912,13 +904,18 @@ const OPS_DIGEST_LABELS: Record<string, [string, string]> = {
  * all 15 coach incidents that day.
  *
  * It now reports what a founder actually needs at the end of a day: did the
- * coaches turn up, were they on time, and did they file the roster. Source is
- * founder_day_report() (migration 0056).
+ * coaches turn up, were they on time, did they file the roster — and which of
+ * them is marking arrival at all, by name. Source is founder_day_report()
+ * (migrations 0056 and 0057); the wording is summariseDay() in ./digest.ts.
  *
  * On the shape: WhatsApp rejects newlines inside a template VARIABLE, but not in
- * a template BODY. That distinction is why the old digest was stuck on one line
- * — it had a single content variable. founder_daily_digest_v3 has a multi-line
- * body with one variable per line, so each line below must stay newline-free.
+ * a template BODY. That distinction is the whole reason the digest read as one
+ * run-on paragraph for its first three days — v1 and v2 of the template declare
+ * a single content variable, so all four sections had to be crammed into it.
+ * founder_daily_digest_v3 declares one variable per line and supplies the line
+ * breaks itself, so every string summariseDay returns must stay newline-free.
+ * The v3 SID is optional: until TWILIO_WA_FOUNDER_DIGEST_V3_SID is set, the
+ * old one-variable shape is sent instead (see interactiveContentFor).
  */
 async function sweepFounderDigest() {
   const now = new Date();
@@ -960,95 +957,35 @@ async function sweepFounderDigest() {
       user_id: f.id,
       type: "ops_daily_digest",
       title: "Today at the academy",
-      // The in-app and plain-text paths get the whole thing; " · " rather than
-      // newlines so the generic template (one variable) stays legal too.
-      body: `Coaches: ${summary.coaches} · Attendance: ${summary.attendance} · ${summary.attention}`,
+      // One labelled section per line. Newlines are safe on every path that
+      // reads `body`: the in-window free-form send passes them through, and the
+      // generic single-variable template flattens them to " · " before it
+      // interpolates (see deliverWhatsApp). They used to be pre-flattened here,
+      // which meant even the paths that could render four lines got one.
+      body: [
+        `Punctuality: ${summary.punctuality}`,
+        `Rosters: ${summary.rosters}`,
+        `By coach: ${summary.byCoach}`,
+        `Needs you: ${summary.attention}`,
+      ].join("\n"),
       data: {
         date: istDate,
-        coaches: summary.coaches,
-        attendance: summary.attendance,
+        // One key per template variable. `summary` is deliberately absent — the
+        // v1/v2 templates read `d.summary`, and the fallback for a missing key
+        // was `row.body`, so every section arrived crammed into one variable.
+        // The v3 template takes the four below instead. (See
+        // interactiveContentFor.)
+        punctuality: summary.punctuality,
+        rosters: summary.rosters,
+        by_coach: summary.byCoach,
         attention: summary.attention,
+        coach_adoption: summary.adoption,
         url: "/admin/schedule",
       },
     });
   }
 }
 
-type DayReportRow = {
-  class_title: string;
-  coach_name: string;
-  time_str: string;
-  arrived_at: string | null;
-  minutes_late: number | null;
-  arrival_source: string | null;
-  roster_size: number;
-  roster_marked: number;
-};
-
-/** How late a coach can be before it is worth the founder's attention. */
-const LATE_THRESHOLD_MIN = 5;
-
-/**
- * Three newline-free lines: punctuality, roster completion, and the exceptions
- * worth acting on. Names are used deliberately — "1 coach was late" is a
- * statistic, "Augustine 12 min late (Beginners Batch)" is something you can ring
- * someone about.
- */
-function summariseDay(rows: DayReportRow[]): {
-  coaches: string;
-  attendance: string;
-  attention: string;
-} {
-  const total = rows.length;
-  const late = rows.filter((r) => (r.minutes_late ?? 0) >= LATE_THRESHOLD_MIN);
-  const missing = rows.filter((r) => r.arrived_at === null);
-  const onTime = total - late.length - missing.length;
-
-  const coaches =
-    `${onTime} of ${total} ${total === 1 ? "session" : "sessions"} started on time` +
-    (late.length
-      ? ` · ${late
-          .slice(0, 3)
-          .map((r) => `${r.coach_name} ${r.minutes_late} min late (${r.class_title})`)
-          .join(" · ")}${late.length > 3 ? ` · +${late.length - 3} more` : ""}`
-      : "");
-
-  // A session with nobody booked has no roster to mark, so it can't count
-  // against a coach — otherwise a quiet day reads as a day of neglect.
-  const withRoster = rows.filter((r) => r.roster_size > 0);
-  const marked = withRoster.filter((r) => r.roster_marked >= r.roster_size);
-  const blank = withRoster.filter((r) => r.roster_marked === 0);
-  const attendance = withRoster.length
-    ? `${marked.length} of ${withRoster.length} rosters marked` +
-      (blank.length ? ` · ${blank.length} left blank` : "")
-    : "no rosters to mark";
-
-  // Never marking arrival at all is the one that needs a name and a nudge: the
-  // parents were told nothing, and the founder was escalated at start+10.
-  const parts: string[] = [];
-  for (const r of missing.slice(0, 3)) {
-    parts.push(`${r.coach_name} never marked arrival (${r.class_title}, ${r.time_str})`);
-  }
-  if (missing.length > 3) parts.push(`+${missing.length - 3} more unmarked`);
-  for (const r of blank.slice(0, 2)) {
-    parts.push(`${r.class_title} roster still blank`);
-  }
-  const attention = parts.length ? parts.join(" · ") : "Nothing — a clean day.";
-
-  return { coaches, attendance, attention };
-}
-
-/** Count ops rows by type and render the one-line summary (zeros omitted). */
-function summariseOps(types: string[]): string {
-  const counts = new Map<string, number>();
-  for (const t of types) counts.set(t, (counts.get(t) ?? 0) + 1);
-  const parts: string[] = [];
-  for (const [key, [one, many]] of Object.entries(OPS_DIGEST_LABELS)) {
-    const n = counts.get(key) ?? 0;
-    if (n > 0) parts.push(`${n} ${n === 1 ? one : many}`);
-  }
-  return parts.join(" · ");
-}
 
 // ── Morning briefings + the two time-driven dead types ──────────────────────
 //
@@ -1587,7 +1524,12 @@ async function deliver(row: {
     return { ok: false, channel: wa.channel, error: notes.join("; ") };
   }
 
-  const deepLink = `${Deno.env.get("APP_URL") ?? "http://localhost:3000"}${row.data?.url ?? "/app"}`;
+  // APP_URL, not a second copy of it. This read had its own `http://localhost:3000`
+  // default while the module-level APP_URL 1500 lines above defaults to
+  // production, so an unset function secret sent every fallback email with a
+  // dead localhost "Open" button — the same class of defect as the frozen
+  // template button URLs, on the channel that only runs when WhatsApp failed.
+  const deepLink = `${APP_URL}${row.data?.url ?? "/app"}`;
   const res = await fetch("https://api.resend.com/emails", {
     method: "POST",
     headers: {
@@ -1603,7 +1545,10 @@ async function deliver(row: {
           <div style="max-width:480px;margin:0 auto;background:#14161B;border:1px solid #26282E;border-radius:12px;padding:28px">
             <p style="color:#E8590C;font-size:11px;letter-spacing:.08em;text-transform:uppercase;margin:0 0 12px">Sharwin TTA</p>
             <h1 style="color:#F4F1EA;font-size:22px;margin:0 0 8px">${row.title}</h1>
-            <p style="color:#A3A7B0;font-size:15px;margin:0 0 24px">${row.body}</p>
+            <!-- pre-line so a multi-line body (the digest, the two morning
+                 briefings) keeps its lines instead of collapsing into HTML's
+                 one paragraph. -->
+            <p style="color:#A3A7B0;font-size:15px;margin:0 0 24px;white-space:pre-line">${row.body}</p>
             <a href="${deepLink}" style="display:inline-block;background:#E8590C;color:#F4F1EA;text-decoration:none;font-weight:600;padding:12px 24px;border-radius:8px">Open</a>
           </div>
         </div>`,
@@ -1689,7 +1634,7 @@ async function deliverWhatsApp(
     fields.ContentSid = TWILIO_TEMPLATE_SID;
     fields.ContentVariables = JSON.stringify({
       "1": firstName,
-      "2": `${row.title} — ${row.body}`.replace(/\s*\n\s*/g, " · ").trim().slice(0, 900),
+      "2": oneLine(`${row.title} — ${row.body}`).slice(0, 900),
     });
   } else {
     // No template configured and outside the window: can't send free-form. This
@@ -1701,6 +1646,21 @@ async function deliverWhatsApp(
   if (res.sid) return { ok: true, channel: "whatsapp" };
   notes.push(res.error ?? "send_failed");
   return { ok: false, channel: "whatsapp", error: notes.join("; ") };
+}
+
+/**
+ * A value safe to pass as a template variable.
+ *
+ * WhatsApp rejects a newline inside a variable (the body may contain them, the
+ * variable may not) and fails the send with 63016 rather than stripping it, so
+ * every interpolated value is flattened. Tabs and runs of spaces go too — they
+ * are rejected on the same rule.
+ */
+function oneLine(value: unknown): string {
+  return String(value ?? "")
+    .replace(/\s*\n\s*/g, " · ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 /**
@@ -1878,14 +1838,40 @@ function interactiveContentFor(
     }
   }
   // Founder: daily digest → CTA to the dashboard (static URL).
-  if (row.type === "ops_daily_digest" && TWILIO_WA_FOUNDER_DIGEST_SID) {
-    return {
-      ContentSid: TWILIO_WA_FOUNDER_DIGEST_SID,
-      ContentVariables: JSON.stringify({
-        "1": String(d.date ?? ""),
-        "2": String(d.summary ?? row.body ?? "").replace(/\s+/g, " ").trim(),
-      }),
-    };
+  //
+  // Two shapes, chosen by which SID is configured, because the sections cannot
+  // degrade into each other. v3 declares one variable per line; v1/v2 declare a
+  // single {{2}} that the whole digest has to fit inside. Sending the v3
+  // variables to a v2 SID would silently drop three of the four sections (Twilio
+  // accepts extra ContentVariables and ignores them), so the shape is picked
+  // explicitly rather than by a fallback.
+  if (row.type === "ops_daily_digest") {
+    if (TWILIO_WA_FOUNDER_DIGEST_V3_SID) {
+      return {
+        ContentSid: TWILIO_WA_FOUNDER_DIGEST_V3_SID,
+        ContentVariables: JSON.stringify({
+          "1": String(d.date ?? ""),
+          "2": oneLine(d.punctuality),
+          "3": oneLine(d.rosters),
+          "4": oneLine(d.by_coach),
+          "5": oneLine(d.attention),
+        }),
+      };
+    }
+    if (TWILIO_WA_FOUNDER_DIGEST_SID) {
+      // Pre-swap behaviour, stated rather than inherited: everything flattened
+      // into the single variable the old templates declare. `d.summary` was the
+      // key this used to read; sweepFounderDigest stopped writing it when the
+      // digest grew sections, and the silent `?? row.body` fallback is what
+      // shipped the run-on paragraph.
+      return {
+        ContentSid: TWILIO_WA_FOUNDER_DIGEST_SID,
+        ContentVariables: JSON.stringify({
+          "1": String(d.date ?? ""),
+          "2": oneLine(row.body).slice(0, 900),
+        }),
+      };
+    }
   }
   // Founder: new signup request with Approve / Deny buttons. The outbound SID is
   // recorded on the row (shared path below) so a tap maps back to the applicant.

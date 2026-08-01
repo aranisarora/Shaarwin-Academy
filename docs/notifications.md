@@ -71,31 +71,53 @@ There is no separate "admin" role: `profiles.role` is `founder`, `coach` or
 
 ---
 
-## 2a. The digest — there is exactly one, and it is the evening
+## 2a. The founder digest — one, at 21:00
 
-A recurring point of confusion, so stated plainly (`sweepFounderDigest`):
+`sweepFounderDigest`:
 
 | | |
 | --- | --- |
-| How many | **One.** There is no morning digest, for anyone. |
+| How many | **One** evening digest. (There are also two 07:00 IST *briefings* — see below.) |
 | When | 21:00 IST or later, once per IST calendar day |
-| Who gets it | **Founders only.** `role = 'founder'`, fanned out to all three. Coaches and clients receive no digest of any kind. |
-| What's in it | A count of that founder's own `FEED_ONLY` rows for the day, e.g. `3 bookings · 1 attendance update · 2 new clients` |
-| When it stays silent | Nothing happened → nothing is sent |
+| Who gets it | **Founders only.** `role = 'founder'`, fanned out to all three. Coaches and clients receive no digest. |
+| Source | `founder_day_report(p_date)` — per-session punctuality and roster facts (migrations `0056`, `0057`) |
+| Wording | `summariseDay()` in `supabase/functions/notify/digest.ts` — pure, unit-tested |
+| When it stays silent | Nothing was scheduled → nothing is sent. A day where everything ran cleanly **is** reported; that is the founder's "all good". |
 
-Two consequences worth knowing before anyone redesigns it:
+Four labelled lines, each one WhatsApp template variable:
 
-- **It counts rows, not events.** `summariseOps()` groups `notifications.type`
-  and pluralises the label, so `2 membership changes` reads identically whether
-  two families joined or two quit.
-- **Escalations are excluded**, because it counts only `FEED_ONLY` types. On 29
-  Jul it reported `2 WhatsApp links` and omitted all 15 coach-reliability
-  incidents that day — the routine reported, the exceptions hidden.
+| Line | Answers |
+| --- | --- |
+| **Punctuality** | `7 of 15 sessions started on time` + who was ≥5 min late, named |
+| **Rosters** | `0 of 2 rosters marked · 2 left blank` |
+| **Arrivals marked by coach** | `Augustine 0/3 · Samir 0/2 · Nandhan 2/3 · Keerthana 3/4` — **every** coach, worst first |
+| **Needs you** | Sessions with no coach, coaches who marked none, blank rosters |
 
-If you have read about a **morning briefing** (`founder_morning_brief`,
-`coach_day_ahead`, `household_day_ahead`), that is a **proposal** in
-`whatsapp-messaging.md` §10 and has never been built. The worker runs eight
-sweeps; none of them is a morning brief.
+The per-coach line is the academy's only per-coach adoption signal — arrival
+marking is the one thing every coach is asked to do on every session. It
+replaced a per-*session* list truncated at three names, which could name one
+coach, hide the rest, and never answer "who is actually using this?".
+
+### Two shape rules that are easy to break
+
+- **A newline is legal in a template BODY and illegal in a template VARIABLE.**
+  Twilio 63016s the send rather than stripping it. This is why the digest was a
+  single run-on paragraph for its first three days: v1 and v2 of the template
+  declare one variable, so all four sections had to be crammed inside it.
+  `founder_daily_digest_v3` declares one variable per line and supplies the
+  breaks itself. Everything `summariseDay()` returns must stay newline-free.
+- **An unassigned session is not a coach failure.** `founder_day_report` used to
+  coalesce a null coach to the literal name `Unassigned`, so a class nobody was
+  rostered onto was reported as `Unassigned never marked arrival (…)`. Migration
+  `0057` makes `coach_name` NULL instead, and the two are now separate lines.
+
+### The morning briefings do exist
+
+`founder_morning_brief` and `coach_day_ahead` both run at 07:00 IST
+(`sweepFounderMorningBrief`, `sweepCoachDayAhead`) and both are deliberately
+absent from `DEFERRABLE` — quiet hours run to 08:00, and deferring a 07:00
+briefing destroys the lead time that is its entire point. `household_day_ahead`
+remains a proposal.
 
 ---
 
@@ -125,21 +147,41 @@ Reconstructed from the July 2026 rework (migrations `0041`–`0049`).
 Re-verified against production, Twilio and the deployed worker on 2026-07-31
 (after the v31 deploy at 08:45 UTC).
 
-1. **Seven replacement templates are awaiting Meta approval — swap the SIDs when
-   they clear.** This is the only remaining step for items that were the two
-   worst defects found on 31 Jul. Nothing is broken while they are pending: the
-   secrets still point at the approved v1s, which deliver.
+1. **The replacement templates are approved. The secrets have not been swapped,
+   so production is still sending localhost buttons.** Re-verified against the
+   Twilio Content API on **2026-08-01**: all eight are `approved`. Until each
+   secret is repointed, the v1 template — and its `http://localhost:3000` button
+   — is what goes out. Confirmed live: the 2026-08-01 21:00 digest was delivered
+   through the v1 template, whose "Open dashboard" button is
+   `http://localhost:3000/admin`.
 
-   | Secret | Swap to | Fixes |
+   | Secret | Swap to | Category | Fixes |
+   | --- | --- | --- | --- |
+   | `TWILIO_WA_CLIENT_PAYMENT_SID` | `HX879441494fa9930038c36a5a2fb8d97b` | UTILITY | localhost "Fix payment" button |
+   | `TWILIO_WA_CLIENT_BOOKED_SID` | `HX332f153d408c4507df53a25aa3480669` | UTILITY | localhost button |
+   | `TWILIO_WA_COACH_PRIVATE_SID` | `HXe084673761a0f11ba9bd339521e656bf` | UTILITY | localhost button |
+   | `TWILIO_WA_FOUNDER_DIGEST_SID` | `HX63c20eab58f329c808ee32a79d4057d0` | UTILITY | localhost button — but prefer v3, below |
+   | `TWILIO_WA_COACH_COMING_SID` | `HXa82dec3d1a321eb8c92c1dcaad5ba4af` | UTILITY | adds the `{{4}}` directions link |
+   | `TWILIO_WA_COACH_ARRIVAL_SID` | `HX19dcfba57e024e8ed82294b02cafecce` | UTILITY | adds the `{{4}}` directions link |
+   | `TWILIO_WA_CLIENT_WAITLIST_SID` | `HX9042cca9baba283cb1de5f2362978ae5` | UTILITY | MARKETING → UTILITY (item 2) |
+   | ~~`TWILIO_WA_CLIENT_APPROVED_SID`~~ | ~~`HX2227fb519b2f87a20d511e6179b62227`~~ | **MARKETING** | **do not swap — see below** |
+
+   `client_signup_approved_v2` came back **MARKETING** despite
+   `allow_category_change: false`. Swapping to it would let a marketing opt-out
+   suppress "your membership is approved", which is the one message a waiting
+   applicant must receive — a worse defect than the dead button it fixes. It
+   needs a v3 with copy Meta cannot read as promotional, not a swap. The v1 it
+   replaces is UTILITY and delivers; only its button is dead.
+
+   Two new secrets accompany the digest rewrite (§2a):
+
+   | Secret | Set to | Why |
    | --- | --- | --- |
-   | `TWILIO_WA_CLIENT_PAYMENT_SID` | `HX879441494fa9930038c36a5a2fb8d97b` | localhost "Fix payment" button |
-   | `TWILIO_WA_CLIENT_BOOKED_SID` | `HX332f153d408c4507df53a25aa3480669` | localhost button |
-   | `TWILIO_WA_COACH_PRIVATE_SID` | `HXe084673761a0f11ba9bd339521e656bf` | localhost button |
-   | `TWILIO_WA_FOUNDER_DIGEST_SID` | `HX63c20eab58f329c808ee32a79d4057d0` | localhost button |
-   | `TWILIO_WA_CLIENT_APPROVED_SID` | `HX2227fb519b2f87a20d511e6179b62227` | localhost button |
-   | `TWILIO_WA_COACH_COMING_SID` | `HXa82dec3d1a321eb8c92c1dcaad5ba4af` | adds the `{{4}}` directions link |
-   | `TWILIO_WA_COACH_ARRIVAL_SID` | `HX19dcfba57e024e8ed82294b02cafecce` | adds the `{{4}}` directions link |
-   | `TWILIO_WA_CLIENT_WAITLIST_SID` | `HX9042cca9baba283cb1de5f2362978ae5` | MARKETING → UTILITY (item 2) |
+   | `TWILIO_WA_FOUNDER_DIGEST_V3_SID` | `founder_daily_digest_v3`, once approved | Four labelled lines instead of one run-on paragraph |
+   | `APP_URL` | `https://sharwinacademy.com` | Confirm it is set on the *function*. Unset, the email fallback used to build `http://localhost:3000` deep links; the default is now production either way. |
+
+   The worker picks its digest shape from which SID is set, so v3 can be
+   provisioned and swapped independently of everything above.
 
    Check `category` as well as `status` on approval, then delete the v1s.
    **Never point a secret at a pending template** — unset falls back to the
@@ -219,6 +261,53 @@ Re-verified against production, Twilio and the deployed worker on 2026-07-31
   sit deferred to 08:00 IST on 1 Aug about a session on 30 Jul that has already
   happened; `CAP_DROP_AFTER_MS` bins them at the 3-day mark. For a high-traffic
   recipient the documented "held, not dropped" rule becomes "dropped".
+
+---
+
+## 4a. Coach adoption — measured against production, 2026-08-01
+
+"Coaches aren't marking themselves as arrived." Measured, they mostly aren't:
+**21 of 82 sessions (25%)** since the arrival ladder began working on 30 Jul,
+and 106 of 436 (24%) across 30 days.
+
+| Coach | Sessions | Confirmed | Arrived | Rate |
+| --- | --- | --- | --- | --- |
+| Nandhan | 18 | 9 | 6 | 33% |
+| Samir | 14 | 6 | 3 | 21% |
+| Keerthana | 14 | 5 | 4 | 28% |
+| Nishchith | 12 | 6 | 2 | 16% |
+| **Augustine Inigo** | 11 | **0** | **0** | **0%** |
+| Sunil Hatti | 5 | 3 | 3 | 60% |
+| Rushi Raj | 5 | 3 | 3 | 60% |
+| **Sampath** | 3 | **0** | **0** | **0%** |
+
+**The mechanism is not the problem.** Every check below passes:
+
+- Delivery is clean — **zero** failed rows for any coach type since 30 Jul.
+- Button ids in the live templates (`coach_arrived`, `coach_late`,
+  `coach_confirm`, `coach_cant`) match `WA_BUTTON` in
+  `lib/whatsapp/interactive.ts` exactly.
+- Taps are landing: `coach_arrival_source = 'wa'` on 13 of Nishchith's and 12 of
+  Nandhan's marks over 30 days.
+- Augustine received 9 `coach_before_class`, 10 `coach_confirm_nudge_2` and 10
+  `coach_arrival_check` over WhatsApp and answered **none** of them.
+
+So this is adoption, concentrated in two coaches — not a delivery fault. Two
+real defects sit underneath it, though:
+
+1. **Sunil Hatti has no `wa_links` row**, so every prompt reaches him by
+   *email*. He is the one coach never actually on WhatsApp, and (at 60%) among
+   the better markers regardless — he taps in the app instead.
+2. **246 founder escalations in three days** (132 `ops_coach_not_arrived`, 114
+   `ops_coach_unconfirmed`). Past the point anyone reads them, which makes the
+   escalation ladder self-defeating: the alert that matters is buried in the
+   alert that doesn't. Worth suppressing repeats per coach per day before
+   building anything else here.
+
+`coach_arrival_source` is NULL on a meaningful minority of marks (17 of
+Nandhan's, 8 of Nishchith's). Those predate the source column being written on
+every path; not a live bug, but it means "how did they mark it?" can't be
+answered for older rows.
 
 ---
 

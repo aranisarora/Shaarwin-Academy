@@ -348,6 +348,58 @@ const TEMPLATES = [
     },
   },
   {
+    // v3 is a rewrite, not a URL fix.
+    //
+    // v1 and v2 declare ONE content variable, so the entire digest — punctuality,
+    // rosters, per-coach marking and the exceptions — had to be crammed into
+    // {{2}}. What the founder actually received on 2026-08-01 was a single
+    // run-on paragraph ending in a promise of "the full breakdown of bookings,
+    // cancellations and new clients", which the digest stopped reporting when it
+    // was rewritten to cover coach reliability. Both problems are in the
+    // template, so neither could be fixed in the worker.
+    //
+    // Four labelled lines, one variable each. WhatsApp rejects newlines inside a
+    // VARIABLE but not inside a BODY, which is exactly why the split has to
+    // happen here: the worker sends four newline-free values and the template
+    // supplies the line breaks. Static text sits between every pair so no two
+    // variables are adjacent (Meta refuses that), and the body ends on text
+    // rather than {{5}} for the same reason.
+    key: "TWILIO_WA_FOUNDER_DIGEST_V3_SID",
+    approvalName: "founder_daily_digest_v3",
+    def: {
+      friendly_name: "founder_daily_digest_v3",
+      language: "en",
+      variables: {
+        1: "2026-08-01",
+        2: "7 of 16 sessions started on time · Samir 12 min late (Beginners Batch)",
+        3: "5 of 8 rosters marked · 2 left blank",
+        4: "Augustine 0/3 · Samir 1/2 · Nandhan 3/4",
+        5: "Augustine marked none of 3 · Windmills Private (9:00 am) had NO coach",
+      },
+      types: {
+        "twilio/call-to-action": {
+          body:
+            "Sharwin Table Tennis Academy — your summary for {{1}}.\n" +
+            "Punctuality: {{2}}.\n" +
+            "Rosters: {{3}}.\n" +
+            "Arrivals marked by coach: {{4}}.\n" +
+            "Needs you: {{5}}.\n" +
+            "Open the dashboard below for the full day.",
+          actions: [{ type: "URL", title: "Open dashboard", url: `${APP_URL}/admin` }],
+        },
+        "twilio/text": {
+          body:
+            "Sharwin Table Tennis Academy — your summary for {{1}}.\n" +
+            "Punctuality: {{2}}.\n" +
+            "Rosters: {{3}}.\n" +
+            "Arrivals marked by coach: {{4}}.\n" +
+            "Needs you: {{5}}.\n" +
+            `Full day on the dashboard: ${APP_URL}/admin`,
+        },
+      },
+    },
+  },
+  {
     // Founder: a new closed-membership signup request with Approve / Deny.
     key: "TWILIO_WA_FOUNDER_SIGNUP_SID",
     approvalName: "founder_signup_request",
