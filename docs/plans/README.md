@@ -61,10 +61,9 @@ Deleted once shipped and merged — `git log` is the record:
   six-digit code lands in one inbox and several people at a school need in — and
   reads its own campus's pupils through widened RLS, so the parent's insights,
   notes and mastery code serves both audiences unchanged. Read-only in the
-  database, not just in the UI. **One owner action left: confirm the
-  email+password provider is enabled in prod Supabase Auth** — every other role
-  signs in by OTP, so nothing else depends on it, and the local stack proves
-  only that the code path works.
+  database, not just in the UI. The password grant was verified live against
+  prod (a bogus sign-in returns `invalid_credentials`, not a provider-disabled
+  error), so nothing is pending on the Supabase side.
 - **location-model** — shipped in `1a610ab` (migrations `0052`–`0054`). All 167
   privates carry a `venue_id` and nothing derives a location from an address
   string any more. The durable part is `../notifications.md` §5.
