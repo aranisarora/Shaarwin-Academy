@@ -15,6 +15,7 @@ import { Sheet } from "@/components/ui/Sheet";
 import { topUpSessions } from "@/app/admin/schedule/actions";
 import { AdminClassSheet } from "./AdminClassSheet";
 import { AdminAddSheet } from "./AdminAddSheet";
+import { AdminBulkRemoveSheet } from "./AdminBulkRemoveSheet";
 import { WeeklyClassCard } from "./ClassCard";
 import { wallDate } from "@/lib/academy-time";
 import {
@@ -66,6 +67,30 @@ export function AdminWeeklyClasses({
   const [message, setMessage] = useState<string | null>(null);
   const [overflowOpen, setOverflowOpen] = useState(false);
   const [pending, startTransition] = useTransition();
+
+  // Selection mode — clearing a timetable is a bulk job, so the founder flips
+  // the whole list into checkboxes rather than opening thirty sheets. Only
+  // group classes are selectable; private series are managed on the Schedule.
+  const [selecting, setSelecting] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [confirming, setConfirming] = useState(false);
+
+  // Stable array identity — the confirm sheet fetches its preview in an effect
+  // keyed on this, so a fresh `[...selected]` each render would refetch.
+  const selectedIds = useMemo(() => [...selected], [selected]);
+
+  function exitSelect() {
+    setSelecting(false);
+    setSelected(new Set());
+    setConfirming(false);
+  }
+  const toggleClass = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
 
   // Success/status lines show as a bottom toast that clears itself, so they
   // never reserve layout space above the list.
@@ -143,6 +168,30 @@ export function AdminWeeklyClasses({
       }),
     [privateSeries, venueFilter, dayFilter, statusFilter]
   );
+
+  // "Select all" means all the classes the filters are currently showing — so
+  // narrowing to one venue or one day makes it a targeted clear, and leaving the
+  // filters wide (status: all) makes it the full reset.
+  const filteredIds = useMemo(() => filteredClasses.map((c) => c.id), [filteredClasses]);
+  const allSelected = filteredIds.length > 0 && filteredIds.every((id) => selected.has(id));
+
+  function selectAllFiltered() {
+    setSelecting(true);
+    setSelected(allSelected ? new Set() : new Set(filteredIds));
+  }
+
+  /** Select/clear every class under one venue card — clearing a venue is the
+   * common case ("we've lost the Andheri hall"). */
+  function toggleVenueSelection(ids: string[], allOn: boolean) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      for (const id of ids) {
+        if (allOn) next.delete(id);
+        else next.add(id);
+      }
+      return next;
+    });
+  }
 
   // Curated venue names — a group with no group-classes that isn't a curated
   // venue is a pure client-home location and gets the [private] badge.
@@ -262,26 +311,48 @@ export function AdminWeeklyClasses({
   return (
     <div className="space-y-4">
       {/* Desktop keeps the inline "Create a class" button; the ⋯ holds the rare
-          maintenance bits. On the phone, Create is a FAB (below). */}
-      <div className="flex items-center justify-end gap-2">
-        <button
-          type="button"
-          aria-label="More options"
-          onClick={() => setOverflowOpen(true)}
-          className="flex h-11 w-11 items-center justify-center rounded-[8px] border border-line text-lg text-fg-2 hover:border-ember hover:text-ember"
-        >
-          ⋯
-        </button>
-        <Button
-          className="hidden lg:inline-flex"
-          onClick={() => {
-            setCreating(true);
-            setMessage(null);
-          }}
-        >
-          Create a class
-        </Button>
-      </div>
+          maintenance bits. On the phone, Create is a FAB (below). In selection
+          mode the same row becomes the select toolbar. */}
+      {selecting ? (
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <span className="text-sm text-fg-2">
+            {selected.size} of {filteredIds.length} selected
+          </span>
+          <div className="flex gap-2">
+            <Button variant="ghost" onClick={selectAllFiltered}>
+              {allSelected ? "Clear selection" : `Select all ${filteredIds.length}`}
+            </Button>
+            <Button variant="ghost" onClick={exitSelect}>
+              Done
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex items-center justify-end gap-2">
+          <button
+            type="button"
+            aria-label="More options"
+            onClick={() => setOverflowOpen(true)}
+            className="flex h-11 w-11 items-center justify-center rounded-[8px] border border-line text-lg text-fg-2 hover:border-ember hover:text-ember"
+          >
+            ⋯
+          </button>
+          {filteredClasses.length > 0 && (
+            <Button variant="ghost" onClick={() => setSelecting(true)}>
+              Select
+            </Button>
+          )}
+          <Button
+            className="hidden lg:inline-flex"
+            onClick={() => {
+              setCreating(true);
+              setMessage(null);
+            }}
+          >
+            Create a class
+          </Button>
+        </div>
+      )}
 
       {classes.length + privateSeries.length > 0 && <FilterBar filters={filterDefs} />}
 
@@ -289,16 +360,20 @@ export function AdminWeeklyClasses({
         const key = group.venue || "no-venue";
         // First venue open by default, others collapsed; a tap flips it.
         const open = i === 0 ? !toggled.has(key) : toggled.has(key);
+        const groupIds = group.days.flatMap((d) => d.rows.map((c) => c.id));
+        const groupAllSelected =
+          groupIds.length > 0 && groupIds.every((id) => selected.has(id));
         return (
         <div
           key={key}
           className="overflow-hidden rounded-[14px] border border-line bg-surface-2"
         >
+          <div className="flex items-center border-b border-line">
           <button
             type="button"
             aria-expanded={open}
             onClick={() => toggleVenue(key)}
-            className="flex w-full items-baseline justify-between gap-3 border-b border-line px-4 py-3 text-left hover:bg-surface"
+            className="flex min-w-0 flex-1 items-baseline justify-between gap-3 px-4 py-3 text-left hover:bg-surface"
           >
             <span className="flex items-baseline gap-2">
               <span
@@ -321,6 +396,16 @@ export function AdminWeeklyClasses({
               {group.privateCount > 0 && `${group.privateCount} private`}
             </span>
           </button>
+          {selecting && groupIds.length > 0 && (
+            <button
+              type="button"
+              onClick={() => toggleVenueSelection(groupIds, groupAllSelected)}
+              className="shrink-0 px-4 py-3 text-sm text-ember underline-offset-4 hover:underline"
+            >
+              {groupAllSelected ? "None" : "All"}
+            </button>
+          )}
+          </div>
           <div className={`divide-y divide-line lg:block ${open ? "block" : "hidden"}`}>
             {group.days.map((day) => (
               <div key={day.weekday} className="px-4 py-3">
@@ -330,14 +415,20 @@ export function AdminWeeklyClasses({
                     <WeeklyClassCard
                       key={c.id}
                       cls={c}
+                      selecting={selecting}
+                      selected={selected.has(c.id)}
                       onClick={() => {
+                        if (selecting) {
+                          toggleClass(c.id);
+                          return;
+                        }
                         setMessage(null);
                         setEditingClass(c);
                       }}
                     />
                   ))}
                   {day.privates.map((p) => (
-                    <PrivateSeriesCard key={p.id} series={p} />
+                    <PrivateSeriesCard key={p.id} series={p} selecting={selecting} />
                   ))}
                 </div>
               </div>
@@ -362,14 +453,34 @@ export function AdminWeeklyClasses({
           </p>
         )}
 
-      {/* Phone: Create a class as a floating button above the tab bar. */}
-      <Fab
-        label="Create a class"
-        onClick={() => {
-          setCreating(true);
-          setMessage(null);
-        }}
-      />
+      {/* Phone: Create a class as a floating button above the tab bar. It gives
+          up the spot to the selection bar while selecting. */}
+      {!selecting && (
+        <Fab
+          label="Create a class"
+          onClick={() => {
+            setCreating(true);
+            setMessage(null);
+          }}
+        />
+      )}
+
+      {/* The selection's own action bar, in the same spot the toast uses so the
+          count and the destructive button stay in reach on a phone. */}
+      {selecting && selected.size > 0 && (
+        <div className="fixed inset-x-4 bottom-[calc(env(safe-area-inset-bottom)+4.75rem)] z-40 mx-auto flex max-w-md items-center gap-3 rounded-[12px] border border-line bg-surface-2 px-4 py-3 shadow-[var(--shadow-sheet)] lg:bottom-6">
+          <span className="text-sm">
+            {selected.size} {selected.size === 1 ? "class" : "classes"} selected
+          </span>
+          <Button
+            variant="destructive"
+            className="ml-auto"
+            onClick={() => setConfirming(true)}
+          >
+            Remove
+          </Button>
+        </div>
+      )}
 
       {/* ⋯ overflow: the explainer + the rare "top up" maintenance action. */}
       <Sheet open={overflowOpen} onClose={() => setOverflowOpen(false)} title="Weekly classes">
@@ -378,6 +489,28 @@ export function AdminWeeklyClasses({
             Each class repeats every week and fills the Schedule tab. Tap one to change it —
             for a one-week-only change, tap that session in the Schedule tab instead.
           </p>
+          {filteredClasses.length > 0 && (
+            <div className="space-y-2 rounded-[12px] border border-line p-4">
+              <p className="label">Clear the timetable</p>
+              <p className="text-sm text-fg-2">
+                Picks every class the filters are showing ({filteredClasses.length}) so you can
+                start again. You get to see what deletes and what has to be ended before
+                anything happens — and you can unpick any of them first.
+              </p>
+              <Button
+                variant="ghost"
+                className="w-full"
+                onClick={() => {
+                  setSelecting(true);
+                  setSelected(new Set(filteredIds));
+                  setOverflowOpen(false);
+                  setMessage(null);
+                }}
+              >
+                Select all {filteredClasses.length} classes
+              </Button>
+            </div>
+          )}
           <div className="space-y-2 rounded-[12px] border border-line p-4">
             <p className="label">Top up the next 8 weeks</p>
             <p className="text-sm text-fg-2">
@@ -421,6 +554,18 @@ export function AdminWeeklyClasses({
         />
       )}
 
+      {confirming && (
+        <AdminBulkRemoveSheet
+          classIds={selectedIds}
+          onClose={() => setConfirming(false)}
+          onDone={(m) => {
+            setMessage(m);
+            exitSelect();
+            router.refresh();
+          }}
+        />
+      )}
+
       {creating && (
         <AdminAddSheet
           variant="create"
@@ -444,7 +589,16 @@ export function AdminWeeklyClasses({
  * card's grammar (day + time bold, then the who). Deep-links to its next
  * generated session on the Schedule tab; end/reassign live there, not here. The
  * ember left-stripe marks it private, matching the schedule's private sessions. */
-function PrivateSeriesCard({ series }: { series: PrivateSeriesRow }) {
+function PrivateSeriesCard({
+  series,
+  selecting = false,
+}: {
+  series: PrivateSeriesRow;
+  /** While the founder is picking classes to clear, privates aren't candidates —
+   * they end from the Schedule tab. Shown greyed and inert so the card doesn't
+   * invite a tap that would do nothing. */
+  selecting?: boolean;
+}) {
   const dayShort = (WEEKDAY_NAME[series.weekday] ?? series.weekday).slice(0, 3);
   const inner = (
     <>
@@ -463,6 +617,7 @@ function PrivateSeriesCard({ series }: { series: PrivateSeriesRow }) {
   );
   const cls =
     "block w-full rounded-[8px] border border-line border-l-[3px] border-l-ember bg-surface-2 px-3 py-2 text-left text-sm";
+  if (selecting) return <div className={`${cls} opacity-40`}>{inner}</div>;
   if (series.nextSessionId && series.nextSessionStart) {
     return (
       <Link

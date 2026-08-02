@@ -418,6 +418,230 @@ export async function deleteGroupClassCore(
   return { ok: true };
 }
 
+/**
+ * Split a selection into what can be deleted outright and what can only be
+ * ended. Same rule as `deleteGroupClassCore` — a class anyone ever booked keeps
+ * its history — but answered for the whole selection in one round trip, so the
+ * confirm step can tell the founder what he is about to do before he does it.
+ */
+export type ClassRemovalPlan = {
+  /** Never booked — safe to delete outright. */
+  deletable: string[];
+  /** Has bookings — deleting would take history with it, so only "end" applies. */
+  booked: string[];
+};
+
+export async function planClassRemovalCore(
+  supabase: SupabaseClient<Database>,
+  classIds: string[]
+): Promise<ClassRemovalPlan> {
+  if (!classIds.length) return { deletable: [], booked: [] };
+  // One query, not one per class: every booking whose session belongs to the
+  // selection, narrowed to the owning class id. `!inner` makes the embed a join
+  // so the filter applies to class_sessions rather than to the bookings rows.
+  const { data } = await supabase
+    .from("bookings")
+    .select("id,class_sessions!inner(class_id)")
+    .in("class_sessions.class_id", classIds);
+
+  const booked = new Set<string>();
+  for (const b of data ?? []) {
+    const cs = b.class_sessions as unknown as { class_id: string | null } | null;
+    if (cs?.class_id) booked.add(cs.class_id);
+  }
+  return {
+    deletable: classIds.filter((id) => !booked.has(id)),
+    booked: classIds.filter((id) => booked.has(id)),
+  };
+}
+
+/** PostgREST puts `.in()` lists in the query string, so a selection worth of
+ * session ids can outgrow the URL. Every filter below that takes ids derived
+ * from the selection (rather than the selection itself) goes through here. */
+const ID_CHUNK = 100;
+function chunked<T>(xs: T[], size = ID_CHUNK): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < xs.length; i += size) out.push(xs.slice(i, i + size));
+  return out;
+}
+
+/**
+ * End several classes as ONE operation: cancel every upcoming session across
+ * all of them, then tell each affected person once.
+ *
+ * Deliberately not a loop over `endGroupClassCore`. `session_cancelled` has no
+ * collapse at the queue site (unlike `coach_changed`, which migration 0043
+ * merges per user per day) and it is a TRANSACTIONAL type, so it skips quiet
+ * hours and the daily send cap. Looping would therefore text a parent booked
+ * into eight of the ended classes eight separate times, instantly, possibly at
+ * 2am — the exact failure the Jul 22 mass-reassignment produced. Grouping the
+ * recipients here keeps the guarantee at one message per household per bulk
+ * operation, and collapses the round trips at the same time.
+ */
+export async function endGroupClassesCore(
+  supabase: SupabaseClient<Database>,
+  founderId: string,
+  classIds: string[]
+): Promise<OpResult & { ended?: number; cancelledSessions?: number }> {
+  if (!classIds.length) return { ok: true, ended: 0, cancelledSessions: 0 };
+
+  const { data: classes } = await supabase
+    .from("classes")
+    .select("id,title")
+    .in("id", classIds)
+    .eq("class_type", "group");
+  if (!classes?.length) return { ok: false, error: "No classes found." };
+  const titleById = new Map(classes.map((c) => [c.id, c.title]));
+  const ids = classes.map((c) => c.id);
+
+  const nowIso = new Date().toISOString();
+  const { data: sessions } = await supabase
+    .from("class_sessions")
+    .select("id,class_id,coach_id")
+    .in("class_id", ids)
+    .eq("status", "scheduled")
+    .gt("starts_at", nowIso);
+  const sessionIds = (sessions ?? []).map((s) => s.id);
+
+  await supabase
+    .from("classes")
+    .update({ active: false, ends_on: nowIso.slice(0, 10) })
+    .in("id", ids);
+
+  // Which classes each person is affected by, so their one message can name a
+  // class and count the rest — same grammar as the collapsed coach_changed row.
+  const classesByClient = new Map<string, Set<string>>();
+  const classesByCoach = new Map<string, Set<string>>();
+
+  if (sessionIds.length) {
+    const classBySession = new Map((sessions ?? []).map((s) => [s.id, s.class_id]));
+
+    const bookings: { id: string; client_id: string | null; session_id: string }[] = [];
+    for (const part of chunked(sessionIds)) {
+      const { data } = await supabase
+        .from("bookings")
+        .select("id,client_id,session_id")
+        .in("session_id", part)
+        .in("status", ["confirmed", "waitlisted"]);
+      bookings.push(...(data ?? []));
+    }
+
+    for (const part of chunked(sessionIds)) {
+      await supabase
+        .from("class_sessions")
+        .update({ status: "cancelled", cancel_reason: "class ended" })
+        .in("id", part);
+    }
+
+    // One update per chunk rather than per booking — the previous per-row loop
+    // was the slowest part of ending a single class.
+    const bookingIds = bookings.map((b) => b.id);
+    for (const part of chunked(bookingIds)) {
+      await supabase
+        .from("bookings")
+        .update({
+          status: "cancelled_by_academy",
+          cancelled_at: nowIso,
+          cancel_reason: "class ended",
+        })
+        .in("id", part);
+    }
+
+    for (const b of bookings) {
+      // School players have no account holder — the booking still cancels
+      // above, there is just nobody to message.
+      if (!b.client_id) continue;
+      const clsId = classBySession.get(b.session_id);
+      if (!clsId) continue;
+      (classesByClient.get(b.client_id) ?? classesByClient.set(b.client_id, new Set()).get(b.client_id)!).add(clsId);
+    }
+    for (const s of sessions ?? []) {
+      if (!s.coach_id) continue;
+      (classesByCoach.get(s.coach_id) ?? classesByCoach.set(s.coach_id, new Set()).get(s.coach_id)!).add(s.class_id);
+    }
+  }
+
+  /** "Monday 6pm Andheri and 3 other classes" — names one, counts the rest. */
+  const subject = (clsIds: Set<string>) => {
+    const [first] = [...clsIds];
+    const title = titleById.get(first) ?? "Your class";
+    const rest = clsIds.size - 1;
+    if (rest <= 0) return title;
+    return `${title} and ${rest} other ${rest === 1 ? "class" : "classes"}`;
+  };
+
+  for (const [clientId, clsIds] of classesByClient) {
+    const many = clsIds.size > 1;
+    await supabase.from("notifications").insert({
+      user_id: clientId,
+      type: "session_cancelled",
+      title: many ? "Classes ended" : "Class ended",
+      body: `${subject(clsIds)} ${many ? "have" : "has"} finished ${many ? "their" : "its"} run. Your remaining sessions in ${many ? "them" : "it"} are cancelled — your allowance is unaffected.`,
+      data: { url: "/app/book", class_count: clsIds.size, collapsed: many },
+    });
+  }
+  for (const [coachId, clsIds] of classesByCoach) {
+    const many = clsIds.size > 1;
+    await supabase.from("notifications").insert({
+      user_id: coachId,
+      type: "session_cancelled",
+      title: many ? "Classes ended" : "Class ended",
+      body: `${subject(clsIds)} ${many ? "have" : "has"} ended — ${many ? "their" : "its"} sessions are off your calendar.`,
+      data: { url: "/coach", class_count: clsIds.size, collapsed: many },
+    });
+  }
+
+  return { ok: true, ended: ids.length, cancelledSessions: sessionIds.length };
+}
+
+/**
+ * Clear a whole selection of weekly classes in one go — the founder resetting a
+ * timetable rather than correcting one class.
+ *
+ * Never-booked classes are deleted outright. Classes with bookings are only
+ * touched when `endBooked` is set, and then they are ended together (see
+ * `endGroupClassesCore`) so each affected person hears once. Anything with
+ * bookings the founder chose not to end is left exactly as it was and reported
+ * back as `kept`.
+ */
+export async function bulkRemoveClassesCore(
+  supabase: SupabaseClient<Database>,
+  founderId: string,
+  classIds: string[],
+  endBooked: boolean
+): Promise<OpResult & { deleted?: number; ended?: number; kept?: number }> {
+  if (!classIds.length) return { ok: false, error: "Nothing selected." };
+  const plan = await planClassRemovalCore(supabase, classIds);
+
+  let deleted = 0;
+  if (plan.deletable.length) {
+    const { data, error } = await supabase
+      .from("classes")
+      .delete()
+      .in("id", plan.deletable)
+      .select("id");
+    if (error) return { ok: false, error: "Couldn't delete the classes." };
+    deleted = (data ?? []).length;
+  }
+
+  let ended = 0;
+  if (endBooked && plan.booked.length) {
+    const r = await endGroupClassesCore(supabase, founderId, plan.booked);
+    if (!r.ok && !deleted) return { ok: false, error: r.error ?? "Couldn't end those classes." };
+    ended = r.ended ?? 0;
+  }
+
+  const kept = endBooked ? plan.booked.length - ended : plan.booked.length;
+  await supabase.from("audit_log").insert({
+    actor_id: founderId,
+    action: "class.bulk_remove",
+    entity: "classes",
+    meta: { selected: classIds.length, deleted, ended, kept },
+  });
+
+  return { ok: true, deleted, ended, kept };
+}
+
 export async function setClassActiveCore(
   supabase: SupabaseClient<Database>,
   founderId: string,
