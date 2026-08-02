@@ -5,7 +5,7 @@ import { effectiveCoachId } from "@/lib/coach-preview";
 import { CoachShell } from "@/components/app/CoachShell";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { PageSkeleton } from "@/components/ui/Skeleton";
-import { CoachPlayerList } from "@/components/app/CoachPlayerList";
+import { PlayerRoster } from "@/components/app/PlayerRoster";
 import { getMasteryMap } from "@/lib/mastery";
 
 export const metadata: Metadata = { title: "Players" };
@@ -55,7 +55,7 @@ async function PlayerList() {
       copy="Your players will appear here once sessions are booked."
     />
   ) : (
-    <CoachPlayerList players={players} />
+    <PlayerRoster players={players} />
   );
 }
 

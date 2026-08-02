@@ -8,9 +8,15 @@ import { Input } from "@/components/ui/Input";
 import { Spinner } from "@/components/ui/Spinner";
 
 /**
- * One-screen auth: email OTP + Google OAuth.
+ * One-screen auth: email OTP + Google OAuth, plus a password path on login.
  * `mode` only changes copy — Supabase OTP signs up on first use.
  * Booking intent survives auth via ?next= and sessionStorage.
+ *
+ * The password step exists for school accounts, which are shared by several
+ * people (a sports head, a coordinator) — a six-digit code lands in one inbox
+ * and cannot be shared, so a credential is the only thing that works for them.
+ * It is sign-IN only and never offered on /signup: accounts without a password
+ * simply can't be reached this way, so the surface it adds is small.
  */
 export function AuthForm({ mode }: { mode: "login" | "signup" }) {
   const params = useSearchParams();
@@ -19,7 +25,8 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
   const [code, setCode] = useState("");
-  const [step, setStep] = useState<"email" | "code">("email");
+  const [password, setPassword] = useState("");
+  const [step, setStep] = useState<"email" | "code" | "password">("email");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -65,6 +72,21 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
     window.location.replace(target);
   }
 
+  async function signInWithPassword(e: React.FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    setBusy(false);
+    if (error) return setError("That email and password didn't match.");
+    sessionStorage.removeItem("auth_next");
+    // Hard navigate, for the same reason the code path does: the server needs
+    // the fresh auth cookie, and router.push fires its RSC fetch before the
+    // cookie is committed. `target` is /app by default; the proxy redirects a
+    // school account on to /school from there.
+    window.location.replace(target);
+  }
+
   async function google() {
     sessionStorage.setItem("auth_next", target);
     await supabase.auth.signInWithOAuth({
@@ -104,6 +126,43 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
     );
   }
 
+  if (step === "password") {
+    return (
+      <form onSubmit={signInWithPassword} className="flex flex-col gap-4">
+        <Input
+          label="Email"
+          type="email"
+          autoComplete="username"
+          value={email}
+          onChange={(e) => setEmail(e.target.value)}
+          required
+        />
+        <Input
+          label="Password"
+          type="password"
+          autoComplete="current-password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          error={error ?? undefined}
+          required
+        />
+        <Button type="submit" disabled={busy || !email || !password}>
+          {busy ? <Spinner /> : "Log in"}
+        </Button>
+        <button
+          type="button"
+          onClick={() => {
+            setStep("email");
+            setError(null);
+          }}
+          className="text-sm text-fg-2 underline-offset-4 hover:underline"
+        >
+          Email me a code instead
+        </button>
+      </form>
+    );
+  }
+
   return (
     <div className="flex flex-col gap-4">
       <form onSubmit={sendCode} className="flex flex-col gap-4">
@@ -137,6 +196,18 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
       <Button variant="ghost" onClick={google}>
         Continue with Google
       </Button>
+      {mode === "login" && (
+        <button
+          type="button"
+          onClick={() => {
+            setStep("password");
+            setError(null);
+          }}
+          className="text-sm text-fg-2 underline-offset-4 hover:underline"
+        >
+          Log in with a password
+        </button>
+      )}
     </div>
   );
 }

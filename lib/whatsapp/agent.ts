@@ -189,7 +189,11 @@ export async function runAgent(opts: {
 }): Promise<string> {
   const { phone, userText, profile, supabase, admin } = opts;
   const ctx: ToolContext = { phone, profile, supabase, admin };
-  const role = profile?.role ?? "guest";
+  // A school login has no WhatsApp identity — it is an impersonal credential
+  // shared by several people, carries no phone, and so never appears in
+  // `wa_links`. It can't reach this code in practice; treating it as a guest is
+  // what makes that true by construction rather than by assumption.
+  const role: Role = profile && profile.role !== "school" ? profile.role : "guest";
   const tools = toolsForRole(role);
   const system = staticSystem(role);
 

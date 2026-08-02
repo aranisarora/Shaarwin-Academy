@@ -63,7 +63,7 @@ const getProfileRow = cache(async (): Promise<Profile | null> => {
 
 export type Profile = {
   id: string;
-  role: "client" | "coach" | "founder";
+  role: "client" | "coach" | "founder" | "school";
   full_name: string;
   email: string;
   phone: string | null;

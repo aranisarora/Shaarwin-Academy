@@ -22,6 +22,11 @@ const items = [
     hint: "Locations & courts",
   },
   {
+    href: "/admin/schools",
+    label: "Schools",
+    hint: "Logins that let a school see its own pupils",
+  },
+  {
     href: "/admin/billing",
     label: "Billing",
     hint: "Invoices, overdue payments & billing",

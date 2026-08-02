@@ -480,3 +480,127 @@ export async function coachUndoArrival(args: {
   const { error } = await coach.rpc("coach_undo_arrival", { p_session: args.sessionId });
   if (error) throw new Error(`coachUndoArrival: ${error.message}`);
 }
+
+// ── Schools ─────────────────────────────────────────────────────────────────
+// A school is a venue that runs `is_school` classes. Its pupils have no account
+// holder at all (`players.client_id` null) and are enrolled by a coach through
+// `add_school_player`; its head signs in with a shared password. These
+// factories build that whole shape so a test can assert what one school may
+// read about another.
+
+export type CreatedSchool = {
+  venueId: string;
+  classId: string;
+  sessionId: string;
+  coachId: string;
+  coachEmail: string;
+};
+
+async function createSchoolVenue(name: string): Promise<string> {
+  const { data, error } = await admin()
+    .from("venues")
+    .insert({
+      name,
+      address: `${name}, Bengaluru, Karnataka`,
+      postcode: "560103",
+      lat: 12.93,
+      lng: 77.68,
+    })
+    .select("id")
+    .single();
+  if (error || !data) throw new Error(`createSchool venue: ${error?.message}`);
+  return data.id;
+}
+
+/**
+ * A school campus with one school class and one upcoming session, taught by a
+ * fresh coach. `venueId` defaults to a new venue so two schools in the same
+ * test never share a campus.
+ */
+export async function createSchool(opts: {
+  name?: string;
+  venueId?: string;
+  startsAt?: Date;
+} = {}): Promise<CreatedSchool> {
+  const db = admin();
+  const name = opts.name ?? `Test School ${++seq}`;
+
+  const venueId = opts.venueId ?? (await createSchoolVenue(name));
+
+  const coach = await createCoach({ fullName: `${name} Coach` });
+
+  const { data: cls, error: clsErr } = await db
+    .from("classes")
+    .insert({
+      class_type: "group",
+      is_school: true,
+      title: `${name} — PE`,
+      capacity: 30,
+      duration_minutes: 60,
+      venue_id: venueId,
+      starts_on: new Date().toISOString().slice(0, 10),
+    })
+    .select("id")
+    .single();
+  if (clsErr || !cls) throw new Error(`createSchool class: ${clsErr?.message}`);
+
+  const session = await createGroupSession({
+    classId: cls.id,
+    coachId: coach.id,
+    startsAt: opts.startsAt ?? hoursFromNow(4),
+  });
+
+  return {
+    venueId,
+    classId: cls.id,
+    sessionId: session.sessionId,
+    coachId: coach.id,
+    coachEmail: coach.email,
+  };
+}
+
+/**
+ * Enrol a pupil the way the app does — the coach calling `add_school_player`,
+ * not a service-role insert — so the account-less player, its weekly series and
+ * its bookings all come out exactly as production builds them.
+ */
+export async function addSchoolPupil(args: {
+  school: CreatedSchool;
+  fullName?: string;
+  grade?: number;
+}): Promise<string> {
+  const coach = await asUser(args.school.coachEmail);
+  const { data, error } = await coach.rpc("add_school_player", {
+    p_session: args.school.sessionId,
+    p_full_name: args.fullName ?? `Pupil ${++seq}`,
+    p_grade: args.grade ?? 7,
+  });
+  if (error) throw new Error(`addSchoolPupil: ${error.message}`);
+  return data as string;
+}
+
+export type CreatedSchoolAdmin = { id: string; email: string; password: string };
+
+/**
+ * The school's login. Created through the admin API with `school_venue_id` in
+ * user metadata, which is precisely how the founder screen does it — so this
+ * exercises the `handle_new_user` school branch rather than reproducing it.
+ */
+export async function createSchoolAdmin(args: {
+  venueId: string;
+  fullName?: string;
+}): Promise<CreatedSchoolAdmin> {
+  const db = admin();
+  const email = uniqueEmail("school");
+  const { data: created, error } = await db.auth.admin.createUser({
+    email,
+    password: SEED_PASSWORD,
+    email_confirm: true,
+    user_metadata: {
+      full_name: args.fullName ?? "Sports Office",
+      school_venue_id: args.venueId,
+    },
+  });
+  if (error || !created.user) throw new Error(`createSchoolAdmin: ${error?.message}`);
+  return { id: created.user.id, email, password: SEED_PASSWORD };
+}

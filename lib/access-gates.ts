@@ -26,6 +26,27 @@ export type GateProfile = {
 export const GATE_COLUMNS = "role,approval_status,onboarded_at";
 
 /**
+ * Where each role's app lives. Shared by the proxy (which bounces wrong-role
+ * requests here) and `/login` (which sends an already-signed-in visitor here),
+ * so the two can't disagree about where a role belongs.
+ *
+ * "/school" is the school head's app. The public marketing page at "/schools"
+ * is a different route: the proxy matches prefixes exactly or slash-prefixed,
+ * so the plural never collides with the singular.
+ */
+export const ROLE_HOME: Record<string, string> = {
+  client: "/app",
+  coach: "/coach",
+  founder: "/admin",
+  school: "/school",
+};
+
+/** A role's home, defaulting to the client app for an unknown or missing role. */
+export function roleHome(role: string | null | undefined): string {
+  return (role && ROLE_HOME[role]) || "/app";
+}
+
+/**
  * Where this request must be redirected before rendering, or `null` to let it
  * through.
  *

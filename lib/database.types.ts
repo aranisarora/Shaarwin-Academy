@@ -1543,6 +1543,49 @@ export type Database = {
           },
         ]
       }
+      school_admins: {
+        Row: {
+          created_at: string
+          created_by: string | null
+          user_id: string
+          venue_id: string
+        }
+        Insert: {
+          created_at?: string
+          created_by?: string | null
+          user_id: string
+          venue_id: string
+        }
+        Update: {
+          created_at?: string
+          created_by?: string | null
+          user_id?: string
+          venue_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "school_admins_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "school_admins_created_by_fkey"
+            columns: ["created_by"]
+            isOneToOne: false
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "school_admins_venue_id_fkey"
+            columns: ["venue_id"]
+            isOneToOne: false
+            referencedRelation: "venues"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       settings: {
         Row: {
           key: string
@@ -2241,6 +2284,11 @@ export type Database = {
       is_approved: { Args: never; Returns: boolean }
       is_coach: { Args: never; Returns: boolean }
       is_founder: { Args: never; Returns: boolean }
+      is_school_admin: { Args: never; Returns: boolean }
+      school_admin_class: { Args: { p_class: string }; Returns: boolean }
+      school_admin_session: { Args: { p_session: string }; Returns: boolean }
+      school_admin_venues: { Args: never; Returns: string[] }
+      school_has_player: { Args: { p_player: string }; Returns: boolean }
       location_label: {
         Args: { c: Database["public"]["Tables"]["classes"]["Row"] }
         Returns: string
@@ -2386,7 +2434,7 @@ export type Database = {
         | "canceled"
         | "paused"
       time_off_status: "pending" | "approved" | "rejected"
-      user_role: "client" | "coach" | "founder"
+      user_role: "client" | "coach" | "founder" | "school"
     }
     CompositeTypes: {
       [_ in never]: never
@@ -2551,7 +2599,7 @@ export const Constants = {
         "paused",
       ],
       time_off_status: ["pending", "approved", "rejected"],
-      user_role: ["client", "coach", "founder"],
+      user_role: ["client", "coach", "founder", "school"],
     },
   },
 } as const

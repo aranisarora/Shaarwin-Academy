@@ -26,6 +26,7 @@ const tabs = [
   { href: "/admin/coaches", label: "Coaches", icon: <CoachIcon />, group: "People" },
   { href: "/admin/skills", label: "Skills", icon: <StarIcon />, group: "Setup" },
   { href: "/admin/venues", label: "Venues", icon: <MapPinIcon />, group: "Setup" },
+  { href: "/admin/schools", label: "Schools", icon: <PeopleIcon />, group: "Setup" },
   { href: "/admin/billing", label: "Billing", icon: <ReceiptIcon />, group: "Setup" },
   { href: "/admin/settings", label: "Settings", icon: <GearIcon />, group: "Setup" },
 ];

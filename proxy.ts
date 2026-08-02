@@ -1,14 +1,11 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
-import { gateRedirect, GATE_COLUMNS } from "@/lib/access-gates";
+import { gateRedirect, roleHome, GATE_COLUMNS } from "@/lib/access-gates";
 
-const PROTECTED_PREFIXES = ["/app", "/coach", "/admin"] as const;
-
-const roleHome: Record<string, string> = {
-  client: "/app",
-  coach: "/coach",
-  founder: "/admin",
-};
+// "/school" (singular) is the school head's app. The public marketing page at
+// "/schools" is a different route and stays public — the match below is exact
+// or slash-prefixed, so "/schools" never matches "/school".
+const PROTECTED_PREFIXES = ["/app", "/coach", "/admin", "/school"] as const;
 
 // Founder "view as coach" preview cookie (see lib/coach-preview.ts). While it is
 // set, a founder is allowed into /coach so the preview actually renders — the
@@ -80,7 +77,7 @@ export async function proxy(request: NextRequest) {
     .maybeSingle();
 
   const role = profile?.role ?? "client";
-  const home = roleHome[role] ?? "/app";
+  const home = roleHome(role);
 
   // A founder previewing a coach is allowed into /coach; without this the
   // wrong-role redirect below would bounce them straight back to /admin and the

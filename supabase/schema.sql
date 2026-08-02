@@ -2,7 +2,7 @@
 --
 -- GENERATED from the live database via the Supabase MCP server. Do not edit by
 -- hand. Regenerate after any schema change (see AGENTS.md -> Database).
--- Last verified: 2026-08-01 (migrations 0048, 0055, 0056 applied to prod).
+-- Last verified: 2026-08-02 (migrations 0057, 0058 applied to prod).
 --
 -- This is a reference dump, grouped for readability (extensions, enums, tables,
 -- constraints, indexes, functions, view, RLS). It is not guaranteed to run
@@ -31,7 +31,7 @@ create type public.skill_level as enum ('beginner', 'intermediate', 'advanced', 
 create type public.subscription_source as enum ('stripe', 'comp', 'razorpay');
 create type public.subscription_status as enum ('incomplete', 'trialing', 'active', 'past_due', 'canceled', 'paused');
 create type public.time_off_status as enum ('pending', 'approved', 'rejected');
-create type public.user_role as enum ('client', 'coach', 'founder');
+create type public.user_role as enum ('client', 'coach', 'founder', 'school');
 
 -- ── Tables ───────────────────────────────────────────────────────────────────
 create table public.area_interest (
@@ -390,6 +390,15 @@ create table public.push_subscriptions (
   created_at timestamptz default now() not null
 );
 
+-- Who may sign in as a school and read its pupils. Many-to-many so one head can
+-- cover two campuses, and a school can hold more than one login.
+create table public.school_admins (
+  user_id uuid not null,
+  venue_id uuid not null,
+  created_by uuid,
+  created_at timestamptz default now() not null
+);
+
 create table public.settings (
   key text not null,
   value jsonb not null,
@@ -592,6 +601,10 @@ ALTER TABLE public.profiles ADD CONSTRAINT profiles_id_fkey FOREIGN KEY (id) REF
 ALTER TABLE public.push_subscriptions ADD CONSTRAINT push_subscriptions_endpoint_key UNIQUE (endpoint);
 ALTER TABLE public.push_subscriptions ADD CONSTRAINT push_subscriptions_pkey PRIMARY KEY (id);
 ALTER TABLE public.push_subscriptions ADD CONSTRAINT push_subscriptions_user_id_fkey FOREIGN KEY (user_id) REFERENCES profiles(id) ON DELETE CASCADE;
+ALTER TABLE public.school_admins ADD CONSTRAINT school_admins_pkey PRIMARY KEY (user_id, venue_id);
+ALTER TABLE public.school_admins ADD CONSTRAINT school_admins_user_id_fkey FOREIGN KEY (user_id) REFERENCES profiles(id) ON DELETE CASCADE;
+ALTER TABLE public.school_admins ADD CONSTRAINT school_admins_venue_id_fkey FOREIGN KEY (venue_id) REFERENCES venues(id) ON DELETE CASCADE;
+ALTER TABLE public.school_admins ADD CONSTRAINT school_admins_created_by_fkey FOREIGN KEY (created_by) REFERENCES profiles(id) ON DELETE SET NULL;
 ALTER TABLE public.settings ADD CONSTRAINT settings_pkey PRIMARY KEY (key);
 ALTER TABLE public.settings ADD CONSTRAINT settings_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES profiles(id) ON DELETE SET NULL;
 ALTER TABLE public.subscriptions ADD CONSTRAINT subscriptions_razorpay_subscription_id_key UNIQUE (razorpay_subscription_id);
@@ -665,6 +678,7 @@ CREATE INDEX skill_assessments_player_created_idx ON public.skill_assessments US
 CREATE INDEX skill_assessments_coach_idx ON public.skill_assessments USING btree (coach_id);
 CREATE INDEX skill_assessments_session_idx ON public.skill_assessments USING btree (session_id);
 CREATE INDEX skill_ratings_skill_idx ON public.skill_ratings USING btree (skill_id);
+CREATE INDEX school_admins_venue_idx ON public.school_admins USING btree (venue_id);
 
 -- ── Functions ────────────────────────────────────────────────────────────────
 
@@ -2287,9 +2301,25 @@ CREATE OR REPLACE FUNCTION public.handle_new_user()
  SET search_path TO 'public'
 AS $function$
 declare
-  v_name text := coalesce(new.raw_user_meta_data->>'full_name', split_part(new.email, '@', 1));
+  v_name   text := coalesce(new.raw_user_meta_data->>'full_name', split_part(new.email, '@', 1));
+  v_school uuid := nullif(new.raw_user_meta_data->>'school_venue_id', '')::uuid;
   v_invite public.coach_invites%rowtype;
 begin
+  -- A school login, created by the founder with the admin API. Ordered first:
+  -- an explicit school_venue_id is an instruction, a matching coach invite is a
+  -- coincidence. No player row — a school is not a household.
+  if v_school is not null then
+    insert into profiles (id, role, full_name, email, approval_status)
+    values (new.id, 'school', v_name, new.email, 'approved')
+    on conflict (id) do nothing;
+
+    insert into school_admins (user_id, venue_id)
+    values (new.id, v_school)
+    on conflict do nothing;
+
+    return new;
+  end if;
+
   select * into v_invite
   from public.coach_invites
   where lower(email) = lower(new.email)
@@ -2635,6 +2665,78 @@ AS $function$
   select exists (
     select 1 from profiles
     where id = auth.uid() and approval_status = 'approved'
+  );
+$function$;
+
+-- ── School access (0058) ─────────────────────────────────────────────────────
+-- A school head reads its own campus's pupils and nothing else. "Its own" means
+-- school_venue_id in their campuses AND client_id null: a private client's child
+-- training on the same campus is never theirs to see.
+
+CREATE OR REPLACE FUNCTION public.is_school_admin()
+ RETURNS boolean
+ LANGUAGE sql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+  select exists (
+    select 1 from profiles where id = auth.uid() and role = 'school'
+  );
+$function$;
+
+CREATE OR REPLACE FUNCTION public.school_admin_venues()
+ RETURNS SETOF uuid
+ LANGUAGE sql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+  select venue_id from school_admins where user_id = auth.uid();
+$function$;
+
+CREATE OR REPLACE FUNCTION public.school_has_player(p_player uuid)
+ RETURNS boolean
+ LANGUAGE sql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+  select exists (
+    select 1 from players pl
+    where pl.id = p_player
+      and pl.client_id is null
+      and pl.school_venue_id in (select school_admin_venues())
+  );
+$function$;
+
+CREATE OR REPLACE FUNCTION public.school_admin_session(p_session uuid)
+ RETURNS boolean
+ LANGUAGE sql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+  select exists (
+    select 1
+      from bookings b
+      join players pl on pl.id = b.player_id
+     where b.session_id = p_session
+       and pl.client_id is null
+       and pl.school_venue_id in (select school_admin_venues())
+  );
+$function$;
+
+CREATE OR REPLACE FUNCTION public.school_admin_class(p_class uuid)
+ RETURNS boolean
+ LANGUAGE sql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+  select exists (
+    select 1
+      from bookings b
+      join players pl on pl.id = b.player_id
+      join class_sessions cs on cs.id = b.session_id
+     where cs.class_id = p_class
+       and pl.client_id is null
+       and pl.school_venue_id in (select school_admin_venues())
   );
 $function$;
 
@@ -3348,6 +3450,7 @@ begin
       select 1 from players pl
        where pl.id = p_player and pl.client_id = auth.uid()
     )
+    or (is_school_admin() and school_has_player(p_player))
   ) then
     raise exception 'not_authorised';
   end if;
@@ -4230,6 +4333,7 @@ AS $function$
         is_founder()
         or (is_coach() and coach_has_player(pl.id))
         or pl.client_id = auth.uid()
+        or (is_school_admin() and school_has_player(pl.id))
       )
   ),
   n_skills as (select count(*)::int as n from skills where active),
@@ -4347,6 +4451,7 @@ alter table public.private_class_details enable row level security;
 alter table public.private_credit_ledger enable row level security;
 alter table public.profiles enable row level security;
 alter table public.push_subscriptions enable row level security;
+alter table public.school_admins enable row level security;
 alter table public.settings enable row level security;
 alter table public.skill_categories enable row level security;
 alter table public.skills enable row level security;
@@ -4372,13 +4477,19 @@ CREATE POLICY "clients read own bookings" ON public.bookings AS PERMISSIVE FOR S
 CREATE POLICY "coaches read their rosters" ON public.bookings AS PERMISSIVE FOR SELECT TO public USING ((EXISTS ( SELECT 1 FROM class_sessions s WHERE ((s.id = bookings.session_id) AND (s.coach_id = ( SELECT auth.uid() AS uid))))));
 CREATE POLICY "coaches write attendance" ON public.bookings AS PERMISSIVE FOR UPDATE TO public USING ((EXISTS ( SELECT 1 FROM class_sessions s WHERE ((s.id = bookings.session_id) AND (s.coach_id = ( SELECT auth.uid() AS uid))))));
 CREATE POLICY "founder full access" ON public.bookings AS PERMISSIVE FOR ALL TO public USING (( SELECT is_founder() AS is_founder));
+-- School pupils carry client_id = null, so "clients read own bookings" matches
+-- nothing for them and every attendance figure would read zero without this.
+CREATE POLICY "school reads pupil bookings" ON public.bookings AS PERMISSIVE FOR SELECT TO public USING ((( SELECT is_school_admin() AS is_school_admin) AND school_has_player(player_id)));
 CREATE POLICY "own credits" ON public.class_credits AS PERMISSIVE FOR SELECT TO public USING (((client_id = ( SELECT auth.uid() AS uid)) OR ( SELECT is_founder() AS is_founder)));
 CREATE POLICY "founder writes credits" ON public.class_credits AS PERMISSIVE FOR ALL TO public USING (( SELECT is_founder() AS is_founder));
 CREATE POLICY "coach updates own session notes" ON public.class_sessions AS PERMISSIVE FOR UPDATE TO public USING ((coach_id = ( SELECT auth.uid() AS uid)));
 CREATE POLICY "founder writes sessions" ON public.class_sessions AS PERMISSIVE FOR ALL TO public USING (( SELECT is_founder() AS is_founder));
 CREATE POLICY "read scheduled sessions" ON public.class_sessions AS PERMISSIVE FOR SELECT TO public USING ((class_is_public_group(class_id) OR (coach_id = ( SELECT auth.uid() AS uid)) OR ( SELECT is_founder() AS is_founder) OR client_owns_private_class(class_id)));
+CREATE POLICY "school reads pupil sessions" ON public.class_sessions AS PERMISSIVE FOR SELECT TO public USING ((( SELECT is_school_admin() AS is_school_admin) AND school_admin_session(id)));
 CREATE POLICY "founder writes classes" ON public.classes AS PERMISSIVE FOR ALL TO public USING (( SELECT is_founder() AS is_founder));
 CREATE POLICY "public reads active group classes" ON public.classes AS PERMISSIVE FOR SELECT TO public USING ((((active = true) AND (class_type = 'group'::class_type) AND (is_school = false)) OR ( SELECT is_founder() AS is_founder) OR (( SELECT is_coach() AS is_coach) AND coach_teaches_class(id)) OR client_owns_private_class(id)));
+-- getStudentInsights joins classes(title, class_type) off the session.
+CREATE POLICY "school reads pupil classes" ON public.classes AS PERMISSIVE FOR SELECT TO public USING ((( SELECT is_school_admin() AS is_school_admin) AND school_admin_class(id)));
 CREATE POLICY "founder all client invites" ON public.client_invites AS PERMISSIVE FOR ALL TO public USING (( SELECT is_founder() AS is_founder));
 CREATE POLICY "assignments visible" ON public.coach_assignments AS PERMISSIVE FOR SELECT TO public USING (((coach_id = ( SELECT auth.uid() AS uid)) OR ( SELECT is_founder() AS is_founder)));
 CREATE POLICY "founder writes assignments" ON public.coach_assignments AS PERMISSIVE FOR ALL TO public USING (( SELECT is_founder() AS is_founder));
@@ -4404,6 +4515,7 @@ CREATE POLICY "founder writes products" ON public.products AS PERMISSIVE FOR ALL
 CREATE POLICY "coach reads own rosters players" ON public.players AS PERMISSIVE FOR SELECT TO public USING ((( SELECT is_coach() AS is_coach) AND coach_has_player(id)));
 CREATE POLICY "founder all players" ON public.players AS PERMISSIVE FOR ALL TO public USING (( SELECT is_founder() AS is_founder));
 CREATE POLICY "own household" ON public.players AS PERMISSIVE FOR ALL TO public USING ((client_id = ( SELECT auth.uid() AS uid))) WITH CHECK ((client_id = ( SELECT auth.uid() AS uid)));
+CREATE POLICY "school reads own pupils" ON public.players AS PERMISSIVE FOR SELECT TO public USING ((( SELECT is_school_admin() AS is_school_admin) AND school_has_player(id)));
 CREATE POLICY "clients read own private series" ON public.private_booking_series AS PERMISSIVE FOR SELECT TO public USING ((client_id = ( SELECT auth.uid() AS uid)));
 CREATE POLICY "founder all private series" ON public.private_booking_series AS PERMISSIVE FOR ALL TO public USING (( SELECT is_founder() AS is_founder));
 CREATE POLICY "founder writes private details" ON public.private_class_details AS PERMISSIVE FOR ALL TO public USING (( SELECT is_founder() AS is_founder));
@@ -4420,6 +4532,8 @@ CREATE POLICY "coach or founder writes notes" ON public.student_notes AS PERMISS
 CREATE POLICY "author or founder deletes note" ON public.student_notes AS PERMISSIVE FOR DELETE TO public USING (((author_id = ( SELECT auth.uid() AS uid)) OR ( SELECT is_founder() AS is_founder)));
 CREATE POLICY "founder writes subscriptions" ON public.subscriptions AS PERMISSIVE FOR ALL TO public USING (( SELECT is_founder() AS is_founder));
 CREATE POLICY "own subscriptions" ON public.subscriptions AS PERMISSIVE FOR SELECT TO public USING (((client_id = ( SELECT auth.uid() AS uid)) OR ( SELECT is_founder() AS is_founder)));
+CREATE POLICY "founder all school admins" ON public.school_admins AS PERMISSIVE FOR ALL TO public USING (( SELECT is_founder() AS is_founder));
+CREATE POLICY "school reads own link" ON public.school_admins AS PERMISSIVE FOR SELECT TO public USING ((user_id = ( SELECT auth.uid() AS uid)));
 CREATE POLICY "founder writes venues" ON public.venues AS PERMISSIVE FOR ALL TO public USING (( SELECT is_founder() AS is_founder));
 CREATE POLICY "public reads active venues" ON public.venues AS PERMISSIVE FOR SELECT TO public USING (((active = true) OR ( SELECT is_founder() AS is_founder)));
 CREATE POLICY "founder reads webhook events" ON public.webhook_events AS PERMISSIVE FOR SELECT TO public USING (( SELECT is_founder() AS is_founder));
