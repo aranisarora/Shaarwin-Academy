@@ -283,7 +283,7 @@ export default function LandingPage() {
             <div className="relative aspect-[4/5] overflow-hidden rounded-[12px] border border-line">
               <Image
                 src={founderClose}
-                alt="Portrait of Stalin Prabhu C, founder and head coach"
+                alt="Stalin Prabhu C, founder and head coach, at the academy with his Excellence in Coaching award"
                 fill
                 placeholder="blur"
                 sizes="(min-width: 768px) 380px, 100vw"
@@ -363,8 +363,8 @@ export default function LandingPage() {
         </Reveal>
         <Reveal>
           <div className="relative aspect-video overflow-hidden rounded-[12px] border border-line bg-ink-2">
-            {/* Poster and video are both 9:16 — a centred crop into this 16:9
-                card cuts off his head, so bias the crop upward. */}
+            {/* Poster and video are both portrait — a centred crop into this
+                16:9 card cuts off his head, so bias the crop upward. */}
             <video
               controls
               preload="none"
