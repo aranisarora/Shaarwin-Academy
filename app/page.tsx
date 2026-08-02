@@ -363,11 +363,13 @@ export default function LandingPage() {
         </Reveal>
         <Reveal>
           <div className="relative aspect-video overflow-hidden rounded-[12px] border border-line bg-ink-2">
+            {/* Poster and video are both 9:16 — a centred crop into this 16:9
+                card cuts off his head, so bias the crop upward. */}
             <video
               controls
               preload="none"
               poster="/images/founder-hall.jpg"
-              className="h-full w-full object-cover"
+              className="h-full w-full object-cover object-[center_30%]"
             >
               <source src="/videos/founder-mission.mp4" type="video/mp4" />
               Your browser doesn&apos;t support embedded video.
