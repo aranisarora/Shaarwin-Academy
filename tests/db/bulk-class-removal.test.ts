@@ -28,6 +28,7 @@ import {
 import { expectNotificationCount } from "../../e2e/lib/notifications";
 import {
   bulkRemoveClassesCore,
+  deleteGroupClassCore,
   planClassRemovalCore,
 } from "../../lib/admin-ops-classes";
 
@@ -85,7 +86,7 @@ describe("bulk class removal", () => {
       await createWeeklySlot({ weeks: 2, classId: id, coachId: coach.id, istHour: 16 + i });
 
     const founder = await asUser(FOUNDER_EMAIL);
-    const r = await bulkRemoveClassesCore(typed(founder), SEED.founder, ids, false);
+    const r = await bulkRemoveClassesCore(typed(founder), SEED.founder, ids, {});
 
     expect(r.ok).toBe(true);
     expect(r.deleted).toBe(3);
@@ -125,7 +126,9 @@ describe("bulk class removal", () => {
     }
 
     const founder = await asUser(FOUNDER_EMAIL);
-    const r = await bulkRemoveClassesCore(typed(founder), SEED.founder, ids, true);
+    const r = await bulkRemoveClassesCore(typed(founder), SEED.founder, ids, {
+      endBooked: true,
+    });
 
     expect(r.ok).toBe(true);
     // Every one of them had a booking, so none could be deleted outright.
@@ -178,7 +181,9 @@ describe("bulk class removal", () => {
     });
 
     const founder = await asUser(FOUNDER_EMAIL);
-    const r = await bulkRemoveClassesCore(typed(founder), SEED.founder, [classId], true);
+    const r = await bulkRemoveClassesCore(typed(founder), SEED.founder, [classId], {
+      endBooked: true,
+    });
     expect(r.ended).toBe(1);
 
     const rows = await expectNotificationCount(
@@ -190,6 +195,128 @@ describe("bulk class removal", () => {
     expect(rows[0].body).toContain(title);
     expect(rows[0].body).not.toContain("other class");
     expect(rows[0].data.collapsed).toBe(false);
+  });
+
+  // ── The dead end this feature shipped with ────────────────────────────────
+  // Prod had two group classes, both already ended (every future session
+  // cancelled), each still holding one confirmed booking on a PAST session.
+  // The old guard counted bookings of any status on any session, so it refused
+  // the delete and told the founder to "end it instead" — which he had already
+  // done. Neither action was available and the classes could not leave the list.
+  it("lets an already-ended class holding history be deleted, but only on purpose", async () => {
+    const db = admin();
+    const coach = await createCoach();
+    const parent = await createClient({ children: 1, groupPlanId: SEED.groupPlan1x });
+    const classId = await createGroupClass(`Bulk ended ${uniq()}`);
+    const [session] = await createWeeklySlot({ weeks: 1, classId, coachId: coach.id });
+    await bookSession({
+      email: parent.email,
+      sessionId: session.sessionId,
+      playerId: parent.playerIds[0],
+    });
+
+    const founder = await asUser(FOUNDER_EMAIL);
+    // End it first — the normal path, history preserved.
+    await bulkRemoveClassesCore(typed(founder), SEED.founder, [classId], { endBooked: true });
+    // ...then flip the booking back to a live status so the class still holds
+    // history, which is the state the two prod classes were stuck in.
+    await db
+      .from("bookings")
+      .update({ status: "attended", cancelled_at: null, cancel_reason: null })
+      .eq("session_id", session.sessionId);
+
+    const plan = await planClassRemovalCore(typed(founder), [classId]);
+    expect(plan.purgeable).toEqual([classId]);
+    expect(plan.endable).toEqual([]);
+    expect(plan.deletable).toEqual([]);
+    // The warning has to be able to quote a real price.
+    expect(plan.purgeCost.bookings).toBeGreaterThan(0);
+    expect(plan.purgeCost.sessions).toBeGreaterThan(0);
+
+    // Without the opt-in it stays put — no silent history loss.
+    const held = await bulkRemoveClassesCore(typed(founder), SEED.founder, [classId], {});
+    expect(held.deleted).toBe(0);
+    expect(held.purged).toBe(0);
+    expect(held.kept).toBe(1);
+    const { data: stillThere } = await db.from("classes").select("id").eq("id", classId);
+    expect(stillThere ?? []).toHaveLength(1);
+
+    // With it, the class finally leaves the list.
+    const gone = await bulkRemoveClassesCore(typed(founder), SEED.founder, [classId], {
+      purgeEnded: true,
+    });
+    expect(gone.purged).toBe(1);
+    expect(gone.kept).toBe(0);
+    const { data: left } = await db.from("classes").select("id").eq("id", classId);
+    expect(left ?? []).toHaveLength(0);
+  });
+
+  it("never tells the founder to end a class he has already ended", async () => {
+    // The single-class "Delete completely" link, which is where he hit the wall.
+    const db = admin();
+    const coach = await createCoach();
+    const parent = await createClient({ children: 1, groupPlanId: SEED.groupPlan1x });
+    const classId = await createGroupClass(`Solo ended ${uniq()}`);
+    const [session] = await createWeeklySlot({ weeks: 1, classId, coachId: coach.id });
+    await bookSession({
+      email: parent.email,
+      sessionId: session.sessionId,
+      playerId: parent.playerIds[0],
+    });
+    const founder = await asUser(FOUNDER_EMAIL);
+
+    // While it is running, the advice to end it first is correct.
+    const running = await deleteGroupClassCore(typed(founder), SEED.founder, classId);
+    expect(running.ok).toBe(false);
+    expect(running.code).toBe("has_bookings");
+    expect(running.error).toContain("End it instead");
+
+    await bulkRemoveClassesCore(typed(founder), SEED.founder, [classId], { endBooked: true });
+    await db
+      .from("bookings")
+      .update({ status: "attended", cancelled_at: null, cancel_reason: null })
+      .eq("session_id", session.sessionId);
+
+    // Now that it IS ended, the same advice would be a dead end — so it asks to
+    // confirm the history loss instead.
+    const ended = await deleteGroupClassCore(typed(founder), SEED.founder, classId);
+    expect(ended.ok).toBe(false);
+    expect(ended.code).toBe("needs_force");
+    expect(ended.error).not.toContain("End it instead");
+
+    const forced = await deleteGroupClassCore(typed(founder), SEED.founder, classId, true);
+    expect(forced.ok).toBe(true);
+    const { data: left } = await db.from("classes").select("id").eq("id", classId);
+    expect(left ?? []).toHaveLength(0);
+  });
+
+  it("does not let a cancelled booking make a class undeletable forever", async () => {
+    // A booking somebody cancelled is not attendance history, so it must not
+    // count against the delete — otherwise one cancelled trial booking pins a
+    // class to the list for good.
+    const db = admin();
+    const coach = await createCoach();
+    const parent = await createClient({ children: 1, groupPlanId: SEED.groupPlan1x });
+    const classId = await createGroupClass(`Bulk cancelled ${uniq()}`);
+    const [session] = await createWeeklySlot({ weeks: 1, classId, coachId: coach.id });
+    await bookSession({
+      email: parent.email,
+      sessionId: session.sessionId,
+      playerId: parent.playerIds[0],
+    });
+    await db
+      .from("bookings")
+      .update({ status: "cancelled_by_client", cancelled_at: new Date().toISOString() })
+      .eq("session_id", session.sessionId);
+
+    const founder = await asUser(FOUNDER_EMAIL);
+    const plan = await planClassRemovalCore(typed(founder), [classId]);
+    expect(plan.deletable).toEqual([classId]);
+
+    const r = await bulkRemoveClassesCore(typed(founder), SEED.founder, [classId], {});
+    expect(r.deleted).toBe(1);
+    const { data: left } = await db.from("classes").select("id").eq("id", classId);
+    expect(left ?? []).toHaveLength(0);
   });
 
   it("leaves booked classes untouched when the founder only wants the empty ones", async () => {
@@ -217,13 +344,14 @@ describe("bulk class removal", () => {
     // The preview the confirm sheet shows must split them the same way.
     const plan = await planClassRemovalCore(typed(founder), [emptyClass, bookedClass]);
     expect(plan.deletable).toEqual([emptyClass]);
-    expect(plan.booked).toEqual([bookedClass]);
+    expect(plan.endable).toEqual([bookedClass]);
+    expect(plan.purgeable).toEqual([]);
 
     const r = await bulkRemoveClassesCore(
       typed(founder),
       SEED.founder,
       [emptyClass, bookedClass],
-      false
+      {}
     );
     expect(r.deleted).toBe(1);
     expect(r.ended).toBe(0);

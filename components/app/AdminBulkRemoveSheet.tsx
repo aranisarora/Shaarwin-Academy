@@ -2,30 +2,37 @@
 
 // Confirm step for clearing a selection of weekly classes.
 //
-// "Delete" means two different things in this domain and the founder shouldn't
-// have to hold that in his head: a class nobody ever booked can go for good,
-// but a class with bookings can only be *ended* — its sessions cancel, everyone
-// booked gets a message, and the history stays. So this sheet asks the server
-// which is which before offering a button, and names both numbers in the copy.
-// Nothing is destroyed until one of the buttons below is tapped.
+// "Delete" means three different things in this domain and the founder
+// shouldn't have to hold that in his head, so the server buckets the selection
+// and this sheet names each number:
+//
+//   • no booking history      → deleted outright, nobody is told
+//   • running, people on it   → can only be ENDED (they're told, history stays)
+//   • already ended, has history → deleting it destroys that history
+//
+// The first is the default and needs one tap. The other two are opt-in
+// checkboxes, unticked, because each costs something the founder can't undo.
+// Nothing is destroyed until the button at the bottom is tapped.
 
 import { useEffect, useState, useTransition } from "react";
 import { Sheet } from "@/components/ui/Sheet";
 import { Button } from "@/components/ui/Button";
+import { Checkbox } from "@/components/ui/Checkbox";
 import { Spinner } from "@/components/ui/Spinner";
 import { bulkRemoveClasses, planClassRemoval } from "@/app/admin/schedule/actions";
 
 const plural = (n: number, one: string, many = `${one}es`) => (n === 1 ? one : many);
 
 /** "3 classes deleted · 2 ended — everyone booked has been told." */
-function resultLine(deleted: number, ended: number, kept: number): string {
+function resultLine(deleted: number, ended: number, purged: number, kept: number): string {
   const parts: string[] = [];
   if (deleted) parts.push(`${deleted} ${plural(deleted, "class")} deleted`);
+  if (purged) parts.push(`${purged} ended ${plural(purged, "class")} deleted with ${purged === 1 ? "its" : "their"} history`);
   if (ended) parts.push(`${ended} ended`);
   if (!parts.length) return "Nothing changed.";
   let line = parts.join(" · ") + ".";
   if (ended) line += " Everyone booked on them has been told.";
-  if (kept) line += ` ${kept} couldn't be removed and ${plural(kept, "is", "are")} unchanged.`;
+  if (kept) line += ` ${kept} ${plural(kept, "was", "were")} left alone.`;
   return line;
 }
 
@@ -40,15 +47,31 @@ export function AdminBulkRemoveSheet({
    * drop them from the selection and refresh. */
   onDone: (message: string) => void;
 }) {
-  const [plan, setPlan] = useState<{ deletable: string[]; booked: string[] } | null>(null);
+  type Plan = {
+    deletable: string[];
+    endable: string[];
+    purgeable: string[];
+    purgeCost: { sessions: number; bookings: number };
+  };
+  const [plan, setPlan] = useState<Plan | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
+  // The two destructive extras are opt-in and independent — neither is ticked
+  // by default, so the safe deletes are always one tap and nothing else moves.
+  const [endBooked, setEndBooked] = useState(false);
+  const [purgeEnded, setPurgeEnded] = useState(false);
 
   useEffect(() => {
     let alive = true;
     planClassRemoval(classIds).then((r) => {
       if (!alive) return;
-      if (r.ok) setPlan({ deletable: r.deletable ?? [], booked: r.booked ?? [] });
+      if (r.ok)
+        setPlan({
+          deletable: r.deletable ?? [],
+          endable: r.endable ?? [],
+          purgeable: r.purgeable ?? [],
+          purgeCost: r.purgeCost ?? { sessions: 0, bookings: 0 },
+        });
       else setError(r.error ?? "Couldn't check those classes.");
     });
     return () => {
@@ -56,16 +79,27 @@ export function AdminBulkRemoveSheet({
     };
   }, [classIds]);
 
-  function run(endBooked: boolean) {
+  function run() {
     startTransition(async () => {
-      const r = await bulkRemoveClasses(classIds, endBooked);
-      if (r.ok) onDone(resultLine(r.deleted ?? 0, r.ended ?? 0, r.kept ?? 0));
+      const r = await bulkRemoveClasses(classIds, { endBooked, purgeEnded });
+      if (r.ok) onDone(resultLine(r.deleted ?? 0, r.ended ?? 0, r.purged ?? 0, r.kept ?? 0));
       else setError(r.error ?? "Couldn't remove those classes.");
     });
   }
 
   const nDel = plan?.deletable.length ?? 0;
-  const nBooked = plan?.booked.length ?? 0;
+  const nEnd = plan?.endable.length ?? 0;
+  const nPurge = plan?.purgeable.length ?? 0;
+  const willRemove = nDel + (purgeEnded ? nPurge : 0);
+  const willEnd = endBooked ? nEnd : 0;
+
+  /** "Delete 4 · end 2" — the button says everything that's ticked. */
+  const actionLabel = (() => {
+    const bits: string[] = [];
+    if (willRemove) bits.push(`Delete ${willRemove}`);
+    if (willEnd) bits.push(`end ${willEnd}`);
+    return bits.length ? bits.join(" · ") : "Nothing selected to remove";
+  })();
 
   return (
     <Sheet open onClose={onClose} title={`Remove ${classIds.length} ${plural(classIds.length, "class")}`}>
@@ -81,56 +115,75 @@ export function AdminBulkRemoveSheet({
             {nDel > 0 && (
               <div className="space-y-1 rounded-[12px] border border-line p-4">
                 <p className="label">
-                  {nDel} never booked — {plural(nDel, "it", "they")} can go
+                  {nDel} with no bookings — {plural(nDel, "it", "they")} can go
                 </p>
                 <p className="text-sm text-fg-2">
                   {nDel === 1 ? "This class is" : `These ${nDel} classes are`} deleted for good,
-                  along with the upcoming sessions nobody took. Nobody is messaged.
+                  along with the sessions nobody took. Nobody is messaged.
                 </p>
               </div>
             )}
 
-            {nBooked > 0 && (
-              <div className="space-y-1 rounded-[12px] border border-line p-4">
-                <p className="label">{nBooked} {plural(nBooked, "has", "have")} bookings</p>
-                <p className="text-sm text-fg-2">
-                  Deleting {nBooked === 1 ? "it" : "them"} would take the attendance history
-                  along too, so {nBooked === 1 ? "it" : "they"} can only be{" "}
-                  <strong>ended</strong>: upcoming sessions are cancelled, everyone booked gets
-                  one message, and past sessions stay in the history. You can restore an ended
-                  class later.
-                </p>
-              </div>
+            {nEnd > 0 && (
+              <label className="flex gap-3 rounded-[12px] border border-line p-4">
+                <Checkbox
+                  size="md"
+                  className="mt-0.5 shrink-0"
+                  checked={endBooked}
+                  onChange={(e) => setEndBooked(e.target.checked)}
+                />
+                <span className="space-y-1">
+                  <span className="label block">
+                    Also end {nEnd} running {plural(nEnd, "class", "classes")} people are on
+                  </span>
+                  <span className="block text-sm text-fg-2">
+                    Upcoming sessions are cancelled and everyone booked gets one message —
+                    one, however many classes go. Past sessions stay in the history, and you
+                    can restore an ended class later.
+                  </span>
+                </span>
+              </label>
             )}
 
-            {nDel === 0 && nBooked === 0 && (
+            {nPurge > 0 && (
+              <label className="flex gap-3 rounded-[12px] border border-err p-4">
+                <Checkbox
+                  size="md"
+                  className="mt-0.5 shrink-0"
+                  checked={purgeEnded}
+                  onChange={(e) => setPurgeEnded(e.target.checked)}
+                />
+                <span className="space-y-1">
+                  <span className="label block">
+                    Also delete {nPurge} already-ended {plural(nPurge, "class", "classes")} for
+                    good
+                  </span>
+                  <span className="block text-sm text-fg-2">
+                    {nPurge === 1 ? "It has" : "They have"} already been ended, so nobody is
+                    messaged again — but {nPurge === 1 ? "it" : "they"} still hold{" "}
+                    {plan.purgeCost.sessions}{" "}
+                    {plural(plan.purgeCost.sessions, "session", "sessions")} and{" "}
+                    {plan.purgeCost.bookings}{" "}
+                    {plural(plan.purgeCost.bookings, "booking", "bookings")} of history, which
+                    this deletes too. This can&apos;t be undone.
+                  </span>
+                </span>
+              </label>
+            )}
+
+            {nDel === 0 && nEnd === 0 && nPurge === 0 && (
               <p className="text-sm text-fg-2">Nothing selected.</p>
             )}
 
             <div className="space-y-2">
-              {nDel > 0 && nBooked === 0 && (
-                <Button variant="destructive" className="w-full" disabled={pending} onClick={() => run(false)}>
-                  {pending ? <Spinner /> : `Delete ${nDel} ${plural(nDel, "class")}`}
-                </Button>
-              )}
-
-              {nDel > 0 && nBooked > 0 && (
-                <>
-                  <Button variant="destructive" className="w-full" disabled={pending} onClick={() => run(true)}>
-                    {pending ? <Spinner /> : `Delete ${nDel} and end ${nBooked}`}
-                  </Button>
-                  <Button variant="ghost" className="w-full" disabled={pending} onClick={() => run(false)}>
-                    Only delete the {nDel} never booked
-                  </Button>
-                </>
-              )}
-
-              {nDel === 0 && nBooked > 0 && (
-                <Button variant="destructive" className="w-full" disabled={pending} onClick={() => run(true)}>
-                  {pending ? <Spinner /> : `End ${nBooked} ${plural(nBooked, "class")}`}
-                </Button>
-              )}
-
+              <Button
+                variant="destructive"
+                className="w-full"
+                disabled={pending || (willRemove === 0 && willEnd === 0)}
+                onClick={run}
+              >
+                {pending ? <Spinner /> : actionLabel}
+              </Button>
               <Button variant="ghost" className="w-full" disabled={pending} onClick={onClose}>
                 Keep everything
               </Button>

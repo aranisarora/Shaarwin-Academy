@@ -74,6 +74,9 @@ export function AdminClassSheet({
   // When the ranking rules reject a coach, we surface an in-sheet override
   // prompt (not window.confirm) holding the reason; confirming forces it.
   const [coachOverride, setCoachOverride] = useState<string | null>(null);
+  // Set when the server refuses a delete because the (already ended) class still
+  // holds bookings — holds its explanation until the founder confirms or backs out.
+  const [deleteForce, setDeleteForce] = useState<string | null>(null);
   // The "Delete completely" text-link arms in place rather than via a native
   // confirm — keeps its subtle affordance while dropping window.confirm.
   const [pending, startTransition] = useTransition();
@@ -363,20 +366,57 @@ export function AdminClassSheet({
             }
           />
         )}
-        <ConfirmAction
-          variant="subtle"
-          label="Delete completely (mistakes only)"
-          prompt="Delete this class completely? Only works if nobody ever booked it."
-          confirmLabel="Delete class"
-          pending={pending}
-          onConfirm={() =>
-            startTransition(async () => {
-              const r = await deleteGroupClass(cls.id);
-              if (r.ok) onDone("Class deleted.");
-              else setMessage(r.error ?? "Failed.");
-            })
-          }
-        />
+        {/* An ended class that still holds bookings can't just be deleted — but
+            it can't be "ended instead" either, since it already has been. The
+            server says so with `needs_force` and names the cost; confirming
+            here deletes it and that history for good. */}
+        {deleteForce ? (
+          <div className="space-y-2 rounded-[8px] border border-err p-3">
+            <p className="text-sm text-fg-2">{deleteForce}</p>
+            <div className="grid grid-cols-2 gap-2">
+              <Button variant="ghost" disabled={pending} onClick={() => setDeleteForce(null)}>
+                Keep
+              </Button>
+              <Button
+                variant="destructive"
+                disabled={pending}
+                onClick={() =>
+                  startTransition(async () => {
+                    const r = await deleteGroupClass(cls.id, true);
+                    setDeleteForce(null);
+                    if (r.ok) onDone("Class deleted, along with its history.");
+                    else setMessage(r.error ?? "Failed.");
+                  })
+                }
+              >
+                {pending ? <Spinner /> : "Delete anyway"}
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <ConfirmAction
+            variant="subtle"
+            label="Delete completely (mistakes only)"
+            prompt={
+              ended
+                ? "Delete this class completely? If it still holds bookings you'll be asked once more before anything goes."
+                : "Delete this class completely? Only works if nobody is booked on it."
+            }
+            confirmLabel="Delete class"
+            pending={pending}
+            onConfirm={() =>
+              startTransition(async () => {
+                const r = await deleteGroupClass(cls.id);
+                if (!r.ok && r.code === "needs_force") {
+                  setDeleteForce(r.error ?? "This class still holds history.");
+                  return;
+                }
+                if (r.ok) onDone("Class deleted.");
+                else setMessage(r.error ?? "Failed.");
+              })
+            }
+          />
+        )}
         {message && <p className="text-sm text-err">{message}</p>}
       </div>
     </Sheet>
