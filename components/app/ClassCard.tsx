@@ -135,31 +135,59 @@ export function SessionCard({
 }
 
 /** A single repeating class on the Weekly classes tab. Venue lives in the group
- * header above, so line 1 is the day + time; line 2 is the coach. */
+ * header above, so line 1 is the day + time; line 2 is the coach.
+ *
+ * In `selecting` mode the whole card becomes the checkbox (tapping it picks the
+ * class rather than opening the editor) — a founder clearing a timetable is
+ * aiming at cards, not at 16px boxes. The tick is drawn rather than a real
+ * <input> so it can live inside the button without nesting two controls. */
 export function WeeklyClassCard({
   cls,
   onClick,
+  selecting = false,
+  selected = false,
 }: {
   cls: ClassRow;
   onClick: () => void;
+  selecting?: boolean;
+  selected?: boolean;
 }) {
   const dayShort = (WEEKDAY_NAME[cls.weekday] ?? cls.weekday).slice(0, 3);
-  const tone = !cls.active
-    ? "border-line bg-surface-2 opacity-55"
-    : !cls.coachName
-      ? "border-err bg-surface-2"
-      : "border-line bg-surface-2";
+  const tone = selecting && selected
+    ? "border-ember bg-surface-2 shadow-[0_0_0_1px_var(--ember)]"
+    : !cls.active
+      ? "border-line bg-surface-2 opacity-55"
+      : !cls.coachName
+        ? "border-err bg-surface-2"
+        : "border-line bg-surface-2";
   return (
-    <button onClick={onClick} className={`${cardBase} ${tone}`}>
-      <p className="font-semibold">
-        {dayShort} · {time12h(cls.time)} – {endTime12h(cls.time, cls.duration)}
-      </p>
-      <p className="text-fg-2">{cls.coachName ?? "No coach yet"}</p>
-      <p className="text-xs text-fg-2">
-        {cls.isSchool ? "School class" : "Group class"} ·{" "}
-        {cls.bookedCount} of {cls.capacity} booked
-      </p>
-      <ClassBadges cls={cls} />
+    <button
+      onClick={onClick}
+      role={selecting ? "checkbox" : undefined}
+      aria-checked={selecting ? selected : undefined}
+      className={`${cardBase} ${tone} ${selecting ? "flex items-start gap-3" : ""}`}
+    >
+      {selecting && (
+        <span
+          aria-hidden
+          className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-[4px] border text-xs leading-none ${
+            selected ? "border-ember bg-ember text-bg" : "border-line"
+          }`}
+        >
+          {selected ? "✓" : ""}
+        </span>
+      )}
+      <span className="block min-w-0">
+        <span className="block font-semibold">
+          {dayShort} · {time12h(cls.time)} – {endTime12h(cls.time, cls.duration)}
+        </span>
+        <span className="block text-fg-2">{cls.coachName ?? "No coach yet"}</span>
+        <span className="block text-xs text-fg-2">
+          {cls.isSchool ? "School class" : "Group class"} ·{" "}
+          {cls.bookedCount} of {cls.capacity} booked
+        </span>
+        <ClassBadges cls={cls} />
+      </span>
     </button>
   );
 }

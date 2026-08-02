@@ -7,10 +7,12 @@ import { asAddressDetails, fromDetails, type StructuredAddress } from "@/lib/add
 import type { SessionRow } from "@/components/app/admin-calendar-types";
 import {
   assignPrivateSessionClientCore,
+  bulkRemoveClassesCore,
   cancelFuturePrivateSessionsCore,
   createOneOffClassCore,
   createPrivateSessionCore,
   deleteGroupClassCore,
+  planClassRemovalCore,
   materializeInviteCore,
   endGroupClassCore,
   moveSessionCore,
@@ -41,6 +43,10 @@ import {
 //   cancelAllFuturePrivateSessions ... notifies the client
 //   reassignClassCoach ............... notifies the coach(es)
 //   deleteGroupClass ................. notifies nobody (only unbooked classes delete)
+//   planClassRemoval ................. notifies nobody (read-only preview)
+//   bulkRemoveClasses ................ deletes notify nobody; the classes it *ends* notify
+//                                      everyone booked + their coaches, ONE message each no
+//                                      matter how many classes went (see endGroupClassesCore)
 //   topUpSessions .................... notifies nobody
 //   createOneOffClass ................ notifies nobody (nothing booked yet)
 //   addSchoolPlayer .................. notifies nobody
@@ -167,6 +173,30 @@ export async function deleteGroupClass(classId: string): Promise<Result> {
   if (!result.ok) return result;
   refresh();
   return { ok: true };
+}
+
+/** What a bulk removal would do, so the confirm step can say it out loud. */
+export async function planClassRemoval(
+  classIds: string[]
+): Promise<Result & { deletable?: string[]; booked?: string[] }> {
+  const { supabase, founder } = await requireFounder();
+  if (!founder) return { ok: false, error: "Founder only." };
+  const plan = await planClassRemovalCore(supabase, classIds);
+  return { ok: true, ...plan };
+}
+
+/** Clear a selection of weekly classes — delete the unbooked, optionally end
+ * the rest (which messages everyone booked, exactly as ending one does). */
+export async function bulkRemoveClasses(
+  classIds: string[],
+  endBooked: boolean
+): Promise<Result & { deleted?: number; ended?: number; kept?: number }> {
+  const { supabase, founder } = await requireFounder();
+  if (!founder) return { ok: false, error: "Founder only." };
+  const result = await bulkRemoveClassesCore(supabase, founder.id, classIds, endBooked);
+  if (!result.ok) return result;
+  refresh();
+  return result;
 }
 
 export async function topUpSessions(): Promise<Result & { created?: number }> {
