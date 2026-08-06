@@ -265,6 +265,25 @@ still counts, because a WhatsApp genuinely went out.
 
 Read `channel_attempted` as a set, not an enum: `= 'push'` means push *alone*.
 
+### Why a *sent* row can carry an `error`
+
+`error` is the reason the channel we would have preferred did not carry the row
+— which now includes rows that went out fine:
+
+| `status` | `error` | meaning |
+| --- | --- | --- |
+| `failed` | set | nothing was delivered; this is why |
+| `sent` | null | the channel we wanted worked |
+| `sent` | set | delivered, but the hard way — this names the channel we lost |
+
+This exists because the narrower version cost four days. When Twilio ran out of
+funds at 16:37 UTC on 2026-08-02, the email fallback covered every message, so
+no row was ever marked failed and nothing was written down. `channel_attempted`
+could show that WhatsApp-linked members were being downgraded to email; nothing
+said why, because the reason lived only in an edge-function log that rolls over
+after 24 hours. Counting failures on `status = 'failed'` is unaffected — only a
+query using `error is not null` as a proxy for failure needs the status test.
+
 ### Subscribing, refreshing, unsubscribing
 
 - **All three roles can subscribe.** The only "Enable push" button used to be in

@@ -407,9 +407,16 @@ Deno.serve(async () => {
     const attempt = await deliver(row);
     if (attempt.ok) {
       sent++;
+      // `error` on a sent row is not a failure — it is why the channel we would
+      // have preferred didn't carry it. Written only when there is something to
+      // say, so `error is not null and status = 'sent'` reads as "delivered the
+      // hard way" and stays queryable long after the edge logs have rolled over.
       await supabase
         .from("notifications")
-        .update({ channel_attempted: attempt.channel })
+        .update({
+          channel_attempted: attempt.channel,
+          ...(attempt.note ? { error: attempt.note.slice(0, 500) } : {}),
+        })
         .eq("id", row.id);
     } else {
       failed++;
@@ -1604,7 +1611,16 @@ async function sweepWaitlistOffers() {
  * reading this column should treat it as a set, not an enum: `= 'push'` means
  * push ALONE, which is why deliveredTodayCount can exclude it safely.
  */
-type Attempt = { ok: boolean; channel: string; error?: string };
+/**
+ * `note` is the reason a *preferred* channel was skipped on a delivery that
+ * nonetheless succeeded — "whatsapp: not_configured" on a row that went out by
+ * email. It exists because losing that sentence once cost four days: when
+ * Twilio ran dry on 2026-08-02 the email fallback covered every message, so
+ * nothing was ever marked failed, and the reason lived only in an edge-function
+ * log that rolls over after 24 hours. `channel_attempted` could tell you a
+ * linked member had been downgraded to email; nothing could tell you why.
+ */
+type Attempt = { ok: boolean; channel: string; error?: string; note?: string };
 
 /**
  * Push needs one extra bit that no other channel does. `ok` answers "may this
@@ -1686,7 +1702,7 @@ async function deliver(row: {
   // free-form text; outside it we fall back to the approved template (with the
   // member's name), and only then to email.
   const wa = await deliverWhatsApp(row, firstName);
-  if (wa.ok) return { ok: true, channel: withPush("whatsapp") };
+  if (wa.ok) return { ok: true, channel: withPush("whatsapp"), note: notes.join("; ") || undefined };
   if (wa.error) notes.push(`whatsapp: ${wa.error}`);
 
   // Email fallback via Resend.
@@ -1725,7 +1741,9 @@ async function deliver(row: {
         </div>`,
     }),
   });
-  if (res.ok) return { ok: true, channel: withPush("email") };
+  // The row went out, so this is not a failure — but WhatsApp was preferred and
+  // did not carry it, and that sentence is the whole diagnosis. Keep it.
+  if (res.ok) return { ok: true, channel: withPush("email"), note: notes.join("; ") || undefined };
   const detail = (await res.text().catch(() => "")).slice(0, 200);
   notes.push(`email: ${res.status} ${detail}`.trim());
   return orPush({ ok: false, channel: "email", error: notes.join("; ") });

@@ -235,6 +235,9 @@ create table public.notifications (
   channel_attempted text
 );
 
+comment on column public.notifications.error is
+  'Why the preferred channel did not carry this row (worker-written). On a failed row, why nothing was delivered at all; on a sent row, why it fell back to a lesser channel. Null when the intended channel worked.';
+
 create table public.student_notes (
   id uuid default gen_random_uuid() not null,
   player_id uuid not null,
