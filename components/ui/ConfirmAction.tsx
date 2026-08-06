@@ -4,6 +4,13 @@
 // window.confirm dialogs look broken in a PWA and truncate copy on small
 // screens. First tap arms it (prompt + Keep/confirm); "Keep" backs out, the
 // confirm button runs the action. Shared by the admin, coach and client sheets.
+//
+// Armed is local state and only "Keep" clears it. That is enough for almost
+// every caller, because a confirmed action closes its sheet and unmounts this
+// along with it. A caller whose surface deliberately STAYS OPEN after the
+// action succeeds — the school password reset, which stays to show the new
+// password — must give this a `key` it changes on success, or the box is left
+// sitting on its confirm button and the second tap costs nothing.
 
 import { useState } from "react";
 import { Button } from "@/components/ui/Button";

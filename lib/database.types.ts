@@ -1550,18 +1550,21 @@ export type Database = {
         Row: {
           created_at: string
           created_by: string | null
+          password_secret_id: string | null
           user_id: string
           venue_id: string
         }
         Insert: {
           created_at?: string
           created_by?: string | null
+          password_secret_id?: string | null
           user_id: string
           venue_id: string
         }
         Update: {
           created_at?: string
           created_by?: string | null
+          password_secret_id?: string | null
           user_id?: string
           venue_id?: string
         }
@@ -2295,6 +2298,16 @@ export type Database = {
       school_admin_session: { Args: { p_session: string }; Returns: boolean }
       school_admin_venues: { Args: never; Returns: string[] }
       school_has_player: { Args: { p_player: string }; Returns: boolean }
+      set_school_password: {
+        Args: { p_user: string; p_password: string }
+        Returns: undefined
+      }
+      school_password: { Args: { p_user: string }; Returns: string | null }
+      clear_school_password: { Args: { p_user: string }; Returns: undefined }
+      school_last_sign_in: {
+        Args: never
+        Returns: { school_user_id: string; signed_in_at: string | null }[]
+      }
       location_label: {
         Args: { c: Database["public"]["Tables"]["classes"]["Row"] }
         Returns: string

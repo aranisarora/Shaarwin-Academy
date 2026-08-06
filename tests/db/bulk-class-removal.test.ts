@@ -1,15 +1,22 @@
 // Clearing a timetable from the Weekly classes tab (bulkRemoveClassesCore).
 //
-// Two things are under test and they pull in opposite directions:
+// Three things are under test and they pull in opposite directions:
 //
-//  1. The founder can wipe a selection in one go — classes holding nothing are
-//     deleted outright, and every other bucket can leave the list too: a booked
-//     class can be ended, or ended and deleted, and an already-ended one can be
-//     deleted together with the history it still holds. He is the admin; no
-//     class is allowed to be stuck.
-//  2. Doing that to twenty classes must not text a parent twenty times.
+//  1. The founder can wipe a selection in one go — classes that have stopped and
+//     hold nothing are deleted outright, and every other bucket can leave the
+//     list too: a booked class can be ended, or ended and deleted, and an
+//     already-ended one can be deleted together with the history it still holds.
+//     He is the admin; no class is allowed to be stuck.
+//  2. Nothing still on the timetable is allowed to go without him asking for it
+//     by name, and nobody who loses hours to it is allowed to find out from an
+//     empty calendar. "No bookings" is not the same fact as "not running": a
+//     school class is registered in the hall, never booked online, so a live
+//     term of them counts zero either way — and a coach is still standing in
+//     that hall every week. That is why `deletableRunning` is its own bucket,
+//     with its own tick and its own message.
+//  3. Doing any of this to twenty classes must not text a parent twenty times.
 //
-// (2) is the reason `endGroupClassesCore` exists instead of a loop over
+// (3) is the reason `endGroupClassesCore` exists instead of a loop over
 // `endGroupClassCore`. Unlike `coach_changed` (collapsed per user per IST day by
 // queue_coach_changed, migration 0043), `session_cancelled` has NO collapse at
 // the queue site, and it is a TRANSACTIONAL type — so it skips quiet hours and
@@ -96,33 +103,164 @@ async function createPrivateClass(label: string): Promise<string> {
 const uniq = () => Math.random().toString(36).slice(2, 7);
 
 describe("bulk class removal", () => {
-  it("deletes never-booked classes outright and messages nobody", async () => {
+  // ── The foot-gun the running/stopped split closes ─────────────────────────
+  // "Deletable" was chosen on bookings alone, so a class that has run all term
+  // and a class created by mistake an hour ago were the same row to it. On prod
+  // that put 36 live classes — 28 of them school classes, 261 future sessions
+  // between them — into the bucket that deletes with no tick and no warning,
+  // one tap behind "Select all 47".
+  it("won't delete a running class nobody has booked until it's asked for by name", async () => {
     const db = admin();
     const coach = await createCoach();
     const tag = uniq();
     const ids = await Promise.all([
-      createGroupClass(`Bulk empty A ${tag}`),
-      createGroupClass(`Bulk empty B ${tag}`),
-      createGroupClass(`Bulk empty C ${tag}`),
+      createGroupClass(`Bulk running A ${tag}`),
+      createGroupClass(`Bulk running B ${tag}`),
+      createGroupClass(`Bulk running C ${tag}`),
     ]);
-    // Sessions but no bookings — the "created it by mistake" case. One coach
-    // teaches all three, so they need distinct slots (coach_no_overlap).
+    // Sessions but no bookings — indistinguishable, to a count of bookings, from
+    // a class created by mistake. One coach teaches all three, so they need
+    // distinct slots (coach_no_overlap).
     for (const [i, id] of ids.entries())
       await createWeeklySlot({ weeks: 2, classId: id, coachId: coach.id, istHour: 16 + i });
 
     const founder = await asUser(FOUNDER_EMAIL);
-    const r = await bulkRemoveClassesCore(typed(founder), SEED.founder, ids, {});
+    const plan = await planClassRemovalCore(typed(founder), ids);
+    expect(plan.deletableRunning.sort()).toEqual([...ids].sort());
+    expect(plan.deletable).toEqual([]);
+    // The tick has to be able to quote what it costs: these still have weeks of
+    // sessions on the schedule ahead of them.
+    expect(plan.purgeCost.runningSessions).toBeGreaterThan(0);
 
-    expect(r.ok).toBe(true);
-    expect(r.deleted).toBe(3);
-    expect(r.ended).toBe(0);
-    expect(r.kept).toBe(0);
+    // The plain button leaves every one of them exactly where it was.
+    const held = await bulkRemoveClassesCore(typed(founder), SEED.founder, ids, {});
+    expect(held.ok).toBe(true);
+    expect(held.deleted).toBe(0);
+    expect(held.deletedRunning).toBe(0);
+    expect(held.kept).toBe(3);
+    const { data: stillThere } = await db.from("classes").select("id").in("id", ids);
+    expect(stillThere ?? []).toHaveLength(3);
 
+    // With the tick they go.
+    const gone = await bulkRemoveClassesCore(typed(founder), SEED.founder, ids, {
+      deleteRunningEmpty: true,
+    });
+    expect(gone.ok).toBe(true);
+    expect(gone.deletedRunning).toBe(3);
+    expect(gone.deleted).toBe(0);
+    expect(gone.kept).toBe(0);
+    // Deleted, not ended-and-left: "ended" counts what the founder still has.
+    expect(gone.ended).toBe(0);
     const { data: left } = await db.from("classes").select("id").in("id", ids);
     expect(left ?? []).toHaveLength(0);
-    // Nobody booked, so nobody is owed a word — including the coach who was on
-    // the sessions that went with them.
-    await expectNotificationCount(db, { userId: coach.id, type: "session_cancelled" }, 0);
+    // Not quietly, though. "Nobody booked" is not "nobody affected": this coach
+    // was rostered on every hour of all three, and deleting a class takes its
+    // sessions off his calendar. He hears — ONCE for the whole clear-out, which
+    // is the only reason the running bucket is ended in the same call as the
+    // booked one rather than in a second pass of its own.
+    const coachRows = await expectNotificationCount(
+      db,
+      { userId: coach.id, type: "session_cancelled" },
+      1
+    );
+    expect(coachRows[0].data.class_count).toBe(3);
+    expect(coachRows[0].data.collapsed).toBe(true);
+  });
+
+  it("tells a coach once when both buckets of a clear-out take his classes", async () => {
+    // The reason `endBooked` and `deleteRunningEmpty` share one ending call. One
+    // coach teaches a class a parent is booked into and a class nobody has
+    // booked; the founder ticks both boxes. Two separate calls would have sent
+    // him two transactional messages seconds apart — session_cancelled has no
+    // collapse at the queue site and skips quiet hours, so that is two texts,
+    // possibly at 2am. This is the Jul 22 burst in miniature.
+    const db = admin();
+    const coach = await createCoach();
+    const parent = await createClient({ children: 1, groupPlanId: SEED.groupPlan1x });
+    const tag = uniq();
+
+    const bookedClass = await createGroupClass(`Both booked ${tag}`);
+    const [session] = await createWeeklySlot({
+      weeks: 1,
+      classId: bookedClass,
+      coachId: coach.id,
+      istHour: 16,
+    });
+    await bookSession({
+      email: parent.email,
+      sessionId: session.sessionId,
+      playerId: parent.playerIds[0],
+    });
+    const emptyClass = await createGroupClass(`Both empty ${tag}`);
+    await createWeeklySlot({
+      weeks: 1,
+      classId: emptyClass,
+      coachId: coach.id,
+      istHour: 18,
+      firstInDays: 4,
+    });
+
+    const founder = await asUser(FOUNDER_EMAIL);
+    const plan = await planClassRemovalCore(typed(founder), [emptyClass, bookedClass]);
+    expect(plan.deletableRunning).toEqual([emptyClass]);
+    expect(plan.endable).toEqual([bookedClass]);
+
+    const r = await bulkRemoveClassesCore(
+      typed(founder),
+      SEED.founder,
+      [emptyClass, bookedClass],
+      { endBooked: true, deleteRunningEmpty: true }
+    );
+    expect(r.ok).toBe(true);
+    expect(r.deletedRunning).toBe(1);
+    // The booked one was ended, not deleted — he only ticked "end them".
+    expect(r.ended).toBe(1);
+    expect(r.kept).toBe(0);
+
+    const coachRows = await expectNotificationCount(
+      db,
+      { userId: coach.id, type: "session_cancelled" },
+      1
+    );
+    expect(coachRows[0].data.class_count).toBe(2);
+    // The parent was only ever on one of them, so her message names it plainly.
+    const rows = await expectNotificationCount(
+      db,
+      { userId: parent.id, type: "session_cancelled" },
+      1
+    );
+    expect(rows[0].data.collapsed).toBe(false);
+  });
+
+  it("still deletes a stopped class holding nothing in one tap", async () => {
+    // The other half of the split, and the reason it isn't just "ask about
+    // everything": clearing away husks is the ordinary job on this screen, and
+    // charging it a tick would be ceremony bought with nothing. A class that has
+    // been ended has no sessions ahead of it and nobody on it — there is no
+    // second thought left to have.
+    const db = admin();
+    const coach = await createCoach();
+    const classId = await createGroupClass(`Bulk stopped ${uniq()}`);
+    await createWeeklySlot({ weeks: 2, classId, coachId: coach.id, istHour: 20 });
+
+    const founder = await asUser(FOUNDER_EMAIL);
+    await endGroupClassesCore(typed(founder), SEED.founder, [classId]);
+    // The ending is what owed the coach a word, and it paid it.
+    await expectNotificationCount(db, { userId: coach.id, type: "session_cancelled" }, 1);
+
+    const plan = await planClassRemovalCore(typed(founder), [classId]);
+    expect(plan.deletable).toEqual([classId]);
+    expect(plan.deletableRunning).toEqual([]);
+    expect(plan.purgeable).toEqual([]);
+
+    const r = await bulkRemoveClassesCore(typed(founder), SEED.founder, [classId], {});
+    expect(r.deleted).toBe(1);
+    expect(r.kept).toBe(0);
+    const { data: left } = await db.from("classes").select("id").eq("id", classId);
+    expect(left ?? []).toHaveLength(0);
+    // ...and the delete itself says nothing more. Everything it removed was
+    // already off everyone's calendar.
+    await expectNotificationCount(db, { userId: coach.id, type: "session_cancelled" }, 1);
   });
 
   it("sends a parent booked across several ended classes ONE message", async () => {
@@ -424,17 +562,17 @@ describe("bulk class removal", () => {
 
     const founder = await asUser(FOUNDER_EMAIL);
     const plan = await planClassRemovalCore(typed(founder), [emptyA, emptyB, privateId]);
-    expect(plan.deletable.sort()).toEqual([emptyA, emptyB].sort());
+    expect(plan.deletableRunning.sort()).toEqual([emptyA, emptyB].sort());
     expect(plan.endable).toEqual([]);
 
     const r = await bulkRemoveClassesCore(
       typed(founder),
       SEED.founder,
       [emptyA, emptyB, privateId],
-      { endBooked: true }
+      { endBooked: true, deleteRunningEmpty: true }
     );
     expect(r.ok).toBe(true);
-    expect(r.deleted).toBe(2);
+    expect(r.deletedRunning).toBe(2);
     expect(r.kept).toBe(0);
     const { data: left } = await db.from("classes").select("id").in("id", [emptyA, emptyB]);
     expect(left ?? []).toHaveLength(0);
@@ -472,10 +610,18 @@ describe("bulk class removal", () => {
       .eq("id", session.sessionId);
 
     const founder = await asUser(FOUNDER_EMAIL);
+    // Ended in August, exactly as the two prod classes were — which is also
+    // what makes it the safe bucket rather than the one that needs a tick.
+    await endGroupClassesCore(typed(founder), SEED.founder, [classId]);
+
     const plan = await planClassRemovalCore(typed(founder), [classId]);
     expect(plan.deletable).toEqual([classId]);
+    expect(plan.deletableRunning).toEqual([]);
     expect(plan.endable).toEqual([]);
     expect(plan.purgeable).toEqual([]);
+    // The lapsed place goes with it, and the confirm step has to be able to say
+    // so rather than call the class empty.
+    expect(plan.purgeCost.unmarked).toBe(1);
 
     // It goes with one plain delete — no history warning, and nobody is told,
     // because there is nothing ahead of anyone to cancel.
@@ -576,10 +722,15 @@ describe("bulk class removal", () => {
 
     const founder = await asUser(FOUNDER_EMAIL);
     const plan = await planClassRemovalCore(typed(founder), [classId]);
-    expect(plan.deletable).toEqual([classId]);
+    // Still running, so it needs the tick — but a cancelled booking must not put
+    // it in `endable`, where only the "everyone gets told" path could reach it.
+    expect(plan.deletableRunning).toEqual([classId]);
+    expect(plan.endable).toEqual([]);
 
-    const r = await bulkRemoveClassesCore(typed(founder), SEED.founder, [classId], {});
-    expect(r.deleted).toBe(1);
+    const r = await bulkRemoveClassesCore(typed(founder), SEED.founder, [classId], {
+      deleteRunningEmpty: true,
+    });
+    expect(r.deletedRunning).toBe(1);
     const { data: left } = await db.from("classes").select("id").eq("id", classId);
     expect(left ?? []).toHaveLength(0);
   });
@@ -608,7 +759,7 @@ describe("bulk class removal", () => {
 
     // The preview the confirm sheet shows must split them the same way.
     const plan = await planClassRemovalCore(typed(founder), [emptyClass, bookedClass]);
-    expect(plan.deletable).toEqual([emptyClass]);
+    expect(plan.deletableRunning).toEqual([emptyClass]);
     expect(plan.endable).toEqual([bookedClass]);
     expect(plan.purgeable).toEqual([]);
 
@@ -616,9 +767,9 @@ describe("bulk class removal", () => {
       typed(founder),
       SEED.founder,
       [emptyClass, bookedClass],
-      {}
+      { deleteRunningEmpty: true }
     );
-    expect(r.deleted).toBe(1);
+    expect(r.deletedRunning).toBe(1);
     expect(r.ended).toBe(0);
     expect(r.kept).toBe(1);
 

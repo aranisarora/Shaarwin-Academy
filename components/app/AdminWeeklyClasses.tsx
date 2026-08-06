@@ -42,6 +42,7 @@ function fmtSlotTime(hhmm: string): string {
 export function AdminWeeklyClasses({
   classes,
   privateSeries = [],
+  oneOffCount = 0,
   coaches,
   venues,
   clients,
@@ -51,6 +52,9 @@ export function AdminWeeklyClasses({
   classes: ClassRow[];
   // Active client weekly privates, grouped under the same locations as classes.
   privateSeries?: PrivateSeriesRow[];
+  // Group classes that run on a date rather than every week, and so aren't on
+  // this list at all. Only the count reaches here — see the note in page.tsx.
+  oneOffCount?: number;
   coaches: Coach[];
   venues: Venue[];
   clients: ClientOption[];
@@ -78,6 +82,12 @@ export function AdminWeeklyClasses({
   // Stable array identity — the confirm sheet fetches its preview in an effect
   // keyed on this, so a fresh `[...selected]` each render would refetch.
   const selectedIds = useMemo(() => [...selected], [selected]);
+
+  // The selection bar and the toast are pinned to the same spot, so exactly one
+  // of them may be on screen at a time — and it has to be this condition, not
+  // `selecting`, or a founder who flips into selection mode without picking
+  // anything loses a status line to a bar that isn't there.
+  const selectionBarShowing = selecting && selected.size > 0;
 
   function exitSelect() {
     setSelecting(false);
@@ -421,7 +431,12 @@ export function AdminWeeklyClasses({
           <div className={`divide-y divide-line lg:block ${open ? "block" : "hidden"}`}>
             {group.days.map((day) => (
               <div key={day.weekday} className="px-4 py-3">
-                <p className="label mb-1.5">{WEEKDAY_NAME[day.weekday] ?? "One-off"}</p>
+                {/* Every row on this screen repeats weekly, so this always has a
+                    real weekday to print. It used to fall back to "One-off",
+                    which could not happen and quietly implied the one-off
+                    classes were somewhere on this list — they are not; the line
+                    under the list says where they are instead. */}
+                <p className="label mb-1.5">{WEEKDAY_NAME[day.weekday] ?? day.weekday}</p>
                 <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                   {day.rows.map((c) => (
                     <WeeklyClassCard
@@ -465,6 +480,22 @@ export function AdminWeeklyClasses({
           </p>
         )}
 
+      {/* This list is the repeating pattern, and the one-off classes genuinely
+          aren't part of it — but they were being left out in silence, which is
+          how two of them ended up with real attendance on them and no way off
+          any screen the founder was looking at. Saying the number and pointing
+          at the Schedule costs one line and ends the guessing. */}
+      {oneOffCount > 0 && (
+        <p className="px-1 text-sm text-fg-2">
+          {oneOffCount} one-off {oneOffCount === 1 ? "class isn't" : "classes aren't"} on this
+          list — {oneOffCount === 1 ? "it runs" : "they run"} on a date rather than every week.{" "}
+          <Link href="/admin/schedule" className="text-ember hover:underline">
+            Find {oneOffCount === 1 ? "it" : "them"} on the Schedule
+          </Link>
+          .
+        </p>
+      )}
+
       {/* Phone: Create a class as a floating button above the tab bar. It gives
           up the spot to the selection bar while selecting. */}
       {!selecting && (
@@ -478,8 +509,9 @@ export function AdminWeeklyClasses({
       )}
 
       {/* The selection's own action bar, in the same spot the toast uses so the
-          count and the destructive button stay in reach on a phone. */}
-      {selecting && selected.size > 0 && (
+          count and the destructive button stay in reach on a phone. The toast
+          stands down while it's here rather than landing on top of it. */}
+      {selectionBarShowing && (
         <div className="fixed inset-x-4 bottom-[calc(env(safe-area-inset-bottom)+4.75rem)] z-40 mx-auto flex max-w-md items-center gap-3 rounded-[12px] border border-line bg-surface-2 px-4 py-3 shadow-[var(--shadow-sheet)] lg:bottom-6">
           <span className="text-sm">
             {selected.size} {selected.size === 1 ? "class" : "classes"} selected
@@ -506,8 +538,9 @@ export function AdminWeeklyClasses({
               <p className="label">Clear the timetable</p>
               <p className="text-sm text-fg-2">
                 Picks every class the filters are showing ({filteredClasses.length}) so you can
-                start again. You get to see what goes quietly and what has people or history on
-                it before anything happens — and you can unpick any of them first.
+                start again. You get to see what goes quietly, what is still running, and what
+                has people or history on it before anything happens — and you can unpick any of
+                them first.
               </p>
               <Button
                 variant="ghost"
@@ -544,8 +577,13 @@ export function AdminWeeklyClasses({
         </div>
       </Sheet>
 
-      {/* Transient status line as a bottom toast — no reserved layout space. */}
-      {message && (
+      {/* Transient status line as a bottom toast — no reserved layout space.
+          It sits exactly where the selection bar sits, so it stands down while
+          that bar is up rather than landing on the Remove button he is reaching
+          for. Nothing sets a message from inside selection mode, and everything
+          that finishes a selection clears it in the same tick, so the line still
+          arrives; it just waits until the bar has gone. */}
+      {message && !selectionBarShowing && (
         <div className="fixed inset-x-4 bottom-[calc(env(safe-area-inset-bottom)+4.75rem)] z-40 mx-auto max-w-md rounded-[12px] border border-line bg-surface-2 px-4 py-3 text-sm text-fg-2 shadow-[var(--shadow-sheet)] lg:bottom-6">
           {message}
         </div>
@@ -600,15 +638,24 @@ export function AdminWeeklyClasses({
 /** A client weekly private slot on the Weekly tab — view-only, sharing the class
  * card's grammar (day + time bold, then the who). Deep-links to its next
  * generated session on the Schedule tab; end/reassign live there, not here. The
- * ember left-stripe marks it private, matching the schedule's private sessions. */
+ * ember left-stripe marks it private, matching the schedule's private sessions.
+ *
+ * In selection mode it used to become a bare `<div>` at 40% — no tick, no
+ * disabled state, no reason, and a grey nothing else on the screen used. Eighteen
+ * of these render on prod, so the honest answer to "why can't I delete that one?"
+ * was, for most of the greyed cards, this card saying nothing. It now dims to the
+ * same 55% every out-of-play card uses, says on its face why it isn't a
+ * candidate, and stays a link — being unpickable is not a reason to stop being a
+ * way through to the session. It is deliberately not folded into the removal
+ * buckets: a private has a paying client behind it, its own semantics and its own
+ * cancellation message, none of which the confirm sheet's vocabulary covers. */
 function PrivateSeriesCard({
   series,
   selecting = false,
 }: {
   series: PrivateSeriesRow;
   /** While the founder is picking classes to clear, privates aren't candidates —
-   * they end from the Schedule tab. Shown greyed and inert so the card doesn't
-   * invite a tap that would do nothing. */
+   * they end from the Schedule tab, which is what the card says while he picks. */
   selecting?: boolean;
 }) {
   const dayShort = (WEEKDAY_NAME[series.weekday] ?? series.weekday).slice(0, 3);
@@ -625,16 +672,19 @@ function PrivateSeriesCard({
         {series.clientName ? ` · ${series.clientName}` : ""}
         {series.coachName ? ` · ${series.coachName}` : ""}
       </p>
+      {selecting && (
+        <p className="mt-1.5 text-xs text-fg-2">Private — end it from the Schedule</p>
+      )}
     </>
   );
-  const cls =
-    "block w-full rounded-[8px] border border-line border-l-[3px] border-l-ember bg-surface-2 px-3 py-2 text-left text-sm";
-  if (selecting) return <div className={`${cls} opacity-40`}>{inner}</div>;
+  const cls = `block w-full rounded-[8px] border border-line border-l-[3px] border-l-ember bg-surface-2 px-3 py-2 text-left text-sm${
+    selecting ? " opacity-55" : ""
+  }`;
   if (series.nextSessionId && series.nextSessionStart) {
     return (
       <Link
         href={`/admin/schedule?date=${wallDate(series.nextSessionStart)}&session=${series.nextSessionId}`}
-        className={`${cls} hover:border-ember`}
+        className={`${cls} hover:border-ember hover:opacity-100`}
       >
         {inner}
       </Link>

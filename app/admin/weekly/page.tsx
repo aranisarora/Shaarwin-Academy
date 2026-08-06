@@ -43,6 +43,7 @@ async function Weekly({ searchParams }: { searchParams: SearchParams }) {
 
   const [
     { data: classes },
+    { count: oneOffCount },
     { data: coaches },
     { data: venues },
     { data: clients },
@@ -57,6 +58,25 @@ async function Weekly({ searchParams }: { searchParams: SearchParams }) {
       .eq("class_type", "group")
       .not("recurrence_rule", "is", null)
       .order("title"),
+    // A group class with no recurrence rule runs on a date, not on a weekday.
+    // This screen is the repeating pattern — every card on it says "Every Mon",
+    // every edit here means "for every week", and the removal sheet's whole
+    // vocabulary (end it, restore it, it stays on this list under Ended) is
+    // about a class that has weeks. A one-off has one hour and then it is
+    // history, so it belongs on the Schedule and it stays excluded.
+    //
+    // What was wrong was doing that in silence. Seven of them exist on prod at
+    // the last count, two holding real attendance (twelve marked registers on
+    // one, eight on another), and the founder had no way of knowing from this
+    // screen that they were anywhere — so we count them and say where they are.
+    // (Only the count crosses over: the rows themselves would have to be given
+    // a fake weekday to render here, which is exactly the pretence we're
+    // dropping.)
+    supabase
+      .from("classes")
+      .select("id", { count: "exact", head: true })
+      .eq("class_type", "group")
+      .is("recurrence_rule", null),
     supabase
       .from("coaches")
       .select("id,active,profiles!inner(full_name)")
@@ -304,6 +324,7 @@ async function Weekly({ searchParams }: { searchParams: SearchParams }) {
     <AdminWeeklyClasses
       classes={classRows}
       privateSeries={privateSeriesRows}
+      oneOffCount={oneOffCount ?? 0}
       coaches={coachList}
       venues={withVenueAddress(venues)}
       clients={clientRows}

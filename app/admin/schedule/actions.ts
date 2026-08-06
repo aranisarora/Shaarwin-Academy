@@ -47,11 +47,12 @@ import {
 //                                      when it does, `force` ends it first, so everyone
 //                                      booked + their coach get the cancellation
 //   planClassRemoval ................. notifies nobody (read-only preview)
-//   bulkRemoveClasses ................ classes holding nothing delete silently; every class
-//                                      it ends — including the ones it ends AND deletes
-//                                      (deleteBooked) — notifies everyone booked + their
-//                                      coaches, ONE message each no matter how many classes
-//                                      went (see endGroupClassesCore)
+//   bulkRemoveClasses ................ classes holding nothing delete silently, whether they
+//                                      had stopped or (on deleteRunningEmpty) were still
+//                                      running; every class it ends — including the ones it
+//                                      ends AND deletes (deleteBooked) — notifies everyone
+//                                      booked + their coaches, ONE message each no matter how
+//                                      many classes went (see endGroupClassesCore)
 //   topUpSessions .................... notifies nobody
 //   createOneOffClass ................ notifies nobody (nothing booked yet)
 //   addSchoolPlayer .................. notifies nobody
@@ -200,14 +201,20 @@ export async function planClassRemoval(
   return { ok: true, ...plan };
 }
 
-/** Clear a selection of weekly classes — delete what carries no history, and
- * whichever of the risky buckets the founder opted into. */
+/** Clear a selection of weekly classes — delete the stopped ones that carry no
+ * history, and whichever of the buckets with a cost the founder opted into. */
 export async function bulkRemoveClasses(
   classIds: string[],
-  opts: { endBooked?: boolean; purgeEnded?: boolean; deleteBooked?: boolean }
+  opts: {
+    endBooked?: boolean;
+    purgeEnded?: boolean;
+    deleteBooked?: boolean;
+    deleteRunningEmpty?: boolean;
+  }
 ): Promise<
   Result & {
     deleted?: number;
+    deletedRunning?: number;
     ended?: number;
     purged?: number;
     deletedBooked?: number;

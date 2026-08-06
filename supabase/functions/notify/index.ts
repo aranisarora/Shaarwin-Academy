@@ -79,11 +79,20 @@ const TWILIO_WA_CLIENT_LATE_SID = Deno.env.get("TWILIO_WA_CLIENT_LATE_SID");
 // (NEXT_PUBLIC_VAPID_PUBLIC_KEY in the app build) — a subscription is bound to
 // the key that created it, so a mismatch here doesn't warn, it just 403s every
 // send. Both are base64url: the public key is the 65-byte uncompressed P-256
-// point, the private key the 32-byte scalar. Unset = push is skipped and the
-// other channels carry everything, exactly as before this existed.
-const VAPID_PUBLIC_KEY = Deno.env.get("VAPID_PUBLIC_KEY");
-const VAPID_PRIVATE_KEY = Deno.env.get("VAPID_PRIVATE_KEY");
-const VAPID_SUBJECT = Deno.env.get("VAPID_SUBJECT") ?? "mailto:hello@sharwinacademy.com";
+// point, the private key the 32-byte scalar. No key from either source = push is
+// skipped and the other channels carry everything, exactly as before this
+// existed.
+//
+// Read from the environment FIRST, and from Supabase Vault only if that comes up
+// empty — see vapidCredentials(). A function secret is the right home for a
+// signing key, so the day one is set it takes over here with no code change and
+// no database round trip.
+const VAPID_PUBLIC_KEY_ENV = Deno.env.get("VAPID_PUBLIC_KEY");
+const VAPID_PRIVATE_KEY_ENV = Deno.env.get("VAPID_PRIVATE_KEY");
+const VAPID_SUBJECT_ENV = Deno.env.get("VAPID_SUBJECT");
+// The mailto: a push service contacts about our traffic. Only ever a default —
+// no push has been rejected for it, and it costs nothing to always have one.
+const VAPID_SUBJECT_FALLBACK = "mailto:hello@sharwinacademy.com";
 const APP_URL = Deno.env.get("APP_URL") ?? "https://sharwinacademy.com";
 const WINDOW_MS = 24 * 60 * 60 * 1000;
 const IST = "Asia/Kolkata";
@@ -1765,7 +1774,8 @@ async function deliver(row: {
 // Built once per worker instance and reused across the batch: importing the
 // keys and generating the ECDH pair is real work, and a busy tick sends to
 // dozens of endpoints. Cached as the promise, not the value, so two concurrent
-// callers share one build.
+// callers share one build — and so the vault read below happens at most once per
+// instance, never once per notification.
 let pushServerOnce: Promise<webpush.ApplicationServer | null> | null = null;
 
 function applicationServer(): Promise<webpush.ApplicationServer | null> {
@@ -1773,21 +1783,70 @@ function applicationServer(): Promise<webpush.ApplicationServer | null> {
   return pushServerOnce;
 }
 
+type VapidCredentials = { publicKey: string; privateKey: string; subject: string };
+
+/**
+ * Where the signing key actually comes from, in the order we want it to.
+ *
+ * A Supabase function secret is the right home for a VAPID private key and this
+ * checks it first, so setting one later silently takes over and this whole
+ * fallback stops being reached. But a function secret can only be set by someone
+ * with CLI or dashboard access to the project, and for a long stretch nobody
+ * working on this had either — which is precisely how push came to be fully
+ * built, deployed, and dormant for want of one string. Leaving it there was not
+ * an option, so the keypair also lives in Supabase Vault, readable only through
+ * `public.vapid_keys()` (migration 0064), which the worker can reach with the
+ * service-role key it already holds.
+ *
+ * Both keys or nothing. A public key without its private half can't sign, and a
+ * private key without its public half can't tell the browser which subscription
+ * it belongs to — so a half-configured source falls through rather than building
+ * a server that would 403 every send.
+ */
+async function vapidCredentials(): Promise<VapidCredentials | null> {
+  if (VAPID_PUBLIC_KEY_ENV && VAPID_PRIVATE_KEY_ENV) {
+    return {
+      publicKey: VAPID_PUBLIC_KEY_ENV,
+      privateKey: VAPID_PRIVATE_KEY_ENV,
+      subject: VAPID_SUBJECT_ENV ?? VAPID_SUBJECT_FALLBACK,
+    };
+  }
+
+  const { data, error } = await supabase.rpc("vapid_keys");
+  if (error) {
+    console.error("notify: vapid_keys() unreadable — push disabled", error.message);
+    return null;
+  }
+  // `returns table(...)` arrives as a one-row array; the function guarantees
+  // exactly one row, with nulls when the vault holds nothing.
+  const row = (Array.isArray(data) ? data[0] : data) as
+    | { public_key?: string | null; private_key?: string | null; subject?: string | null }
+    | undefined;
+  if (!row?.public_key || !row?.private_key) return null;
+
+  return {
+    publicKey: row.public_key,
+    privateKey: row.private_key,
+    subject: row.subject ?? VAPID_SUBJECT_FALLBACK,
+  };
+}
+
 async function buildApplicationServer(): Promise<webpush.ApplicationServer | null> {
-  if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) return null;
+  const creds = await vapidCredentials();
+  if (!creds) return null;
   try {
     // The keys are stored the way the browser wants them (raw base64url); the
     // library wants JWK. x and y are just the two halves of the uncompressed
     // point, so the conversion is a slice, not a computation.
-    const point = b64uBytes(VAPID_PUBLIC_KEY);
+    const point = b64uBytes(creds.publicKey);
     if (point.length !== 65 || point[0] !== 0x04) {
-      throw new Error("VAPID_PUBLIC_KEY is not a base64url raw P-256 point");
+      throw new Error("VAPID public key is not a base64url raw P-256 point");
     }
     const x = b64uText(point.slice(1, 33));
     const y = b64uText(point.slice(33, 65));
     // Round-tripped rather than used as-is, so a key pasted with padding or in
     // standard base64 still imports — JWK accepts unpadded base64url only.
-    const d = b64uText(b64uBytes(VAPID_PRIVATE_KEY));
+    const d = b64uText(b64uBytes(creds.privateKey));
 
     const vapidKeys = await webpush.importVapidKeys(
       {
@@ -1797,7 +1856,7 @@ async function buildApplicationServer(): Promise<webpush.ApplicationServer | nul
       { extractable: false }
     );
     return await webpush.ApplicationServer.new({
-      contactInformation: VAPID_SUBJECT,
+      contactInformation: creds.subject,
       vapidKeys,
     });
   } catch (err) {

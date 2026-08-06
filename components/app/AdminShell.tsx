@@ -44,7 +44,24 @@ const mobileMore = { href: "/admin/more", label: "More", icon: <DotsIcon /> };
 // index: the bar used to read tabs[0..3], so adding a single entry to the rail
 // above would otherwise have pushed Players silently out of it.
 const inBar = ["/admin", "/admin/schedule", "/admin/weekly", "/admin/players"];
-const mobileTabs: TabItem[] = [...tabs.filter((t) => inBar.includes(t.href)), mobileMore];
+// "Weekly classes" wraps to two lines at 11px on every phone width. Nothing is
+// cut off — but two lines grow the bar past its 56px floor, and because each
+// tab centres itself in the stretched row, Weekly's icon ends up sitting eight
+// pixels above the other four. That crooked row is what reads as overflow.
+// "Weekly" holds one line down to a 253px viewport, so it is safe anywhere.
+// Third time we've made this trade — Notifications → Alerts on the coach bar,
+// "Book group class" → Book on the client one: the rail has room for the full
+// name, the bar does not, and the page heading and tab title still say "Weekly
+// classes" so the whole name introduces itself on arrival.
+//
+// The copy is the load-bearing part: filter() hands back the very same objects
+// as `tabs`, so renaming one in place would rename the desktop rail with it.
+const mobileTabs: TabItem[] = [
+  ...tabs
+    .filter((t) => inBar.includes(t.href))
+    .map((t) => (t.href === "/admin/weekly" ? { ...t, label: "Weekly" } : t)),
+  mobileMore,
+];
 
 export function AdminShell({
   title,

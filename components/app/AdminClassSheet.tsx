@@ -168,6 +168,108 @@ export function AdminClassSheet({
     });
   }
 
+  /* The delete control — trigger, the "ask once more" box the server can demand,
+   * and whatever went wrong — kept as one thing, because it has to live in two
+   * different places and both of them need all three parts within a thumb's
+   * reach of each other.
+   *
+   * On a running class it stays at the foot of the sheet as a subtle underlined
+   * link: deleting one outright is a mistakes-only action and should be hard to
+   * hit while you were reaching for "End class".
+   *
+   * On an ENDED class it moves up beside "Restore class" and becomes a real
+   * destructive button. The card badge promises "Ended — restore or delete", and
+   * a promise answered by a grey link at the bottom of a scrolling sheet is not
+   * one the founder can see. There is nothing left to end and nothing left to
+   * cancel, so delete is simply the other half of what he came here to do. The
+   * two-tap arming stays either way — it is what keeps it off an accidental
+   * thumb, not the greyness. */
+  const deleteControls = (
+    <div className="space-y-2">
+      {deleteForce ? (
+        <div className="space-y-2 rounded-[8px] border border-err p-3">
+          <p className="text-sm text-fg-2">{deleteForce}</p>
+          {deleteError && <p className="text-sm text-err">{deleteError}</p>}
+          <div className="grid grid-cols-2 gap-2">
+            <Button
+              variant="ghost"
+              disabled={pending}
+              onClick={() => {
+                setDeleteForce(null);
+                setDeleteError(null);
+              }}
+            >
+              Keep
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={pending}
+              onClick={() =>
+                startTransition(async () => {
+                  setDeleteError(null);
+                  try {
+                    const r = await deleteGroupClass(cls.id, true);
+                    if (r.ok) {
+                      setDeleteForce(null);
+                      onDone(
+                        r.cancelledBookings
+                          ? "Class deleted. The sessions people were booked on were cancelled first, and everyone affected has been told."
+                          : "Class deleted, along with the history it held. Nobody was still holding a place, so nobody needed telling."
+                      );
+                    } else setDeleteError(r.error ?? "Couldn't delete the class.");
+                  } catch {
+                    setDeleteError(UNREACHABLE);
+                  }
+                })
+              }
+            >
+              {pending ? <Spinner /> : "Delete anyway"}
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <ConfirmAction
+          variant={ended ? "destructive" : "subtle"}
+          label={ended ? "Delete for good" : "Delete completely (mistakes only)"}
+          prompt={
+            ended
+              ? "Delete this class completely? If it still holds bookings you'll be asked once more before anything goes."
+              : "Delete this class completely? If anyone is booked on it you'll be asked once more — and their sessions are cancelled and everyone told before it goes."
+          }
+          confirmLabel="Delete class"
+          pending={pending}
+          onConfirm={() =>
+            startTransition(async () => {
+              setDeleteError(null);
+              try {
+                const r = await deleteGroupClass(cls.id);
+                if (!r.ok && r.code === "needs_force") {
+                  setDeleteForce(r.error ?? "This class still holds history.");
+                  return;
+                }
+                // A class can pass the guard and still not be empty: its places
+                // may sit on sessions that came and went without a register.
+                // That is the ordinary end-state of a class here, not a rarity —
+                // so the ✓ line must not tell him nobody was ever booked on the
+                // thing he just destroyed.
+                if (r.ok)
+                  onDone(
+                    r.unmarkedBookings
+                      ? `Class deleted, along with ${r.unmarkedBookings} booking${r.unmarkedBookings === 1 ? "" : "s"} on sessions that came and went with no register marked. Nobody was still holding a place, so nobody was told.`
+                      : "Class deleted. Nobody was booked on it, so nobody was told."
+                  );
+                else setDeleteError(r.error ?? "Couldn't delete the class.");
+              } catch {
+                setDeleteError(UNREACHABLE);
+              }
+            })
+          }
+        />
+      )}
+      {!deleteForce && deleteError && <p className="text-sm text-err">{deleteError}</p>}
+    </div>
+  );
+
   return (
     <Sheet open onClose={onClose} title="Edit class">
       <div className="space-y-4">
@@ -243,7 +345,8 @@ export function AdminClassSheet({
           <div className="space-y-3 rounded-[12px] border border-line bg-surface-2 p-4">
             <p className="text-sm text-fg-2">
               This class has ended — its upcoming sessions were cancelled. Restore it and
-              they go back on the schedule (clients who were booked need to book again).
+              they go back on the schedule (clients who were booked need to book again), or
+              delete it and it leaves the list for good.
             </p>
             <Button
               className="w-full"
@@ -263,6 +366,10 @@ export function AdminClassSheet({
             >
               {pending ? <Spinner /> : "Restore class"}
             </Button>
+            {/* Stacked rather than side by side: armed, the confirm box holds a
+                whole sentence, and half a phone's width turns that into a column
+                of two-word lines. */}
+            {deleteControls}
           </div>
         )}
 
@@ -416,93 +523,9 @@ export function AdminClassSheet({
         {/* A class that holds bookings isn't deleted on the first ask. The
             server names the cost with `needs_force` — for a running class that
             cost includes cancelling the sessions people are on and telling
-            them — and confirming here goes through with it. Whatever comes back
-            is shown right here, inside this box, because the message this sheet
-            used to print at its very foot was below the fold on a phone and
-            read as the button having done nothing. */}
-        <div className="space-y-2">
-          {deleteForce ? (
-            <div className="space-y-2 rounded-[8px] border border-err p-3">
-              <p className="text-sm text-fg-2">{deleteForce}</p>
-              {deleteError && <p className="text-sm text-err">{deleteError}</p>}
-              <div className="grid grid-cols-2 gap-2">
-                <Button
-                  variant="ghost"
-                  disabled={pending}
-                  onClick={() => {
-                    setDeleteForce(null);
-                    setDeleteError(null);
-                  }}
-                >
-                  Keep
-                </Button>
-                <Button
-                  variant="destructive"
-                  disabled={pending}
-                  onClick={() =>
-                    startTransition(async () => {
-                      setDeleteError(null);
-                      try {
-                        const r = await deleteGroupClass(cls.id, true);
-                        if (r.ok) {
-                          setDeleteForce(null);
-                          onDone(
-                            r.cancelledBookings
-                              ? "Class deleted. The sessions people were booked on were cancelled first, and everyone affected has been told."
-                              : "Class deleted, along with the history it held. Nobody was still holding a place, so nobody needed telling."
-                          );
-                        } else setDeleteError(r.error ?? "Couldn't delete the class.");
-                      } catch {
-                        setDeleteError(UNREACHABLE);
-                      }
-                    })
-                  }
-                >
-                  {pending ? <Spinner /> : "Delete anyway"}
-                </Button>
-              </div>
-            </div>
-          ) : (
-            <ConfirmAction
-              variant="subtle"
-              label="Delete completely (mistakes only)"
-              prompt={
-                ended
-                  ? "Delete this class completely? If it still holds bookings you'll be asked once more before anything goes."
-                  : "Delete this class completely? If anyone is booked on it you'll be asked once more — and their sessions are cancelled and everyone told before it goes."
-              }
-              confirmLabel="Delete class"
-              pending={pending}
-              onConfirm={() =>
-                startTransition(async () => {
-                  setDeleteError(null);
-                  try {
-                    const r = await deleteGroupClass(cls.id);
-                    if (!r.ok && r.code === "needs_force") {
-                      setDeleteForce(r.error ?? "This class still holds history.");
-                      return;
-                    }
-                    // A class can pass the guard and still not be empty: its
-                    // places may sit on sessions that came and went without a
-                    // register. That is the ordinary end-state of a class here,
-                    // not a rarity — so the ✓ line must not tell him nobody was
-                    // ever booked on the thing he just destroyed.
-                    if (r.ok)
-                      onDone(
-                        r.unmarkedBookings
-                          ? `Class deleted, along with ${r.unmarkedBookings} booking${r.unmarkedBookings === 1 ? "" : "s"} on sessions that came and went with no register marked. Nobody was still holding a place, so nobody was told.`
-                          : "Class deleted. Nobody was booked on it, so nobody was told."
-                      );
-                    else setDeleteError(r.error ?? "Couldn't delete the class.");
-                  } catch {
-                    setDeleteError(UNREACHABLE);
-                  }
-                })
-              }
-            />
-          )}
-          {!deleteForce && deleteError && <p className="text-sm text-err">{deleteError}</p>}
-        </div>
+            them — and confirming there goes through with it. On an ended class
+            these same controls sit up beside "Restore class" instead. */}
+        {!ended && deleteControls}
         {message && <p className="text-sm text-err">{message}</p>}
       </div>
     </Sheet>

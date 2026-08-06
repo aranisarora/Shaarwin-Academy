@@ -11,12 +11,25 @@
 // The pupil count is here for a different reason. It is a number the founder
 // reads and then repeats to a head teacher, so it has to agree with what the
 // school sees when it logs in — which is decided by RLS (`school_has_player`),
-// not by this query. The last case pins the two together.
+// not by this query. One case pins the two together.
+//
+// The rest of the file is the credential itself (migration 0062). A school's
+// password is shared by several people and has to be re-readable, so it is kept
+// encrypted in Supabase Vault rather than thrown away — and "kept" is a claim
+// that has to be proved, in both directions: it must survive a second look
+// unchanged, it must change when the founder deliberately resets it, and it
+// must not be readable by anyone who is not him.
+//
+// Two of those cases are about a null, because null is where this gets
+// dangerous. "We couldn't read it" and "there is nothing to read" arrive the
+// same way and the screen answers one of them with a reset, so they are pinned
+// apart here — and so is the write that used to report a save it had not made.
 
 import { describe, it, expect, beforeAll } from "vitest";
-import type { SupabaseClient } from "@supabase/supabase-js";
+import { createClient as createSupabaseClient, type SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "../../lib/database.types";
 import { admin, asUser } from "../../e2e/lib/supabase";
+import { SUPABASE_URL, ANON_KEY } from "../../e2e/lib/env";
 import {
   addSchoolPupil,
   createClient,
@@ -25,17 +38,39 @@ import {
   type CreatedSchool,
 } from "../../e2e/lib/scenario";
 import {
-  createSchoolAccountCore,
   listSchoolsCore,
   mintedEmailFor,
+  openSchoolLoginCore,
+  removeSchoolAccountCore,
+  resetSchoolPasswordCore,
   schoolAccountName,
 } from "../../lib/admin-ops-schools";
 import { saveVenueCore } from "../../lib/admin-ops-venues";
 import { SEED } from "../../e2e/lib/scenario";
 
 /** The cores take the app's typed client; the harness hands out an untyped
- *  service-role one. Same object, and RLS is not what these cases are about. */
+ *  service-role one. Same object, and RLS is not what most cases are about. */
 const founderClient = () => admin() as unknown as SupabaseClient<Database>;
+
+/**
+ * A client signed in as the seeded founder. Reading a stored password is
+ * founder-only by design — the service key is refused too, deliberately, so the
+ * plaintext sits behind a person rather than behind a deployment secret. Any
+ * case that reads one has to come through here.
+ */
+const founderAuth = async () =>
+  (await asUser("founder@sharwin.example")) as unknown as SupabaseClient<Database>;
+
+/** Does this email and password actually open the door? Signing in is the only
+ *  test of a password that can't be fooled by our own bookkeeping — and it is
+ *  also what stamps `last_sign_in_at`, which the founder's screen reads back. */
+async function canSignIn(email: string, password: string): Promise<boolean> {
+  const client = createSupabaseClient(SUPABASE_URL, ANON_KEY, {
+    auth: { autoRefreshToken: false, persistSession: false },
+  });
+  const { error } = await client.auth.signInWithPassword({ email, password });
+  return !error;
+}
 
 async function markAsSchool(venueId: string): Promise<void> {
   const { error } = await admin().from("venues").update({ is_school: true }).eq("id", venueId);
@@ -90,9 +125,10 @@ describe("listSchoolsCore reads the venue flag", () => {
     expect(row).toBeDefined();
     expect(row?.classes).toBe(0);
     expect(row?.pupils).toBe(0);
+    // No login until the founder opens it, and no sign-in either — which is the
+    // line his screen shows, in both cases, as "Never signed in".
     expect(row?.account).toBeNull();
-    // The sheet shows this before the founder commits, so it has to be there.
-    expect(row?.mintedEmail).toMatch(/@schools\.sharwin\.local$/);
+    expect(row?.lastSignInAt).toBeNull();
   });
 
   it("keeps a school whose class was published as an ordinary Group class", async () => {
@@ -175,7 +211,10 @@ describe("un-marking a school", () => {
     expect(after?.is_school).toBe(true);
   });
 
-  it("goes through once the login is gone", async () => {
+  it("goes through for a campus nobody ever opened", async () => {
+    // The reason a login is minted when the founder opens a school, not when he
+    // flips the flag: a campus he marked and thought better of the same morning
+    // has no account to strand, so the guard above never fires on it.
     const venueId = await bareVenue(`Clean Exit ${Date.now()}`);
     const r = await saveVenueCore(founderClient(), SEED.founder, {
       id: venueId,
@@ -239,26 +278,47 @@ describe("the address a school is given", () => {
   });
 });
 
-describe("creating a login without typing anything", () => {
+describe("opening a school's login", () => {
+  it("mints one on the first open, and hands back the same one after that", async () => {
+    const venueId = await bareVenue(`First Open ${Date.now()}`);
+    const founder = await founderAuth();
+
+    const first = await openSchoolLoginCore(founder, SEED.founder, venueId);
+    expect(first.ok).toBe(true);
+    expect(first.created).toBe(true);
+    expect(first.login?.email).toMatch(/@schools\.sharwin\.local$/);
+    expect(first.login?.password).toBeTruthy();
+    expect(first.login?.saved).toBe(true);
+    expect(first.login?.lastSignInAt).toBeNull();
+
+    // The second open is a read. Nothing is created, nothing is rotated — this
+    // is the whole point of the rework: the founder can look the password up as
+    // often as he likes without locking the school out of its own account.
+    const second = await openSchoolLoginCore(founder, SEED.founder, venueId);
+    expect(second.ok).toBe(true);
+    expect(second.created).toBeUndefined();
+    expect(second.login?.userId).toBe(first.login?.userId);
+    expect(second.login?.password).toBe(first.login?.password);
+
+    // And it is the live password, not a copy of one we threw away.
+    expect(await canSignIn(second.login!.email, second.login!.password!)).toBe(true);
+  });
+
   it("mints a second address when two campuses share a name", async () => {
     // Nothing stops two venues being called the same thing; `auth.users.email`
-    // is unique regardless. With the override field gone from the sheet, the
+    // is unique regardless. With no address field left anywhere in the UI, the
     // retry is the only thing standing between the founder and a dead end.
     const shared = `Twin Campus ${Date.now()}`;
     const first = await bareVenue(shared);
     const second = await bareVenue(shared);
 
-    const a = await createSchoolAccountCore(founderClient(), SEED.founder, {
-      venueId: first,
-    });
-    const b = await createSchoolAccountCore(founderClient(), SEED.founder, {
-      venueId: second,
-    });
+    const a = await openSchoolLoginCore(founderClient(), SEED.founder, first);
+    const b = await openSchoolLoginCore(founderClient(), SEED.founder, second);
 
     expect(a.ok).toBe(true);
     expect(b.ok).toBe(true);
-    expect(a.credentials?.email).not.toBe(b.credentials?.email);
-    expect(b.credentials?.email).toMatch(/@schools\.sharwin\.local$/);
+    expect(a.login?.email).not.toBe(b.login?.email);
+    expect(b.login?.email).toMatch(/@schools\.sharwin\.local$/);
 
     // Both really exist and are wired to their own campus.
     const rows = await listSchoolsCore(founderClient());
@@ -266,23 +326,215 @@ describe("creating a login without typing anything", () => {
     expect(rows.find((r) => r.venueId === second)?.account).not.toBeNull();
   });
 
-  it("takes a real address when the school insists on one", async () => {
-    const venueId = await bareVenue(`Insistent School ${Date.now()}`);
-    const real = `sports+${Date.now()}@insistent.example`;
-    const r = await createSchoolAccountCore(founderClient(), SEED.founder, {
-      venueId,
-      email: real,
-    });
-    expect(r.ok).toBe(true);
-    expect(r.credentials?.email).toBe(real);
+  it("refuses a campus that isn't marked as a school", async () => {
+    const venueId = await bareVenue(`Demoted ${Date.now()}`);
+    await admin().from("venues").update({ is_school: false }).eq("id", venueId);
+
+    const r = await openSchoolLoginCore(founderClient(), SEED.founder, venueId);
+    expect(r.ok).toBe(false);
+    // No account was minted for a campus that has left the tab.
+    const { data: links } = await admin()
+      .from("school_admins")
+      .select("user_id")
+      .eq("venue_id", venueId);
+    expect(links ?? []).toHaveLength(0);
+  });
+});
+
+describe("the password the founder can read back", () => {
+  it("survives a reveal unchanged, and changes only on a reset", async () => {
+    const venueId = await bareVenue(`Rotation ${Date.now()}`);
+    const founder = await founderAuth();
+
+    const opened = await openSchoolLoginCore(founder, SEED.founder, venueId);
+    const { userId, email, password: original } = opened.login!;
+
+    // Reveal, twice more. Reading is a read.
+    for (let i = 0; i < 2; i++) {
+      const again = await openSchoolLoginCore(founder, SEED.founder, venueId);
+      expect(again.login?.password).toBe(original);
+    }
+    expect(await canSignIn(email, original!)).toBe(true);
+
+    // Reset is the deliberate act, and it really does take the old one away.
+    const reset = await resetSchoolPasswordCore(founder, SEED.founder, userId);
+    expect(reset.ok).toBe(true);
+    expect(reset.login?.password).not.toBe(original);
+    expect(reset.login?.saved).toBe(true);
+    expect(await canSignIn(email, original!)).toBe(false);
+    expect(await canSignIn(email, reset.login!.password!)).toBe(true);
+
+    // And the new one is what a later open hands back — the vault was updated,
+    // not left holding the password the school can no longer use.
+    const after = await openSchoolLoginCore(founder, SEED.founder, venueId);
+    expect(after.login?.password).toBe(reset.login?.password);
   });
 
-  it("refuses an address that isn't one", async () => {
-    const venueId = await bareVenue(`Typo School ${Date.now()}`);
-    const r = await createSchoolAccountCore(founderClient(), SEED.founder, {
-      venueId,
-      email: "not-an-email",
+  it("is refused to everyone but the founder", async () => {
+    const venueId = await bareVenue(`Private ${Date.now()}`);
+    const founder = await founderAuth();
+    const opened = await openSchoolLoginCore(founder, SEED.founder, venueId);
+    const userId = opened.login!.userId;
+
+    // A parent. The plaintext of a school's shared credential is not theirs.
+    const parent = await createClient({ children: 1 });
+    const asParent = await asUser(parent.email);
+    const parentRead = await asParent.rpc("school_password", { p_user: userId });
+    expect(parentRead.error).not.toBeNull();
+
+    // The school itself — it already knows its own password, but a definer
+    // function that leaks one school's credential leaks every school's.
+    const school = await asUser(opened.login!.email, opened.login!.password!);
+    const schoolRead = await school.rpc("school_password", { p_user: userId });
+    expect(schoolRead.error).not.toBeNull();
+
+    // And the service key, deliberately: it is the key our own servers carry,
+    // and refusing it keeps the plaintext behind a person.
+    const serviceRead = await admin().rpc("school_password", { p_user: userId });
+    expect(serviceRead.error).not.toBeNull();
+
+    // The founder, meanwhile, still gets it.
+    const founderRead = await founder.rpc("school_password", { p_user: userId });
+    expect(founderRead.error).toBeNull();
+    expect(founderRead.data).toBe(opened.login!.password);
+  });
+
+  it("comes back after being cleared, rather than colliding with its own ghost", async () => {
+    // `vault.secrets.name` is unique and derived from the user id, so a clear
+    // that only nulled the pointer would leave a secret nobody could replace —
+    // and the founder would be stuck on a school that can never be reset.
+    const venueId = await bareVenue(`Cleared ${Date.now()}`);
+    const founder = await founderAuth();
+    const opened = await openSchoolLoginCore(founder, SEED.founder, venueId);
+    const userId = opened.login!.userId;
+
+    const cleared = await admin().rpc("clear_school_password", { p_user: userId });
+    expect(cleared.error).toBeNull();
+
+    const { data: row } = await admin()
+      .from("school_admins")
+      .select("password_secret_id")
+      .eq("user_id", userId)
+      .maybeSingle();
+    expect(row?.password_secret_id).toBeNull();
+
+    // The screen's honest blank: an account with no password saved for it.
+    const blank = await openSchoolLoginCore(founder, SEED.founder, venueId);
+    expect(blank.login?.password).toBeNull();
+    expect(blank.login?.saved).toBe(false);
+
+    const reset = await resetSchoolPasswordCore(founder, SEED.founder, userId);
+    expect(reset.ok).toBe(true);
+    expect(reset.login?.saved).toBe(true);
+    expect(await canSignIn(opened.login!.email, reset.login!.password!)).toBe(true);
+  });
+
+  it("says it couldn't read one, rather than that there isn't one", async () => {
+    // The two arrive identically — null — and only one of them has a safe
+    // answer. The screen's answer to "nothing saved" is the reset, and a reset
+    // takes the password off everyone at that campus. So a read that merely
+    // FAILED must never come back wearing the empty vault's clothes, or a
+    // dropped connection walks the founder into locking out a school whose
+    // password was in the vault the whole time.
+    //
+    // The service key is the failure we can stage on purpose: `school_password`
+    // refuses it by design, which also makes this the wiring fault the swallow
+    // used to hide — every school reading "no password saved", forever.
+    const venueId = await bareVenue(`Unreadable ${Date.now()}`);
+    const founder = await founderAuth();
+    const opened = await openSchoolLoginCore(founder, SEED.founder, venueId);
+    expect(opened.login?.password).toBeTruthy();
+
+    const refused = await openSchoolLoginCore(founderClient(), SEED.founder, venueId);
+    expect(refused.ok).toBe(false);
+    expect(refused.login).toBeUndefined();
+
+    // And nothing was rotated to get that answer: the password he already sent
+    // is still the password.
+    const again = await openSchoolLoginCore(founder, SEED.founder, venueId);
+    expect(again.login?.password).toBe(opened.login?.password);
+    expect(again.login?.saved).toBe(true);
+  });
+
+  it("refuses to be saved against a login that no longer exists", async () => {
+    // The UPDATE used to touch zero rows and the function returned happily, so
+    // the founder was told the password was saved while the next open read back
+    // nothing — and a secret nobody could reach was banked in the vault. Both
+    // halves are asserted here: the write fails, and a reset that ran into it
+    // admits the password is his only copy.
+    const venueId = await bareVenue(`No Link Row ${Date.now()}`);
+    const founder = await founderAuth();
+    const opened = await openSchoolLoginCore(founder, SEED.founder, venueId);
+    const userId = opened.login!.userId;
+
+    // The auth user and its 'school' profile survive; only the link row goes —
+    // which is all `resetSchoolPasswordCore` ever checks for.
+    await admin().rpc("clear_school_password", { p_user: userId });
+    const { error: unlinked } = await admin()
+      .from("school_admins")
+      .delete()
+      .eq("user_id", userId);
+    expect(unlinked).toBeNull();
+
+    const { error } = await admin().rpc("set_school_password", {
+      p_user: userId,
+      p_password: "orchid-willow-1234",
     });
-    expect(r.ok).toBe(false);
+    expect(error).not.toBeNull();
+
+    const reset = await resetSchoolPasswordCore(founder, SEED.founder, userId);
+    expect(reset.ok).toBe(true);
+    expect(reset.login?.password).toBeTruthy();
+    expect(reset.login?.saved).toBe(false);
+    // The new password is real even though we couldn't keep it — which is why
+    // the screen says "send it now" rather than pretending nothing happened.
+    expect(await canSignIn(opened.login!.email, reset.login!.password!)).toBe(true);
+  });
+
+  it("goes when the login goes", async () => {
+    const venueId = await bareVenue(`Removed ${Date.now()}`);
+    const founder = await founderAuth();
+    const opened = await openSchoolLoginCore(founder, SEED.founder, venueId);
+    const userId = opened.login!.userId;
+
+    const r = await removeSchoolAccountCore(founder, SEED.founder, userId);
+    expect(r.ok).toBe(true);
+
+    const { data: links } = await admin()
+      .from("school_admins")
+      .select("user_id")
+      .eq("venue_id", venueId);
+    expect(links ?? []).toHaveLength(0);
+    expect(await canSignIn(opened.login!.email, opened.login!.password!)).toBe(false);
+  });
+});
+
+describe("when a school last signed in", () => {
+  it("reads never until someone actually uses the credentials", async () => {
+    const venueId = await bareVenue(`Handover ${Date.now()}`);
+    const founder = await founderAuth();
+    const opened = await openSchoolLoginCore(founder, SEED.founder, venueId);
+
+    const before = await listSchoolsCore(founderClient());
+    expect(before.find((r) => r.venueId === venueId)?.lastSignInAt).toBeNull();
+
+    expect(await canSignIn(opened.login!.email, opened.login!.password!)).toBe(true);
+
+    const after = await listSchoolsCore(founderClient());
+    const stamp = after.find((r) => r.venueId === venueId)?.lastSignInAt;
+    expect(stamp).toBeTruthy();
+    expect(Date.now() - new Date(stamp!).getTime()).toBeLessThan(120_000);
+
+    // The sheet reads it too, so the founder sees the same answer wherever he
+    // is standing.
+    const reopened = await openSchoolLoginCore(founder, SEED.founder, venueId);
+    expect(reopened.login?.lastSignInAt).toBe(stamp);
+  });
+
+  it("tells nobody but the founder and our own servers", async () => {
+    const parent = await createClient({ children: 1 });
+    const asParent = await asUser(parent.email);
+    const { error } = await asParent.rpc("school_last_sign_in");
+    expect(error).not.toBeNull();
   });
 });

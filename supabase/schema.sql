@@ -2,7 +2,8 @@
 --
 -- GENERATED from the live database via the Supabase MCP server. Do not edit by
 -- hand. Regenerate after any schema change (see AGENTS.md -> Database).
--- Last verified: 2026-08-06 (migrations 0057, 0058, 0059 applied to prod).
+-- Last verified: 2026-08-06 (migrations 0057, 0058, 0059, 0062, 0063 applied to
+-- prod).
 --
 -- This is a reference dump, grouped for readability (extensions, enums, tables,
 -- constraints, indexes, functions, view, RLS). It is not guaranteed to run
@@ -14,6 +15,7 @@ set search_path = public;
 -- ── Extensions ──────────────────────────────────────────────────────────────
 create extension if not exists pgcrypto;      -- gen_random_uuid()
 create extension if not exists btree_gist;     -- coach_no_overlap exclusion
+create extension if not exists supabase_vault; -- school password plaintext (0062)
 
 -- ── Enums ────────────────────────────────────────────────────────────────────
 create type public.assignment_status as enum ('active', 'superseded');
@@ -404,7 +406,10 @@ create table public.school_admins (
   user_id uuid not null,
   venue_id uuid not null,
   created_by uuid,
-  created_at timestamptz default now() not null
+  created_at timestamptz default now() not null,
+  -- Vault secret holding this login's shared password in plaintext (0062). A
+  -- pointer, not the password: read it only through public.school_password().
+  password_secret_id uuid
 );
 
 create table public.settings (
@@ -2753,6 +2758,189 @@ AS $function$
   );
 $function$;
 
+-- ── School login credentials (0062, 0063) ────────────────────────────────────
+-- A school's password is shared by several people and must be re-readable, so
+-- the plaintext is kept in Supabase Vault and `school_admins.password_secret_id`
+-- holds only the pointer. PostgREST exposes `public` and `graphql_public` only,
+-- so these four functions are the whole surface: nothing else can reach vault.*.
+--
+-- `current_setting('role')` is the role PostgREST switched into before the call
+-- and survives the SECURITY DEFINER hop, which rewrites current_user but not
+-- that GUC. Note the asymmetry: the read is founder-only on purpose, so the
+-- plaintext sits behind a person rather than behind a deployment secret.
+
+CREATE OR REPLACE FUNCTION public.set_school_password(p_user uuid, p_password text)
+ RETURNS void
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare
+  v_secret uuid;
+  v_name   text := 'school_login_password:' || p_user::text;
+begin
+  if not ((select is_founder()) or current_setting('role', true) = 'service_role') then
+    raise exception 'not_authorised';
+  end if;
+
+  select password_secret_id into v_secret
+    from school_admins
+   where user_id = p_user
+   limit 1;
+
+  -- No link row, no login: refuse before touching the vault, so a password we
+  -- cannot store is never reported as stored and never leaves a secret behind.
+  if not found then
+    raise exception 'no_school_login';
+  end if;
+
+  if v_secret is null then
+    delete from vault.secrets where name = v_name;
+    v_secret := vault.create_secret(
+      p_password,
+      v_name,
+      'Shared sign-in password for a school login (public.school_admins).'
+    );
+    update school_admins set password_secret_id = v_secret where user_id = p_user;
+    if not found then
+      raise exception 'no_school_login';
+    end if;
+  else
+    perform vault.update_secret(v_secret, p_password);
+  end if;
+end;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.school_password(p_user uuid)
+ RETURNS text
+ LANGUAGE plpgsql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare
+  v_password text;
+begin
+  if not (select is_founder()) then
+    raise exception 'not_authorised';
+  end if;
+
+  select s.decrypted_secret into v_password
+    from school_admins sa
+    join vault.decrypted_secrets s on s.id = sa.password_secret_id
+   where sa.user_id = p_user
+   limit 1;
+
+  return v_password;
+end;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.clear_school_password(p_user uuid)
+ RETURNS void
+ LANGUAGE plpgsql
+ SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+declare
+  v_secret uuid;
+begin
+  if not ((select is_founder()) or current_setting('role', true) = 'service_role') then
+    raise exception 'not_authorised';
+  end if;
+
+  select password_secret_id into v_secret
+    from school_admins
+   where user_id = p_user
+   limit 1;
+
+  if v_secret is not null then
+    delete from vault.secrets where id = v_secret;
+    update school_admins set password_secret_id = null where user_id = p_user;
+  end if;
+
+  delete from vault.secrets where name = 'school_login_password:' || p_user::text;
+end;
+$function$;
+
+CREATE OR REPLACE FUNCTION public.school_last_sign_in()
+ RETURNS TABLE(school_user_id uuid, signed_in_at timestamptz)
+ LANGUAGE plpgsql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+begin
+  if not ((select is_founder()) or current_setting('role', true) = 'service_role') then
+    raise exception 'not_authorised';
+  end if;
+
+  return query
+    select sa.user_id, u.last_sign_in_at
+      from school_admins sa
+      join auth.users u on u.id = sa.user_id;
+end;
+$function$;
+
+-- Supabase grants EXECUTE on new public functions to anon, authenticated and
+-- service_role by default. Nothing above is reachable with an anon key, and the
+-- password read is not reachable with the service key either — the plaintext
+-- sits behind a person, not behind a deployment secret. Defence in depth: the
+-- same gates run inside the function bodies, which is what the local harness
+-- exercises (it re-grants `public` wholesale after replaying this file).
+REVOKE ALL ON FUNCTION public.set_school_password(uuid, text) FROM public, anon;
+GRANT EXECUTE ON FUNCTION public.set_school_password(uuid, text) TO authenticated, service_role;
+
+REVOKE ALL ON FUNCTION public.clear_school_password(uuid) FROM public, anon;
+GRANT EXECUTE ON FUNCTION public.clear_school_password(uuid) TO authenticated, service_role;
+
+REVOKE ALL ON FUNCTION public.school_last_sign_in() FROM public, anon;
+GRANT EXECUTE ON FUNCTION public.school_last_sign_in() TO authenticated, service_role;
+
+REVOKE ALL ON FUNCTION public.school_password(uuid) FROM public, anon, service_role;
+GRANT EXECUTE ON FUNCTION public.school_password(uuid) TO authenticated;
+
+-- ── Web push signing keys (0064) ─────────────────────────────────────────────
+-- The second thing kept in Vault, and the mirror image of the block above.
+--
+-- A VAPID private key belongs in a Supabase function secret; the worker reads
+-- `Deno.env` first for exactly that reason, so setting a real secret takes over
+-- silently. It lives here because nothing in the environment this was built from
+-- could set one, and the alternative was leaving push dormant indefinitely.
+--
+-- Note the reversed audience, which is the part to get right. `school_password`
+-- refuses service_role so a shared credential sits behind a person. This one is
+-- read by the notify edge function, which connects with the service-role key and
+-- is the ONLY legitimate caller — so service_role is allowed and `authenticated`
+-- is refused. Backwards in one direction push never sends anything, silently;
+-- backwards in the other every signed-in parent, coach and school head can push
+-- an arbitrary banner to any subscribed device in the academy, wearing our name.
+--
+-- Nulls, not an exception, when the vault is empty: "we hold no key" is an
+-- honest state and the worker answers it by skipping push, exactly as it behaved
+-- before push existed. The aggregate always returns one row.
+
+CREATE OR REPLACE FUNCTION public.vapid_keys()
+ RETURNS TABLE(public_key text, private_key text, subject text)
+ LANGUAGE plpgsql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+begin
+  if current_setting('role', true) is distinct from 'service_role' then
+    raise exception 'not_authorised';
+  end if;
+
+  return query
+    select
+      max(s.decrypted_secret) filter (where s.name = 'vapid_public_key'),
+      max(s.decrypted_secret) filter (where s.name = 'vapid_private_key'),
+      max(s.decrypted_secret) filter (where s.name = 'vapid_subject')
+      from vault.decrypted_secrets s
+     where s.name in ('vapid_public_key', 'vapid_private_key', 'vapid_subject');
+end;
+$function$;
+
+REVOKE ALL ON FUNCTION public.vapid_keys() FROM public, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.vapid_keys() TO service_role;
+
 -- The applicant's signup request: capture name + (E.164) phone, notify founders,
 -- idempotent so a typo'd phone can be corrected before the founder acts. A phone
 -- matching a founder pre-registration auto-approves via claim_client_invite and
@@ -3315,6 +3503,17 @@ begin
 end;
 $function$;
 
+-- Runs hourly at :05 (cron job `session-status-hourly`, migration 0065). Until
+-- then it had never run at all, so a session only ever left 'scheduled' when a
+-- coach tapped a register — which is how hundreds of finished sessions came to
+-- read as still-to-come and pin their classes to the founder's list.
+--
+-- It closes sessions and does NOTHING else. The 0006 version had a second
+-- statement defaulting un-marked attendance to 'attended' after 48h; that was
+-- deliberately dropped, because 'attended' is what a parent, a school and the
+-- WhatsApp bot are told about a child, and inventing one is indistinguishable
+-- afterwards from a register somebody actually kept. 0065 records what would
+-- have to exist before it could come back.
 CREATE OR REPLACE FUNCTION public.sweep_session_status()
  RETURNS void
  LANGUAGE sql
@@ -3323,12 +3522,14 @@ CREATE OR REPLACE FUNCTION public.sweep_session_status()
 AS $function$
   update class_sessions set status = 'completed'
   where status = 'scheduled' and ends_at < now();
-  -- un-marked attendance defaults to attended after 48h
-  update bookings b set status = 'attended'
-  from class_sessions s
-  where b.session_id = s.id and b.status = 'confirmed'
-    and s.ends_at < now() - interval '48 hours';
 $function$;
+
+COMMENT ON FUNCTION public.sweep_session_status() IS 'Closes past scheduled sessions to completed, hourly. Deliberately does NOT default un-marked attendance — see migration 0065.';
+
+-- Maintenance only: cron runs it as the job owner, and nothing in the app calls
+-- it. It carried PUBLIC execute from 0006 while it was dead code; scheduling it
+-- made that a writable SECURITY DEFINER function reachable anonymously (0066).
+revoke execute on function public.sweep_session_status() from public, anon, authenticated;
 
 CREATE OR REPLACE FUNCTION public.coach_mark_arrival(p_session uuid, p_late boolean DEFAULT false, p_source text DEFAULT 'tap'::text, p_distance_m integer DEFAULT NULL::integer)
  RETURNS timestamptz

@@ -13,7 +13,9 @@
 //   • red border       = needs you to act (no coach yet)
 //   • ember left-stripe = a private class
 //   • ember ring        = happening right now (live)
-//   • greyed out        = finished / ended / paused
+//   • greyed out        = out of play: finished, ended, paused — or, while the
+//                         founder is picking classes to clear, a card that
+//                         isn't his to pick (it says so on its face)
 
 import Link from "next/link";
 import { Badge } from "@/components/ui/Badge";

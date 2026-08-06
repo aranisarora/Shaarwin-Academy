@@ -39,6 +39,23 @@ session; one channel for receipts and news.
 > and pushing changes nothing in production until someone runs
 > `supabase functions deploy notify`.
 
+> **⚠ Production is running v32, which predates the push sender entirely
+> (checked 2026-08-06).** The deployed worker has no `deliverPush`, no
+> `PUSH_ADDITIVE` and no `pushActionsFor` — 1,944 lines against 2,334 in the
+> repo. Everything §2b describes is written, tested and **not live**. The repo
+> version is a strict superset of what is deployed (0 declarations would be
+> lost), so the deploy is safe whenever someone runs it — but until they do,
+> push sends nothing, and neither does anything else added to the worker since
+> the `founder_day_report` era.
+>
+> ```bash
+> supabase link --project-ref jkjgdpifimvnptpxjixk
+> supabase functions deploy notify
+> ```
+>
+> This needs a machine whose Supabase CLI is signed in to the account that owns
+> the project. It cannot be done from the MCP tooling alone.
+
 ---
 
 ## 1. The four rules that shape everything
@@ -127,7 +144,8 @@ sweeps; none of them is a morning brief.
 
 ## 2b. Web push — the leg that was missing
 
-Built 2026-08-06. Everything except the sender had existed for two years: the
+Built 2026-08-06; **written and keyed, not yet deployed** — see the warning at
+the top of this file. Everything except the sender had existed for two years: the
 `push_subscriptions` table and its RLS, the browser subscribe flow, and the
 service worker's `push` / `notificationclick` handlers. Nothing ever signed a
 VAPID token and POSTed to an endpoint, so all of it sat there working perfectly
@@ -193,17 +211,78 @@ makes the replacement buzz. Everything else keeps a per-type key, where the tag
 is only a safety net: `alreadyFired()` already guarantees one row per (type,
 session, person).
 
-### Environment variables
+### Where the keys actually live
 
-Three, and the public one has to match on both sides — a subscription is bound
-to the key that created it, so a mismatch doesn't warn, it 403s every send.
+The public key has to match on both sides — a subscription is bound to the key
+that created it, so a mismatch doesn't warn, it 403s every send.
 
 | Variable | Where it goes | Why |
 | --- | --- | --- |
-| `NEXT_PUBLIC_VAPID_PUBLIC_KEY` | **Vercel** (all environments) + `.env.local` | Baked into the client bundle; `lib/push.ts` subscribes with it. Absent → the toggle honestly says "Push isn't switched on for the academy yet" instead of the old "email on this device". |
-| `VAPID_PUBLIC_KEY` | **Supabase function secret** | Same value. The worker needs it to derive the JWK it signs with. |
-| `VAPID_PRIVATE_KEY` | **Supabase function secret** | Read from `Deno.env` only. Never in the repo, never `NEXT_PUBLIC_`. |
-| `VAPID_SUBJECT` | **Supabase function secret** (optional) | The `mailto:` a push service contacts about our traffic. Defaults to `mailto:hello@sharwinacademy.com`. |
+| `NEXT_PUBLIC_VAPID_PUBLIC_KEY` | **Vercel** (all environments) + `.env.local` | Baked into the client bundle; `lib/push.ts` subscribes with it. Absent → the toggle honestly says "Push isn't switched on for the academy yet" instead of the old "email on this device". **Set in Vercel 2026-08-06.** |
+| `VAPID_PUBLIC_KEY` | Supabase function secret **or Vault** | Same value. The worker needs it to derive the JWK it signs with. |
+| `VAPID_PRIVATE_KEY` | Supabase function secret **or Vault** | The signing key. Never in the repo, never `NEXT_PUBLIC_`. |
+| `VAPID_SUBJECT` | Supabase function secret **or Vault** (optional) | The `mailto:` a push service contacts about our traffic. Defaults to `mailto:hello@sharwinacademy.com`. |
+
+**The worker reads `Deno.env` first and Supabase Vault second**
+(`vapidCredentials()` in `supabase/functions/notify/index.ts`). Today there are
+no function secrets set, so every send is signed with the Vault copy.
+
+#### Why Vault, and why env still wins
+
+A function secret is the right home for a signing key and nothing here argues
+otherwise — which is exactly why it is checked first. Set one and this whole
+fallback stops being reached, with no code change and no database round trip.
+
+It exists because a function secret can only be set by someone with CLI or
+dashboard access to the project, and for a long stretch nobody working on push
+had either. That is how push came to be fully built, deployed and **dormant for
+want of one string**: the table, the RLS, the subscribe flow, the service worker
+and the sender were all shipped and correct, and not one notification was ever
+signed. The choice was to leave the key in a note waiting for somebody, or put it
+somewhere the schema itself could reach. Supabase Vault (migration `0064`),
+alongside the school passwords (`0062`).
+
+| | |
+| --- | --- |
+| Stored as | three `vault.secrets` rows — `vapid_public_key`, `vapid_private_key`, `vapid_subject` |
+| Read through | `public.vapid_keys()`, SECURITY DEFINER, `set search_path` |
+| Who may call it | **`service_role` only.** `authenticated` and `anon` are refused, in the function body *and* by the grant |
+| Read how often | once per worker instance — `applicationServer()` caches the built server, never per notification |
+| When the vault is empty | returns nulls, not an error; push is skipped and WhatsApp/email carry everything, exactly as before push existed |
+
+Note the deliberate asymmetry with `school_password()`, which refuses
+`service_role` so a school's shared credential sits behind a *person*. This one's
+only legitimate caller **is** a deployment — the notify function connects with
+the service-role key. Backwards one way and push silently never sends; backwards
+the other and every signed-in parent, coach and school head holds the key to push
+an arbitrary banner to any subscribed device in the academy, wearing our name.
+Both directions are pinned by `tests/db/vapid-keys.test.ts`.
+
+#### Seeding the vault — an out-of-band step, on purpose
+
+Migration `0064` creates `vapid_keys()` and nothing else. **It does not contain
+the key, and must never contain it**: migrations are committed, and a signing key
+in git is a signing key in every clone, every fork and every future reader of the
+history — no amount of Vault around it helps once the plaintext has been through
+a commit. (An earlier draft of `0064` did inline it; the file was rewritten and
+the applied-migration record sanitised before either reached a commit.)
+
+So each environment is seeded once, by hand, against the live database. For each
+of `vapid_private_key`, `vapid_public_key`, `vapid_subject`:
+
+```sql
+select id from vault.secrets where name = 'vapid_private_key';
+-- no row → select vault.create_secret(
+--             '<value>', 'vapid_private_key',
+--             'Web push VAPID (RFC 8292). Read only through public.vapid_keys().');
+-- a row  → select vault.update_secret('<that id>', '<value>');
+```
+
+Production was seeded 2026-08-06. A fresh project with an empty vault is a
+supported state, not a broken one — `vapid_keys()` returns nulls and push is
+simply skipped.
+
+To move to function secrets later (still the better path):
 
 ```bash
 supabase secrets set \
@@ -213,12 +292,17 @@ supabase secrets set \
 supabase functions deploy notify     # nothing above takes effect without this
 ```
 
-Then set `NEXT_PUBLIC_VAPID_PUBLIC_KEY` in Vercel and redeploy the app — it is a
-build-time value, so a redeploy is required, not just a restart.
+The Vault rows can then be deleted, or left as a fallback — they are never read
+while the env vars are set.
+
+`NEXT_PUBLIC_VAPID_PUBLIC_KEY` is a build-time value, so changing it in Vercel
+needs a redeploy, not just a restart.
 
 Rotating the keys invalidates every existing subscription. `lib/push.ts` notices
 (it compares the stored `applicationServerKey`), drops the stale subscription and
-re-subscribes on the next visit, so nobody has to be told to do anything.
+re-subscribes on the next visit, so nobody has to be told to do anything. Rotate
+**both halves together** — the public key is stored next to the private one for
+that reason, since a half-rotated pair 403s every send without warning.
 
 ### Buttons, and the iOS caveat that shapes them
 
@@ -350,6 +434,14 @@ Reconstructed from the July 2026 rework (migrations `0041`–`0049`).
 ---
 
 ## 4. Open, in priority order
+
+**0. Deploy the worker.** This now outranks everything below it. Production is on
+v32 and the repo is many changes ahead, push among them; every item in this list
+is being judged against a worker that isn't running. One command, from a machine
+signed in to the right Supabase account — see the warning at the top. The
+database side is already done: the VAPID keypair is in Vault and
+`public.vapid_keys()` is live, so the first tick after the deploy signs real
+pushes with no further setup.
 
 Re-verified against production, Twilio and the deployed worker on 2026-07-31
 (after the v31 deploy at 08:45 UTC).
