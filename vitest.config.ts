@@ -9,6 +9,9 @@ export default defineConfig({
   },
   test: {
     environment: "node",
-    include: ["lib/**/*.test.ts"],
+    // The worker is Deno and mostly untestable here, but its pure pieces are
+    // plain TypeScript with no Deno globals and are worth covering — see
+    // supabase/functions/notify/digest.ts.
+    include: ["lib/**/*.test.ts", "supabase/functions/**/*.test.ts"],
   },
 });

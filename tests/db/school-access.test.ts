@@ -97,7 +97,12 @@ describe("school head — what they can read", () => {
       .from("class_sessions")
       .select("id,classes(title)")
       .eq("id", tisb.sessionId);
-    expect(sessions?.[0]?.classes?.title).toContain("TISB");
+    // PostgREST returns the embedded class as an object for this to-one
+    // relationship, but the generated types describe it as an array. Normalise
+    // rather than cast, so the assertion keeps working whichever we are handed.
+    const embedded = sessions?.[0]?.classes;
+    const cls = Array.isArray(embedded) ? embedded[0] : embedded;
+    expect(cls?.title).toContain("TISB");
   });
 
   it("reads its own pupils' coach notes and mastery", async () => {
@@ -197,6 +202,10 @@ describe("school head — read-only", () => {
       .eq("player_id", ourPupil)
       .limit(1)
       .single();
+
+    // The fixture always books this pupil, so a miss here means the scenario
+    // broke rather than the permission we are actually testing — say which.
+    if (!booking) throw new Error("fixture: expected a booking for the school pupil");
 
     await school.from("bookings").update({ status: "attended" }).eq("id", booking.id);
     const { data: after } = await admin()

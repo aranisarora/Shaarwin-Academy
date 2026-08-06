@@ -3884,7 +3884,13 @@ AS $function$
     s.id,
     c.title,
     s.coach_id,
-    coalesce(nullif(btrim(p.full_name), ''), 'Unassigned'),
+    -- NULL for an unassigned session (0067). Was coalesce(..., 'Unassigned'),
+    -- which made a scheduling gap indistinguishable from a coach who ignored
+    -- the arrival prompt.
+    case when s.coach_id is null
+         then null
+         else coalesce(nullif(btrim(p.full_name), ''), 'Coach')
+    end,
     s.starts_at,
     to_char(s.starts_at at time zone 'Asia/Kolkata', 'FMHH12:MI am'),
     s.coach_confirmed_at,
@@ -3915,7 +3921,8 @@ $function$;
 COMMENT ON FUNCTION public.founder_day_report IS
   'Per-session punctuality and roster-completion facts for one IST day. Backs '
   'the 21:00 founder summary (sweepFounderDigest). Replaces a row count that '
-  'excluded every coach escalation.';
+  'excluded every coach escalation. coach_name is NULL for an unassigned '
+  'session so the caller can separate a scheduling gap from a coach no-show.';
 
 -- Founders only; the digest sweep runs as service-role.
 REVOKE ALL ON FUNCTION public.founder_day_report(date) FROM public, anon, authenticated;
