@@ -16,6 +16,19 @@ import { WEEKDAYS } from "@/components/app/admin-calendar-types";
 
 const ISO_WEEKDAY_CODE = WEEKDAYS.map(([code]) => code); // 0-based: [MO..SU]
 
+/** "Monday 3:30 pm · Mantri Espana" → "15:30".
+ *
+ * Last resort, for a class that never had a single session generated. The title
+ * is written from the slot by `generateClassTitle`, so it is the only record of
+ * that slot left once there are no sessions to read it off — `recurrence_rule`
+ * carries the day and nothing else. Anything unparseable falls through. */
+function timeFromTitle(title: string): string | null {
+  const m = /(\d{1,2}):(\d{2})\s*(am|pm)/i.exec(title);
+  if (!m) return null;
+  const h = (Number(m[1]) % 12) + (m[3].toLowerCase() === "pm" ? 12 : 0);
+  return `${String(h).padStart(2, "0")}:${m[2]}`;
+}
+
 export const metadata: Metadata = { title: "Weekly classes" };
 
 type SearchParams = Promise<{ class?: string }>;
@@ -110,6 +123,24 @@ async function Weekly({ searchParams }: { searchParams: SearchParams }) {
     });
   }
 
+  // Ending a class cancels every future session, so the lookup above finds
+  // nothing for one and the slot falls through. It used to fall through to a
+  // hardcoded "18:30", which was not a display quirk: every ended class read as
+  // 6:30 pm, sorted into the wrong evening, and — the real damage — the editor
+  // seeds its form from this time and regenerates the title from it, so opening
+  // an ended class to restore it and tapping Save rewrote its actual recurrence
+  // and title to 6:30 pm. Its own sessions still hold the truth whether they
+  // were cancelled or not, so we ask the most recent one.
+  const slotlessIds = classIds.filter((id) => !nextByClass.has(id));
+  const lastSessionsPromise = slotlessIds.length
+    ? supabase
+        .from("class_sessions")
+        .select("class_id,starts_at")
+        .in("class_id", slotlessIds)
+        .order("starts_at", { ascending: false })
+        .then((r) => r.data)
+    : Promise.resolve(null);
+
   // The private-series booking lookup only needs `series` from the Promise.all
   // above, so start it here rather than at its use site further down — calling
   // .then() is what actually dispatches a Supabase builder, letting it overlap
@@ -138,8 +169,19 @@ async function Weekly({ searchParams }: { searchParams: SearchParams }) {
       bookedBySession.set(b.session_id, (bookedBySession.get(b.session_id) ?? 0) + 1);
   }
 
+  const lastByClass = new Map<string, string>();
+  for (const s of (await lastSessionsPromise) ?? []) {
+    if (!lastByClass.has(s.class_id)) lastByClass.set(s.class_id, s.starts_at);
+  }
+
   const classRows: ClassRow[] = (classes ?? []).map((c) => {
     const next = nextByClass.get(c.id);
+    const last = lastByClass.get(c.id);
+    const time = next
+      ? utcToAcademyWall(new Date(next.starts_at)).time
+      : last
+        ? utcToAcademyWall(new Date(last)).time
+        : (timeFromTitle(c.title) ?? "18:30");
     return {
       id: c.id,
       title: c.title,
@@ -148,7 +190,7 @@ async function Weekly({ searchParams }: { searchParams: SearchParams }) {
       capacity: c.capacity,
       duration: c.duration_minutes,
       weekday: c.recurrence_rule?.match(/BYDAY=(..)/)?.[1] ?? "MO",
-      time: next ? utcToAcademyWall(new Date(next.starts_at)).time : "18:30",
+      time,
       active: c.active,
       endsOn: c.ends_on,
       venueId: c.venue_id,

@@ -15,6 +15,15 @@ export type VenueInput = {
   lat: number;
   lng: number;
   details?: StructuredAddress | null;
+  /**
+   * Whether this venue is a school. Something the founder says here, not
+   * something we infer from the classes that happen to run at it — a campus
+   * used to appear in the Schools tab the moment a School class was published
+   * there and vanish again when it was deleted, which nobody could see or
+   * control. Left out (undefined) the flag is untouched, so the WhatsApp tool
+   * editing an address can't quietly demote a school.
+   */
+  isSchool?: boolean;
 };
 
 export async function saveVenueCore(
@@ -46,6 +55,33 @@ export async function saveVenueCore(
     }
   }
 
+  // Turning the school flag off is how a venue leaves the Schools tab, and the
+  // Schools tab is the only place its login can be reset or taken away. Let
+  // that happen and the account keeps working with nowhere left to manage it —
+  // which is precisely the failure the flag was added to end. So the login has
+  // to go first, and saying so is more use than silently obeying.
+  //
+  // `school_admins` is keyed on (user_id, venue_id), so a campus is allowed more
+  // than one login row — which is exactly why this asks for a list rather than
+  // maybeSingle(). maybeSingle() treats two rows as an error and hands back
+  // null, the guard reads that as "no login", and the save goes through: the
+  // campus with two working logins would be the one case that slipped past.
+  // A limit(1) list makes more rows than expected stricter, not weaker.
+  if (input.id && input.isSchool === false) {
+    const { data: logins } = await supabase
+      .from("school_admins")
+      .select("user_id")
+      .eq("venue_id", input.id)
+      .limit(1);
+    if (logins && logins.length > 0) {
+      return {
+        ok: false,
+        error:
+          "This school has a login. Remove it in the Schools tab first — otherwise the account keeps working with nowhere left to change it.",
+      };
+    }
+  }
+
   const row = {
     name: input.name,
     unit: input.unit?.trim() || null,
@@ -55,8 +91,10 @@ export async function saveVenueCore(
     lng: input.lng,
     photo_url: "/images/venue-hall.jpg",
     // Only touch the structured column when the caller supplies it, so a bare
-    // update (e.g. the WhatsApp tool) doesn't wipe backfilled details.
+    // update (e.g. the WhatsApp tool) doesn't wipe backfilled details. Same
+    // rule for the school flag, for the same reason.
     ...(input.details !== undefined ? { address_details: input.details } : {}),
+    ...(input.isSchool !== undefined ? { is_school: input.isSchool } : {}),
   };
   const { error } = input.id
     ? await supabase.from("venues").update(row).eq("id", input.id)

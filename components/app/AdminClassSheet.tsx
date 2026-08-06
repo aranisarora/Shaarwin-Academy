@@ -37,6 +37,12 @@ import {
   type Venue,
 } from "./admin-calendar-types";
 
+/** Any of these calls can simply not arrive — a phone on a sports-hall wifi
+ * drops one often enough that "I tapped it and nothing happened" was a real
+ * outcome rather than a misreading. Every action says so instead of leaving its
+ * button armed and the sheet silent. */
+const UNREACHABLE = "Couldn't reach the server. Nothing changed — try again.";
+
 export function AdminClassSheet({
   cls,
   coaches,
@@ -74,9 +80,15 @@ export function AdminClassSheet({
   // When the ranking rules reject a coach, we surface an in-sheet override
   // prompt (not window.confirm) holding the reason; confirming forces it.
   const [coachOverride, setCoachOverride] = useState<string | null>(null);
-  // Set when the server refuses a delete because the (already ended) class still
-  // holds bookings — holds its explanation until the founder confirms or backs out.
+  // Set when the server refuses a delete because the class still holds
+  // bookings — holds its explanation until the founder confirms or backs out.
   const [deleteForce, setDeleteForce] = useState<string | null>(null);
+  // Anything that goes wrong on the delete path shows *here*, beside the delete
+  // controls. It used to land in the single message line at the very foot of a
+  // sheet you have to scroll to reach, under buttons that were still armed — so
+  // tapping Delete on a class the server refused looked exactly like tapping a
+  // button that did nothing at all.
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   // The "Delete completely" text-link arms in place rather than via a native
   // confirm — keeps its subtle affordance while dropping window.confirm.
   const [pending, startTransition] = useTransition();
@@ -126,25 +138,33 @@ export function AdminClassSheet({
     if (!coachTarget) return;
     setCoachOverride(null);
     startTransition(async () => {
-      const r = await reassignClassCoach(cls.id, coachTarget, lock);
-      if (!r.ok && r.code === "filter_failed") {
-        // The rules say no — but the founder can override. A hard time clash
-        // is still blocked by the database either way. Ask in-sheet, not native.
-        setCoachOverride(r.error ?? "That coach doesn't fit the rules.");
-        return;
+      try {
+        const r = await reassignClassCoach(cls.id, coachTarget, lock);
+        if (!r.ok && r.code === "filter_failed") {
+          // The rules say no — but the founder can override. A hard time clash
+          // is still blocked by the database either way. Ask in-sheet, not native.
+          setCoachOverride(r.error ?? "That coach doesn't fit the rules.");
+          return;
+        }
+        if (r.ok) coachDone(r);
+        else setMessage(r.error ?? "Failed.");
+      } catch {
+        setMessage(UNREACHABLE);
       }
-      if (r.ok) coachDone(r);
-      else setMessage(r.error ?? "Failed.");
     });
   }
 
   function applyCoachOverride() {
     if (!coachTarget) return;
     startTransition(async () => {
-      const r = await reassignClassCoach(cls.id, coachTarget, lock, true);
-      setCoachOverride(null);
-      if (r.ok) coachDone(r);
-      else setMessage(r.error ?? "Failed.");
+      try {
+        const r = await reassignClassCoach(cls.id, coachTarget, lock, true);
+        setCoachOverride(null);
+        if (r.ok) coachDone(r);
+        else setMessage(r.error ?? "Failed.");
+      } catch {
+        setMessage(UNREACHABLE);
+      }
     });
   }
 
@@ -180,9 +200,13 @@ export function AdminClassSheet({
               type="button"
               onClick={() =>
                 startTransition(async () => {
-                  const ok = await viewAsCoach(cls.nextCoachId as string);
-                  if (ok) window.location.assign("/coach");
-                  else setMessage("Preview unavailable — only founders can view as coach.");
+                  try {
+                    const ok = await viewAsCoach(cls.nextCoachId as string);
+                    if (ok) window.location.assign("/coach");
+                    else setMessage("Preview unavailable — only founders can view as coach.");
+                  } catch {
+                    setMessage(UNREACHABLE);
+                  }
                 })
               }
               disabled={pending}
@@ -226,10 +250,14 @@ export function AdminClassSheet({
               disabled={pending}
               onClick={() =>
                 startTransition(async () => {
-                  const r = await restoreGroupClass(cls.id);
-                  if (r.ok)
-                    onDone("Class restored — its upcoming sessions are back on the schedule.");
-                  else setMessage(r.error ?? "Couldn't restore the class.");
+                  try {
+                    const r = await restoreGroupClass(cls.id);
+                    if (r.ok)
+                      onDone("Class restored — its upcoming sessions are back on the schedule.");
+                    else setMessage(r.error ?? "Couldn't restore the class.");
+                  } catch {
+                    setMessage(UNREACHABLE);
+                  }
                 })
               }
             >
@@ -266,20 +294,24 @@ export function AdminClassSheet({
           disabled={pending || !form.venueId}
           onClick={() =>
             startTransition(async () => {
-              const r = await updateGroupClass({
-                classId: cls.id,
-                title: form.title,
-                description: form.description,
-                skillLevel: form.skillLevel,
-                capacity: form.capacity,
-                durationMinutes: form.durationMinutes,
-                venueId: form.venueId,
-                weekday: form.weekday,
-                time: form.time,
-              });
-              if (r.ok)
-                onDone("Saved — upcoming sessions moved with it and everyone booked was told.");
-              else setMessage(r.error ?? "Couldn't save the class.");
+              try {
+                const r = await updateGroupClass({
+                  classId: cls.id,
+                  title: form.title,
+                  description: form.description,
+                  skillLevel: form.skillLevel,
+                  capacity: form.capacity,
+                  durationMinutes: form.durationMinutes,
+                  venueId: form.venueId,
+                  weekday: form.weekday,
+                  time: form.time,
+                });
+                if (r.ok)
+                  onDone("Saved — upcoming sessions moved with it and everyone booked was told.");
+                else setMessage(r.error ?? "Couldn't save the class.");
+              } catch {
+                setMessage(UNREACHABLE);
+              }
             })
           }
         >
@@ -337,10 +369,18 @@ export function AdminClassSheet({
             disabled={pending}
             onClick={() =>
               startTransition(async () => {
-                const r = await setClassActive(cls.id, !cls.active);
-                if (r.ok)
-                  onDone(cls.active ? "Booking paused for this class." : "Class reopened for booking.");
-                else setMessage(r.error ?? "Failed.");
+                try {
+                  const r = await setClassActive(cls.id, !cls.active);
+                  if (r.ok)
+                    onDone(
+                      cls.active
+                        ? "Booking paused. The class stays on this list, greyed out and marked Paused, until you reopen it."
+                        : "Class reopened for booking."
+                    );
+                  else setMessage(r.error ?? "Failed.");
+                } catch {
+                  setMessage(UNREACHABLE);
+                }
               })
             }
             className={`w-full text-center text-sm underline-offset-4 hover:underline ${
@@ -359,64 +399,110 @@ export function AdminClassSheet({
             pending={pending}
             onConfirm={() =>
               startTransition(async () => {
-                const r = await endGroupClass(cls.id);
-                if (r.ok) onDone("Class ended — everyone affected has been told. You can restore it from the weekly classes list.");
-                else setMessage(r.error ?? "Failed.");
+                try {
+                  const r = await endGroupClass(cls.id);
+                  if (r.ok)
+                    onDone(
+                      "Class ended — everyone affected has been told. It stays on this list marked Ended, so you can restore it or delete it from there."
+                    );
+                  else setMessage(r.error ?? "Failed.");
+                } catch {
+                  setMessage(UNREACHABLE);
+                }
               })
             }
           />
         )}
-        {/* An ended class that still holds bookings can't just be deleted — but
-            it can't be "ended instead" either, since it already has been. The
-            server says so with `needs_force` and names the cost; confirming
-            here deletes it and that history for good. */}
-        {deleteForce ? (
-          <div className="space-y-2 rounded-[8px] border border-err p-3">
-            <p className="text-sm text-fg-2">{deleteForce}</p>
-            <div className="grid grid-cols-2 gap-2">
-              <Button variant="ghost" disabled={pending} onClick={() => setDeleteForce(null)}>
-                Keep
-              </Button>
-              <Button
-                variant="destructive"
-                disabled={pending}
-                onClick={() =>
-                  startTransition(async () => {
-                    const r = await deleteGroupClass(cls.id, true);
+        {/* A class that holds bookings isn't deleted on the first ask. The
+            server names the cost with `needs_force` — for a running class that
+            cost includes cancelling the sessions people are on and telling
+            them — and confirming here goes through with it. Whatever comes back
+            is shown right here, inside this box, because the message this sheet
+            used to print at its very foot was below the fold on a phone and
+            read as the button having done nothing. */}
+        <div className="space-y-2">
+          {deleteForce ? (
+            <div className="space-y-2 rounded-[8px] border border-err p-3">
+              <p className="text-sm text-fg-2">{deleteForce}</p>
+              {deleteError && <p className="text-sm text-err">{deleteError}</p>}
+              <div className="grid grid-cols-2 gap-2">
+                <Button
+                  variant="ghost"
+                  disabled={pending}
+                  onClick={() => {
                     setDeleteForce(null);
-                    if (r.ok) onDone("Class deleted, along with its history.");
-                    else setMessage(r.error ?? "Failed.");
-                  })
-                }
-              >
-                {pending ? <Spinner /> : "Delete anyway"}
-              </Button>
+                    setDeleteError(null);
+                  }}
+                >
+                  Keep
+                </Button>
+                <Button
+                  variant="destructive"
+                  disabled={pending}
+                  onClick={() =>
+                    startTransition(async () => {
+                      setDeleteError(null);
+                      try {
+                        const r = await deleteGroupClass(cls.id, true);
+                        if (r.ok) {
+                          setDeleteForce(null);
+                          onDone(
+                            r.cancelledBookings
+                              ? "Class deleted. The sessions people were booked on were cancelled first, and everyone affected has been told."
+                              : "Class deleted, along with the history it held. Nobody was still holding a place, so nobody needed telling."
+                          );
+                        } else setDeleteError(r.error ?? "Couldn't delete the class.");
+                      } catch {
+                        setDeleteError(UNREACHABLE);
+                      }
+                    })
+                  }
+                >
+                  {pending ? <Spinner /> : "Delete anyway"}
+                </Button>
+              </div>
             </div>
-          </div>
-        ) : (
-          <ConfirmAction
-            variant="subtle"
-            label="Delete completely (mistakes only)"
-            prompt={
-              ended
-                ? "Delete this class completely? If it still holds bookings you'll be asked once more before anything goes."
-                : "Delete this class completely? Only works if nobody is booked on it."
-            }
-            confirmLabel="Delete class"
-            pending={pending}
-            onConfirm={() =>
-              startTransition(async () => {
-                const r = await deleteGroupClass(cls.id);
-                if (!r.ok && r.code === "needs_force") {
-                  setDeleteForce(r.error ?? "This class still holds history.");
-                  return;
-                }
-                if (r.ok) onDone("Class deleted.");
-                else setMessage(r.error ?? "Failed.");
-              })
-            }
-          />
-        )}
+          ) : (
+            <ConfirmAction
+              variant="subtle"
+              label="Delete completely (mistakes only)"
+              prompt={
+                ended
+                  ? "Delete this class completely? If it still holds bookings you'll be asked once more before anything goes."
+                  : "Delete this class completely? If anyone is booked on it you'll be asked once more — and their sessions are cancelled and everyone told before it goes."
+              }
+              confirmLabel="Delete class"
+              pending={pending}
+              onConfirm={() =>
+                startTransition(async () => {
+                  setDeleteError(null);
+                  try {
+                    const r = await deleteGroupClass(cls.id);
+                    if (!r.ok && r.code === "needs_force") {
+                      setDeleteForce(r.error ?? "This class still holds history.");
+                      return;
+                    }
+                    // A class can pass the guard and still not be empty: its
+                    // places may sit on sessions that came and went without a
+                    // register. That is the ordinary end-state of a class here,
+                    // not a rarity — so the ✓ line must not tell him nobody was
+                    // ever booked on the thing he just destroyed.
+                    if (r.ok)
+                      onDone(
+                        r.unmarkedBookings
+                          ? `Class deleted, along with ${r.unmarkedBookings} booking${r.unmarkedBookings === 1 ? "" : "s"} on sessions that came and went with no register marked. Nobody was still holding a place, so nobody was told.`
+                          : "Class deleted. Nobody was booked on it, so nobody was told."
+                      );
+                    else setDeleteError(r.error ?? "Couldn't delete the class.");
+                  } catch {
+                    setDeleteError(UNREACHABLE);
+                  }
+                })
+              }
+            />
+          )}
+          {!deleteForce && deleteError && <p className="text-sm text-err">{deleteError}</p>}
+        </div>
         {message && <p className="text-sm text-err">{message}</p>}
       </div>
     </Sheet>

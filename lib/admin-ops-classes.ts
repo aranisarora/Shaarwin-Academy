@@ -194,18 +194,21 @@ export async function endGroupClassCore(
     .maybeSingle();
   if (!cls) return { ok: false, error: "Class not found." };
 
+  const nowIso = new Date().toISOString();
   const { data: sessions } = await supabase
     .from("class_sessions")
     .select("id,coach_id")
     .eq("class_id", classId)
     .eq("status", "scheduled")
-    .gt("starts_at", new Date().toISOString());
+    .gt("starts_at", nowIso);
   const ids = (sessions ?? []).map((s) => s.id);
 
   await supabase
     .from("classes")
-    .update({ active: false, ends_on: new Date().toISOString().slice(0, 10) })
+    .update({ active: false, ends_on: nowIso.slice(0, 10) })
     .eq("id", classId);
+
+  await settlePastSessions(supabase, [classId], nowIso);
 
   if (ids.length) {
     const { data: bookings } = await supabase
@@ -384,156 +387,329 @@ export async function restoreGroupClassCore(
 }
 
 /**
- * Booking statuses that are a real record of someone's place in a class, and so
- * are worth refusing to destroy. A cancelled booking is not one: it says
- * somebody once held a spot and gave it up, which is not attendance history and
- * shouldn't make a class undeletable forever.
+ * Two very different things live in `bookings.status`, and the delete guard has
+ * to tell them apart or it ends up protecting nothing that matters and blocking
+ * things that don't.
+ *
+ * A RECORD — attended, no_show, rescheduled — is somebody having written down
+ * what actually happened. Deleting the class throws that away, so it is always
+ * worth asking about.
+ *
+ * A HELD PLACE — confirmed, waitlisted — is only a claim on a session that
+ * hasn't happened yet. Once that session's hour has passed with nobody marking
+ * a register, the row means neither thing any more: nobody is waiting for it,
+ * and nobody wrote down whether they came. Two classes on prod rotted in
+ * exactly that state — ended in August, each still holding one 'confirmed'
+ * booking on a session from July that nothing ever settled — and the old guard
+ * read that leftover as live history and would not let either class go. So a
+ * held place counts only while the session it holds is still ahead of us.
+ *
+ * Which leaves the third count, LAPSED, and the reason it has to exist rather
+ * than just falling off the end of the sum. A held place on a session already
+ * behind us should not pin a class to the list — but it is still a row about a
+ * child, and it does not stop being one because nobody marked the register.
+ * `sweep_session_status` is not on a schedule yet, so that is the ordinary
+ * end-state of a class, not a rare rot: dozens of prod bookings sit 'confirmed'
+ * on sessions long past. Counting them as nothing at all made the screen say
+ * "no bookings — nobody is messaged" over a class whose whole attendance
+ * history one tap would destroy. So we count them separately: they don't block
+ * the delete, they just stop us calling the class empty.
+ *
+ * A cancelled booking counts as neither: it says somebody once had a spot and
+ * gave it up, which is not attendance and shouldn't pin a class to the list.
  */
-const HISTORIC_BOOKING_STATUSES = [
-  "confirmed",
-  "waitlisted",
-  "attended",
-  "no_show",
-  "rescheduled",
-] as const;
+const RECORDED_BOOKING_STATUSES = ["attended", "no_show", "rescheduled"] as const;
+const HELD_BOOKING_STATUSES = ["confirmed", "waitlisted"] as const;
+
+/** What one class holds, split the three ways the copy has to talk about it. */
+type BookingWeight = { recorded: number; held: number; lapsed: number };
+
+/**
+ * How much every class in a selection holds, in one pair of queries rather than
+ * two per class. `!inner` makes the embed a join so the filters land on
+ * class_sessions rather than on the bookings rows.
+ */
+async function classBookingWeights(
+  supabase: SupabaseClient<Database>,
+  classIds: string[]
+): Promise<Map<string, BookingWeight>> {
+  const weights = new Map<string, BookingWeight>();
+  if (!classIds.length) return weights;
+  const nowIso = new Date().toISOString();
+
+  const owningClass = (row: { class_sessions: unknown }) =>
+    (row.class_sessions as { class_id: string | null } | null)?.class_id ?? null;
+  const bump = (classId: string, kind: keyof BookingWeight) => {
+    const w = weights.get(classId) ?? { recorded: 0, held: 0, lapsed: 0 };
+    w[kind] += 1;
+    weights.set(classId, w);
+  };
+
+  for (const part of chunked(classIds)) {
+    const { data: recorded } = await supabase
+      .from("bookings")
+      .select("id,class_sessions!inner(class_id)")
+      .in("class_sessions.class_id", part)
+      .in("status", RECORDED_BOOKING_STATUSES);
+    for (const b of recorded ?? []) {
+      const id = owningClass(b);
+      if (id) bump(id, "recorded");
+    }
+
+    // One query for both sides of the same row, split here rather than by two
+    // opposite `starts_at` filters — the cut has to be the same instant for
+    // "still ahead of us" and "already behind us" or a session on the boundary
+    // is counted twice or not at all.
+    const { data: held } = await supabase
+      .from("bookings")
+      .select("id,class_sessions!inner(class_id,starts_at)")
+      .in("class_sessions.class_id", part)
+      .in("status", HELD_BOOKING_STATUSES);
+    for (const b of held ?? []) {
+      const s = b.class_sessions as unknown as {
+        class_id: string | null;
+        starts_at: string;
+      } | null;
+      if (s?.class_id) bump(s.class_id, s.starts_at > nowIso ? "held" : "lapsed");
+    }
+  }
+  return weights;
+}
+
+/**
+ * Cancelling the future is only half of ending a class. The other half is the
+ * past: a session whose hour came and went while nobody marked a register is
+ * still sitting at 'scheduled', which every screen in the app reads as "this is
+ * still to come", and the confirmed bookings hanging off it read as places
+ * somebody is still holding in a class that stopped running. That is how two
+ * classes ended in August ended up pinned to the list by one booking on a
+ * session from July.
+ *
+ * So ending settles those sessions as completed — the honest half, because the
+ * hour genuinely did pass. Their bookings are left exactly as they are. Whether
+ * a child actually turned up is not something we can work out at the moment
+ * somebody clears a timetable, and `sweep_session_status` is already the one
+ * place that decides what an unmarked register means (attended, 48 hours on);
+ * it is not ours to duplicate or to pre-empt. What we do instead is stop
+ * *counting* a held place on a session that is already behind us as though it
+ * were live — see the two status lists above.
+ *
+ * The cut is `ends_at`, the same one the sweep uses, not `starts_at`: a session
+ * that is halfway through when the founder ends the class is neither cancelled
+ * (it's happening) nor finished, and calling it completed would take it off the
+ * coach's screen while he is still standing in the hall.
+ */
+async function settlePastSessions(
+  supabase: SupabaseClient<Database>,
+  classIds: string[],
+  nowIso: string
+): Promise<void> {
+  for (const part of chunked(classIds)) {
+    await supabase
+      .from("class_sessions")
+      .update({ status: "completed" })
+      .in("class_id", part)
+      .eq("status", "scheduled")
+      .lt("ends_at", nowIso);
+  }
+}
 
 /** A class is "ended" (rather than merely paused) exactly as the UI reads it. */
 const isEnded = (c: { active: boolean; ends_on: string | null }) => !c.active && !!c.ends_on;
 
 /**
- * Hard delete. Safe when the class carries no booking history; when it does,
- * deleting cascades that history away, so it is allowed only for a class that
- * has already been *ended* and only with `force` — the founder saying "I don't
- * want this record either". A running class must be ended first.
+ * Hard delete. Safe when the class carries nothing worth keeping; when it does,
+ * deleting cascades that away, so it asks for `force` — the founder saying "I
+ * don't want this record either".
+ *
+ * `force` clears the guard for a *running* class too. The founder is the admin
+ * and must be able to remove any class outright, but a class people are booked
+ * on cannot simply vanish: we end it first, which cancels its upcoming sessions
+ * and sends everyone affected exactly one message, and only then delete it. So
+ * the destructive path still owes the same courtesy the safe path does — it
+ * just no longer takes two separate trips through the UI to get there.
  */
 export async function deleteGroupClassCore(
   supabase: SupabaseClient<Database>,
   founderId: string,
   classId: string,
   force = false
-): Promise<OpResult> {
+): Promise<OpResult & { cancelledBookings?: number; unmarkedBookings?: number }> {
+  // Group only, and the same filter the plan uses. `endGroupClassesCore` ends
+  // group classes and nothing else, so anything this function will hand it has
+  // to have been filtered the same way or the two disagree about what exists.
   const { data: cls } = await supabase
     .from("classes")
     .select("id,active,ends_on")
     .eq("id", classId)
+    .eq("class_type", "group")
     .maybeSingle();
   if (!cls) return { ok: false, error: "Class not found." };
 
-  const { data: sessions } = await supabase
-    .from("class_sessions")
-    .select("id")
-    .eq("class_id", classId);
-  const ids = (sessions ?? []).map((s) => s.id);
-  let historic = 0;
-  for (const part of chunked(ids)) {
-    const { count } = await supabase
-      .from("bookings")
-      .select("id", { count: "exact", head: true })
-      .in("session_id", part)
-      .in("status", HISTORIC_BOOKING_STATUSES);
-    historic += count ?? 0;
-  }
+  const weight = (await classBookingWeights(supabase, [classId])).get(classId) ?? {
+    recorded: 0,
+    held: 0,
+    lapsed: 0,
+  };
+  const historic = weight.recorded + weight.held;
+  // Lapsed places don't stand in the way of the delete — that is the whole
+  // point of counting them apart — but they do go with it, so the audit row and
+  // the ✓ line both have to know they existed.
+  const destroyed = historic + weight.lapsed;
 
-  if (historic > 0 && !(isEnded(cls) && force)) {
+  if (historic > 0 && !force) {
+    // Both branches are recoverable now — each names its cost and asks once
+    // more. Neither is a dead end: the running class used to say "end it
+    // instead", which left the founder two operations away from a delete he
+    // had already asked for twice.
     return {
       ok: false,
-      // Never tell someone to end a class they have already ended — that was a
-      // dead end with no way out of the list.
-      error: isEnded(cls)
-        ? `This class has ${historic} booking${historic === 1 ? "" : "s"} on record. Deleting it removes ${historic === 1 ? "that" : "those"} too — confirm to delete it and its history.`
-        : "People are booked on this class, so it can't be deleted. End it instead — history stays safe, and you can delete it afterwards.",
-      code: isEnded(cls) ? "needs_force" : "has_bookings",
+      error:
+        weight.held > 0
+          ? `This class still has ${weight.held} live booking${weight.held === 1 ? "" : "s"} on it. Deleting it cancels those sessions, tells everyone affected once, and removes ${historic} booking${historic === 1 ? "" : "s"} of history for good.`
+          : `This class has ${historic} booking${historic === 1 ? "" : "s"} on record. Deleting it removes ${historic === 1 ? "that" : "those"} too — confirm to delete it and its history.`,
+      code: "needs_force",
     };
   }
 
-  const { error } = await supabase.from("classes").delete().eq("id", classId);
+  // A running class people still hold places in is ended before it is deleted,
+  // so its members get the cancellation they are owed. `endGroupClassesCore`
+  // collapses that to one message per person however many sessions they held.
+  // Here the end has to succeed: deleting the class while the message failed
+  // would take their sessions away without a word, which is the one outcome
+  // this whole path exists to prevent.
+  if (weight.held > 0 && !isEnded(cls)) {
+    const ending = await endGroupClassesCore(supabase, founderId, [classId]);
+    if (!ending.ok) {
+      return { ok: false, error: ending.error ?? "Couldn't cancel the sessions first." };
+    }
+  }
+
+  // Ask for the deleted rows back. A delete that matches nothing is not an
+  // error to PostgREST, so without the `.select()` this reported success while
+  // the class stayed exactly where it was — the silent no-op the founder kept
+  // meeting.
+  const { data: removed, error } = await supabase
+    .from("classes")
+    .delete()
+    .eq("id", classId)
+    .select("id");
   if (error) return { ok: false, error: "Couldn't delete the class." };
+  if (!removed?.length)
+    return { ok: false, error: "That class is no longer there — refresh the list." };
   await supabase.from("audit_log").insert({
     actor_id: founderId,
     action: "class.delete",
     entity: "classes",
     entity_id: classId,
-    meta: { purged_bookings: historic },
+    meta: { purged_bookings: destroyed, cancelled_bookings: weight.held },
   });
-  return { ok: true };
+  // These two let the sheet's ✓ line be true in all three cases: a class people
+  // were on has to say they were told, one nobody was on must not claim a
+  // message that never went, and one carrying only unmarked registers must not
+  // claim nobody was ever booked on it.
+  return {
+    ok: true,
+    cancelledBookings: isEnded(cls) ? 0 : weight.held,
+    unmarkedBookings: weight.lapsed,
+  };
 }
 
 /**
  * Split a selection three ways, so the confirm step can say exactly what each
  * class is about to get and never offer a button that can't work:
  *
- *   deletable — no booking history, goes for good, nobody is told
- *   endable   — still running with people on it; must be ended (they're told)
+ *   deletable — nobody is holding a place and no register was ever marked;
+ *               goes for good, nobody is told
+ *   endable   — still running and holds bookings; ended (everyone on it is
+ *               told), and deleted too if the founder asks for that
  *   purgeable — already ended, but still holds history; deleting destroys it
  *
- * The third bucket is the one that used to be a dead end: an ended class with
- * an old booking could neither be deleted (guard) nor ended again (already
- * done), so it sat on the list forever with no way off.
+ * Every bucket can leave the list. That wasn't always true: an ended class with
+ * an old booking could once neither be deleted (guard) nor ended again (already
+ * done), and a running one could only ever be ended — so either way a class
+ * could sit there with no way off.
+ *
+ * "Deletable" is deliberately not the same as "empty": a class can land there
+ * still carrying held places on sessions that came and went unmarked. It goes
+ * without a warning because nothing about it is live, but `purgeCost.unmarked`
+ * counts what goes with it so the confirm step never claims there was nothing.
  */
 export type ClassRemovalPlan = {
   deletable: string[];
   endable: string[];
   purgeable: string[];
-  /** What deleting the `purgeable` classes would destroy, for the warning copy. */
-  purgeCost: { sessions: number; bookings: number };
+  /** The price of each destructive bucket, for the warning copy: `sessions` and
+   * `bookings` are what deleting the `purgeable` classes destroys; `unmarked` is
+   * what the plain `deletable` ones still carry. */
+  purgeCost: { sessions: number; bookings: number; unmarked: number };
 };
 
 export async function planClassRemovalCore(
   supabase: SupabaseClient<Database>,
   classIds: string[]
 ): Promise<ClassRemovalPlan> {
-  const empty = { deletable: [], endable: [], purgeable: [], purgeCost: { sessions: 0, bookings: 0 } };
+  const empty = {
+    deletable: [],
+    endable: [],
+    purgeable: [],
+    purgeCost: { sessions: 0, bookings: 0, unmarked: 0 },
+  };
   if (!classIds.length) return empty;
 
-  const { data: classes } = await supabase
-    .from("classes")
-    .select("id,active,ends_on")
-    .in("id", classIds);
-  if (!classes?.length) return empty;
-
-  // One query, not one per class: every booking that counts as history whose
-  // session belongs to the selection, narrowed to the owning class id. `!inner`
-  // makes the embed a join so the filter applies to class_sessions rather than
-  // to the bookings rows.
-  const { data } = await supabase
-    .from("bookings")
-    .select("id,class_sessions!inner(class_id)")
-    .in("class_sessions.class_id", classIds)
-    .in("status", HISTORIC_BOOKING_STATUSES);
-
-  const withHistory = new Set<string>();
-  for (const b of data ?? []) {
-    const cs = b.class_sessions as unknown as { class_id: string | null } | null;
-    if (cs?.class_id) withHistory.add(cs.class_id);
+  // Group classes only. The buckets feed straight into `endGroupClassesCore`,
+  // which ends group classes and refuses outright when it is handed a list that
+  // matches none — so a single private or school id slipping into `endable`
+  // used to abort a removal that had nothing to do with it.
+  const classes: { id: string; active: boolean; ends_on: string | null }[] = [];
+  for (const part of chunked(classIds)) {
+    const { data } = await supabase
+      .from("classes")
+      .select("id,active,ends_on")
+      .in("id", part)
+      .eq("class_type", "group");
+    classes.push(...(data ?? []));
   }
+  if (!classes.length) return empty;
+
+  const weights = await classBookingWeights(
+    supabase,
+    classes.map((c) => c.id)
+  );
 
   const deletable: string[] = [];
   const endable: string[] = [];
   const purgeable: string[] = [];
   for (const c of classes) {
-    if (!withHistory.has(c.id)) deletable.push(c.id);
+    const w = weights.get(c.id);
+    if (!w || w.recorded + w.held === 0) deletable.push(c.id);
     else if (isEnded(c)) purgeable.push(c.id);
     else endable.push(c.id);
   }
 
-  // Only the purge needs a price tag — the other two buckets destroy nothing
-  // the founder would miss.
+  // What a plain delete takes with it. Free — the weights are already counted —
+  // and the one number standing between the founder and a card that tells him
+  // these classes hold nothing.
+  const unmarked = deletable.reduce((n, id) => n + (weights.get(id)?.lapsed ?? 0), 0);
+
+  // The purge needs a price tag of its own: `endable` is the only bucket that
+  // destroys nothing on its own terms, because ending is reversible.
   let sessions = 0;
   let bookings = 0;
-  if (purgeable.length) {
+  for (const part of chunked(purgeable)) {
     const { count: sc } = await supabase
       .from("class_sessions")
       .select("id", { count: "exact", head: true })
-      .in("class_id", purgeable);
-    sessions = sc ?? 0;
+      .in("class_id", part);
+    sessions += sc ?? 0;
     const { count: bc } = await supabase
       .from("bookings")
       .select("id,class_sessions!inner(class_id)", { count: "exact", head: true })
-      .in("class_sessions.class_id", purgeable);
-    bookings = bc ?? 0;
+      .in("class_sessions.class_id", part);
+    bookings += bc ?? 0;
   }
 
-  return { deletable, endable, purgeable, purgeCost: { sessions, bookings } };
+  return { deletable, endable, purgeable, purgeCost: { sessions, bookings, unmarked } };
 }
 
 /** PostgREST puts `.in()` lists in the query string, so a selection worth of
@@ -566,28 +742,40 @@ export async function endGroupClassesCore(
 ): Promise<OpResult & { ended?: number; cancelledSessions?: number }> {
   if (!classIds.length) return { ok: true, ended: 0, cancelledSessions: 0 };
 
-  const { data: classes } = await supabase
-    .from("classes")
-    .select("id,title")
-    .in("id", classIds)
-    .eq("class_type", "group");
-  if (!classes?.length) return { ok: false, error: "No classes found." };
+  const classes: { id: string; title: string }[] = [];
+  for (const part of chunked(classIds)) {
+    const { data } = await supabase
+      .from("classes")
+      .select("id,title")
+      .in("id", part)
+      .eq("class_type", "group");
+    classes.push(...(data ?? []));
+  }
+  if (!classes.length) return { ok: false, error: "No classes found." };
   const titleById = new Map(classes.map((c) => [c.id, c.title]));
   const ids = classes.map((c) => c.id);
 
   const nowIso = new Date().toISOString();
-  const { data: sessions } = await supabase
-    .from("class_sessions")
-    .select("id,class_id,coach_id")
-    .in("class_id", ids)
-    .eq("status", "scheduled")
-    .gt("starts_at", nowIso);
-  const sessionIds = (sessions ?? []).map((s) => s.id);
+  const sessions: { id: string; class_id: string; coach_id: string | null }[] = [];
+  for (const part of chunked(ids)) {
+    const { data } = await supabase
+      .from("class_sessions")
+      .select("id,class_id,coach_id")
+      .in("class_id", part)
+      .eq("status", "scheduled")
+      .gt("starts_at", nowIso);
+    sessions.push(...(data ?? []));
+  }
+  const sessionIds = sessions.map((s) => s.id);
 
-  await supabase
-    .from("classes")
-    .update({ active: false, ends_on: nowIso.slice(0, 10) })
-    .in("id", ids);
+  for (const part of chunked(ids)) {
+    await supabase
+      .from("classes")
+      .update({ active: false, ends_on: nowIso.slice(0, 10) })
+      .in("id", part);
+  }
+
+  await settlePastSessions(supabase, ids, nowIso);
 
   // Which classes each person is affected by, so their one message can name a
   // class and count the rest — same grammar as the collapsed coach_changed row.
@@ -595,7 +783,7 @@ export async function endGroupClassesCore(
   const classesByCoach = new Map<string, Set<string>>();
 
   if (sessionIds.length) {
-    const classBySession = new Map((sessions ?? []).map((s) => [s.id, s.class_id]));
+    const classBySession = new Map(sessions.map((s) => [s.id, s.class_id]));
 
     const bookings: { id: string; client_id: string | null; session_id: string }[] = [];
     for (const part of chunked(sessionIds)) {
@@ -636,7 +824,7 @@ export async function endGroupClassesCore(
       if (!clsId) continue;
       (classesByClient.get(b.client_id) ?? classesByClient.set(b.client_id, new Set()).get(b.client_id)!).add(clsId);
     }
-    for (const s of sessions ?? []) {
+    for (const s of sessions) {
       if (!s.coach_id) continue;
       (classesByCoach.get(s.coach_id) ?? classesByCoach.set(s.coach_id, new Set()).get(s.coach_id)!).add(s.class_id);
     }
@@ -679,58 +867,113 @@ export async function endGroupClassesCore(
  * Clear a whole selection of weekly classes in one go — the founder resetting a
  * timetable rather than correcting one class.
  *
- * Classes with no booking history are deleted outright, always. The two risky
- * buckets are opt-in and independent: `endBooked` ends the running classes
- * people are on (telling each person once, via `endGroupClassesCore`), and
- * `purgeEnded` deletes already-ended classes together with the history they
- * still hold. Anything the founder didn't opt into is left exactly as it was
- * and reported back as `kept`.
+ * Classes holding nothing are deleted outright, always. The risky buckets are
+ * opt-in: `endBooked` ends the running classes people hold places in (telling
+ * each person once, via `endGroupClassesCore`), `deleteBooked` does the same
+ * and then removes the class as well, and `purgeEnded` deletes already-ended
+ * classes together with the history they still hold. Anything the founder
+ * didn't opt into is left exactly as it was and reported back as `kept`.
+ *
+ * `deleteBooked` is the option that was missing. Without it a founder who
+ * selected his whole timetable and ticked "also end" watched the running
+ * classes stay on the list, because `endable` was the one bucket nothing could
+ * ever delete — he had asked to remove them and the screen quietly did half of
+ * it.
  */
 export async function bulkRemoveClassesCore(
   supabase: SupabaseClient<Database>,
   founderId: string,
   classIds: string[],
-  opts: { endBooked?: boolean; purgeEnded?: boolean } = {}
-): Promise<OpResult & { deleted?: number; ended?: number; purged?: number; kept?: number }> {
+  opts: { endBooked?: boolean; purgeEnded?: boolean; deleteBooked?: boolean } = {}
+): Promise<
+  OpResult & {
+    deleted?: number;
+    ended?: number;
+    purged?: number;
+    deletedBooked?: number;
+    kept?: number;
+    /** Why part of the selection didn't move, when the rest of it did. */
+    warning?: string;
+  }
+> {
   if (!classIds.length) return { ok: false, error: "Nothing selected." };
-  const { endBooked = false, purgeEnded = false } = opts;
+  const { endBooked = false, purgeEnded = false, deleteBooked = false } = opts;
   const plan = await planClassRemovalCore(supabase, classIds);
 
-  const toDelete = [...plan.deletable, ...(purgeEnded ? plan.purgeable : [])];
-  let removed = 0;
-  if (toDelete.length) {
+  // Deleting a class people are on *is* ending it and then removing the record,
+  // so `deleteBooked` implies `endBooked` — the cancellation message is not
+  // optional just because the founder also wants the row gone.
+  const endFirst = endBooked || deleteBooked;
+
+  // If the ending fails, the classes it would have ended are the only ones that
+  // lose out: everything else in the selection is a delete that owes nobody a
+  // message, and refusing to run those as well would mean one awkward class
+  // holding back a whole timetable clear-out. So the failure is remembered
+  // rather than thrown, and only the bucket that depended on it is dropped.
+  let ended = 0;
+  let endError: string | undefined;
+  if (endFirst && plan.endable.length) {
+    const r = await endGroupClassesCore(supabase, founderId, plan.endable);
+    if (r.ok) ended = r.ended ?? 0;
+    else endError = r.error ?? "Couldn't end those classes.";
+  }
+
+  // Three buckets can be deleted in one statement, but they have to be counted
+  // apart: "3 deleted", "2 ended classes wiped with their history" and "1 class
+  // people were on, cancelled and deleted" are three different sentences and
+  // the founder is owed the right one.
+  const buckets = {
+    deleted: plan.deletable,
+    purged: purgeEnded ? plan.purgeable : [],
+    deletedBooked: deleteBooked && !endError ? plan.endable : [],
+  };
+  const toDelete = [...buckets.deleted, ...buckets.purged, ...buckets.deletedBooked];
+
+  const removedIds = new Set<string>();
+  for (const part of chunked(toDelete)) {
     const { data, error } = await supabase
       .from("classes")
       .delete()
-      .in("id", toDelete)
+      .in("id", part)
       .select("id");
     if (error) return { ok: false, error: "Couldn't delete the classes." };
-    removed = (data ?? []).length;
+    for (const c of data ?? []) removedIds.add(c.id);
   }
-  // Report the two kinds separately — "3 deleted" and "2 ended classes wiped
-  // along with their history" are very different sentences.
-  const purged = purgeEnded ? Math.min(removed, plan.purgeable.length) : 0;
-  const deleted = removed - purged;
+  const countIn = (ids: string[]) => ids.filter((id) => removedIds.has(id)).length;
+  const deleted = countIn(buckets.deleted);
+  const purged = countIn(buckets.purged);
+  const deletedBooked = countIn(buckets.deletedBooked);
 
-  let ended = 0;
-  if (endBooked && plan.endable.length) {
-    const r = await endGroupClassesCore(supabase, founderId, plan.endable);
-    if (!r.ok && !removed) return { ok: false, error: r.error ?? "Couldn't end those classes." };
-    ended = r.ended ?? 0;
-  }
+  // Nothing moved at all and the ending is why — that is a failure, and the
+  // founder should hear the real reason rather than a cheerful "nothing changed".
+  if (endError && removedIds.size === 0 && ended === 0)
+    return { ok: false, error: endError };
 
-  const kept =
-    (endBooked ? plan.endable.length - ended : plan.endable.length) +
-    (purgeEnded ? plan.purgeable.length - purged : plan.purgeable.length);
+  // A booked class that was deleted is reported as deleted, not as ended —
+  // it was both, and counting it twice would overstate what is left.
+  const endedOnly = ended - deletedBooked;
+
+  // "Kept" is simply what the founder still has: everything he picked that we
+  // neither deleted nor ended.
+  const endedIds = new Set(endError ? [] : endFirst ? plan.endable : []);
+  const kept = [...plan.deletable, ...plan.purgeable, ...plan.endable].filter(
+    (id) => !removedIds.has(id) && !endedIds.has(id)
+  ).length;
 
   await supabase.from("audit_log").insert({
     actor_id: founderId,
     action: "class.bulk_remove",
     entity: "classes",
-    meta: { selected: classIds.length, deleted, ended, purged, kept },
+    meta: { selected: classIds.length, deleted, ended: endedOnly, purged, deletedBooked, kept },
   });
 
-  return { ok: true, deleted, ended, purged, kept };
+  // When something else did move, the run is a success with a hole in it, and
+  // the reason has to travel with the counts. Counts alone are the same silent
+  // half-completion this work exists to remove: he ticks "also end them", the
+  // ending fails, and the screen says "3 classes deleted. 2 were left alone."
+  // — worst under deleteBooked, where classes he asked to DELETE come back as
+  // "left alone" with nothing to explain why.
+  return { ok: true, deleted, ended: endedOnly, purged, deletedBooked, kept, warning: endError };
 }
 
 export async function setClassActiveCore(

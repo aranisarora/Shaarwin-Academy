@@ -19,9 +19,10 @@ export default function AdminSchoolsPage() {
     <AdminShell title="Schools">
       <div className="mx-auto max-w-3xl space-y-6">
         <p className="text-sm text-fg-2">
-          A school login sees its own pupils — progress, attendance and coach
-          notes — and can change nothing. Several people can share one, so hand
-          the credentials to whoever needs them.
+          Every campus you&apos;ve marked as a school in the Venues tab. A school
+          login sees its own pupils — progress, attendance and coach notes — and
+          can change nothing. Several people can share one, so hand the
+          credentials to whoever needs them.
         </p>
         <Suspense fallback={<PageSkeleton />}>
           <Schools />

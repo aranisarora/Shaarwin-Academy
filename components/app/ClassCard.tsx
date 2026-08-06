@@ -58,21 +58,29 @@ function SessionBadges({ session }: { session: SessionRow }) {
   );
 }
 
-/** Status badges for a weekly class — School / Paused / Ended. */
+/** Status badges for a weekly class — School / Paused / Ended.
+ *
+ * The ended badge used to read "tap to restore", from when restoring was the
+ * only thing left to do with one. Ended classes now sit on the list by default
+ * and the sheet will delete one outright, so the badge names both. */
 function ClassBadges({ cls }: { cls: ClassRow }) {
   if (!cls.isSchool && cls.active) return null;
   return (
     <span className="mt-1.5 inline-flex flex-wrap gap-1.5">
       {cls.isSchool && <Badge>School</Badge>}
       {!cls.active && (
-        <Badge tone="err">{cls.endsOn ? "Ended — tap to restore" : "Paused"}</Badge>
+        <Badge tone="err">{cls.endsOn ? "Ended — restore or delete" : "Paused"}</Badge>
       )}
     </span>
   );
 }
 
+// `pressable` is not decoration on these. Every session and every weekly class
+// is one of these cards, they are the app's main way of getting anywhere, and
+// without a pressed state a tap on a phone looks like nothing happened until
+// the sheet finishes opening.
 const cardBase =
-  "w-full rounded-[8px] border px-3 py-2 text-left text-sm hover:border-ember";
+  "pressable w-full rounded-[8px] border px-3 py-2 text-left text-sm hover:border-ember";
 
 /** A single session on the Schedule. `showDay` prepends the weekday+date (used
  * in the ungrouped "no coach yet" box, which isn't under a day header). Pass

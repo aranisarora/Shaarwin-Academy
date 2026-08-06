@@ -36,7 +36,7 @@ export function BottomTabBar({ items }: { items: TabItem[] }) {
               key={item.href}
               href={item.href}
               aria-current={active ? "page" : undefined}
-              className={`flex min-h-14 flex-col items-center justify-center gap-0.5 text-[11px] font-medium uppercase tracking-[0.08em] ${
+              className={`pressable-row flex min-h-14 flex-col items-center justify-center gap-0.5 text-[11px] font-medium uppercase tracking-[0.08em] ${
                 active ? "text-ember" : "text-fg-2"
               }`}
             >

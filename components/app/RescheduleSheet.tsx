@@ -198,7 +198,10 @@ export function RescheduleSheet({
               )}
 
               {!isPrivate && targets && !scopeTarget && (
-                <div className="max-h-80 space-y-2 overflow-y-auto pr-1">
+                // A scroller inside a sheet: without containment, reaching the
+                // end of the list carries on into the page behind the backdrop
+                // and the whole screen rubber-bands under the modal.
+                <div className="max-h-80 space-y-2 overflow-y-auto overscroll-contain pr-1">
                   {targets.length === 0 && (
                     <p className="py-4 text-sm text-fg-2">
                       No equivalent sessions with seats in the next two weeks.
@@ -209,7 +212,7 @@ export function RescheduleSheet({
                       key={t.sessionId}
                       disabled={pending}
                       onClick={() => pickGroup(t)}
-                      className="flex w-full items-center justify-between gap-3 rounded-[8px] border border-line px-3.5 py-3 text-left hover:border-ember"
+                      className="pressable flex w-full items-center justify-between gap-3 rounded-[8px] border border-line px-3.5 py-3 text-left hover:border-ember active:border-ember"
                     >
                       <div>
                         <p className="tnum text-sm font-medium">{formatSessionDate(t.starts_at)}</p>
@@ -228,7 +231,7 @@ export function RescheduleSheet({
               )}
 
               {isPrivate && slots && !preview && (
-                <div className="grid max-h-72 grid-cols-2 gap-2 overflow-y-auto pr-1">
+                <div className="grid max-h-72 grid-cols-2 gap-2 overflow-y-auto overscroll-contain pr-1">
                   {slots.length === 0 && (
                     <p className="col-span-2 py-4 text-sm text-fg-2">
                       No servable times in the next two weeks.
@@ -239,7 +242,7 @@ export function RescheduleSheet({
                       key={s.starts_at}
                       disabled={pending}
                       onClick={() => pickPrivate(s.starts_at)}
-                      className="tnum min-h-11 rounded-[8px] border border-line px-2 text-sm hover:border-ember"
+                      className="pressable tnum min-h-11 rounded-[8px] border border-line px-2 text-sm hover:border-ember active:border-ember"
                     >
                       {formatSessionDate(s.starts_at)}
                     </button>

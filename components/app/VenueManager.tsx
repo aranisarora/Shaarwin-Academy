@@ -1,11 +1,33 @@
 "use client";
 
-import { useState, useTransition } from "react";
+// Every place we coach at — thirty of them now, read mostly on a phone between
+// sessions. Two things had to become visible here.
+//
+// One: whether a venue is a school. That was nowhere on this screen. A campus
+// quietly joined the Schools tab because somebody published a School class at
+// it, and left again when that class was deleted. It is a switch in the editor
+// now, and a section of its own on this list.
+//
+// Two: which venues are hidden. A green "shown on website" badge on all thirty
+// rows is not information, it is wallpaper you learn to skip past. Only the
+// unusual state earns a badge, and a hidden venue is dimmed so the eye finds it
+// before you've read a word.
+//
+// The row also stopped being two competing tap targets. Everything you can do
+// to a venue is in its sheet, which is what makes the card safe to tap with a
+// thumb — and lets the wide screen carry two columns of them instead of one
+// phone-width list stranded down the middle, the way the weekly list already
+// uses its width.
+
+import { useMemo, useState, useTransition } from "react";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { Fab } from "@/components/ui/Fab";
 import { Input } from "@/components/ui/Input";
 import { Sheet } from "@/components/ui/Sheet";
 import { Spinner } from "@/components/ui/Spinner";
+import { Switch } from "@/components/ui/Switch";
 import { ConfirmAction } from "@/components/ui/ConfirmAction";
 import { AddressForm, isAddressComplete } from "@/components/app/AddressForm";
 import {
@@ -26,6 +48,7 @@ type Venue = {
   lat: number;
   lng: number;
   active: boolean;
+  is_school: boolean;
   address_details?: Partial<StructuredAddress> | null;
 };
 
@@ -33,23 +56,90 @@ type Editing = {
   id?: string;
   name: string;
   unit: string;
+  isSchool: boolean;
   addr: StructuredAddress;
 };
 
+/** One venue, as a card. Tapping anywhere on it opens the editor — there is no
+ *  second control to miss on a phone. */
+function VenueCard({ venue, onOpen }: { venue: Venue; onOpen: () => void }) {
+  return (
+    <button
+      onClick={onOpen}
+      className={`flex h-full w-full flex-col gap-1 rounded-[12px] border border-line bg-surface-2 px-4 py-3 text-left transition-colors hover:border-ember ${
+        venue.active ? "" : "opacity-60"
+      }`}
+    >
+      <span className="flex w-full items-start justify-between gap-2">
+        <span className="min-w-0 font-medium">{venueDisplayName(venue)}</span>
+        <span className="flex shrink-0 gap-1.5 pt-0.5">
+          {venue.is_school && <Badge tone="ember">School</Badge>}
+          {!venue.active && <Badge>Hidden</Badge>}
+        </span>
+      </span>
+      <span className="line-clamp-2 text-sm text-fg-2">
+        {venue.address} · {venue.postcode}
+      </span>
+    </button>
+  );
+}
+
 export function VenueManager({ venues }: { venues: Venue[] }) {
+  const [search, setSearch] = useState("");
   const [editing, setEditing] = useState<Editing | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
+  // A refusal has to land inside the sheet. The sheet is a portal over a
+  // full-screen backdrop, so anything written to `message` — which renders down
+  // in the page body — is a sentence nobody will ever read: the founder flips
+  // "This venue is a school" off, taps Save, the spinner stops, and as far as he
+  // can tell nothing happened. `message` keeps the outcomes that close the sheet
+  // first; this one carries the ones that don't. The tag says which control it
+  // belongs beside, because "remove the login first" only means something next
+  // to the button that just refused.
+  const [sheetError, setSheetError] = useState<{
+    at: "save" | "visibility" | "delete";
+    text: string;
+  } | null>(null);
+
+  const errorAt = (at: "save" | "visibility" | "delete") =>
+    sheetError?.at === at ? <p className="text-sm text-err">{sheetError.text}</p> : null;
+
+  const query = search.trim().toLowerCase();
+  const matches = useMemo(
+    () =>
+      venues.filter(
+        (v) =>
+          query === "" ||
+          venueDisplayName(v).toLowerCase().includes(query) ||
+          v.address.toLowerCase().includes(query) ||
+          v.postcode.toLowerCase().includes(query)
+      ),
+    [venues, query]
+  );
+
+  // Coaching venues first because that is the daily list; schools are the
+  // smaller, rarer group and sit under it rather than competing with it.
+  const sections = [
+    { key: "coaching", title: "Places we coach", rows: matches.filter((v) => !v.is_school) },
+    { key: "schools", title: "Schools", rows: matches.filter((v) => v.is_school) },
+  ];
+
   function openNew() {
-    setEditing({ name: "", unit: "", addr: EMPTY_ADDRESS });
+    setMessage(null);
+    setSheetError(null);
+    setEditing({ name: "", unit: "", isSchool: false, addr: EMPTY_ADDRESS });
   }
 
   function openEdit(v: Venue) {
+    setMessage(null);
+    setSheetError(null);
     setEditing({
       id: v.id,
       name: v.name,
       unit: v.unit ?? "",
+      isSchool: v.is_school,
       addr: fromDetails(v.address_details, {
         address: v.address,
         postcode: v.postcode,
@@ -68,9 +158,14 @@ export function VenueManager({ venues }: { venues: Venue[] }) {
       venues.filter((v) => v.id !== editing.id)
     );
 
+  // The saved row behind the open sheet — the visibility control acts on the
+  // venue as it stands, not on the unsaved edits above it.
+  const current = editing?.id ? venues.find((v) => v.id === editing.id) : undefined;
+
   function submit() {
     if (!editing || !editing.name.trim() || !isAddressComplete(editing.addr)) return;
     if (needsUnit) return;
+    setSheetError(null);
     startTransition(async () => {
       const a = editing.addr;
       const r = await saveVenue({
@@ -82,58 +177,76 @@ export function VenueManager({ venues }: { venues: Venue[] }) {
         lat: a.lat ?? BENGALURU.lat,
         lng: a.lng ?? BENGALURU.lng,
         details: a,
+        isSchool: editing.isSchool,
       });
-      setMessage(r.ok ? "Saved." : (r.error ?? "Save failed."));
-      if (r.ok) setEditing(null);
+      if (r.ok) {
+        setMessage("Saved.");
+        setEditing(null);
+      } else {
+        setSheetError({ at: "save", text: r.error ?? "Save failed." });
+      }
     });
   }
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <p className="label">Venues</p>
-        <Button onClick={openNew}>New venue</Button>
-      </div>
+      {venues.length > 0 && (
+        <>
+          <div className="flex flex-wrap items-baseline justify-between gap-3">
+            <p className="text-sm text-fg-2">
+              Everywhere we coach, and every school campus.
+            </p>
+            <div className="flex items-center gap-3">
+              <span className="tnum shrink-0 text-sm text-fg-2">
+                {matches.length} of {venues.length}
+              </span>
+              <Button className="hidden lg:inline-flex" onClick={openNew}>
+                New venue
+              </Button>
+            </div>
+          </div>
+          <Input
+            placeholder="Search by name, address or pincode…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+          />
+        </>
+      )}
+
       {message && <p className="text-sm text-fg-2">{message}</p>}
 
       {venues.length === 0 ? (
-        <div className="rounded-[12px] border border-line bg-surface-2 p-4 text-sm text-fg-2">
-          <p className="font-medium text-fg">Add the places you coach at.</p>
-          <p className="mt-1">
-            Each venue&apos;s name and map pin show up on class cards and directions.
-            Tap &ldquo;New venue&rdquo; to add your first one.
-          </p>
-        </div>
+        <EmptyState
+          image="/images/empty-ivory.jpg"
+          copy="Add the places you coach at. A venue's name and map pin show up on class cards and in directions — and a campus you mark as a school gets its own row in the Schools tab."
+          action={<Button onClick={openNew}>Add your first venue</Button>}
+        />
+      ) : matches.length === 0 ? (
+        <p className="rounded-[12px] border border-line bg-surface-2 p-4 text-sm text-fg-2">
+          Nothing here matches &ldquo;{search.trim()}&rdquo;.
+        </p>
       ) : (
-        <ul className="divide-y divide-line rounded-[12px] border border-line bg-surface-2">
-          {venues.map((v) => (
-            <li key={v.id} className="flex items-center justify-between gap-3 px-4 py-3">
-            <button onClick={() => openEdit(v)} className="text-left hover:text-ember">
-              <p className="font-medium">{venueDisplayName(v)}</p>
-              <p className="text-sm text-fg-2">
-                {v.address} · {v.postcode}
-              </p>
-            </button>
-            <div className="flex flex-col items-end gap-1.5">
-              <Badge tone={v.active ? "ok" : "err"}>
-                {v.active ? "shown on website" : "hidden"}
-              </Badge>
-              <button
-                disabled={pending}
-                onClick={() =>
-                  startTransition(async () => {
-                    await setVenueActive(v.id, !v.active);
-                  })
-                }
-                className="text-xs text-fg-2 underline-offset-4 hover:underline"
-              >
-                {v.active ? "Hide venue" : "Show venue"}
-              </button>
-            </div>
-            </li>
-          ))}
-        </ul>
+        sections.map(
+          (s) =>
+            s.rows.length > 0 && (
+              <section key={s.key} className="space-y-2">
+                <div className="flex items-baseline justify-between gap-3">
+                  <p className="label">{s.title}</p>
+                  <span className="tnum text-xs text-fg-2">{s.rows.length}</span>
+                </div>
+                <ul className="grid gap-2 sm:grid-cols-2">
+                  {s.rows.map((v) => (
+                    <li key={v.id}>
+                      <VenueCard venue={v} onOpen={() => openEdit(v)} />
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            )
+        )
       )}
+
+      {venues.length > 0 && <Fab label="New venue" onClick={openNew} />}
 
       <Sheet
         open={editing !== null}
@@ -171,6 +284,22 @@ export function VenueManager({ venues }: { venues: Venue[] }) {
                 </>
               )}
             </p>
+
+            <label className="flex items-start justify-between gap-4 rounded-[12px] border border-line p-4">
+              <span className="min-w-0">
+                <span className="block font-medium">This venue is a school</span>
+                <span className="mt-1 block text-sm text-fg-2">
+                  A school gets its own row in the Schools tab, where you can
+                  give the campus a login that sees its pupils. It is never
+                  offered to clients as a place to book.
+                </span>
+              </span>
+              <Switch
+                checked={editing.isSchool}
+                onChange={(isSchool) => setEditing({ ...editing, isSchool })}
+              />
+            </label>
+
             <AddressForm
               value={editing.addr}
               onChange={(addr) => setEditing({ ...editing, addr })}
@@ -178,23 +307,69 @@ export function VenueManager({ venues }: { venues: Venue[] }) {
               searchPlaceholder="Start typing the venue address…"
               showAccessNotes
             />
+            {errorAt("save")}
             <Button onClick={submit} disabled={pending || needsUnit} className="w-full">
               {pending ? <Spinner /> : "Save venue"}
             </Button>
+
+            {current && (
+              <div className="space-y-2 rounded-[12px] border border-line p-4">
+                <p className="label">Where it shows</p>
+                <p className="text-sm text-fg-2">
+                  {!current.active
+                    ? "Hidden. Classes already here keep it — it just stops being offered for new ones."
+                    : current.is_school
+                      ? "Offered when you set a class up. Clients are never shown a school."
+                      : "Offered wherever a place gets picked — yours and the client's."}
+                </p>
+                {errorAt("visibility")}
+                <Button
+                  variant="ghost"
+                  className="w-full"
+                  disabled={pending}
+                  onClick={() => {
+                    setSheetError(null);
+                    startTransition(async () => {
+                      const r = await setVenueActive(current.id, !current.active);
+                      if (!r.ok) {
+                        setSheetError({
+                          at: "visibility",
+                          text: r.error ?? "Couldn't update the venue.",
+                        });
+                      }
+                    });
+                  }}
+                >
+                  {current.active ? "Hide venue" : "Show venue"}
+                </Button>
+              </div>
+            )}
+
             {editing.id && (
-              <ConfirmAction
-                label="Delete venue"
-                confirmLabel="Delete"
-                prompt="Delete this venue for good? This only works if no classes use it."
-                pending={pending}
-                onConfirm={() =>
-                  startTransition(async () => {
-                    const r = await deleteVenue(editing.id!);
-                    setMessage(r.ok ? "Venue deleted." : (r.error ?? "Delete failed."));
-                    if (r.ok) setEditing(null);
-                  })
-                }
-              />
+              <>
+                {errorAt("delete")}
+                <ConfirmAction
+                  label="Delete venue"
+                  confirmLabel="Delete"
+                  prompt="Delete this venue for good? This only works if no classes use it."
+                  pending={pending}
+                  onConfirm={() => {
+                    setSheetError(null);
+                    startTransition(async () => {
+                      const r = await deleteVenue(editing.id!);
+                      if (r.ok) {
+                        setMessage("Venue deleted.");
+                        setEditing(null);
+                      } else {
+                        setSheetError({
+                          at: "delete",
+                          text: r.error ?? "Delete failed.",
+                        });
+                      }
+                    });
+                  }}
+                />
+              </>
             )}
           </div>
         )}

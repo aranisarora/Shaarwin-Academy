@@ -39,7 +39,11 @@ export function PendingAssessments() {
   if (pathname === `/coach/players/${current.playerId}`) return null;
 
   return (
-    <div className="pb-safe fixed inset-x-3 bottom-16 z-50 rounded-[12px] border border-ember bg-surface-2 p-4 shadow-[var(--shadow-sheet)] lg:bottom-6 lg:left-auto lg:right-6 lg:w-96">
+    // Same offset as the FAB and the bulk-action bars — see `.above-tabbar`.
+    // This card used to sit on `pb-safe bottom-16`, which cleared the tab bar by
+    // eight pixels and would have sat behind it once the safe-area inset became
+    // real; padding the inside of a floating card was never the lever anyway.
+    <div className="above-tabbar fixed inset-x-3 z-50 rounded-[12px] border border-ember bg-surface-2 p-4 shadow-[var(--shadow-sheet)] lg:left-auto lg:right-6 lg:w-96">
       <p className="font-medium">Pending assessments ({items.length})</p>
       <p className="mt-1 text-sm text-fg-2">
         Complete assessment for <strong>{current.playerName}</strong> —{" "}

@@ -41,23 +41,29 @@ export function FilterBar({
 
   return (
     <>
-      {/* ── Mobile: one scrollable chip row ── */}
-      <div className="-mx-5 flex gap-2 overflow-x-auto px-5 pb-1 lg:hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+      {/* ── Mobile: one scrollable chip row ──
+          overscroll-x-contain matters more than it looks: without it, swiping
+          past the last chip hands the gesture to the browser's back-swipe and
+          throws you off the schedule mid-task. */}
+      <div className="-mx-5 flex gap-2 overflow-x-auto overscroll-x-contain px-5 pb-1 lg:hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {filters.map((f) => {
           const fallback = f.defaultValue ?? f.options[0]?.value;
           const active = f.value !== fallback;
           const current = f.options.find((o) => o.value === f.value);
           return (
+            // The squeeze lives on the whole chip, not on its two halves —
+            // :active reaches ancestors, so pressing either part moves the one
+            // thing the eye reads as a single control.
             <div
               key={f.key}
-              className={`inline-flex shrink-0 items-center rounded-full border text-sm font-medium ${
+              className={`pressable inline-flex shrink-0 items-center rounded-full border text-sm font-medium ${
                 active ? "border-ember text-ember" : "border-line text-fg-2"
               }`}
             >
               <button
                 type="button"
                 onClick={() => setOpenKey(f.key)}
-                className="min-h-9 whitespace-nowrap py-1.5 pl-3.5 pr-2"
+                className="min-h-11 whitespace-nowrap rounded-l-full py-1.5 pl-3.5 pr-2"
               >
                 {active ? (current?.label ?? f.label) : f.label}
                 <span aria-hidden className="ml-1 text-xs opacity-70">
@@ -65,11 +71,16 @@ export function FilterBar({
                 </span>
               </button>
               {active && (
+                // Roughly 26px wide and sharing an edge with the button that
+                // opens the sheet — the one control on this row where a mis-tap
+                // costs you the filter you just set. hit-slop-r widens the
+                // target outward, away from that shared edge, so the chip stays
+                // the size it looks and neither half steals the other's taps.
                 <button
                   type="button"
                   aria-label={`Clear ${f.label}`}
                   onClick={() => f.onChange(fallback)}
-                  className="min-h-9 pl-1 pr-3 text-fg-2 hover:text-ember"
+                  className="hit-slop-r min-h-11 rounded-r-full pl-1 pr-3 text-fg-2 hover:text-ember active:text-ember"
                 >
                   ✕
                 </button>
@@ -116,10 +127,10 @@ export function FilterBar({
                       openFilter.onChange(o.value);
                       setOpenKey(null);
                     }}
-                    className={`flex min-h-12 w-full items-center justify-between gap-3 rounded-[8px] border px-4 text-left text-base ${
+                    className={`pressable flex min-h-12 w-full items-center justify-between gap-3 rounded-[8px] border px-4 text-left text-base ${
                       selected
                         ? "border-ember text-ember"
-                        : "border-line hover:border-ember"
+                        : "border-line hover:border-ember active:border-ember"
                     }`}
                   >
                     <span>{o.label}</span>

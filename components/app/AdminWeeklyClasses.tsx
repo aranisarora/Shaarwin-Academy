@@ -102,23 +102,35 @@ export function AdminWeeklyClasses({
 
   function topUp() {
     startTransition(async () => {
-      const r = await topUpSessions();
-      setMessage(
-        r.ok
-          ? r.created
-            ? `Added ${r.created} upcoming sessions.`
-            : "The schedule is already fully topped up."
-          : (r.error ?? "Failed.")
-      );
-      if (r.ok) router.refresh();
+      try {
+        const r = await topUpSessions();
+        setMessage(
+          r.ok
+            ? r.created
+              ? `Added ${r.created} upcoming sessions.`
+              : "The schedule is already fully topped up."
+            : (r.error ?? "Failed.")
+        );
+        if (r.ok) router.refresh();
+      } catch {
+        setMessage("Couldn't reach the server. Nothing changed — try again.");
+      }
     });
   }
 
   // Filters — location (venue), day and status. Options are drawn from the
   // classes that actually exist so we never show an empty bucket.
+  //
+  // Status starts at "all", not "active". It used to hide the ended and paused
+  // ones, which sounds tidy until you follow what the founder actually does:
+  // he ends a class, the class vanishes from the list, and the thing he now
+  // wants to delete is somewhere he has to guess at — and "Select all 38" was
+  // quietly only the active 38, so a timetable clear-out left the ended ones
+  // behind. The cards already grey themselves out and say "Ended" or "Paused",
+  // so nothing is lost by showing them, and Active is one tap away.
   const [venueFilter, setVenueFilter] = useState("all");
   const [dayFilter, setDayFilter] = useState("all");
-  const [statusFilter, setStatusFilter] = useState("active");
+  const [statusFilter, setStatusFilter] = useState("all");
 
   // Location + day options are drawn from both classes and private series so a
   // location that only hosts a private slot still appears in the filter.
@@ -297,7 +309,7 @@ export function AdminWeeklyClasses({
       aria: "Filter by status",
       label: "Any status",
       value: statusFilter,
-      defaultValue: "active",
+      defaultValue: "all",
       onChange: setStatusFilter,
       options: [
         { value: "all", label: "All statuses" },
@@ -494,8 +506,8 @@ export function AdminWeeklyClasses({
               <p className="label">Clear the timetable</p>
               <p className="text-sm text-fg-2">
                 Picks every class the filters are showing ({filteredClasses.length}) so you can
-                start again. You get to see what deletes and what has to be ended before
-                anything happens — and you can unpick any of them first.
+                start again. You get to see what goes quietly and what has people or history on
+                it before anything happens — and you can unpick any of them first.
               </p>
               <Button
                 variant="ghost"

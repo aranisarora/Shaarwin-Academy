@@ -2,7 +2,7 @@
 --
 -- GENERATED from the live database via the Supabase MCP server. Do not edit by
 -- hand. Regenerate after any schema change (see AGENTS.md -> Database).
--- Last verified: 2026-08-02 (migrations 0057, 0058 applied to prod).
+-- Last verified: 2026-08-06 (migrations 0057, 0058, 0059 applied to prod).
 --
 -- This is a reference dump, grouped for readability (extensions, enums, tables,
 -- constraints, indexes, functions, view, RLS). It is not guaranteed to run
@@ -387,7 +387,12 @@ create table public.push_subscriptions (
   p256dh text not null,
   auth text not null,
   user_agent text,
-  created_at timestamptz default now() not null
+  created_at timestamptz default now() not null,
+  -- The last time a live browser told us this device still exists (0060).
+  -- A subscription can stay VALID long after anyone stops opening the browser
+  -- that owns it, so this is what separates "the push service accepted it" from
+  -- "somebody will see it".
+  last_seen_at timestamptz default now() not null
 );
 
 -- Who may sign in as a school and read its pupils. Many-to-many so one head can
@@ -466,6 +471,10 @@ create table public.venues (
   photo_url text,
   address_details jsonb,
   active boolean default true not null,
+  -- Said by the founder in the venue editor, never inferred from the classes
+  -- that happen to run here (migration 0059). Drives the Schools tab, and keeps
+  -- the campus out of every client-facing venue list.
+  is_school boolean default false not null,
   created_at timestamptz default now() not null
 );
 
@@ -679,6 +688,7 @@ CREATE INDEX skill_assessments_coach_idx ON public.skill_assessments USING btree
 CREATE INDEX skill_assessments_session_idx ON public.skill_assessments USING btree (session_id);
 CREATE INDEX skill_ratings_skill_idx ON public.skill_ratings USING btree (skill_id);
 CREATE INDEX school_admins_venue_idx ON public.school_admins USING btree (venue_id);
+CREATE INDEX push_subscriptions_last_seen_at_idx ON public.push_subscriptions USING btree (last_seen_at);
 
 -- ── Functions ────────────────────────────────────────────────────────────────
 
@@ -4394,6 +4404,20 @@ as $$
   delete from public.wa_inbound_seen where created_at < now() - interval '1 day';
 $$;
 
+-- Every write to a push_subscriptions row comes from a browser that is open
+-- right now, so "when was this row last written" and "when was this device last
+-- alive" are the same fact. Stamped here rather than by each caller, so a
+-- caller that forgets the column can't make a row look fresher than it is.
+create or replace function public.touch_push_subscription()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.last_seen_at := now();
+  return new;
+end;
+$$;
+
 -- ── View ─────────────────────────────────────────────────────────────────────
 CREATE OR REPLACE VIEW public.coach_client_view AS
   SELECT id, full_name, avatar_url FROM profiles p;
@@ -4425,6 +4449,7 @@ CREATE TRIGGER profiles_ops_feed AFTER INSERT ON public.profiles FOR EACH ROW EX
 CREATE TRIGGER subscriptions_ops_feed AFTER INSERT OR UPDATE OF status ON public.subscriptions FOR EACH ROW EXECUTE FUNCTION ops_notify_subscription();
 CREATE TRIGGER wa_links_ops_feed AFTER INSERT ON public.wa_links FOR EACH ROW EXECUTE FUNCTION ops_notify_wa_linked();
 CREATE TRIGGER profiles_claim_client_invite AFTER INSERT OR UPDATE OF phone ON public.profiles FOR EACH ROW WHEN ((new.phone IS NOT NULL)) EXECUTE FUNCTION claim_client_invite();
+CREATE TRIGGER push_subscriptions_touch BEFORE INSERT OR UPDATE ON public.push_subscriptions FOR EACH ROW EXECUTE FUNCTION touch_push_subscription();
 
 -- ── Row Level Security ───────────────────────────────────────────────────────
 alter table public.area_interest enable row level security;

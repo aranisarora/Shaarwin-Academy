@@ -37,10 +37,15 @@ async function People({ searchParams }: { searchParams: SearchParams }) {
         .order("created_at", { ascending: false }),
       supabase.from("plans").select("id,name").eq("active", true).order("price_pence"),
       // School players have no account holder — fetched on their own and joined
-      // to the school (venue) they attend.
+      // to the school (venue) they attend. The raw `school_venue_id` rides along
+      // beside the joined name because the Players tab filters on the id: the
+      // display name is only ever a label, and a pupil whose venue row went
+      // missing must not land in the same bucket as everyone else's fallback.
       supabase
         .from("players")
-        .select("id,full_name,skill_level,date_of_birth,notes,created_at,grade,venues(name,unit)")
+        .select(
+          "id,full_name,skill_level,date_of_birth,notes,created_at,grade,school_venue_id,venues(name,unit)"
+        )
         .is("client_id", null)
         .order("created_at"),
     ]);
@@ -55,6 +60,7 @@ async function People({ searchParams }: { searchParams: SearchParams }) {
             .select("client_id,status,plans(name)")
             .in("client_id", ids)
             .in("status", ["active", "trialing", "past_due"])
+            .order("created_at", { ascending: false })
         : Promise.resolve({ data: [] }),
       ids.length
         ? supabase
@@ -79,12 +85,25 @@ async function People({ searchParams }: { searchParams: SearchParams }) {
         : Promise.resolve({ data: [] }),
     ]);
 
-  const subByClient = new Map(
-    (subs ?? []).map((s) => [
-      s.client_id,
-      { status: s.status, plan: (s.plans)?.name },
-    ])
-  );
+  // A household can be on more than one live plan at a time — an old one
+  // winding down beside the new one, a handful of them on the books right now.
+  // The query comes back newest first, so the single plan we *show* is the one
+  // they most recently signed up for and it stays the same on every load.
+  // `plansByClient` keeps every plan they hold, because a filter that says
+  // "everyone on this plan" has to mean everyone, not whichever row landed last.
+  const subByClient = new Map<string, { status: string; plan: string | undefined }>();
+  const plansByClient = new Map<string, Set<string>>();
+  for (const s of subs ?? []) {
+    const plan = s.plans?.name;
+    if (!subByClient.has(s.client_id)) {
+      subByClient.set(s.client_id, { status: s.status, plan });
+    }
+    if (plan) {
+      const held = plansByClient.get(s.client_id);
+      if (held) held.add(plan);
+      else plansByClient.set(s.client_id, new Set([plan]));
+    }
+  }
   const ltv = new Map<string, number>();
   for (const inv of invoices ?? []) {
     ltv.set(inv.client_id, (ltv.get(inv.client_id) ?? 0) + inv.amount_pence);
@@ -139,10 +158,10 @@ async function People({ searchParams }: { searchParams: SearchParams }) {
     planId: i.plan_id ?? "",
   }));
 
-  // The Players view — every household player, joined with their account
-  // holder's contact details. Archived clients' players stay hidden, matching
-  // the default client list. This one really is a third trip: it needs the
-  // player ids round 2 returns.
+  // The Players view — every player we coach: household players joined with
+  // their account holder's contact details, and the school pupils below them.
+  // Archived clients' players stay hidden, matching the default client list.
+  // This one really is a third trip: it needs the player ids round 2 returns.
   const masteryMap = await getMasteryMap(supabase, [
     ...(players ?? []).map((p) => p.id),
     ...(schoolPlayers ?? []).map((p) => p.id),
@@ -156,6 +175,12 @@ async function People({ searchParams }: { searchParams: SearchParams }) {
     })
     .map((p) => {
       const c = clientById.get(p.client_id)!;
+      // The household's plans were already rolled up for the Account holders
+      // view; carrying them onto the player row costs nothing and lets the tab
+      // filter players by what their household pays for. The filter matches on
+      // the full list — a household on two plans belongs under both — while the
+      // single `planName` is only ever the line the sheet prints.
+      const sub = subByClient.get(p.client_id);
       return {
         id: p.id,
         name: p.full_name,
@@ -169,6 +194,11 @@ async function People({ searchParams }: { searchParams: SearchParams }) {
         clientEmail: c.email ?? "",
         clientPhone: c.phone ?? null,
         school: null as string | null,
+        schoolVenueId: null as string | null,
+        grade: null as number | null,
+        planName: sub?.plan ?? null,
+        subStatus: sub?.status ?? null,
+        planNames: [...(plansByClient.get(p.client_id) ?? [])],
       };
     });
 
@@ -186,6 +216,13 @@ async function People({ searchParams }: { searchParams: SearchParams }) {
     clientEmail: "",
     clientPhone: null,
     school: p.venues ? venueDisplayName(p.venues) : "School",
+    schoolVenueId: (p.school_venue_id as string | null) ?? null,
+    grade: (p.grade as number | null) ?? null,
+    // A school pupil sits outside billing entirely — the school pays, not a
+    // household — so there is no plan to show and none to filter on.
+    planName: null as string | null,
+    subStatus: null as string | null,
+    planNames: [] as string[],
   }));
 
   const playerRows = [...householdRows, ...schoolRows].sort((a, b) =>

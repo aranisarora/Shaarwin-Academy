@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { Badge } from "@/components/ui/Badge";
+import { FilterBar, type FilterDef } from "@/components/ui/FilterBar";
 import { Input } from "@/components/ui/Input";
 import { Sheet } from "@/components/ui/Sheet";
 import { formatWallDateFull } from "@/lib/academy-time";
@@ -21,6 +22,22 @@ type PlayerRow = {
   clientEmail: string;
   clientPhone: string | null;
   school?: string | null;
+  /** The venue id behind `school`. Filtering keys on this, never on the name:
+   *  the name is a label with a fallback, and two labels that read the same are
+   *  still two different schools. Null on a household player. */
+  schoolVenueId?: string | null;
+  /** School grade, where a coach recorded one. Null on a household player and
+   *  on the older pupils nobody asked. */
+  grade?: number | null;
+  /** The household's plan, rolled up on the server. Null on a school pupil —
+   *  the school pays for them, so they are outside billing altogether. */
+  planName?: string | null;
+  subStatus?: string | null;
+  /** Every plan the household holds, not just the one the sheet shows. A
+   *  household can be on two live plans at once, and a filter promising
+   *  "everyone on this plan" has to find them under both. Empty on a school
+   *  pupil, and on a household paying for nothing. */
+  planNames: string[];
 };
 
 const LEVELS = ["beginner", "intermediate", "advanced", "elite"] as const;
@@ -41,6 +58,13 @@ const LEVEL_TONE: Record<string, "neutral" | "ok" | "ember"> = {
 
 function levelLabel(level: string): string {
   return LEVEL_LABELS[level] ?? level;
+}
+
+/** Where a level sits on the ladder, so the filter reads beginner → elite
+ *  however the rows happen to be ordered. Anything unrecognised sorts last. */
+function levelRank(level: string): number {
+  const i = (LEVELS as readonly string[]).indexOf(level);
+  return i === -1 ? LEVELS.length : i;
 }
 
 function ageYears(dob: string): number {
@@ -74,9 +98,24 @@ function displayName(row: PlayerRow): string {
   return row.clientPhone ?? "New member";
 }
 
+/** The household's plan as it reads inside the sheet — the billing state only
+ *  gets a mention when it's something the founder would want to chase. */
+function planLine(row: PlayerRow): string {
+  if (!row.planName) return "No plan";
+  if (row.subStatus === "past_due") return `${row.planName} · past due`;
+  if (row.subStatus === "trialing") return `${row.planName} · trial`;
+  return row.planName;
+}
+
 function clientSubline(row: PlayerRow): string {
-  // School players have no account holder — show the school they attend.
-  if (row.school) return `${row.school} · school player`;
+  // School players have no account holder — show the school they attend. The
+  // school's name already says they're a school pupil, so when a coach took
+  // their grade down that's the more useful second half of the line.
+  if (row.school) {
+    return row.grade != null
+      ? `${row.school} · Grade ${row.grade}`
+      : `${row.school} · school player`;
+  }
   const parts: string[] = [];
   if (isRealName(row.clientName) && row.clientName !== displayName(row))
     parts.push(row.clientName);
@@ -134,28 +173,142 @@ function Avatar({ row, size }: { row: PlayerRow; size: "sm" | "lg" }) {
 
 export function PlayerManager({ players }: { players: PlayerRow[] }) {
   const [search, setSearch] = useState("");
-  const [level, setLevel] = useState<string | null>(null);
   const [selected, setSelected] = useState<PlayerRow | null>(null);
+
+  // Three ways to narrow the list — level, school and the household's plan.
+  // All of it is local state, like every other filtered list here: the tab is
+  // one screen of already-loaded rows, so a URL round-trip would buy nothing.
+  const [levelFilter, setLevelFilter] = useState("all");
+  const [schoolFilter, setSchoolFilter] = useState("all");
+  const [planFilter, setPlanFilter] = useState("all");
+
+  // Every option comes from the players actually on the list, so we never offer
+  // a bucket that turns up empty. Schools are keyed by venue id and only
+  // labelled with the name.
+  const levelOptions = useMemo(
+    () => [...new Set(players.map((p) => p.skillLevel))].sort((a, b) => levelRank(a) - levelRank(b)),
+    [players]
+  );
+  const schoolOptions = useMemo(() => {
+    const byId = new Map<string, string>();
+    for (const p of players) {
+      if (p.schoolVenueId) byId.set(p.schoolVenueId, p.school ?? "School");
+    }
+    return [...byId]
+      .map(([value, label]) => ({ value, label }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [players]);
+  const planOptions = useMemo(
+    () => [...new Set(players.flatMap((p) => p.planNames))].sort((a, b) => a.localeCompare(b)),
+    [players]
+  );
+  // "Household players" is the absence of a school, not the absence of a venue
+  // id: a pupil whose venue link is broken is still somebody's school pupil and
+  // belongs nowhere near that bucket.
+  const hasHousehold = useMemo(() => players.some((p) => !p.school), [players]);
+  // Deleting a venue leaves its pupils behind with nothing pointing at a school
+  // — no venue id, and no account holder either, since they never had one. They
+  // would sit in the list matching no school and no household, findable only by
+  // scrolling past everyone. This bucket is where they turn up.
+  const hasUnlinkedSchool = useMemo(
+    () => players.some((p) => p.school && !p.schoolVenueId),
+    [players]
+  );
+  const hasUnplanned = useMemo(
+    () => players.some((p) => p.clientId !== null && p.planNames.length === 0),
+    [players]
+  );
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return players.filter(
-      (p) =>
-        (level === null || p.skillLevel === level) &&
-        (q === "" ||
-          p.name.toLowerCase().includes(q) ||
-          p.clientName.toLowerCase().includes(q) ||
-          p.clientEmail.toLowerCase().includes(q) ||
-          (p.clientPhone ?? "").toLowerCase().includes(q) ||
-          (p.school ?? "").toLowerCase().includes(q))
-    );
-  }, [players, search, level]);
+    return players.filter((p) => {
+      if (levelFilter !== "all" && p.skillLevel !== levelFilter) return false;
+      if (schoolFilter === "household") {
+        if (p.school) return false;
+      } else if (schoolFilter === "unlinked") {
+        if (!p.school || p.schoolVenueId) return false;
+      } else if (schoolFilter !== "all" && p.schoolVenueId !== schoolFilter) {
+        return false;
+      }
+      // "No plan" means a household that isn't paying for anything. A school
+      // pupil has no plan either, but that's the arrangement rather than a gap,
+      // so they stay out of this bucket — the school filter is where you find
+      // them.
+      if (planFilter === "none") {
+        if (p.clientId === null || p.planNames.length > 0) return false;
+      } else if (planFilter !== "all" && !p.planNames.includes(planFilter)) {
+        return false;
+      }
+      if (q === "") return true;
+      return (
+        p.name.toLowerCase().includes(q) ||
+        p.clientName.toLowerCase().includes(q) ||
+        p.clientEmail.toLowerCase().includes(q) ||
+        (p.clientPhone ?? "").toLowerCase().includes(q) ||
+        (p.school ?? "").toLowerCase().includes(q)
+      );
+    });
+  }, [players, search, levelFilter, schoolFilter, planFilter]);
+
+  const filterDefs: FilterDef[] = [
+    {
+      key: "level",
+      aria: "Filter by level",
+      label: "All levels",
+      value: levelFilter,
+      defaultValue: "all",
+      onChange: setLevelFilter,
+      options: [
+        { value: "all", label: "All levels" },
+        ...levelOptions.map((l) => ({ value: l, label: levelLabel(l) })),
+      ],
+    },
+    ...(schoolOptions.length > 0 || hasUnlinkedSchool
+      ? [
+          {
+            key: "school",
+            aria: "Filter by school",
+            label: "All schools",
+            value: schoolFilter,
+            defaultValue: "all",
+            onChange: setSchoolFilter,
+            options: [
+              { value: "all", label: "All schools" },
+              ...schoolOptions,
+              ...(hasUnlinkedSchool
+                ? [{ value: "unlinked", label: "Unlinked school" }]
+                : []),
+              ...(hasHousehold
+                ? [{ value: "household", label: "Household players" }]
+                : []),
+            ],
+          },
+        ]
+      : []),
+    ...(planOptions.length > 0
+      ? [
+          {
+            key: "plan",
+            aria: "Filter by plan",
+            label: "All plans",
+            value: planFilter,
+            defaultValue: "all",
+            onChange: setPlanFilter,
+            options: [
+              { value: "all", label: "All plans" },
+              ...planOptions.map((n) => ({ value: n, label: n })),
+              ...(hasUnplanned ? [{ value: "none", label: "No plan" }] : []),
+            ],
+          },
+        ]
+      : []),
+  ];
 
   return (
     <div className="space-y-4">
       <div className="flex items-baseline justify-between gap-3">
         <p className="text-sm text-fg-2">
-          Every household player across all client accounts.
+          Everyone we coach — household players and school pupils.
         </p>
         <span className="tnum shrink-0 text-sm text-fg-2">
           {filtered.length} of {players.length}
@@ -168,21 +321,7 @@ export function PlayerManager({ players }: { players: PlayerRow[] }) {
         onChange={(e) => setSearch(e.target.value)}
       />
 
-      <div className="flex flex-wrap gap-2">
-        <FilterChip
-          label="All"
-          active={level === null}
-          onClick={() => setLevel(null)}
-        />
-        {LEVELS.map((l) => (
-          <FilterChip
-            key={l}
-            label={LEVEL_LABELS[l]}
-            active={level === l}
-            onClick={() => setLevel(level === l ? null : l)}
-          />
-        ))}
-      </div>
+      {players.length > 0 && <FilterBar filters={filterDefs} />}
 
       <ul className="divide-y divide-line rounded-[12px] border border-line bg-surface-2">
         {filtered.map((p) => (
@@ -254,6 +393,9 @@ export function PlayerManager({ players }: { players: PlayerRow[] }) {
               <div className="space-y-2 rounded-[12px] border border-line p-4">
                 <p className="label">School</p>
                 <p className="font-medium">{selected.school}</p>
+                {selected.grade != null && (
+                  <p className="tnum text-sm text-fg-2">Grade {selected.grade}</p>
+                )}
                 <p className="text-sm text-fg-2">
                   School player — no account holder. Added by a coach at the class.
                 </p>
@@ -284,6 +426,7 @@ export function PlayerManager({ players }: { players: PlayerRow[] }) {
                   )}
                 </>
               )}
+              <p className="text-sm text-fg-2">{planLine(selected)}</p>
             </div>
             )}
 
@@ -297,29 +440,5 @@ export function PlayerManager({ players }: { players: PlayerRow[] }) {
         )}
       </Sheet>
     </div>
-  );
-}
-
-function FilterChip({
-  label,
-  active,
-  onClick,
-}: {
-  label: string;
-  active: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      aria-pressed={active}
-      className={`rounded-full border px-3 py-1 text-sm font-medium transition-colors ${
-        active
-          ? "border-ember bg-ember/10 text-ember"
-          : "border-line text-fg-2 hover:bg-surface-2"
-      }`}
-    >
-      {label}
-    </button>
   );
 }

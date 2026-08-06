@@ -134,6 +134,16 @@ export function LockIcon({ className }: IconProps) {
   );
 }
 
+/** Notifications — a bell. */
+export function BellIcon({ className }: IconProps) {
+  return (
+    <svg {...base(className)}>
+      <path d="M6.5 9.5a5.5 5.5 0 0 1 11 0c0 4 1.5 5.5 1.5 5.5H5s1.5-1.5 1.5-5.5Z" />
+      <path d="M10 18.5a2 2 0 0 0 4 0" />
+    </svg>
+  );
+}
+
 /** More — three dots. */
 export function DotsIcon({ className }: IconProps) {
   return (

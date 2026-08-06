@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Spinner } from "@/components/ui/Spinner";
+import { PushToggle } from "@/components/app/PushToggle";
 import { saveSettings } from "@/app/admin/settings/actions";
 
 // Plain-English label + a one-line "what this does" hint for each setting, so
@@ -80,6 +81,13 @@ export function SettingsEditor({ values }: { values: Record<string, number> }) {
         {saved && !pending && <span className="text-sm text-ok">Saved ✓</span>}
       </div>
       {message && <p className="text-sm text-err">{message}</p>}
+
+      {/* Not a booking rule, but this is the founder's settings screen and the
+          escalations — a coach who hasn't confirmed, a coach who hasn't turned
+          up — are aimed at him. Until now there was no way for him to subscribe
+          at all: the only Enable push button in the app was on the client
+          profile screen he never opens. */}
+      <PushToggle feedHref="/admin/notifications" className="mt-8" />
     </div>
   );
 }

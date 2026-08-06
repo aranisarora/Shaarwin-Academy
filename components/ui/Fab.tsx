@@ -19,7 +19,7 @@ export function Fab({
       onClick={onClick}
       aria-label={label}
       title={label}
-      className="fixed bottom-[calc(env(safe-area-inset-bottom)+4.75rem)] right-4 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-ember text-3xl leading-none text-ivory shadow-[var(--shadow-sheet)] active:bg-ember-2 lg:hidden"
+      className="above-tabbar pressable fixed right-4 z-40 flex h-14 w-14 items-center justify-center rounded-full bg-ember text-3xl leading-none text-ivory shadow-[var(--shadow-sheet)] active:bg-ember-2 lg:hidden"
     >
       <span aria-hidden className="-mt-0.5">
         +

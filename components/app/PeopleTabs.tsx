@@ -1,8 +1,9 @@
 "use client";
 
 // One "people" hub: account holders (billing, credits, invites) and players
-// (every household player, by level) as two views of the same tab, so the
-// admin never hunts for a separate Players page.
+// (everyone we coach — household players and school pupils, narrowed by level,
+// by school or by the plan their household pays for) as two views of the same
+// tab, so the admin never hunts for a separate Players page.
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";

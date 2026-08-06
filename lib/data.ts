@@ -128,6 +128,9 @@ export const getVenues = unstable_cache(
       .from("venues")
       .select("id,name,unit,address,postcode,lat,lng,photo_url")
       .eq("active", true)
+      // A school campus is not a place a member of the public can turn up to.
+      // This used to depend on the founder remembering to hide it by hand.
+      .eq("is_school", false)
       .order("name");
     return data ?? [];
   },

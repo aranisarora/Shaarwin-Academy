@@ -32,7 +32,13 @@ async function Wizard({ searchParams }: { searchParams: SearchParams }) {
     // near one. Active venues are world-readable (RLS), and naming one is
     // strictly better than a typed guess: it sets venue_id, so a later rename
     // corrects every message rather than leaving frozen copies.
-    supabase.from("venues").select("id,name,unit,lat,lng").eq("active", true),
+    // School campuses are excluded by their own flag, not by the founder
+    // remembering to hide them — a client can't book a private at a school.
+    supabase
+      .from("venues")
+      .select("id,name,unit,lat,lng")
+      .eq("active", true)
+      .eq("is_school", false),
   ]);
 
   const coaches = ((coachesRes.data ?? []) as CoachRosterRow[]).map((c) => ({

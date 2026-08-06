@@ -43,11 +43,15 @@ import {
 //   restoreGroupClass ................ notifies nobody
 //   cancelAllFuturePrivateSessions ... notifies the client
 //   reassignClassCoach ............... notifies the coach(es)
-//   deleteGroupClass ................. notifies nobody (only unbooked classes delete)
+//   deleteGroupClass ................. notifies nobody when the class holds no live booking;
+//                                      when it does, `force` ends it first, so everyone
+//                                      booked + their coach get the cancellation
 //   planClassRemoval ................. notifies nobody (read-only preview)
-//   bulkRemoveClasses ................ deletes notify nobody; the classes it *ends* notify
-//                                      everyone booked + their coaches, ONE message each no
-//                                      matter how many classes went (see endGroupClassesCore)
+//   bulkRemoveClasses ................ classes holding nothing delete silently; every class
+//                                      it ends — including the ones it ends AND deletes
+//                                      (deleteBooked) — notifies everyone booked + their
+//                                      coaches, ONE message each no matter how many classes
+//                                      went (see endGroupClassesCore)
 //   topUpSessions .................... notifies nobody
 //   createOneOffClass ................ notifies nobody (nothing booked yet)
 //   addSchoolPlayer .................. notifies nobody
@@ -167,15 +171,23 @@ export async function reassignClassCoach(
   return { ok: true, changed: result.changed, skipped: result.skipped };
 }
 
-/** `force` deletes an already-ended class together with the history it holds —
- * the sheet asks a second time before passing it. */
-export async function deleteGroupClass(classId: string, force = false): Promise<Result> {
+/** `force` deletes a class together with the history it holds — and, if people
+ * are still booked on it, cancels their sessions and tells them on the way. The
+ * sheet asks a second time before passing it. */
+export async function deleteGroupClass(
+  classId: string,
+  force = false
+): Promise<Result & { cancelledBookings?: number; unmarkedBookings?: number }> {
   const { supabase, founder } = await requireFounder();
   if (!founder) return { ok: false, error: "Founder only." };
   const result = await deleteGroupClassCore(supabase, founder.id, classId, force);
   if (!result.ok) return result;
   refresh();
-  return { ok: true };
+  return {
+    ok: true,
+    cancelledBookings: result.cancelledBookings,
+    unmarkedBookings: result.unmarkedBookings,
+  };
 }
 
 /** What a bulk removal would do, so the confirm step can say it out loud. */
@@ -189,11 +201,20 @@ export async function planClassRemoval(
 }
 
 /** Clear a selection of weekly classes — delete what carries no history, and
- * whichever of the two risky buckets the founder opted into. */
+ * whichever of the risky buckets the founder opted into. */
 export async function bulkRemoveClasses(
   classIds: string[],
-  opts: { endBooked?: boolean; purgeEnded?: boolean }
-): Promise<Result & { deleted?: number; ended?: number; purged?: number; kept?: number }> {
+  opts: { endBooked?: boolean; purgeEnded?: boolean; deleteBooked?: boolean }
+): Promise<
+  Result & {
+    deleted?: number;
+    ended?: number;
+    purged?: number;
+    deletedBooked?: number;
+    kept?: number;
+    warning?: string;
+  }
+> {
   const { supabase, founder } = await requireFounder();
   if (!founder) return { ok: false, error: "Founder only." };
   const result = await bulkRemoveClassesCore(supabase, founder.id, classIds, opts);

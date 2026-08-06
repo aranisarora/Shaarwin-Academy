@@ -35,6 +35,11 @@
   --text: var(--ink);
   --text-2: var(--slate);
   --line: var(--line-l);
+
+  /* The Studio shell's top bar, as a variable rather than a `top-14` copied into
+   * every surface that has to sit under it. The admin week pager sticks here;
+   * when the bar changes height it follows. */
+  --header-h: 3.5rem;
 }
 
 [data-mood="stage"] {
@@ -80,6 +85,14 @@
   --radius-card: 12px;
   --radius-control: 8px;
   --shadow-sheet: 0 8px 24px rgb(11 12 15 / 0.06);
+}
+
+/* Installed on a home screen this is an app, not a page: pulling down at the top
+ * must not reload the whole shell, and overscrolling a list must not rubber-band
+ * the document behind it. Containment starts here and is repeated on every
+ * scroller that sits inside something else (sheets, chip rows). */
+html {
+  overscroll-behavior-y: none;
 }
 
 body {
@@ -182,24 +195,44 @@ body {
   to { opacity: 1; }
 }
 
+/* One class, both shapes of the sheet. It used to carry `md:sheet-panel-side`
+ * alongside this — but these are plain classes, not Tailwind utilities, so the
+ * variant generated nothing and the desktop side panel slid up from the floor.
+ * The breakpoint lives here instead, where it actually fires. */
 .sheet-panel-bottom {
   animation: sheet-up 320ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-.sheet-panel-side {
-  animation: sheet-in-right 280ms cubic-bezier(0.22, 1, 0.36, 1);
+@media (min-width: 768px) {
+  .sheet-panel-bottom {
+    animation: sheet-in-right 280ms cubic-bezier(0.22, 1, 0.36, 1);
+  }
 }
 
 .sheet-backdrop {
   animation: fade-in 200ms ease-out;
 }
 
+/* iOS does not shrink the layout viewport when the keyboard opens (Android does,
+ * via the viewport export's interactiveWidget), so a sheet's Save button ends up
+ * underneath it. The panel lifts itself by whatever visualViewport says is
+ * covered; --kb is 0 until there's a keyboard, and always 0 on the desktop side
+ * panel, which is full-height and anchored top and bottom anyway. */
+.sheet-lift {
+  bottom: var(--kb, 0px);
+}
+
+@media (min-width: 768px) {
+  .sheet-lift {
+    bottom: 0;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .spinner-ball { animation: none; }
   .reveal.is-visible,
   .ball-drop,
-  .sheet-panel-bottom,
-  .sheet-panel-side {
+  .sheet-panel-bottom {
     animation: fade-in 200ms ease-out;
   }
   html { scroll-behavior: auto; }
@@ -214,9 +247,106 @@ body {
   background: linear-gradient(to top, rgb(11 12 15 / 0.86) 0%, rgb(11 12 15 / 0.35) 55%, transparent 100%);
 }
 
+/* ── Touch ───────────────────────────────────────────────────────────────── */
+/*
+ * A finger has no cursor and leaves no trail, so a tap that doesn't visibly
+ * answer reads as a dead control — and Tailwind's reset already throws away the
+ * grey flash the OS would have drawn for us. Two shapes of the same idea:
+ *
+ *   .pressable      shrinks a thing you aim at — a card, a chip, a button.
+ *   .pressable-row  tints a full-width row or tab, where a scale would look
+ *                   like the whole screen wobbled.
+ *
+ * cursor:pointer is not decoration here: Safari only applies :active to
+ * elements it considers clickable, and touch-action:manipulation drops the
+ * double-tap-to-zoom wait before the press even registers.
+ */
+.pressable,
+.pressable-row {
+  touch-action: manipulation;
+  -webkit-user-select: none;
+  user-select: none;
+  transition:
+    transform 120ms cubic-bezier(0.22, 1, 0.36, 1),
+    background-color 120ms ease-out,
+    border-color 120ms ease-out,
+    color 120ms ease-out,
+    opacity 120ms ease-out;
+}
+
+/* Only while the control will actually do something. These rules sit outside
+ * @layer, so they outrank anything Tailwind writes into `utilities` no matter
+ * how specific — a `disabled:cursor-not-allowed` on a pressable button would
+ * quietly lose, and the week arrows would keep promising a press while the week
+ * they point at is still loading. */
+.pressable:not(:disabled),
+.pressable-row:not(:disabled) {
+  cursor: pointer;
+}
+
+.pressable:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.pressable-row:active:not(:disabled) {
+  background-color: color-mix(in srgb, var(--text) 7%, transparent);
+}
+
+/* Someone who has asked for less motion still needs to know the tap landed, so
+ * the scale becomes a dim rather than nothing at all. */
+@media (prefers-reduced-motion: reduce) {
+  .pressable:active:not(:disabled) {
+    transform: none;
+    opacity: 0.72;
+  }
+}
+
+/* Hit-slop: grows a small control's tappable area by 8px on every side without
+ * moving a pixel of it — for a knob or a glyph that the eye reads as big enough
+ * and the thumb doesn't.
+ *
+ * .hit-slop-r is the same idea for a control with a neighbour pressed right up
+ * against it, and it grows away from that neighbour instead. The ✕ that clears
+ * a filter chip sits immediately right of the button that opens it, and slop on
+ * that shared edge paints *over* the neighbour — it comes later in the DOM, so
+ * it wins — swallowing the last 8px of a button whose right padding is exactly
+ * 8px. Aim at the far edge of "open this filter" and you'd clear it instead:
+ * the precise mistake the slop was added to prevent. Leave the boundary where
+ * the eye puts it. */
+.hit-slop,
+.hit-slop-r {
+  position: relative;
+}
+
+.hit-slop::after,
+.hit-slop-r::after {
+  content: "";
+  position: absolute;
+  inset: -8px;
+}
+
+.hit-slop-r::after {
+  left: 0;
+}
+
 /* Safe-area for BottomTabBar */
 .pb-safe {
   padding-bottom: max(env(safe-area-inset-bottom), 0px);
+}
+
+/* Anything that floats above the bottom tab bar — the FAB, the install card, the
+ * pending-assessment card, the bulk-action bars. With viewport-fit=cover the bar
+ * is 56px plus the home indicator, so the offset has to be measured from the
+ * inset, not guessed at. One place, so the copies stop drifting apart. */
+.above-tabbar {
+  bottom: calc(env(safe-area-inset-bottom) + 4.75rem);
+}
+
+@media (min-width: 1024px) {
+  /* No tab bar on desktop — these sit in the corner instead. */
+  .above-tabbar {
+    bottom: 1.5rem;
+  }
 }
 
 /* Deep-link landing ring — a "needs your attention" row on Today scrolls the

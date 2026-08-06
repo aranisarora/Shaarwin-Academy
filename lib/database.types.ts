@@ -1504,6 +1504,7 @@ export type Database = {
           created_at: string
           endpoint: string
           id: string
+          last_seen_at: string
           p256dh: string
           user_agent: string | null
           user_id: string
@@ -1513,6 +1514,7 @@ export type Database = {
           created_at?: string
           endpoint: string
           id?: string
+          last_seen_at?: string
           p256dh: string
           user_agent?: string | null
           user_id: string
@@ -1522,6 +1524,7 @@ export type Database = {
           created_at?: string
           endpoint?: string
           id?: string
+          last_seen_at?: string
           p256dh?: string
           user_agent?: string | null
           user_id?: string
@@ -1904,6 +1907,7 @@ export type Database = {
           address_details: Json | null
           created_at: string
           id: string
+          is_school: boolean
           lat: number
           lng: number
           name: string
@@ -1918,6 +1922,7 @@ export type Database = {
           address_details?: Json | null
           created_at?: string
           id?: string
+          is_school?: boolean
           lat: number
           lng: number
           name: string
@@ -1932,6 +1937,7 @@ export type Database = {
           address_details?: Json | null
           created_at?: string
           id?: string
+          is_school?: boolean
           lat?: number
           lng?: number
           name?: string

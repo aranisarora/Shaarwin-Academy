@@ -65,7 +65,7 @@ export default function MorePage() {
               <li key={item.href}>
                 <Link
                   href={item.href}
-                  className="flex items-center justify-between gap-3 px-5 py-4 transition-colors hover:text-ember"
+                  className="pressable-row flex items-center justify-between gap-3 px-5 py-4 hover:text-ember"
                 >
                   <span>
                     <span className="block font-medium">{item.label}</span>

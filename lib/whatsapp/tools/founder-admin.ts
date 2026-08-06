@@ -163,18 +163,36 @@ const endClass: WaTool = {
   },
 };
 
+// Two calls, like the admin sheet: the first prices the delete, the second goes
+// through with it. Without `force` this tool was a dead end — every booked class
+// came back "confirm to delete it" and there was nothing the assistant could
+// confirm with, where the old wording at least pointed at end_class.
 const deleteClass: WaTool = {
   name: "delete_class",
   description:
-    "Permanently delete a class that nobody ever booked (created by mistake). Fails if it has bookings — end it instead. Confirm first.",
+    "Permanently delete a class — the record itself, not just its sessions. On a class that holds bookings the first call deletes nothing and reports exactly what it would cost (live places that get cancelled, history that is destroyed). Relay that cost to the founder, and only call again with force:true once he has said yes to it. Deleting a class people still hold places in cancels those sessions and tells everyone affected first. To stop a class but keep its record and its history, use end_class instead.",
   input_schema: {
     type: "object",
-    properties: { class_id: { type: "string" } },
+    properties: {
+      class_id: { type: "string" },
+      force: {
+        type: "boolean",
+        description:
+          "Set force:true only after the founder has confirmed the cost the previous call reported. Never on the first call.",
+      },
+    },
     required: ["class_id"],
   },
   run: async (input, ctx) => {
-    const result = await deleteGroupClassCore(ctx.supabase!, ctx.profile!.id, String(input.class_id));
-    return result.ok ? ok({ deleted: true }) : fail(result.error ?? "Failed.");
+    const result = await deleteGroupClassCore(
+      ctx.supabase!,
+      ctx.profile!.id,
+      String(input.class_id),
+      Boolean(input.force)
+    );
+    return result.ok
+      ? ok({ deleted: true, cancelled_bookings: result.cancelledBookings ?? 0 })
+      : fail(result.error ?? "Failed.");
   },
 };
 

@@ -13,7 +13,7 @@ type Result = { ok: boolean; error?: string; credentials?: Credentials };
 
 export async function createSchoolAccount(input: {
   venueId: string;
-  fullName: string;
+  /** Optional real address; left out, the core mints one from the venue. */
   email?: string;
 }): Promise<Result> {
   const { supabase, founder } = await requireFounder();

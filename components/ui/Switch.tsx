@@ -25,13 +25,16 @@ export function Switch({
       aria-label={label}
       disabled={disabled}
       onClick={() => onChange(!checked)}
-      className={`relative h-7 w-12 shrink-0 rounded-full transition-colors disabled:opacity-50 ${
+      className={`hit-slop relative h-7 w-12 shrink-0 cursor-pointer rounded-full transition-colors disabled:pointer-events-none disabled:opacity-50 ${
         checked ? "bg-ember" : "bg-line"
       }`}
     >
+      {/* The knob slides on a transform, not on `left`. Animating `left` relayouts
+          the track on every frame; a translate rides the compositor. hit-slop
+          buys back the 8px the 28px-tall track is short of a 44px target. */}
       <span
-        className={`absolute top-1 h-5 w-5 rounded-full bg-ivory transition-all ${
-          checked ? "left-6" : "left-1"
+        className={`absolute left-1 top-1 h-5 w-5 rounded-full bg-ivory transition-transform duration-150 ease-out motion-reduce:transition-none ${
+          checked ? "translate-x-5" : "translate-x-0"
         }`}
       />
     </button>

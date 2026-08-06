@@ -31,7 +31,8 @@ export function ConfirmAction({
    */
   variant?: "destructive" | "ghost" | "subtle";
   keepLabel?: string;
-  /** False lets the trigger sit inline beside other buttons in a row. */
+  /** False lets the trigger — and the armed box behind it — sit inline beside
+   *  other buttons in a row rather than claim the whole width. */
   fullWidth?: boolean;
 }) {
   const [armed, setArmed] = useState(false);
@@ -60,14 +61,35 @@ export function ConfirmAction({
       </Button>
     );
   }
+  // The armed box used to hardcode `w-full`, which read as harmless until you
+  // remember what its *intrinsic* width is: a whole sentence of prompt on one
+  // line, near 600px. Inside a row that doesn't let it shrink, that width is
+  // what the row asks for, and the row wins — the controls hang off the side of
+  // the card, worst on the phone. So it honours fullWidth like the trigger
+  // does, refuses to claim more than its container, and lets the two buttons
+  // wrap onto separate lines rather than squeeze their labels.
   return (
-    <div className="w-full space-y-2 rounded-[8px] border border-line p-3">
+    <div
+      className={`min-w-0 max-w-full space-y-2 rounded-[8px] border border-line p-3 ${
+        fullWidth ? "w-full" : ""
+      }`}
+    >
       <p className="text-sm text-fg-2">{prompt}</p>
-      <div className="grid grid-cols-2 gap-2">
-        <Button variant="ghost" disabled={pending} onClick={() => setArmed(false)}>
+      <div className="flex flex-wrap gap-2">
+        <Button
+          variant="ghost"
+          className="min-w-fit flex-1 basis-32"
+          disabled={pending}
+          onClick={() => setArmed(false)}
+        >
           {keepLabel}
         </Button>
-        <Button variant="destructive" disabled={pending} onClick={onConfirm}>
+        <Button
+          variant="destructive"
+          className="min-w-fit flex-1 basis-32"
+          disabled={pending}
+          onClick={onConfirm}
+        >
           {pending ? <Spinner /> : confirmLabel}
         </Button>
       </div>

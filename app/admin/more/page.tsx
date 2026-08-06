@@ -7,6 +7,11 @@ export const metadata: Metadata = { title: "More" };
 
 const items = [
   {
+    href: "/admin/notifications",
+    label: "Notifications",
+    hint: "Everything we've sent you, including the ops feed",
+  },
+  {
     href: "/admin/coaches",
     label: "Coaches",
     hint: "Profiles, availability & time off",

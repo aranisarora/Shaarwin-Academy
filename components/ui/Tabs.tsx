@@ -49,8 +49,8 @@ export function TabsTrigger({
       role="tab"
       aria-selected={active}
       onClick={() => ctx.setValue(value)}
-      className={`min-h-11 rounded-[6px] px-4 text-sm font-medium transition-colors duration-200 ${
-        active ? "bg-ember text-ivory" : "text-fg-2 hover:text-fg"
+      className={`pressable min-h-11 rounded-[6px] px-4 text-sm font-medium ${
+        active ? "bg-ember text-ivory" : "text-fg-2 hover:text-fg active:text-fg"
       }`}
     >
       {children}

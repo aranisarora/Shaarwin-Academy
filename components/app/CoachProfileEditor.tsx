@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/Button";
 import { Spinner } from "@/components/ui/Spinner";
 import { AddressSearch, type GeocodeHit } from "@/components/app/AddressSearch";
 import { LocationPinMap } from "@/components/app/LocationPinMap";
+import { PushToggle } from "@/components/app/PushToggle";
 import { saveCoachProfile } from "@/app/coach/more/actions";
 
 export function CoachProfileEditor({
@@ -91,6 +92,12 @@ export function CoachProfileEditor({
         {pending ? <Spinner /> : "Save profile"}
       </Button>
       {message && <p className="text-sm text-fg-2">{message}</p>}
+
+      {/* A coach's phone is where the whole class-day loop happens — the T-60
+          prompt, the arrival check, a cover offer. Push is the leg of that loop
+          that has never existed for them, so the switch lives on the screen
+          they already open to change anything about themselves. */}
+      <PushToggle feedHref="/coach/notifications" />
     </div>
   );
 }

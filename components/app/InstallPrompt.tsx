@@ -43,7 +43,12 @@ export function InstallPrompt() {
   if (!show) return null;
 
   return (
-    <div className="pb-safe fixed inset-x-3 bottom-16 z-40 rounded-[12px] border border-line bg-surface-2 p-4 shadow-[var(--shadow-sheet)] lg:bottom-6 lg:left-auto lg:right-6 lg:w-96">
+    // `above-tabbar`, not `pb-safe bottom-16`. The old pair was the wrong idiom
+    // twice over: pb-safe pads the inside of a floating card, which does nothing
+    // for a card that isn't touching the bottom edge, and bottom-16 (64px)
+    // cleared the 56px tab bar by eight pixels — until viewport-fit=cover made
+    // the bar 90px tall and put this card behind it.
+    <div className="above-tabbar fixed inset-x-3 z-40 rounded-[12px] border border-line bg-surface-2 p-4 shadow-[var(--shadow-sheet)] lg:left-auto lg:right-6 lg:w-96">
       <p className="font-medium">Add Sharwin to your home screen</p>
       <p className="mt-1 text-sm text-fg-2">
         {isIos

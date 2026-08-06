@@ -13,7 +13,7 @@ async function Venues() {
   const { supabase } = await requireUser("/admin/venues");
   const { data: venues } = await supabase
     .from("venues")
-    .select("id,name,unit,address,postcode,lat,lng,active,address_details")
+    .select("id,name,unit,address,postcode,lat,lng,active,is_school,address_details")
     .order("name");
 
   return <VenueManager venues={withVenueAddress(venues)} />;

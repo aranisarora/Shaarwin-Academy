@@ -75,11 +75,10 @@ function partOfDay(iso: string): "Morning" | "Afternoon" | "Evening" {
 }
 
 const pill =
-  "min-h-11 shrink-0 snap-start rounded-full border px-4 text-sm font-semibold transition-colors";
-const chip =
-  "min-h-11 rounded-[8px] border px-2 text-sm transition-colors disabled:opacity-40";
+  "pressable min-h-11 shrink-0 snap-start rounded-full border px-4 text-sm font-semibold";
+const chip = "pressable min-h-11 rounded-[8px] border px-2 text-sm disabled:opacity-40";
 const on = "border-ember bg-ember text-ivory";
-const off = "border-line hover:border-ember";
+const off = "border-line hover:border-ember active:border-ember";
 
 export function SlotPicker({
   slots,
@@ -144,8 +143,10 @@ export function SlotPicker({
 
   return (
     <div className="space-y-3">
-      {/* Level 1 — day / weekday selector */}
-      <div className="-mx-1 flex snap-x gap-2 overflow-x-auto px-1 pb-1">
+      {/* Level 1 — day / weekday selector. Contained on both axes: this lives
+          inside a sheet, and swiping past the last day should not scroll the
+          page behind the backdrop or hand the gesture to the browser's back. */}
+      <div className="-mx-1 flex snap-x gap-2 overflow-x-auto overscroll-x-contain px-1 pb-1">
         {groups.map((g) => {
           const isActive = active?.key === g.key;
           return (
@@ -176,7 +177,7 @@ export function SlotPicker({
       </div>
 
       {/* Level 2 — times for the active day */}
-      <div className="max-h-72 overflow-y-auto pr-1">
+      <div className="max-h-72 overflow-y-auto overscroll-contain pr-1">
         {bucketed
           ? (["Morning", "Afternoon", "Evening"] as const).map((part) => {
               const partTimes = times.filter((t) => partOfDay(t) === part);
@@ -205,7 +206,11 @@ export function SlotPicker({
           )}
       </div>
 
-      {/* Running selection — removable, so picks on other days aren't lost. */}
+      {/* Running selection — removable, so picks on other days aren't lost.
+          These are full-height targets rather than the 36px they used to be:
+          they wrap onto their own rows, so there was room and no reason for a
+          "remove the slot I just picked" button to be the hardest thing to hit
+          on the screen. */}
       {selected.length > 0 && (
         <div className="flex flex-wrap gap-2 border-t border-line pt-3">
           {[...selected]
@@ -215,7 +220,7 @@ export function SlotPicker({
                 key={s}
                 type="button"
                 onClick={() => onToggle(s)}
-                className="tnum inline-flex min-h-9 items-center gap-1.5 rounded-full border border-ember bg-ember/10 px-3 text-xs font-medium text-ember"
+                className="pressable tnum inline-flex min-h-11 items-center gap-1.5 rounded-full border border-ember bg-ember/10 px-3 text-xs font-medium text-ember"
               >
                 {mode === "weekly"
                   ? `${weekdayPlural(s)} · ${timeLabel(s)}`

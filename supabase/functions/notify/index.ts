@@ -4,12 +4,20 @@
 //     url := 'https://<ref>.supabase.co/functions/v1/notify',
 //     headers := '{"Authorization": "Bearer <service-role-key>"}'::jsonb)$$);
 //
-// Claims due rows (skip-locked semantics via status flip), tries web push to
-// every subscription, falls back to Resend email, marks sent/failed. After
-// delivery it runs a set of sweeps (waitlist offers, coach prompts, founder
-// escalations, after-class summaries).
+// Claims due rows (skip-locked semantics via status flip), delivers them over
+// web push / WhatsApp / Resend email, marks sent/failed. After delivery it runs
+// a set of sweeps (waitlist offers, coach prompts, founder escalations,
+// after-class summaries).
+//
+// The comment that used to sit here claimed the worker tried "web push, falling
+// back to email". It never did — there were no VAPID keys and no sender, so
+// push was a table with zero rows and a service worker listening for a message
+// nobody sent. deliverPush() below is that missing leg. Read it together with
+// the note above PUSH_ADDITIVE: push is deliberately NOT a cheaper substitute
+// for WhatsApp on anything time-critical.
 
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import * as webpush from "jsr:@negrel/webpush@0.5";
 
 const supabase = createClient(
   Deno.env.get("SUPABASE_URL")!,
@@ -66,6 +74,16 @@ const TWILIO_WA_COACH_NUDGE_SID = Deno.env.get("TWILIO_WA_COACH_NUDGE_SID");
 const TWILIO_WA_COACH_COVER_SID = Deno.env.get("TWILIO_WA_COACH_COVER_SID");
 const TWILIO_WA_CLIENT_ARRIVED_SID = Deno.env.get("TWILIO_WA_CLIENT_ARRIVED_SID");
 const TWILIO_WA_CLIENT_LATE_SID = Deno.env.get("TWILIO_WA_CLIENT_LATE_SID");
+// ── Web push (RFC 8291 / RFC 8292) ──────────────────────────────────────────
+// The public key must be the same string the browser subscribes with
+// (NEXT_PUBLIC_VAPID_PUBLIC_KEY in the app build) — a subscription is bound to
+// the key that created it, so a mismatch here doesn't warn, it just 403s every
+// send. Both are base64url: the public key is the 65-byte uncompressed P-256
+// point, the private key the 32-byte scalar. Unset = push is skipped and the
+// other channels carry everything, exactly as before this existed.
+const VAPID_PUBLIC_KEY = Deno.env.get("VAPID_PUBLIC_KEY");
+const VAPID_PRIVATE_KEY = Deno.env.get("VAPID_PRIVATE_KEY");
+const VAPID_SUBJECT = Deno.env.get("VAPID_SUBJECT") ?? "mailto:hello@sharwinacademy.com";
 const APP_URL = Deno.env.get("APP_URL") ?? "https://sharwinacademy.com";
 const WINDOW_MS = 24 * 60 * 60 * 1000;
 const IST = "Asia/Kolkata";
@@ -198,6 +216,58 @@ const CAP_EXEMPT = new Set([
 // for a session that already happened helps nobody. Dropped (claimed, never
 // delivered) rather than deferred forever.
 const CAP_DROP_AFTER_MS = 3 * 86400000;
+
+// ── Push is ADDITIVE for these, not a substitute ────────────────────────────
+//
+// deliver() is first-success-wins by design, and that is right for the
+// informational tail: if a receipt lands on someone's lock screen there is no
+// reason to also spend a WhatsApp on it. Applied to the whole list, though, it
+// quietly does the opposite of what push is for. Anyone who subscribes STOPS
+// getting WhatsApp — including a coach whose phone is face-down on a bench, on
+// Do Not Disturb, in a hall with no wifi, forty minutes before the class they
+// haven't confirmed. A push banner nobody sees would then count as delivered,
+// and the escalation ladder that exists precisely because the coach is a single
+// point of failure (docs/whatsapp-messaging.md is explicit about there being no
+// redundancy behind them) would fire against a message we told ourselves went
+// out.
+//
+// So for the time-critical set, push goes out AND WhatsApp follows. Two
+// channels for the handful of messages where a miss costs a real session, one
+// channel for everything else. The row records `push+whatsapp` so it still
+// explains itself afterwards.
+//
+// The set is CAP_EXEMPT (already curated as "a miss here causes a real-world
+// failure, not just a quieter phone") plus TRANSACTIONAL (account-critical
+// enough to ignore preferences — a failed payment, a cancelled session, someone
+// waiting on an approval). Deriving it rather than writing a third list is
+// deliberate: two definitions of "urgent" would drift apart within a month.
+const PUSH_ADDITIVE = new Set([...CAP_EXEMPT, ...TRANSACTIONAL]);
+
+// ── A subscription can be valid and still be nobody ─────────────────────────
+//
+// The additive rule above protects the urgent set. It does nothing for the
+// informational tail, and that is where the quieter version of the same failure
+// lives: a push counted as delivered the moment the push SERVICE accepted it,
+// which says nothing at all about whether a human will see it. Self-cleaning
+// only fires on 404/410 — a subscription that is stale but still VALID, a
+// desktop Chrome profile signed into once and never opened again, a second
+// browser on a work laptop, returns 201 indefinitely. One of those permanently
+// absorbed that person's whole tail: booking_confirmed, booking_rescheduled,
+// coach_assigned, coach_changed, payment_receipt, renewal_upcoming,
+// assessment_ready, student_note, monthly_progress, private_session_booked.
+// All of those reach people on WhatsApp today; they would have stopped
+// silently, with the row recording channel_attempted='push' so no failure query
+// would ever have shown it.
+//
+// push_subscriptions.last_seen_at (migration 0060) is the missing fact.
+// PushToggle re-upserts on every mount and a trigger stamps the column, so a
+// device anyone actually opens keeps itself fresh. An endpoint seen inside
+// PUSH_FRESH_MS may end the chain; an older one still GETS the push — it may
+// well be the right device, we just don't know — but WhatsApp follows it.
+// Anything untouched for PUSH_STALE_MS is deleted, because at that point it is
+// only a row that makes our numbers look better than they are.
+const PUSH_FRESH_MS = 30 * 86400000;
+const PUSH_STALE_MS = 90 * 86400000;
 
 // ── Grouped preferences (notification-fix-plan 2.6 / G9) ────────────────────
 //
@@ -368,6 +438,7 @@ Deno.serve(async () => {
   await safeSweep("founder-morning-brief", sweepFounderMorningBrief);
   await safeSweep("renewal-reminders", sweepRenewalReminders);
   await safeSweep("monthly-progress", sweepMonthlyProgress);
+  await safeSweep("stale-push", sweepStalePushSubscriptions);
 
   return new Response(JSON.stringify({ sent, failed }), {
     headers: { "Content-Type": "application/json" },
@@ -454,6 +525,14 @@ function nextMorningIst(): string {
  * only rows that reached a channel — `channel_attempted` is null for feed-only
  * rows (claimed, never delivered) and for pref-muted rows, so neither eats into
  * anyone's daily allowance. (notification-fix-plan 2.2.)
+ *
+ * Push-only rows are excluded, and the reasoning matters. The cap exists to
+ * stop us interrupting a family three times a day on their phone's messaging
+ * app; it was written when every delivery cost a WhatsApp. A push banner is a
+ * different, quieter thing — free, dismissible, and already opt-in per device.
+ * Counting it would mean that turning notifications ON silently REDUCED how
+ * many WhatsApps you could receive, so the feature would punish the people who
+ * adopted it. `push+whatsapp` still counts: a WhatsApp genuinely went out.
  */
 async function deliveredTodayCount(userId: string): Promise<number> {
   const { count } = await supabase
@@ -462,6 +541,7 @@ async function deliveredTodayCount(userId: string): Promise<number> {
     .eq("user_id", userId)
     .eq("status", "sent")
     .not("channel_attempted", "is", null)
+    .neq("channel_attempted", "push")
     .gte("sent_at", istDayStart());
   return count ?? 0;
 }
@@ -1513,12 +1593,28 @@ async function sweepWaitlistOffers() {
 }
 
 /**
- * Outcome of one delivery attempt. `channel` is the last channel we actually
- * tried ("whatsapp" | "email" | "none"); `error` is the accumulated reason
- * chain, written to notifications.error so a failed row explains itself.
+ * Outcome of one delivery attempt. `channel` is what actually carried it, or
+ * the last channel we tried when nothing did ("push" | "whatsapp" | "email" |
+ * "none"); `error` is the accumulated reason chain, written to
+ * notifications.error so a failed row explains itself.
  * (notification-fix-plan 1.5.)
+ *
+ * Since push arrived it can also be compound — "push+whatsapp", "push+email" —
+ * for the PUSH_ADDITIVE types, where both legs are sent on purpose. Anything
+ * reading this column should treat it as a set, not an enum: `= 'push'` means
+ * push ALONE, which is why deliveredTodayCount can exclude it safely.
  */
 type Attempt = { ok: boolean; channel: string; error?: string };
+
+/**
+ * Push needs one extra bit that no other channel does. `ok` answers "may this
+ * end the chain?", which for push means a device somebody still opens took it
+ * (see PUSH_FRESH_MS). `accepted` answers "did a banner go out at all?", which
+ * is what the compound channel label should record — a push that reached only a
+ * long-dormant browser is still a push, it just isn't a reason to skip the
+ * WhatsApp.
+ */
+type PushAttempt = Attempt & { accepted: boolean };
 
 /**
  * K8 — offer any uncovered upcoming session to every eligible coach.
@@ -1565,26 +1661,46 @@ async function deliver(row: {
     .maybeSingle();
   const firstName = (profile?.full_name ?? "").trim().split(/\s+/)[0] || "there";
 
-  // WhatsApp first for linked users. Inside the 24h service window we send rich
+  // Push first, because it is instant and costs nothing — but see PUSH_ADDITIVE:
+  // for the time-critical set it does NOT end the chain, it runs alongside it.
+  // `push.ok` means a device we have reason to believe somebody still opens
+  // accepted it; `push.accepted` means some endpoint took it. The two differ
+  // exactly when every subscription this person has is stale, which is the case
+  // the freshness rule exists for.
+  const push = await deliverPush(row);
+  // Only a *rejected* push is worth writing down. deliverPush reports channel
+  // "none" for the two states that are simply normal — no keys configured, or a
+  // person who has never subscribed — and stamping those on every failed row
+  // would bury the reason that actually explains the failure.
+  const notes: string[] = push.channel === "push" && push.error ? [`push: ${push.error}`] : [];
+  if (push.ok && !PUSH_ADDITIVE.has(row.type)) return { ok: true, channel: "push" };
+
+  /** Push already carried it, so a dead fallback isn't a failed notification. */
+  const orPush = (attempt: Attempt): Attempt =>
+    push.ok ? { ok: true, channel: "push" } : attempt;
+
+  /** What to call the channel once a later leg lands. */
+  const withPush = (channel: string) => (push.accepted ? `push+${channel}` : channel);
+
+  // WhatsApp for linked users. Inside the 24h service window we send rich
   // free-form text; outside it we fall back to the approved template (with the
   // member's name), and only then to email.
   const wa = await deliverWhatsApp(row, firstName);
-  if (wa.ok) return wa;
-  const notes: string[] = wa.error ? [`whatsapp: ${wa.error}`] : [];
+  if (wa.ok) return { ok: true, channel: withPush("whatsapp") };
+  if (wa.error) notes.push(`whatsapp: ${wa.error}`);
 
-  // Email fallback via Resend (web push needs VAPID keys — add them and a
-  // push library here when keys are provisioned; email is the reliable path).
+  // Email fallback via Resend.
   //
   // Previously an unset RESEND_API_KEY returned `true` here — every undeliverable
   // row was silently recorded as sent (G8). Now it fails honestly so the row
   // carries `no_channel` and shows up in the failure query.
   if (!RESEND_KEY) {
     notes.push("email: no_channel");
-    return { ok: false, channel: wa.channel, error: notes.join("; ") };
+    return orPush({ ok: false, channel: wa.channel, error: notes.join("; ") });
   }
   if (!profile?.email) {
     notes.push("email: no_address");
-    return { ok: false, channel: wa.channel, error: notes.join("; ") };
+    return orPush({ ok: false, channel: wa.channel, error: notes.join("; ") });
   }
 
   const deepLink = `${Deno.env.get("APP_URL") ?? "http://localhost:3000"}${row.data?.url ?? "/app"}`;
@@ -1609,10 +1725,265 @@ async function deliver(row: {
         </div>`,
     }),
   });
-  if (res.ok) return { ok: true, channel: "email" };
+  if (res.ok) return { ok: true, channel: withPush("email") };
   const detail = (await res.text().catch(() => "")).slice(0, 200);
   notes.push(`email: ${res.status} ${detail}`.trim());
-  return { ok: false, channel: "email", error: notes.join("; ") };
+  return orPush({ ok: false, channel: "email", error: notes.join("; ") });
+}
+
+// ---------------------------------------------------------------------------
+// Web push
+//
+// The leg that was missing for two years. push_subscriptions, its RLS, the
+// browser subscribe flow and the service worker's push handler all existed and
+// all worked; nothing ever signed a VAPID token and POSTed to an endpoint, so
+// the table sat at zero rows against 55 profiles and not one push was ever
+// attempted. RFC 8291 (payload encryption) and RFC 8292 (the VAPID JWT) are
+// handled by jsr:@negrel/webpush — hand-rolling AES128GCM + HKDF + ECDH here
+// would be a fine way to ship a bug nobody can see, since a botched envelope
+// fails as a silent 400 from the push service, not as an error anyone reads.
+// ---------------------------------------------------------------------------
+
+// Built once per worker instance and reused across the batch: importing the
+// keys and generating the ECDH pair is real work, and a busy tick sends to
+// dozens of endpoints. Cached as the promise, not the value, so two concurrent
+// callers share one build.
+let pushServerOnce: Promise<webpush.ApplicationServer | null> | null = null;
+
+function applicationServer(): Promise<webpush.ApplicationServer | null> {
+  if (!pushServerOnce) pushServerOnce = buildApplicationServer();
+  return pushServerOnce;
+}
+
+async function buildApplicationServer(): Promise<webpush.ApplicationServer | null> {
+  if (!VAPID_PUBLIC_KEY || !VAPID_PRIVATE_KEY) return null;
+  try {
+    // The keys are stored the way the browser wants them (raw base64url); the
+    // library wants JWK. x and y are just the two halves of the uncompressed
+    // point, so the conversion is a slice, not a computation.
+    const point = b64uBytes(VAPID_PUBLIC_KEY);
+    if (point.length !== 65 || point[0] !== 0x04) {
+      throw new Error("VAPID_PUBLIC_KEY is not a base64url raw P-256 point");
+    }
+    const x = b64uText(point.slice(1, 33));
+    const y = b64uText(point.slice(33, 65));
+    // Round-tripped rather than used as-is, so a key pasted with padding or in
+    // standard base64 still imports — JWK accepts unpadded base64url only.
+    const d = b64uText(b64uBytes(VAPID_PRIVATE_KEY));
+
+    const vapidKeys = await webpush.importVapidKeys(
+      {
+        publicKey: { kty: "EC", crv: "P-256", x, y },
+        privateKey: { kty: "EC", crv: "P-256", x, y, d },
+      },
+      { extractable: false }
+    );
+    return await webpush.ApplicationServer.new({
+      contactInformation: VAPID_SUBJECT,
+      vapidKeys,
+    });
+  } catch (err) {
+    // Loud in the logs, quiet in production: a malformed key disables push and
+    // leaves WhatsApp and email exactly as they were.
+    console.error("notify: VAPID keys unusable — push disabled", err);
+    return null;
+  }
+}
+
+/**
+ * Send one notification to every device this person has subscribed. Returns the
+ * same Attempt shape as the other deliverers so `channel_attempted` gets
+ * stamped and a failure explains itself, plus `accepted` — see PUSH_FRESH_MS.
+ *
+ * Fans out rather than picking one: a coach has a phone and often a laptop, and
+ * we have no idea which one is in their hand. One endpoint that we last heard
+ * from recently accepting is enough to call it delivered; an endpoint nobody
+ * has opened in a month gets the push but is not allowed to end the chain.
+ */
+async function deliverPush(row: {
+  id: string;
+  user_id: string;
+  type: string;
+  title: string;
+  body: string;
+  data: { url?: string } & Record<string, unknown>;
+}): Promise<PushAttempt> {
+  const server = await applicationServer();
+  if (!server) return { ok: false, accepted: false, channel: "none", error: "not_configured" };
+
+  // Service-role client, so the "own push subscriptions" RLS policy doesn't
+  // apply — the worker sends on someone's behalf, it doesn't read as them.
+  const { data: subs } = await supabase
+    .from("push_subscriptions")
+    .select("id,endpoint,p256dh,auth,last_seen_at")
+    .eq("user_id", row.user_id);
+  if (!subs?.length) {
+    return { ok: false, accepted: false, channel: "none", error: "no_subscription" };
+  }
+
+  const d = row.data ?? {};
+  const urgent = PUSH_ADDITIVE.has(row.type);
+  const payload = JSON.stringify({
+    title: row.title,
+    // Push services cap the encrypted payload (4KB on most, less on some), and
+    // an over-long body is rejected wholesale rather than truncated. Nothing we
+    // send is near this; the slice is so a future long one degrades instead.
+    body: (row.body ?? "").slice(0, 500),
+    tag: pushTagFor(row.type, d, row.id),
+    actions: pushActionsFor(row.type, d),
+    data: {
+      url: String(d.url ?? "/app"),
+      type: row.type,
+      session_id: d.session_id ?? null,
+      notification_id: row.id,
+    },
+  });
+
+  const freshAfter = Date.now() - PUSH_FRESH_MS;
+  let delivered = 0;
+  let deliveredFresh = 0;
+  const notes: string[] = [];
+  for (const sub of subs) {
+    try {
+      await server
+        .subscribe({
+          endpoint: sub.endpoint,
+          keys: { p256dh: sub.p256dh, auth: sub.auth },
+        })
+        .pushTextMessage(payload, {
+          urgency: urgent ? webpush.Urgency.High : webpush.Urgency.Normal,
+          // A "your class starts in an hour" that surfaces tomorrow morning is
+          // worse than one that never arrives, so the urgent set expires in an
+          // hour. The rest keeps a day, in case a phone is off overnight.
+          ttl: urgent ? 3600 : 86400,
+        });
+      delivered++;
+      if (new Date(sub.last_seen_at).getTime() >= freshAfter) deliveredFresh++;
+    } catch (err) {
+      const status = err instanceof webpush.PushMessageError ? err.response.status : 0;
+      if (status === 404 || status === 410) {
+        // The browser threw this subscription away (uninstalled, cleared site
+        // data, rotated endpoint). Dead endpoints are the reason push tables
+        // rot, so it self-cleans here rather than failing forever.
+        await supabase.from("push_subscriptions").delete().eq("id", sub.id);
+        notes.push(`gone_${status}`);
+      } else {
+        notes.push(status ? String(status) : String(err).slice(0, 80));
+      }
+    }
+  }
+
+  if (deliveredFresh > 0) return { ok: true, accepted: true, channel: "push" };
+  // Accepted, but only by devices nobody has opened in a month. The push is out
+  // there; we just refuse to let it stand in for the WhatsApp.
+  if (delivered > 0) {
+    return { ok: false, accepted: true, channel: "push", error: "stale_endpoints_only" };
+  }
+  return {
+    ok: false,
+    accepted: false,
+    channel: "push",
+    error: notes.join(", ") || "no_endpoint_accepted",
+  };
+}
+
+/**
+ * Drop subscriptions no browser has re-upserted in PUSH_STALE_MS. PushToggle
+ * refreshes on every mount, so anything this old belongs to a browser profile
+ * nobody opens — and keeping it costs a wasted encrypt-and-POST per message
+ * plus a row that makes the push table look healthier than it is.
+ */
+async function sweepStalePushSubscriptions() {
+  await supabase
+    .from("push_subscriptions")
+    .delete()
+    .lt("last_seen_at", new Date(Date.now() - PUSH_STALE_MS).toISOString());
+}
+
+// The three prompts one coach gets about one session, in the order they arrive.
+// They share a tag on purpose — see pushTagFor.
+const COACH_SESSION_PROMPTS = new Set([
+  "coach_before_class",
+  "coach_confirm_nudge_2",
+  "coach_arrival_check",
+]);
+
+/**
+ * The tray tag — which banner a new one replaces.
+ *
+ * This used to be `${type}:${session}` with a comment claiming it stopped three
+ * reminders about one 6:30 session stacking up. It did the opposite: those
+ * three prompts are three different TYPES, so they got three different tags and
+ * stacked exactly as described, while alreadyFired() already guarantees one row
+ * per (type, session, coach) — so the tag could never collide and `renotify`
+ * never fired. A mechanism that was inert while its comment described it as the
+ * fix.
+ *
+ * Keyed on the session for the coach prompt family, it now does the thing:
+ * "have you reached?" replaces "are you coming?" instead of sitting under it,
+ * and a coach glancing at a lock screen sees the question we want answered now
+ * rather than three of them. Everything else keeps the per-type key, where the
+ * tag is only a safety net against a duplicate that alreadyFired() missed.
+ */
+function pushTagFor(type: string, d: Record<string, unknown>, id: string): string {
+  const session = d.session_id ? String(d.session_id) : null;
+  if (session && COACH_SESSION_PROMPTS.has(type)) return `coach:${session}`;
+  return `${type}:${String(d.session_id ?? d.booking_id ?? id)}`;
+}
+
+/**
+ * The buttons on a push notification — the push mirror of
+ * interactiveContentFor(), keyed off the same types and worded the same way, so
+ * a coach who has been tapping "Yes, I'm coming" in WhatsApp finds the same
+ * words on their lock screen.
+ *
+ * Two deliberate limits. Browsers render at most two (the service worker caps
+ * to whatever Notification.maxActions says), and WebKit renders none at all —
+ * so every one of these is also reachable by tapping the notification body and
+ * landing on data.url, which is the only path an iPhone ever takes.
+ *
+ * "Can't make it" is an `open`, not an action: it starts a cover search and
+ * can't be undone from a tray, which is why WhatsApp asks a second question
+ * before committing it. It opens the session screen, where that confirm step
+ * already lives. Anything without a session_id gets no buttons, because there
+ * would be nothing for the server to act on.
+ */
+function pushActionsFor(
+  type: string,
+  d: Record<string, unknown>
+): { action: string; title: string }[] {
+  if (!d.session_id) return [];
+  switch (type) {
+    case "coach_before_class":
+    case "coach_confirm_nudge_2":
+      return [
+        { action: "coach_confirm", title: "Yes, I'm coming" },
+        { action: "open", title: "Can't make it" },
+      ];
+    case "coach_arrival_check":
+      return [
+        { action: "coach_arrived", title: "I've arrived" },
+        { action: "coach_late", title: "Running late" },
+      ];
+    default:
+      return [];
+  }
+}
+
+/** base64url (padded or not, standard or url alphabet) → bytes. */
+function b64uBytes(value: string): Uint8Array {
+  const normalised = value.replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(normalised + "=".repeat((4 - (normalised.length % 4)) % 4));
+  const bytes = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+  return bytes;
+}
+
+/** bytes → unpadded base64url, the only spelling JWK accepts. */
+function b64uText(bytes: Uint8Array): string {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
 async function deliverWhatsApp(

@@ -7,7 +7,33 @@ covers the *messages*.
 
 Everything is one table. `notifications` rows are inserted by Postgres triggers
 and RPCs, then claimed once a minute by the `notify` edge function, which
-decides the channel: **web push → WhatsApp → email**, first one that works.
+decides the channel.
+
+> **Correction (2026-08-06).** This line used to say the worker tried "web push
+> → WhatsApp → email, first one that works". It never did. There was no sender:
+> `deliver()` went WhatsApp → email, and the comment where push should have been
+> said it was waiting on VAPID keys. `push_subscriptions` held **0 rows against
+> 55 profiles**, and of 5,171 notifications `channel_attempted` was email 823,
+> whatsapp 637, null 3,711 — **zero pushes, ever**. The order below is the one
+> that is now actually implemented.
+
+**The order, as built.** Push first, then WhatsApp, then email — but with one
+rule that is not "first one that works":
+
+| Types | Behaviour |
+| --- | --- |
+| `PUSH_ADDITIVE` — every `CAP_EXEMPT` and `TRANSACTIONAL` type | Push **and** WhatsApp. Both legs go out; the row records `push+whatsapp`. |
+| Everything else (the informational tail) | First one that works. A push that lands ends the chain. |
+
+The additive rule is the whole design decision, so it is worth stating why.
+First-success-wins applied to a coach prompt means anyone who turns push on
+*stops* getting WhatsApp — including a coach whose phone is face-down on a bench
+on Do Not Disturb, forty minutes before a class they haven't confirmed. A banner
+nobody sees would count as delivered, and the escalation ladder that exists
+precisely because a coach has no redundancy behind them
+(`whatsapp-messaging.md`) would fire against a message we had told ourselves
+went out. Two channels for the handful of messages where a miss costs a real
+session; one channel for receipts and news.
 
 > `notify` has **no autodeploy**. Editing `supabase/functions/notify/index.ts`
 > and pushing changes nothing in production until someone runs
@@ -96,6 +122,190 @@ If you have read about a **morning briefing** (`founder_morning_brief`,
 `coach_day_ahead`, `household_day_ahead`), that is a **proposal** in
 `whatsapp-messaging.md` §10 and has never been built. The worker runs eight
 sweeps; none of them is a morning brief.
+
+---
+
+## 2b. Web push — the leg that was missing
+
+Built 2026-08-06. Everything except the sender had existed for two years: the
+`push_subscriptions` table and its RLS, the browser subscribe flow, and the
+service worker's `push` / `notificationclick` handlers. Nothing ever signed a
+VAPID token and POSTed to an endpoint, so all of it sat there working perfectly
+on a message that was never sent.
+
+### The path a push takes
+
+| Step | Where |
+| --- | --- |
+| A device subscribes and stores `{endpoint, p256dh, auth}` | `lib/push.ts` → `push_subscriptions` |
+| The worker reads every subscription for that user (service role, bypasses RLS) | `deliverPush()` in `supabase/functions/notify/index.ts` |
+| VAPID JWT + RFC 8291 payload encryption | `jsr:@negrel/webpush` — **not hand-rolled**; a botched envelope fails as a silent 400 from the push service, which is the worst possible failure mode |
+| The browser wakes the worker and draws the banner | `public/sw.js`, `push` handler |
+| A tap on a button runs the same RPC WhatsApp would | `public/sw.js` → `app/api/push-action/route.ts` |
+
+A dead endpoint (404 / 410 Gone) deletes its own row, so the table self-cleans
+instead of accumulating subscriptions that can never deliver again.
+
+### A valid subscription is not the same as a person
+
+The rule that keeps the informational tail alive, and the one to read before
+touching `deliverPush()`. Self-cleaning on 404/410 only catches endpoints the
+browser has thrown away. A subscription that is **stale but still valid** — a
+desktop Chrome profile signed into once and never opened again, a second browser
+on a work laptop — returns 201/202 for ever. Counting that as delivered let a
+single forgotten browser absorb someone's whole informational tail
+(`booking_confirmed`, `payment_receipt`, `assessment_ready`, `monthly_progress`
+and the rest), which reaches them on WhatsApp today. The row would have recorded
+`channel_attempted='push'`, so no failure query would ever have shown it.
+
+| | |
+| --- | --- |
+| The fact | `push_subscriptions.last_seen_at` (migration `0060`), stamped by a trigger on every insert or update |
+| Who stamps it | `refreshPush()` runs on every `PushToggle` mount and re-upserts, so a device anyone opens keeps itself fresh |
+| Fresh — may end the chain | seen within **30 days** (`PUSH_FRESH_MS`) |
+| Stale — push goes out, WhatsApp follows | older than that; the row records `push+whatsapp` and, on a failure, `push: stale_endpoints_only` |
+| Pruned | untouched for **90 days** (`PUSH_STALE_MS`), by the `stale-push` sweep |
+
+`deliverPush()` therefore returns one bit more than the other channels: `ok`
+("may this end the chain?") and `accepted` ("did a banner go out at all?"). They
+differ exactly when every subscription a person holds is stale.
+
+### Two people, one browser
+
+`endpoint` is globally UNIQUE and a browser profile has exactly one, so the
+second person to sign in on a shared laptop or a family iPad collides with the
+row the first left behind — and the `own push subscriptions` policy hides that
+row from both of them, so Postgres refuses the merge with `42501` rather than
+performing it. The browser cannot delete what RLS won't show it, so
+`lib/push.ts` hands the write to `/api/push-action`, which clears the endpoint
+with the service role and writes it again for whoever is signed in. Taking an
+endpoint off another account is deliberate: an endpoint URL is known only to the
+browser holding it and to us, and the alternative is a shared device that can
+never subscribe again.
+
+### The tray tag
+
+`pushTagFor()` keys the three coach prompts about one session —
+`coach_before_class`, `coach_confirm_nudge_2`, `coach_arrival_check` — on
+`coach:<session_id>`, so "have you reached?" **replaces** "are you coming?" in
+the tray instead of stacking three banners about one 6:30 class, and `renotify`
+makes the replacement buzz. Everything else keeps a per-type key, where the tag
+is only a safety net: `alreadyFired()` already guarantees one row per (type,
+session, person).
+
+### Environment variables
+
+Three, and the public one has to match on both sides — a subscription is bound
+to the key that created it, so a mismatch doesn't warn, it 403s every send.
+
+| Variable | Where it goes | Why |
+| --- | --- | --- |
+| `NEXT_PUBLIC_VAPID_PUBLIC_KEY` | **Vercel** (all environments) + `.env.local` | Baked into the client bundle; `lib/push.ts` subscribes with it. Absent → the toggle honestly says "Push isn't switched on for the academy yet" instead of the old "email on this device". |
+| `VAPID_PUBLIC_KEY` | **Supabase function secret** | Same value. The worker needs it to derive the JWK it signs with. |
+| `VAPID_PRIVATE_KEY` | **Supabase function secret** | Read from `Deno.env` only. Never in the repo, never `NEXT_PUBLIC_`. |
+| `VAPID_SUBJECT` | **Supabase function secret** (optional) | The `mailto:` a push service contacts about our traffic. Defaults to `mailto:hello@sharwinacademy.com`. |
+
+```bash
+supabase secrets set \
+  VAPID_PUBLIC_KEY=… \
+  VAPID_PRIVATE_KEY=… \
+  VAPID_SUBJECT=mailto:hello@sharwinacademy.com
+supabase functions deploy notify     # nothing above takes effect without this
+```
+
+Then set `NEXT_PUBLIC_VAPID_PUBLIC_KEY` in Vercel and redeploy the app — it is a
+build-time value, so a redeploy is required, not just a restart.
+
+Rotating the keys invalidates every existing subscription. `lib/push.ts` notices
+(it compares the stored `applicationServerKey`), drops the stale subscription and
+re-subscribes on the next visit, so nobody has to be told to do anything.
+
+### Buttons, and the iOS caveat that shapes them
+
+Push notifications carry the same actions the WhatsApp templates do, worded the
+same way, derived server-side in `pushActionsFor()`:
+
+| Type | Buttons |
+| --- | --- |
+| `coach_before_class`, `coach_confirm_nudge_2` | Yes, I'm coming · Can't make it |
+| `coach_arrival_check` | I've arrived · Running late |
+
+Two constraints decide the shape of all of it:
+
+- **Browsers draw at most two**, and silently drop the rest — the worker caps to
+  `Notification.maxActions` before showing.
+- **WebKit draws none.** Safari has never implemented notification actions; on
+  iOS the array is ignored entirely (reported against 16.4 and unchanged since),
+  and Safari 18.4's Declarative Web Push added a navigable URL for the
+  notification *body*, not custom buttons. On top of that iOS grants the Push API
+  only to a web app that has been **added to the Home Screen** — in a Safari tab
+  there is no `PushManager` at all.
+
+So the rule is: **every action must also be reachable by tapping the body.**
+Buttons are a shortcut for Android and desktop, never the only route. The
+service worker treats no-action, `open`, and any action it doesn't recognise
+identically — it opens `data.url`. `PushToggle` reports the iOS case as its own
+state (`needs_install`) and says what to do about it, rather than calling the
+device unsupported.
+
+"Can't make it" is deliberately **not** a one-tap action. It starts a cover
+search and can't be undone from a tray, which is why WhatsApp asks a second
+question first; the push version opens the session screen where that confirm
+step already lives.
+
+### Push does not eat the WhatsApp allowance
+
+`deliveredTodayCount()` counts rows with a non-null `channel_attempted` against
+`DAILY_SEND_CAP = 3`. Rows whose channel is exactly `push` are excluded. The cap
+was written to stop us interrupting a family three times a day on their
+messaging app; counting a free, dismissible, per-device opt-in banner would mean
+that **turning notifications on silently reduced how many WhatsApps you could
+receive** — the feature punishing the people who adopted it. `push+whatsapp`
+still counts, because a WhatsApp genuinely went out.
+
+Read `channel_attempted` as a set, not an enum: `= 'push'` means push *alone*.
+
+### Subscribing, refreshing, unsubscribing
+
+- **All three roles can subscribe.** The only "Enable push" button used to be in
+  `ProfileEditor`, which renders on `/app/profile` only — so coaches and
+  founders, who are ~82% of delivery volume, could not subscribe at all. The
+  shared `PushToggle` now mounts on `/app/profile`, `/coach/more` and
+  `/admin/settings`. The service worker was already registered in all three
+  shells.
+- **It refreshes itself.** `refreshPush()` runs on mount and silently
+  re-subscribes anyone whose permission is already granted, so a rotated
+  endpoint or a row lost server-side repairs on the next visit. It never
+  prompts, and it respects a deliberate opt-out held in `localStorage`.
+- **`pushsubscriptionchange`** in the service worker re-subscribes and POSTs the
+  new endpoint to `/api/push-action`, deleting the old row. The `endpoint`
+  UNIQUE constraint plus `onConflict: 'endpoint'` makes every one of these
+  writes idempotent.
+- **Push can be turned off**, per device, from the same toggle.
+- **Every failure state says the true thing and offers the fix.** Dismissing the
+  permission prompt (tapping outside it — the most common outcome on mobile
+  Chrome) leaves permission at `default`, not `denied`, so it reports `off` and
+  offers the button again rather than sending someone into site settings for a
+  switch that isn't set. A write that doesn't land reports `save_failed` and
+  keeps a retry button; `signed_out` is reserved for a genuinely absent session.
+- **The in-app list is a tab, not a link on a settings screen.** A push banner
+  keeps no history, so the person most likely to need the list is the one who
+  just dismissed one — and they are not on the settings screen. `/coach/
+  notifications` and `/admin/notifications` are in the coach bar and the founder
+  rail; the founder's is also the only surface rendering eleven of the thirteen
+  `FEED_ONLY` `ops_*` types.
+
+### Offline
+
+A push banner deep-links into the app, and an installed app with no signal used
+to show the browser's dinosaur page inside what the user believes is our app.
+`/offline` is a static page precached by the service worker and served for any
+failed navigation. It holds no data and no client component on purpose: it has
+to render from a cached document with nothing else available. Its "Try again" is
+a plain `<a href="">`, which reloads the URL still sitting in the address bar —
+the worker substitutes only the body of the failed navigation, so a real retry
+is free, where a link to `/app` would abandon the page the person asked for and
+send a coach, a founder or a school somewhere the proxy bounces them out of.
 
 ---
 

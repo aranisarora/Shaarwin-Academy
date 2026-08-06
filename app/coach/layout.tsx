@@ -1,11 +1,17 @@
 import { Suspense } from "react";
+import type { Viewport } from "next";
 import { ServiceWorkerRegistrar } from "@/components/app/ServiceWorkerRegistrar";
-import { OfflineBanner } from "@/components/app/OfflineBanner";
 import { RealtimeRefresh } from "@/components/app/RealtimeRefresh";
 import { InstallPrompt } from "@/components/app/InstallPrompt";
 import { PendingAssessments } from "@/components/app/PendingAssessments";
 import { CoachPreviewBanner } from "@/components/app/CoachPreviewBanner";
 import { getCoachPreview } from "@/lib/coach-preview";
+
+// Everything below here is the ivory studio shell, so Android should tint the
+// address bar to match rather than to the ink the marketing site asks for. Only
+// themeColor changes; the root's viewport-fit, colour scheme and keyboard
+// behaviour merge through untouched.
+export const viewport: Viewport = { themeColor: "#F4F1EA" };
 
 /**
  * The founder-only "view as coach" banner, isolated in its own async component
@@ -29,7 +35,6 @@ export default function CoachLayout({ children }: { children: React.ReactNode })
         <PreviewBanner />
       </Suspense>
       <ServiceWorkerRegistrar />
-      <OfflineBanner />
       <RealtimeRefresh tables={["bookings", "class_sessions"]} />
       {children}
       <InstallPrompt />

@@ -13,7 +13,7 @@ import type {
 } from "./admin-calendar-types";
 
 const arrowBtn =
-  "flex h-11 w-11 shrink-0 items-center justify-center rounded-[8px] border border-line text-fg-2 hover:border-ember hover:text-ember disabled:cursor-not-allowed disabled:opacity-50";
+  "pressable flex h-11 w-11 shrink-0 items-center justify-center rounded-[8px] border border-line text-fg-2 hover:border-ember hover:text-ember active:border-ember active:text-ember disabled:cursor-not-allowed disabled:opacity-50";
 
 export function AdminCalendarNav({
   initialAnchor,
@@ -77,8 +77,13 @@ export function AdminCalendarNav({
     <>
       {/* Compact one-row pager, sticky beneath the app header so the week you're
           looking at never scrolls away. The centre label opens a date picker;
-          "Today" appears only when you're off the current week. */}
-      <div className="sticky top-14 z-20 -mx-5 mb-4 flex items-center gap-2 border-b border-line bg-surface/90 px-5 py-1.5 backdrop-blur lg:top-0">
+          "Today" appears only when you're off the current week.
+          It hangs off --header-h rather than a hardcoded top-14 (and no longer
+          claims lg:top-0, where it was sticking *behind* the header). The
+          surface is opaque on purpose: this row and the header sit directly on
+          top of one another, so two blurred surfaces meant every scroll frame
+          paid for two backdrop-filter passes to render one visible result. */}
+      <div className="sticky top-[var(--header-h)] z-20 -mx-5 mb-4 flex items-center gap-2 border-b border-line bg-surface px-5 py-1.5">
         <button
           onClick={() => navigate(shiftWallDate(anchor, -7))}
           disabled={isPending}
@@ -99,7 +104,7 @@ export function AdminCalendarNav({
               else el.focus();
             }}
             disabled={isPending}
-            className="tnum flex w-full items-center justify-center gap-1.5 truncate rounded-[8px] px-2 py-2 text-sm font-medium hover:text-ember disabled:opacity-50"
+            className="pressable tnum flex min-h-11 w-full items-center justify-center gap-1.5 truncate rounded-[8px] px-2 text-sm font-medium hover:text-ember active:text-ember disabled:opacity-50"
           >
             {rangeLabel}
             {isThisWeek ? " (this week)" : ""}
@@ -125,7 +130,7 @@ export function AdminCalendarNav({
           <button
             onClick={() => navigate(today)}
             disabled={isPending}
-            className="shrink-0 rounded-[8px] px-2 py-2 text-sm font-medium text-ember hover:underline disabled:opacity-50"
+            className="pressable min-h-11 shrink-0 rounded-[8px] px-2 text-sm font-medium text-ember hover:underline disabled:opacity-50"
           >
             Today
           </button>

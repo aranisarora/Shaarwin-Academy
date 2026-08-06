@@ -2,14 +2,13 @@
 
 import { useState, useTransition } from "react";
 import Link from "next/link";
-import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { PhoneField } from "@/components/app/PhoneField";
 import { Spinner } from "@/components/ui/Spinner";
 import { ConfirmAction } from "@/components/ui/ConfirmAction";
 import { Switch } from "@/components/ui/Switch";
-import { enablePush, type PushState } from "@/lib/push";
+import { PushToggle } from "@/components/app/PushToggle";
 import { AddressForm } from "@/components/app/AddressForm";
 import {
   fromDetails,
@@ -46,7 +45,6 @@ export function ProfileEditor({
     fromDetails(profile.addressDetails, { address: profile.defaultAddress })
   );
   const [newPlayer, setNewPlayer] = useState({ fullName: "", dateOfBirth: "" });
-  const [pushState, setPushState] = useState<PushState | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -101,23 +99,7 @@ export function ProfileEditor({
             payment fails.
           </p>
         </div>
-        <div className="mt-3 flex items-center gap-3">
-          <Button
-            variant="ghost"
-            onClick={async () => setPushState(await enablePush())}
-          >
-            Enable push notifications
-          </Button>
-          {pushState === "subscribed" && <Badge tone="ok">Push on</Badge>}
-          {pushState === "denied" && (
-            <p className="text-xs text-fg-2">
-              Notifications: email. Re-enable them in your browser&apos;s site settings.
-            </p>
-          )}
-          {pushState === "unsupported" && (
-            <p className="text-xs text-fg-2">Notifications: email on this device.</p>
-          )}
-        </div>
+        <PushToggle feedHref="/app/notifications" className="mt-3" />
       </div>
 
       <div>
