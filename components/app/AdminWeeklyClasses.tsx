@@ -16,8 +16,7 @@ import { topUpSessions } from "@/app/admin/schedule/actions";
 import { AdminClassSheet } from "./AdminClassSheet";
 import { AdminAddSheet } from "./AdminAddSheet";
 import { AdminBulkRemoveSheet } from "./AdminBulkRemoveSheet";
-import { WeeklyClassCard } from "./ClassCard";
-import { wallDate } from "@/lib/academy-time";
+import { PrivateSeriesCard, WeeklyClassCard } from "./ClassCard";
 import {
   WEEKDAY_NAME,
   WEEKDAYS,
@@ -30,14 +29,6 @@ import {
 } from "./admin-calendar-types";
 
 const WEEKDAY_ORDER = WEEKDAYS.map(([code]) => code) as string[];
-
-/** "5:00 pm" from an "HH:MM" IST wall-clock string (series slot time). */
-function fmtSlotTime(hhmm: string): string {
-  const [h, m] = hhmm.split(":").map(Number);
-  const period = h < 12 ? "am" : "pm";
-  const h12 = h % 12 === 0 ? 12 : h % 12;
-  return `${h12}:${String(m).padStart(2, "0")} ${period}`;
-}
 
 export function AdminWeeklyClasses({
   classes,
@@ -452,6 +443,14 @@ export function AdminWeeklyClasses({
                         setMessage(null);
                         setEditingClass(c);
                       }}
+                      // Press and hold to start picking, with the held card
+                      // already ticked — a hold that dropped him into an empty
+                      // selection would make him aim at the same card twice.
+                      onLongPress={() => {
+                        setMessage(null);
+                        setSelecting(true);
+                        setSelected(new Set([c.id]));
+                      }}
                     />
                   ))}
                   {day.privates.map((p) => (
@@ -635,60 +634,3 @@ export function AdminWeeklyClasses({
   );
 }
 
-/** A client weekly private slot on the Weekly tab — view-only, sharing the class
- * card's grammar (day + time bold, then the who). Deep-links to its next
- * generated session on the Schedule tab; end/reassign live there, not here. The
- * ember left-stripe marks it private, matching the schedule's private sessions.
- *
- * In selection mode it used to become a bare `<div>` at 40% — no tick, no
- * disabled state, no reason, and a grey nothing else on the screen used. Eighteen
- * of these render on prod, so the honest answer to "why can't I delete that one?"
- * was, for most of the greyed cards, this card saying nothing. It now dims to the
- * same 55% every out-of-play card uses, says on its face why it isn't a
- * candidate, and stays a link — being unpickable is not a reason to stop being a
- * way through to the session. It is deliberately not folded into the removal
- * buckets: a private has a paying client behind it, its own semantics and its own
- * cancellation message, none of which the confirm sheet's vocabulary covers. */
-function PrivateSeriesCard({
-  series,
-  selecting = false,
-}: {
-  series: PrivateSeriesRow;
-  /** While the founder is picking classes to clear, privates aren't candidates —
-   * they end from the Schedule tab, which is what the card says while he picks. */
-  selecting?: boolean;
-}) {
-  const dayShort = (WEEKDAY_NAME[series.weekday] ?? series.weekday).slice(0, 3);
-  const inner = (
-    <>
-      <p className="font-semibold">
-        Every {dayShort} · {fmtSlotTime(series.time)}
-      </p>
-      <p className="text-fg-2">
-        {series.playerName} <span className="text-fg-2">(private)</span>
-      </p>
-      <p className="text-xs text-fg-2">
-        {series.duration} min
-        {series.clientName ? ` · ${series.clientName}` : ""}
-        {series.coachName ? ` · ${series.coachName}` : ""}
-      </p>
-      {selecting && (
-        <p className="mt-1.5 text-xs text-fg-2">Private — end it from the Schedule</p>
-      )}
-    </>
-  );
-  const cls = `block w-full rounded-[8px] border border-line border-l-[3px] border-l-ember bg-surface-2 px-3 py-2 text-left text-sm${
-    selecting ? " opacity-55" : ""
-  }`;
-  if (series.nextSessionId && series.nextSessionStart) {
-    return (
-      <Link
-        href={`/admin/schedule?date=${wallDate(series.nextSessionStart)}&session=${series.nextSessionId}`}
-        className={`${cls} hover:border-ember hover:opacity-100`}
-      >
-        {inner}
-      </Link>
-    );
-  }
-  return <div className={cls}>{inner}</div>;
-}

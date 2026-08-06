@@ -110,7 +110,7 @@ async function Today() {
               <SessionCard
                 key={s.id}
                 session={s}
-                href={`/admin/schedule?session=${s.id}`}
+                href={`/admin/schedule?session=${s.id}&date=${utcToAcademyWall(new Date(s.starts_at)).date}`}
               />
             ))}
           </div>

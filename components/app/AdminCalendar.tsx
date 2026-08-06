@@ -161,9 +161,12 @@ export function AdminCalendar({
   // Card look + border language live in the shared ClassCard; here we only wire
   // the tap. Under a day header the card shows just the time; the ungrouped
   // "no coach" box carries the full weekday + date via showDay.
-  const Block = ({ session, showDay = false }: { session: SessionRow; showDay?: boolean }) => (
-    <SessionCard session={session} showDay={showDay} onClick={() => openSession(session)} />
-  );
+  //
+  // This used to be a `Block` wrapper declared here in the render body, which
+  // gave it a new component type on every render — so every card in the
+  // unassigned box and every card in the desktop lanes unmounted and remounted
+  // each time a filter moved. The phone list never went through it, so the two
+  // halves of this screen behaved differently for no reason anyone chose.
 
   const filterDefs: FilterDef[] = [
     {
@@ -263,7 +266,7 @@ export function AdminCalendar({
           <p className="label mb-3 !text-err">No coach yet — tap to fix</p>
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
             {lanes.unassigned.map((s) => (
-              <Block key={s.id} session={s} showDay />
+              <SessionCard key={s.id} session={s} showDay onClick={() => openSession(s)} />
             ))}
           </div>
         </div>
@@ -320,7 +323,7 @@ export function AdminCalendar({
                     </p>
                     <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                       {day.rows.map((s) => (
-                        <Block key={s.id} session={s} />
+                        <SessionCard key={s.id} session={s} onClick={() => openSession(s)} />
                       ))}
                     </div>
                   </div>
