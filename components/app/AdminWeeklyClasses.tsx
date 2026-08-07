@@ -61,7 +61,7 @@ export function AdminWeeklyClasses({
   );
   const [creating, setCreating] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
-  const [overflowOpen, setOverflowOpen] = useState(false);
+  const [clearOpen, setClearOpen] = useState(false);
   const [pending, startTransition] = useTransition();
 
   // Selection mode — clearing a timetable is a bulk job, so the founder flips
@@ -351,8 +351,12 @@ export function AdminWeeklyClasses({
 
   return (
     <div className="space-y-4">
-      {/* Desktop keeps the inline "Create a class" button; the ⋯ holds the rare
-          maintenance bits. On the phone, Create is a FAB (below). In selection
+      {/* Two controls, and both say what they do. There used to be a third — an
+          unlabelled ⋯ — and it held the one thing on this screen there is no
+          undo for. It also held a second way to start a selection, so "clear
+          some classes" had two doors and "clear the whole calendar" had none
+          you could see. One door now: Clear opens the hub, the hub owns every
+          way of clearing. On the phone, Create is a FAB (below). In selection
           mode the same row becomes the select toolbar. */}
       {selecting ? (
         <div className="flex flex-wrap items-center justify-between gap-2">
@@ -370,17 +374,15 @@ export function AdminWeeklyClasses({
         </div>
       ) : (
         <div className="flex items-center justify-end gap-2">
-          <button
-            type="button"
-            aria-label="More options"
-            onClick={() => setOverflowOpen(true)}
-            className="flex h-11 w-11 items-center justify-center rounded-[8px] border border-line text-lg text-fg-2 hover:border-ember hover:text-ember"
-          >
-            ⋯
-          </button>
-          {filteredTotal > 0 && (
-            <Button variant="ghost" onClick={() => setSelecting(true)}>
-              Select
+          {classes.length + privateSeries.length > 0 && (
+            <Button
+              variant="ghost"
+              onClick={() => {
+                setMessage(null);
+                setClearOpen(true);
+              }}
+            >
+              Clear…
             </Button>
           )}
           {/* `hidden` alone cannot hide a Button: its base class list already
@@ -560,6 +562,24 @@ export function AdminWeeklyClasses({
         </p>
       )}
 
+      {/* Maintenance, not clearing — so it does not belong in the Clear hub, and
+          it was the only other thing the ⋯ held. A quiet line in the flow of the
+          page is more findable than an unlabelled glyph, and it says up front
+          that he almost certainly doesn't need it. */}
+      {classes.length > 0 && (
+        <p className="px-1 text-sm text-fg-2">
+          Sessions top up automatically each night.{" "}
+          <button
+            type="button"
+            disabled={pending}
+            onClick={topUp}
+            className="text-ember underline-offset-4 hover:underline disabled:opacity-60"
+          >
+            {pending ? "Topping up…" : "Top up now"}
+          </button>
+        </p>
+      )}
+
       {/* Phone: Create a class as a floating button above the tab bar. It gives
           up the spot to the selection bar while selecting. */}
       {!selecting && (
@@ -601,21 +621,34 @@ export function AdminWeeklyClasses({
         </div>
       )}
 
-      {/* ⋯ overflow: the explainer + the rare "top up" maintenance action. */}
-      <Sheet open={overflowOpen} onClose={() => setOverflowOpen(false)} title="Weekly classes">
+      {/* The Clear hub — every way of clearing this calendar, in the order the
+          founder needs them: the filtered list first because it is the everyday
+          job, the whole calendar last and alone in red because it is the one
+          with no undo. Nothing else lives here; a menu that also held a tutorial
+          and a maintenance button is what made the last one unfindable. */}
+      <Sheet open={clearOpen} onClose={() => setClearOpen(false)} title="Clear classes">
         <div className="space-y-4">
-          <p className="text-sm text-fg-2">
-            Each class repeats every week and fills the Schedule tab. Tap one to change it —
-            for a one-week-only change, tap that session in the Schedule tab instead.
-          </p>
           {filteredTotal > 0 && (
             <div className="space-y-2 rounded-[12px] border border-line p-4">
-              <p className="label">Clear the timetable</p>
+              <p className="label">Clear this list</p>
               <p className="text-sm text-fg-2">
-                Picks everything the filters are showing ({filteredTotal}) so you can start
-                again. You get to see what goes quietly, what is still running, and what has
-                people or history on it before anything happens — and you can unpick any of
-                them first.
+                {/* Counted apart whenever both kinds are here, for the same
+                    reason the selection bar counts them apart: a class and a
+                    family's standing slot are not the same thing to lose. */}
+                {filteredSeriesIds.length > 0 ? (
+                  <>
+                    {filteredIds.length}{" "}
+                    {filteredIds.length === 1 ? "class" : "classes"} and{" "}
+                    {filteredSeriesIds.length} private{" "}
+                    {filteredSeriesIds.length === 1 ? "slot" : "slots"} are showing.
+                  </>
+                ) : (
+                  <>
+                    {filteredTotal} {filteredTotal === 1 ? "class is" : "classes are"} showing.
+                  </>
+                )}{" "}
+                Narrow with the filters first to clear one location or one day. You see what
+                each one costs before anything happens, and you can unpick any of them.
                 {/* Say what it does NOT reach, rather than leaving him to find
                     out from a list that still has things on it. */}
                 {oneOffCount > 0 && (
@@ -627,45 +660,46 @@ export function AdminWeeklyClasses({
                   </>
                 )}
               </p>
-              <Button
-                variant="ghost"
-                className="w-full"
-                onClick={() => {
-                  setSelecting(true);
-                  setSelected(new Set(filteredIds));
-                  setSelectedSeries(new Set(filteredSeriesIds));
-                  setOverflowOpen(false);
-                  setMessage(null);
-                }}
-              >
-                Select all {filteredTotal}
-              </Button>
+              <div className="flex flex-wrap gap-2">
+                {/* Straight to the decision, with everything ticked. Closing
+                    that sheet leaves him here in selection mode with the ticks
+                    intact, so "all but three" is still two taps away. */}
+                <Button
+                  variant="ghost"
+                  className="min-w-fit flex-1 basis-40"
+                  onClick={() => {
+                    setSelecting(true);
+                    setSelected(new Set(filteredIds));
+                    setSelectedSeries(new Set(filteredSeriesIds));
+                    setClearOpen(false);
+                    setMessage(null);
+                    setConfirming(true);
+                  }}
+                >
+                  Clear all {filteredTotal}
+                </Button>
+                <Button
+                  variant="ghost"
+                  className="min-w-fit flex-1 basis-40"
+                  onClick={() => {
+                    setSelecting(true);
+                    setSelected(new Set());
+                    setSelectedSeries(new Set());
+                    setClearOpen(false);
+                    setMessage(null);
+                  }}
+                >
+                  Pick some…
+                </Button>
+              </div>
             </div>
           )}
-          <div className="space-y-2 rounded-[12px] border border-line p-4">
-            <p className="label">Top up the next 8 weeks</p>
-            <p className="text-sm text-fg-2">
-              Extends every class&apos;s upcoming sessions so the schedule never runs dry. Runs
-              automatically — you rarely need this.
-            </p>
-            <Button
-              variant="ghost"
-              disabled={pending}
-              className="w-full"
-              onClick={() => {
-                topUp();
-                setOverflowOpen(false);
-              }}
-            >
-              {pending ? "Topping up…" : "Top up now"}
-            </Button>
-          </div>
 
           {/* Set apart in red, below everything else and last in the tab order,
               because it is the only control here that ignores the filters and
               the selection entirely. Its own sheet does the actual guarding. */}
           <div className="space-y-2 rounded-[12px] border border-err p-4">
-            <p className="label">Clear the whole calendar</p>
+            <p className="label">The whole calendar</p>
             <p className="text-sm text-fg-2">
               Everything, not just what this list shows — the one-off classes too, and every
               family&apos;s weekly private slot. You see exactly what it holds, and what each
@@ -675,7 +709,7 @@ export function AdminWeeklyClasses({
               variant="ghost"
               className="w-full"
               onClick={() => {
-                setOverflowOpen(false);
+                setClearOpen(false);
                 setMessage(null);
                 setWiping(true);
               }}
