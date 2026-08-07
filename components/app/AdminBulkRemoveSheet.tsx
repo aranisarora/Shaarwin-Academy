@@ -485,10 +485,11 @@ export function AdminBulkRemoveSheet({
                   variant="destructive"
                   className="w-full"
                   aria-describedby={nothingMoves ? "bulk-remove-why" : undefined}
-                  disabled={pending || nothingMoves}
+                  loading={pending}
+                  disabled={nothingMoves}
                   onClick={run}
                 >
-                  {pending ? <Spinner /> : actionLabel}
+                  {actionLabel}
                 </Button>
               )}
               <Button variant="ghost" className="w-full" disabled={pending} onClick={onClose}>

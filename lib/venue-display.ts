@@ -47,6 +47,24 @@ export function venueDisplayName(v: VenueNameParts): string {
 }
 
 /**
+ * The venue half of a location label — what the Location filter filters on.
+ *
+ * `location_label(classes)` is "venue, unit" and the unit only exists for a
+ * private (it reads `private_class_details.unit_label`), so This week labels a
+ * family's Tuesday "Adarsh Palm Retreat Villas, Villa 659" while the Timetable
+ * lists the same slot under "Adarsh Palm Retreat Villas". Two spellings of one
+ * place, which is fine while each view owns its own filter and wrong the moment
+ * one filter drives both. The founder picking a location means the place, not
+ * the doorway, so the doorway comes off.
+ */
+export function venueKeyOf(label: string | null | undefined): string {
+  const s = label?.trim();
+  if (!s) return "";
+  const comma = s.indexOf(", ");
+  return comma === -1 ? s : s.slice(0, comma);
+}
+
+/**
  * Venue plus where inside it — the string a coach reads. Mirrors
  * `location_label(classes)`.
  */

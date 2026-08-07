@@ -1,9 +1,25 @@
 "use client";
 
-// 12-hour time picker — hour / minutes / am-pm selects that read and emit the
-// canonical 24-hour "HH:MM" wall-clock string the rest of the app speaks.
-// Replaces <input type="time">, whose display format follows the OS locale and
-// can't be forced to a 12-hour clock.
+// 12-hour time picker — reads and emits the canonical 24-hour "HH:MM" wall-clock
+// string the rest of the app speaks. Replaces <input type="time">, whose display
+// format follows the OS locale and can't be forced to a 12-hour clock.
+//
+// It used to be three equal dropdowns in a `grid-cols-3`, which is fine at full
+// width and unusable everywhere it was actually put: dropped into a half-column
+// beside a Day select it gave each one 51px, of which ~16px is the native arrow
+// — about 17px of room for "12", ":55" and "pm" at 16px type. All three clipped.
+//
+// Two changes fix it for good:
+//
+//   • am/pm is a two-button toggle, not a third dropdown. It is a binary choice
+//     and it was the widest thing competing for the narrowest space; as a
+//     toggle both answers are visible, each is a 44px target, and one tap
+//     switches instead of open-scan-pick. It also drops a tab stop.
+//   • The two remaining selects flex, so the control fills whatever it is given
+//     rather than dividing it three ways.
+//
+// It still must not be put in a half-column — `fullWidth` rows are the only
+// call sites now — but it no longer falls apart if it ends up in a narrow one.
 
 const MINUTE_STEPS = [0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55];
 
@@ -41,12 +57,12 @@ export function TimeSelect12h({
   }
 
   const selectClass =
-    "min-h-11 rounded-[8px] border border-line bg-surface-2 px-2 text-base text-fg";
+    "min-h-11 min-w-0 flex-1 rounded-[8px] border border-line bg-surface-2 px-2 text-base text-fg";
 
   return (
     <div className="flex flex-col gap-1.5">
       {label && <span className="label">{label}</span>}
-      <div className="grid grid-cols-3 gap-2">
+      <div className="flex items-center gap-2">
         <select
           aria-label={`${aria} — hour`}
           className={selectClass}
@@ -59,6 +75,9 @@ export function TimeSelect12h({
             </option>
           ))}
         </select>
+        <span aria-hidden className="shrink-0 text-fg-2">
+          :
+        </span>
         <select
           aria-label={`${aria} — minutes`}
           className={selectClass}
@@ -67,19 +86,36 @@ export function TimeSelect12h({
         >
           {minutes.map((m) => (
             <option key={m} value={m}>
-              :{String(m).padStart(2, "0")}
+              {String(m).padStart(2, "0")}
             </option>
           ))}
         </select>
-        <select
+        {/* Both answers visible, one tap to switch. radiogroup rather than two
+            aria-pressed buttons, because they are mutually exclusive and a
+            screen reader should say "am, 1 of 2" rather than announcing two
+            unrelated toggles. */}
+        <div
+          role="radiogroup"
           aria-label={`${aria} — am or pm`}
-          className={selectClass}
-          value={period}
-          onChange={(e) => emit(h12, minute, e.target.value as "am" | "pm")}
+          className="flex shrink-0 overflow-hidden rounded-[8px] border border-line"
         >
-          <option value="am">am</option>
-          <option value="pm">pm</option>
-        </select>
+          {(["am", "pm"] as const).map((p) => (
+            <button
+              key={p}
+              type="button"
+              role="radio"
+              aria-checked={period === p}
+              onClick={() => emit(h12, minute, p)}
+              className={`pressable min-h-11 px-3 text-base font-medium ${
+                period === p
+                  ? "bg-ember text-ivory"
+                  : "bg-surface-2 text-fg-2 hover:text-ember"
+              }`}
+            >
+              {p}
+            </button>
+          ))}
+        </div>
       </div>
     </div>
   );

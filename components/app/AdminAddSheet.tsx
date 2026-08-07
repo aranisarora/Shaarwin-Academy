@@ -14,6 +14,14 @@
 // school class is a group class with a longer default and a flag — only a
 // private is genuinely a different shape (it needs a family, and it spends
 // their minutes).
+//
+// The two halves ask the same questions in the same shapes now. They did not:
+// a group class picked its dates with tappable chips and a private got a bare
+// native date wheel that took one date and no more; the group weekday chips
+// were 34px with no press feedback while the private ones beside them were
+// 44px with it; Location/Length/Spots were hand-rolled here and imported from
+// ClassFields everywhere else, so the same three fields had two option sets and
+// two labels. There is one of each now.
 
 import { useEffect, useState, useTransition } from "react";
 import {
@@ -25,9 +33,7 @@ import {
 } from "@/lib/academy-time";
 import { Sheet } from "@/components/ui/Sheet";
 import { Button } from "@/components/ui/Button";
-import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
-import { Spinner } from "@/components/ui/Spinner";
 import { createGroupClass } from "@/app/admin/actions";
 import {
   createOneOffClass,
@@ -37,16 +43,16 @@ import {
   type SlotPreview,
 } from "@/app/admin/schedule/actions";
 import {
+  ClassDetailFields,
   EMPTY_CLASS_FORM,
   ItemTimesList,
   generateClassTitle,
   time12h,
   type ClassFormState,
 } from "./ClassFields";
-import { TimeSelect12h } from "./TimeSelect12h";
+import { DayChips } from "./DayChips";
 import { ActionResult } from "./ActionResult";
 import {
-  WEEKDAYS,
   WEEKDAY_NAME,
   playerChoiceValue,
   playerChoices,
@@ -82,13 +88,13 @@ const QUICK_DAYS: { offset: number; label?: string }[] = [
   { offset: 2 },
 ];
 
-// School blocks run far longer than a normal group class.
-const WEEKLY_DURATIONS = [60, 90, 120, 150, 180, 210, 240];
-const SCHOOL_DURATIONS = [60, 90, 120, 150, 180, 210, 240, 270, 300, 330, 360];
-
 const WEEKDAY_DOW: Record<string, number> = {
   SU: 0, MO: 1, TU: 2, WE: 3, TH: 4, FR: 5, SA: 6,
 };
+
+/** MO..SU, so a picked set renders in the order a week is read rather than the
+ *  order he happened to tap. */
+const WEEKDAYS_IN_ORDER = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"];
 
 /** First calendar date on or after `startDate` that falls on `weekdayCode`. */
 function firstOccurrenceOnOrAfter(startDate: string, weekdayCode: string): string {
@@ -99,7 +105,58 @@ function firstOccurrenceOnOrAfter(startDate: string, weekdayCode: string): strin
   return `${result.getFullYear()}-${String(result.getMonth() + 1).padStart(2, "0")}-${String(result.getDate()).padStart(2, "0")}`;
 }
 
-/** "2025-07-14" → "Mon 14 Jul" */
+/** The date chips + ＋, shared by the group and private one-off paths so
+ *  "today" is one tap in both. Multi-select in both: a founder putting on two
+ *  make-up sessions after a washout is doing one job, and the private half used
+ *  to make him do it twice because the underlying call takes a single date —
+ *  which is a fact about the call, not about the job. It is looped, exactly as
+ *  the recurring private path already loops over weekdays. */
+function DateChips({
+  today,
+  dates,
+  onAdd,
+  onRemove,
+  dateKey,
+}: {
+  today: string;
+  dates: string[];
+  onAdd: (d: string) => void;
+  onRemove: (d: string) => void;
+  /** Bumped to reset the native picker so the same date can be re-added. */
+  dateKey: number;
+}) {
+  return (
+    <div className="mb-3 flex flex-wrap gap-2">
+      {QUICK_DAYS.map(({ offset, label }) => {
+        const d = shiftWallDate(today, offset);
+        const on = dates.includes(d);
+        return (
+          <button
+            key={d}
+            type="button"
+            onClick={() => (on ? onRemove(d) : onAdd(d))}
+            aria-pressed={on}
+            className={`pressable min-h-11 rounded-full border px-4 text-sm font-medium transition-colors ${
+              on ? "border-ember bg-ember text-ivory" : "border-line hover:border-ember"
+            }`}
+          >
+            {label ?? formatWallDay(d)}
+          </button>
+        );
+      })}
+      <label className="pressable flex min-h-11 cursor-pointer items-center rounded-full border border-line px-4 text-sm font-medium hover:border-ember">
+        ＋
+        <input
+          key={dateKey}
+          type="date"
+          onChange={(e) => onAdd(e.target.value)}
+          className="sr-only"
+          aria-label="Add another date"
+        />
+      </label>
+    </div>
+  );
+}
 
 export function AdminAddSheet({
   defaultRepeat = "once",
@@ -135,6 +192,13 @@ export function AdminAddSheet({
   const [repeat, setRepeat] = useState<RepeatChoice>(defaultRepeat);
   const today = academyToday();
 
+  // Has he put anything of his own into this form? Drives the discard guard on
+  // the way out — the sheet opens pre-filled with sensible defaults, so "is
+  // anything set" would be true from the first paint and would nag on every
+  // close.
+  const [touched, setTouched] = useState(false);
+  const mark = () => setTouched(true);
+
   // The most recently chosen time anywhere in the sheet — newly picked
   // days/dates start from it so a run of same-time picks needs no re-entry.
   const [lastTime, setLastTime] = useState("18:30");
@@ -153,6 +217,7 @@ export function AdminAddSheet({
   const [dayTimes, setDayTimes] = useState<Record<string, string>>({ MO: "18:30" });
 
   function toggleDay(code: string) {
+    mark();
     setWeekdays((prev) =>
       prev.includes(code) ? prev.filter((d) => d !== code) : [...prev, code]
     );
@@ -160,6 +225,7 @@ export function AdminAddSheet({
   }
 
   function setDayTime(code: string, time: string) {
+    mark();
     setDayTimes((t) => ({ ...t, [code]: time }));
     setLastTime(time);
   }
@@ -169,25 +235,26 @@ export function AdminAddSheet({
   // Today is already picked. A one-time class is nearly always something he is
   // putting on today or tomorrow — a make-up session, a hall that came free —
   // and this used to open with nothing selected and no way forward but the
-  // phone's native date wheel. The repeating path had a default day and a
-  // default time from the start; the urgent path had neither, which was exactly
-  // backwards.
+  // phone's native date wheel.
   const [dates, setDates] = useState<string[]>([today]);
   const [dateTimes, setDateTimes] = useState<Record<string, string>>({ [today]: "18:30" });
   const [dateKey, setDateKey] = useState(0);
 
   function addDate(d: string) {
     if (!d || dates.includes(d)) return;
+    mark();
     setDates((prev) => [...prev, d].sort());
     setDateTimes((t) => ({ ...t, [d]: lastTime }));
     setDateKey((k) => k + 1);
   }
 
   function removeDate(d: string) {
+    mark();
     setDates((prev) => prev.filter((x) => x !== d));
   }
 
   function setDateTime(d: string, time: string) {
+    mark();
     setDateTimes((t) => ({ ...t, [d]: time }));
     setLastTime(time);
   }
@@ -196,20 +263,48 @@ export function AdminAddSheet({
   const [priv, setPriv] = useState({
     clientId: "",
     playerId: "",
-    // Both default to today for the same reason the class dates do — a private
-    // booked on the phone is nearly always for this week.
-    date: today,        // used when it happens once
-    startFrom: today,   // used when it repeats — anchor for the weekday maths
-    time: "17:00",
-    duration: 60,
+    startFrom: today, // used when it repeats — anchor for the weekday maths
+    duration: seed?.durationMinutes ?? 60,
     coachId: seed?.coachId ?? "",
     venueId: seed?.venueId ?? venues[0]?.id ?? "",
     recurWeeks: 4,
   });
+  function updatePriv(next: Partial<typeof priv>) {
+    mark();
+    setPriv((p) => ({ ...p, ...next }));
+  }
+
+  // Just once: the same multi-select dates a one-time group class gets.
+  const [privDates, setPrivDates] = useState<string[]>([today]);
+  const [privDateTimes, setPrivDateTimes] = useState<Record<string, string>>({
+    [today]: "17:00",
+  });
+  const [privDateKey, setPrivDateKey] = useState(0);
+
+  function addPrivDate(d: string) {
+    if (!d || privDates.includes(d)) return;
+    mark();
+    setPrivDates((prev) => [...prev, d].sort());
+    setPrivDateTimes((t) => ({ ...t, [d]: lastTime }));
+    setPrivDateKey((k) => k + 1);
+  }
+
+  function removePrivDate(d: string) {
+    mark();
+    setPrivDates((prev) => prev.filter((x) => x !== d));
+  }
+
+  function setPrivDateTime(d: string, time: string) {
+    mark();
+    setPrivDateTimes((t) => ({ ...t, [d]: time }));
+    setLastTime(time);
+  }
+
   const [privWeekdays, setPrivWeekdays] = useState<string[]>(["MO"]);
   const [privDayTimes, setPrivDayTimes] = useState<Record<string, string>>({ MO: "17:00" });
 
   function togglePrivDay(code: string) {
+    mark();
     setPrivWeekdays((prev) =>
       prev.includes(code) ? prev.filter((d) => d !== code) : [...prev, code]
     );
@@ -217,6 +312,7 @@ export function AdminAddSheet({
   }
 
   function setPrivDayTime(code: string, time: string) {
+    mark();
     setPrivDayTimes((t) => ({ ...t, [code]: time }));
     setLastTime(time);
   }
@@ -234,6 +330,7 @@ export function AdminAddSheet({
   function addAnother() {
     setSuccess(null);
     setMessage(null);
+    setTouched(false);
     if (mode === "weekly" || mode === "school") {
       setWeekdays([]);
       setDayTimes({});
@@ -241,9 +338,12 @@ export function AdminAddSheet({
       setDateTimes({ [today]: lastTime });
       setDateKey((k) => k + 1);
     } else {
-      setPriv((p) => ({ ...p, clientId: "", playerId: "", date: "", startFrom: "" }));
+      setPriv((p) => ({ ...p, clientId: "", playerId: "", startFrom: today }));
       setPrivWeekdays([]);
       setPrivDayTimes({});
+      setPrivDates([today]);
+      setPrivDateTimes({ [today]: lastTime });
+      setPrivDateKey((k) => k + 1);
     }
   }
 
@@ -275,16 +375,14 @@ export function AdminAddSheet({
       : dates
     : privRecurring
       ? privWeekdays
-      : priv.date
-        ? [priv.date]
-        : [];
+      : privDates;
   const previewTimes = isClassMode
     ? repeats
       ? dayTimes
       : dateTimes
     : privRecurring
       ? privDayTimes
-      : { [priv.date]: priv.time };
+      : privDateTimes;
   const previewVenueId = isClassMode ? form.venueId : priv.venueId;
   const previewCoachId = isClassMode ? form.coachId : priv.coachId;
   const previewDuration = isClassMode ? form.durationMinutes : priv.duration;
@@ -366,11 +464,11 @@ export function AdminAddSheet({
     const lines: string[] = [];
 
     if (row.coachBusy.length > 0 && coachName) {
-      const dates = namedDates(row.coachBusy.map((b) => b.startsAt));
+      const busyDates = namedDates(row.coachBusy.map((b) => b.startsAt));
       lines.push(
         previewMode === "recurring"
-          ? `${coachName} is already teaching on ${row.coachBusy.length} of these ${row.occurrences.length} — ${dates}. Those weeks still go on; they arrive with no coach and one is picked automatically.`
-          : `${coachName} is already teaching then (${dates}). Nothing is created while he's on it — pick another coach, or leave it on automatic.`
+          ? `${coachName} is already teaching on ${row.coachBusy.length} of these ${row.occurrences.length} — ${busyDates}. Those weeks still go on; they arrive with no coach and one is picked automatically.`
+          : `${coachName} is already teaching then (${busyDates}). Nothing is created while he's on it — pick another coach, or leave it on automatic.`
       );
     }
     if (row.venueBusy.length > 0) {
@@ -400,17 +498,15 @@ export function AdminAddSheet({
   function resetMode(next: Mode) {
     setMode(next);
     setMessage(null);
-    if (next === "weekly") {
-      setForm({ ...EMPTY_CLASS_FORM, venueId: venues[0]?.id ?? "" });
-      setWeekdays(["MO"]);
-      setDayTimes({ MO: lastTime });
-      setDates([today]);
-      setDateTimes({ [today]: lastTime });
-      setDateKey((k) => k + 1);
-    }
-    if (next === "school") {
-      // School blocks hold a whole class of pupils and run longer.
-      setForm({ ...EMPTY_CLASS_FORM, venueId: venues[0]?.id ?? "", capacity: 30, durationMinutes: 120 });
+    mark();
+    if (next === "weekly" || next === "school") {
+      const school = next === "school";
+      // A school block holds a whole class of pupils and runs longer.
+      setForm({
+        ...EMPTY_CLASS_FORM,
+        venueId: venues[0]?.id ?? "",
+        ...(school ? { capacity: 30, durationMinutes: 120 } : {}),
+      });
       setWeekdays(["MO"]);
       setDayTimes({ MO: lastTime });
       setDates([today]);
@@ -421,9 +517,7 @@ export function AdminAddSheet({
       setPriv({
         clientId: "",
         playerId: "",
-        date: today,
         startFrom: today,
-        time: "17:00",
         duration: 60,
         coachId: "",
         venueId: venues[0]?.id ?? "",
@@ -431,10 +525,14 @@ export function AdminAddSheet({
       });
       setPrivWeekdays(["MO"]);
       setPrivDayTimes({ MO: "17:00" });
+      setPrivDates([today]);
+      setPrivDateTimes({ [today]: "17:00" });
+      setPrivDateKey((k) => k + 1);
     }
   }
 
   const venueName = venues.find((v) => v.id === form.venueId)?.name;
+  const totalPrivSessions = privWeekdays.length * priv.recurWeeks;
 
   /** Title for a one-off class: date-led when it's a single date, venue-led
    * when it spans several. */
@@ -505,7 +603,7 @@ export function AdminAddSheet({
           // a class the founder can trust and one he finds holes in later.
           const coachLine =
             coachless > 0
-              ? ` ${coachless} ${coachless === 1 ? "week" : "weeks"} clashed with that coach's diary and went out for a coach to be picked automatically — the Schedule shows any that still need one.`
+              ? ` ${coachless} ${coachless === 1 ? "week" : "weeks"} clashed with that coach's diary and went out for a coach to be picked automatically — This week shows any that still need one.`
               : "";
 
           if (failed.length === 0) {
@@ -531,7 +629,7 @@ export function AdminAddSheet({
       } else {
         const venue = venues.find((v) => v.id === priv.venueId);
         if (!venue) {
-          setMessage("Please select a venue.");
+          setMessage("Pick a location first.");
           return;
         }
         const locationDetails = {
@@ -557,7 +655,7 @@ export function AdminAddSheet({
             for (const day of privWeekdays) {
               const r = await createPrivateSession({
                 ...locationDetails,
-                time: privDayTimes[day] ?? priv.time,
+                time: privDayTimes[day] ?? "17:00",
                 date: firstOccurrenceOnOrAfter(priv.startFrom, day),
                 recurWeeks: priv.recurWeeks,
               });
@@ -571,15 +669,23 @@ export function AdminAddSheet({
               `${totalPrivSessions} open private slots held (${dayNames}) — assign a client to any of them later.`
             );
           } else {
-            const r = await createPrivateSession({
-              ...locationDetails,
-              time: priv.time,
-              date: priv.date,
-              recurWeeks: 1,
-            });
-            if (r.ok) {
-              setSuccess("Open private slot added — assign a client to it any time.");
-            } else setMessage(r.error ?? "Couldn't add the slot.");
+            for (const date of privDates) {
+              const r = await createPrivateSession({
+                ...locationDetails,
+                time: privDateTimes[date] ?? "17:00",
+                date,
+                recurWeeks: 1,
+              });
+              if (!r.ok) {
+                setMessage(r.error ?? "Couldn't add the slot.");
+                return;
+              }
+            }
+            setSuccess(
+              privDates.length > 1
+                ? `${privDates.length} open private slots added — assign a client to any of them any time.`
+                : "Open private slot added — assign a client to it any time."
+            );
           }
         } else if (privRecurring) {
           // Recurring: one series per selected weekday at that day's own time,
@@ -589,7 +695,7 @@ export function AdminAddSheet({
             const date = firstOccurrenceOnOrAfter(priv.startFrom, day);
             const baseDetails = {
               ...locationDetails,
-              time: privDayTimes[day] ?? priv.time,
+              time: privDayTimes[day] ?? "17:00",
               recurWeeks: priv.recurWeeks,
             };
             const r = isInvite
@@ -608,30 +714,49 @@ export function AdminAddSheet({
               return;
             }
           }
-          const totalSessions = privWeekdays.length * priv.recurWeeks;
           const dayNames = privWeekdays.map((d) => WEEKDAY_NAME[d] ?? d).join(", ");
           setSuccess(
             isInvite
-              ? `Account created and ${totalSessions} private sessions booked (${dayNames}) — waiting when they sign in.`
-              : `${totalSessions} private sessions booked (${dayNames}) — the client has been told.`
+              ? `Account created and ${totalPrivSessions} private sessions booked (${dayNames}) — waiting when they sign in.`
+              : `${totalPrivSessions} private sessions booked (${dayNames}) — the client has been told.`
           );
         } else {
-          // One-off
-          const details = { ...locationDetails, time: priv.time, date: priv.date, recurWeeks: 1 };
-          const r = isInvite
-            ? await createPrivateSessionForInvite(priv.clientId.slice("invite:".length), details)
-            : await createPrivateSession({
-                ...details,
-                clientId: priv.clientId,
-                playerId: priv.playerId || undefined,
-              });
-          if (r.ok) {
-            setSuccess(
-              isInvite
-                ? "Account created and private session booked — it'll be waiting when they sign in."
+          // One or more specific dates, one call each — the same loop the
+          // recurring path runs over weekdays.
+          const booked: string[] = [];
+          for (const date of privDates) {
+            const details = {
+              ...locationDetails,
+              time: privDateTimes[date] ?? "17:00",
+              date,
+              recurWeeks: 1,
+            };
+            const r = isInvite
+              ? await createPrivateSessionForInvite(priv.clientId.slice("invite:".length), details)
+              : await createPrivateSession({
+                  ...details,
+                  clientId: priv.clientId,
+                  playerId: priv.playerId || undefined,
+                });
+            if (!r.ok) {
+              // Say what already went through before naming what didn't — the
+              // sessions that exist are real and he must not book them twice.
+              setMessage(
+                booked.length
+                  ? `${booked.length} booked (${namedDates(booked)}), then ${formatWallDay(date)} failed — ${r.error ?? "couldn't book it."}`
+                  : (r.error ?? "Couldn't book the session.")
+              );
+              return;
+            }
+            booked.push(date);
+          }
+          setSuccess(
+            isInvite
+              ? `Account created and ${booked.length > 1 ? `${booked.length} private sessions` : "a private session"} booked — waiting when they sign in.`
+              : booked.length > 1
+                ? `${booked.length} private sessions booked (${namedDates(booked)}) — the client has been told.`
                 : "Private session booked — the client has been told."
-            );
-          } else setMessage(r.error ?? "Couldn't book the session.");
+          );
         }
       }
     });
@@ -642,10 +767,11 @@ export function AdminAddSheet({
       ? !repeats
         ? !!form.venueId && dates.length > 0
         : !!form.venueId && weekdays.length > 0
-      : !!priv.clientId && !!priv.time && !!priv.venueId &&
-        (privRecurring ? privWeekdays.length > 0 && !!priv.startFrom : !!priv.date);
+      : !!priv.clientId && !!priv.venueId &&
+        (privRecurring
+          ? privWeekdays.length > 0 && !!priv.startFrom
+          : privDates.length > 0);
 
-  const totalPrivSessions = privWeekdays.length * priv.recurWeeks;
   const submitLabel =
     mode === "weekly" || mode === "school"
       ? !repeats
@@ -660,15 +786,19 @@ export function AdminAddSheet({
       : isOpen
         ? privRecurring
           ? `Hold ${totalPrivSessions} open slots`
-          : "Add open slot"
+          : privDates.length > 1
+            ? `Hold ${privDates.length} open slots`
+            : "Add open slot"
         : privRecurring
           ? privWeekdays.length > 1
             ? `Book ${totalPrivSessions} sessions`
             : `Book ${priv.recurWeeks} weekly sessions`
-          : "Book private session";
+          : privDates.length > 1
+            ? `Book ${privDates.length} sessions`
+            : "Book private session";
 
   return (
-    <Sheet open onClose={onClose} title="New class">
+    <Sheet open onClose={onClose} dirty={touched && !success} title="Add a class">
       {success ? (
         <div className="space-y-5">
           <ActionResult>{success}</ActionResult>
@@ -679,7 +809,7 @@ export function AdminAddSheet({
             <Button onClick={() => onDone(success)}>Done</Button>
           </div>
           <p className="text-sm text-fg-2">
-            &ldquo;Add another&rdquo; keeps the venue, type and length — just pick the next
+            &ldquo;Add another&rdquo; keeps the location, type and length — just pick the next
             day and time.
           </p>
         </div>
@@ -692,13 +822,14 @@ export function AdminAddSheet({
             control at all. */}
         <div>
           <p className="label mb-2">Kind</p>
-          <div className="grid grid-cols-3 gap-2">
+          <div role="radiogroup" aria-label="Kind of class" className="grid grid-cols-3 gap-2">
             {MODES.map((m) => (
               <button
                 key={m.value}
                 type="button"
+                role="radio"
+                aria-checked={mode === m.value}
                 onClick={() => resetMode(m.value)}
-                aria-pressed={mode === m.value}
                 className={`pressable min-h-11 rounded-[8px] border px-2 text-sm font-semibold ${
                   mode === m.value
                     ? "border-ember bg-ember text-ivory"
@@ -716,7 +847,7 @@ export function AdminAddSheet({
         {!isOpen && (
           <div>
             <p className="label mb-2">Repeats</p>
-            <div className="grid grid-cols-2 gap-2">
+            <div role="radiogroup" aria-label="How often" className="grid grid-cols-2 gap-2">
               {(
                 [
                   { value: "once", label: "Just once" },
@@ -726,8 +857,12 @@ export function AdminAddSheet({
                 <button
                   key={r.value}
                   type="button"
-                  onClick={() => setRepeat(r.value)}
-                  aria-pressed={repeat === r.value}
+                  role="radio"
+                  aria-checked={repeat === r.value}
+                  onClick={() => {
+                    mark();
+                    setRepeat(r.value);
+                  }}
                   className={`pressable min-h-11 rounded-[8px] border px-2 text-sm font-semibold ${
                     repeat === r.value
                       ? "border-ember bg-ember text-ivory"
@@ -744,11 +879,19 @@ export function AdminAddSheet({
         {/* ── Group / school class ──────────────────────────────────────────── */}
         {(mode === "weekly" || mode === "school") && (
           <>
+            {/* No hint under this. The option says "Automatic — pick the best
+                fit", which is the whole idea; a two-sentence explanation
+                underneath repeated it and then described a failure state he has
+                not reached, on the form where he is trying to get one thing
+                made. The red card on the schedule teaches that failure at the
+                moment it is true. */}
             <Select
               label="Coach"
-              hint="Leave on automatic and each week gets whoever's free. A week with nobody free arrives with no coach, and shows red on the Schedule."
               value={form.coachId}
-              onChange={(e) => setForm({ ...form, coachId: e.target.value })}
+              onChange={(e) => {
+                mark();
+                setForm({ ...form, coachId: e.target.value });
+              }}
             >
               <option value="">Automatic — pick the best fit</option>
               {coaches.map((c) => (
@@ -756,35 +899,14 @@ export function AdminAddSheet({
               ))}
             </Select>
 
-            <div className="grid grid-cols-2 gap-3">
-              <Select
-                label="Location"
-                value={form.venueId}
-                onChange={(e) => setForm({ ...form, venueId: e.target.value })}
-              >
-                {venues.map((v) => (
-                  <option key={v.id} value={v.id}>
-                    {v.active ? v.name : `${v.name} (hidden)`}
-                  </option>
-                ))}
-              </Select>
-              <Select
-                label="Length"
-                value={form.durationMinutes}
-                onChange={(e) => setForm({ ...form, durationMinutes: Number(e.target.value) })}
-              >
-                {(mode === "school" ? SCHOOL_DURATIONS : WEEKLY_DURATIONS).map((d) => (
-                  <option key={d} value={d}>{d} min</option>
-                ))}
-              </Select>
-              <Input
-                label="Spots"
-                type="number"
-                min={1}
-                value={form.capacity}
-                onChange={(e) => setForm({ ...form, capacity: Number(e.target.value) })}
-              />
-            </div>
+            <ClassDetailFields
+              form={form}
+              onChange={(next) => {
+                mark();
+                setForm(next);
+              }}
+              venues={venues}
+            />
 
             {repeats ? (
               <div>
@@ -792,25 +914,16 @@ export function AdminAddSheet({
                     classes. The chips show what is picked and a time row
                     appears under each one — the control already says it. */}
                 <p className="label mb-2">Days</p>
-                <div className="mb-3 flex flex-wrap gap-2">
-                  {WEEKDAYS.map(([code, name]) => (
-                    <button
-                      key={code}
-                      type="button"
-                      onClick={() => toggleDay(code)}
-                      aria-pressed={weekdays.includes(code)}
-                      className={`rounded-full border px-4 py-1.5 text-sm font-medium transition-colors ${
-                        weekdays.includes(code)
-                          ? "border-ember bg-ember text-ivory"
-                          : "border-line hover:border-ember"
-                      }`}
-                    >
-                      {name.slice(0, 3)}
-                    </button>
-                  ))}
+                <div className="mb-3">
+                  <DayChips
+                    multiple
+                    label="Days"
+                    selected={weekdays}
+                    onSelect={toggleDay}
+                  />
                 </div>
                 <ItemTimesList
-                  items={WEEKDAYS.map(([code]) => code).filter((c) => weekdays.includes(c))}
+                  items={WEEKDAYS_IN_ORDER.filter((c) => weekdays.includes(c))}
                   labelOf={(c) => WEEKDAY_NAME[c] ?? c}
                   times={dayTimes}
                   onSetTime={setDayTime}
@@ -825,35 +938,13 @@ export function AdminAddSheet({
                     date wheel to say "today" was the single worst tap in the
                     app: the thing he wants most often was the thing furthest
                     away. Anything else is still one tap, on the ＋. */}
-                <div className="mb-3 flex flex-wrap gap-2">
-                  {QUICK_DAYS.map(({ offset, label }) => {
-                    const d = shiftWallDate(today, offset);
-                    const on = dates.includes(d);
-                    return (
-                      <button
-                        key={d}
-                        type="button"
-                        onClick={() => (on ? removeDate(d) : addDate(d))}
-                        aria-pressed={on}
-                        className={`pressable min-h-11 rounded-full border px-4 text-sm font-medium transition-colors ${
-                          on ? "border-ember bg-ember text-ivory" : "border-line hover:border-ember"
-                        }`}
-                      >
-                        {label ?? formatWallDay(d)}
-                      </button>
-                    );
-                  })}
-                  <label className="pressable flex min-h-11 cursor-pointer items-center rounded-full border border-line px-4 text-sm font-medium hover:border-ember">
-                    ＋
-                    <input
-                      key={dateKey}
-                      type="date"
-                      onChange={(e) => addDate(e.target.value)}
-                      className="sr-only"
-                      aria-label="Add another date"
-                    />
-                  </label>
-                </div>
+                <DateChips
+                  today={today}
+                  dates={dates}
+                  onAdd={addDate}
+                  onRemove={removeDate}
+                  dateKey={dateKey}
+                />
                 <ItemTimesList
                   items={dates}
                   labelOf={formatWallDay}
@@ -907,7 +998,7 @@ export function AdminAddSheet({
               value={playerChoiceValue(priv.clientId, priv.playerId)}
               onChange={(e) => {
                 const { clientId, playerId } = splitPlayerChoice(e.target.value);
-                setPriv({ ...priv, clientId, playerId });
+                updatePriv({ clientId, playerId });
               }}
             >
               <option value="">— pick a player —</option>
@@ -932,9 +1023,8 @@ export function AdminAddSheet({
 
             <Select
               label="Coach"
-              hint="Leave on automatic and each week gets whoever's free. A week with nobody free arrives with no coach, and shows red on the Schedule."
               value={priv.coachId}
-              onChange={(e) => setPriv({ ...priv, coachId: e.target.value })}
+              onChange={(e) => updatePriv({ coachId: e.target.value })}
             >
               <option value="">Automatic — pick the best fit</option>
               {coaches.map((c) => (
@@ -950,8 +1040,9 @@ export function AdminAddSheet({
             <div className="grid grid-cols-2 gap-3">
               <Select
                 label="Location"
+                className="col-span-2"
                 value={priv.venueId}
-                onChange={(e) => setPriv({ ...priv, venueId: e.target.value })}
+                onChange={(e) => updatePriv({ venueId: e.target.value })}
               >
                 {venues.map((v) => (
                   <option key={v.id} value={v.id}>
@@ -964,7 +1055,7 @@ export function AdminAddSheet({
               <Select
                 label="Length"
                 value={priv.duration}
-                onChange={(e) => setPriv({ ...priv, duration: Number(e.target.value) })}
+                onChange={(e) => updatePriv({ duration: Number(e.target.value) })}
               >
                 {[60, 90].map((d) => (
                   <option key={d} value={d}>{d} min</option>
@@ -972,56 +1063,26 @@ export function AdminAddSheet({
               </Select>
             </div>
 
-            {/* Just once: the same chips a one-time group class gets, so "today"
-                is one tap on both. It was a bare native date wheel here — the
-                one place in the sheet where the commonest answer was the most
-                work. Single-select, because a private is one family's hour:
-                the underlying booking takes one date, and pretending otherwise
-                would be a control that promises more than Save does. */}
+            {/* Just once: the same chips, the same multi-select and the same
+                per-row times a one-time group class gets. */}
             {!privRecurring && (
               <div>
-                <p className="label mb-2">Date</p>
-                <div className="mb-3 flex flex-wrap gap-2">
-                  {QUICK_DAYS.map(({ offset, label }) => {
-                    const d = shiftWallDate(today, offset);
-                    const on = priv.date === d;
-                    return (
-                      <button
-                        key={d}
-                        type="button"
-                        onClick={() => setPriv({ ...priv, date: d })}
-                        aria-pressed={on}
-                        className={`pressable min-h-11 rounded-full border px-4 text-sm font-medium transition-colors ${
-                          on ? "border-ember bg-ember text-ivory" : "border-line hover:border-ember"
-                        }`}
-                      >
-                        {label ?? formatWallDay(d)}
-                      </button>
-                    );
-                  })}
-                  <label
-                    className={`pressable flex min-h-11 cursor-pointer items-center rounded-full border px-4 text-sm font-medium ${
-                      QUICK_DAYS.every(({ offset }) => shiftWallDate(today, offset) !== priv.date)
-                        ? "border-ember bg-ember text-ivory"
-                        : "border-line hover:border-ember"
-                    }`}
-                  >
-                    {QUICK_DAYS.every(({ offset }) => shiftWallDate(today, offset) !== priv.date)
-                      ? formatWallDay(priv.date)
-                      : "＋"}
-                    <input
-                      type="date"
-                      value={priv.date}
-                      onChange={(e) => e.target.value && setPriv({ ...priv, date: e.target.value })}
-                      className="sr-only"
-                      aria-label="Pick another date"
-                    />
-                  </label>
-                </div>
-                <TimeSelect12h
-                  label="Time"
-                  value={priv.time}
-                  onChange={(time) => setPriv({ ...priv, time })}
+                <p className="label mb-2">Dates</p>
+                <DateChips
+                  today={today}
+                  dates={privDates}
+                  onAdd={addPrivDate}
+                  onRemove={removePrivDate}
+                  dateKey={privDateKey}
+                />
+                <ItemTimesList
+                  items={privDates}
+                  labelOf={formatWallDay}
+                  times={privDateTimes}
+                  onSetTime={setPrivDateTime}
+                  onRemove={removePrivDate}
+                  noteOf={slotNote}
+                  railOf={(d) => (preview?.byKey[d]?.coachBusy.length ?? 0) > 0}
                 />
               </div>
             )}
@@ -1033,25 +1094,16 @@ export function AdminAddSheet({
               <>
                 <div>
                   <p className="label mb-2">Days</p>
-                  <div className="mb-3 flex flex-wrap gap-2">
-                    {WEEKDAYS.map(([code, name]) => (
-                      <button
-                        key={code}
-                        type="button"
-                        onClick={() => togglePrivDay(code)}
-                        aria-pressed={privWeekdays.includes(code)}
-                        className={`pressable min-h-11 rounded-full border px-4 text-sm font-medium transition-colors ${
-                          privWeekdays.includes(code)
-                            ? "border-ember bg-ember text-ivory"
-                            : "border-line hover:border-ember"
-                        }`}
-                      >
-                        {name.slice(0, 3)}
-                      </button>
-                    ))}
+                  <div className="mb-3">
+                    <DayChips
+                      multiple
+                      label="Days"
+                      selected={privWeekdays}
+                      onSelect={togglePrivDay}
+                    />
                   </div>
                   <ItemTimesList
-                    items={WEEKDAYS.map(([code]) => code).filter((c) => privWeekdays.includes(c))}
+                    items={WEEKDAYS_IN_ORDER.filter((c) => privWeekdays.includes(c))}
                     labelOf={(c) => WEEKDAY_NAME[c] ?? c}
                     times={privDayTimes}
                     onSetTime={setPrivDayTime}
@@ -1060,18 +1112,22 @@ export function AdminAddSheet({
                   />
                 </div>
                 <div className="grid grid-cols-2 gap-3">
-                  <Input
-                    label="Starting"
-                    type="date"
-                    value={priv.startFrom}
-                    onChange={(e) => setPriv({ ...priv, startFrom: e.target.value })}
-                  />
+                  <div className="flex flex-col gap-1.5">
+                    <label className="label" htmlFor="priv-start">
+                      Starting
+                    </label>
+                    <input
+                      id="priv-start"
+                      type="date"
+                      value={priv.startFrom}
+                      onChange={(e) => updatePriv({ startFrom: e.target.value })}
+                      className="min-h-11 rounded-[8px] border border-line bg-surface-2 px-3 text-base text-fg"
+                    />
+                  </div>
                   <Select
                     label="For"
                     value={priv.recurWeeks}
-                    onChange={(e) =>
-                      setPriv((p) => ({ ...p, recurWeeks: Number(e.target.value) }))
-                    }
+                    onChange={(e) => updatePriv({ recurWeeks: Number(e.target.value) })}
                   >
                     {[2, 3, 4, 5, 6, 7, 8, 10, 12].map((w) => (
                       <option key={w} value={w}>{w} weeks</option>
@@ -1083,8 +1139,8 @@ export function AdminAddSheet({
           </>
         )}
 
-        <Button onClick={submit} disabled={pending || !canSubmit} className="w-full">
-          {pending ? <Spinner /> : submitLabel}
+        <Button onClick={submit} loading={pending} disabled={!canSubmit} className="w-full">
+          {submitLabel}
         </Button>
 
         {message && <p className="text-sm text-err">{message}</p>}

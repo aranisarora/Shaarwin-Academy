@@ -418,7 +418,14 @@ export function AdminSessionSheet({
     );
 
   return (
-    <Sheet open onClose={onClose} title={session.title}>
+    <Sheet
+      open
+      onClose={onClose}
+      // Only while he is actually mid-edit — the scope step is a decision, not
+      // a form, and the Session tab has nothing to lose.
+      dirty={step === "edit" && tab === "edit" && anyChanged}
+      title={session.title}
+    >
       {step === "scope" ? (
         /* ── Google Calendar-style scope chooser ──
            One screen, two verbs. Saving asks it because the change is
@@ -508,19 +515,13 @@ export function AdminSessionSheet({
             <Button
               variant={scopeMode === "cancel" ? "destructive" : "primary"}
               onClick={() => (scopeMode === "cancel" ? applyCancel(scope) : apply(scope))}
-              disabled={pending}
+              loading={pending}
             >
-              {pending ? (
-                <Spinner />
-              ) : scopeMode === "cancel" ? (
-                scope === "session" ? (
-                  `Cancel this ${thisDayName}`
-                ) : (
-                  "End the class"
-                )
-              ) : (
-                "Apply"
-              )}
+              {scopeMode === "cancel"
+                ? scope === "session"
+                  ? `Cancel this ${thisDayName}`
+                  : "End the class"
+                : "Apply"}
             </Button>
           </div>
         </div>
@@ -531,14 +532,15 @@ export function AdminSessionSheet({
               touch-none because it is the drag-to-dismiss grab area; a second
               sticky strip would eat ~44px of an 88dvh panel and sit in the
               gesture path. */}
-          <div className="grid grid-cols-2 gap-2">
+          <div role="radiogroup" aria-label="Session or edit" className="grid grid-cols-2 gap-2">
             {(["session", "edit"] as const).map((t) => (
               <button
                 key={t}
                 type="button"
+                role="radio"
                 onClick={() => setTab(t)}
-                aria-pressed={tab === t}
-                className={`min-h-11 rounded-[8px] border px-2 text-sm font-semibold ${
+                aria-checked={tab === t}
+                className={`pressable min-h-11 rounded-[8px] border px-2 text-sm font-semibold ${
                   tab === t
                     ? "border-ember bg-ember text-ivory"
                     : "border-line hover:border-ember"
@@ -763,8 +765,8 @@ export function AdminSessionSheet({
                   </option>
                 ))}
               </Select>
-              <Button onClick={assign} disabled={pending || !assignClientId} className="w-full">
-                {pending ? <Spinner /> : "Assign client"}
+              <Button onClick={assign} loading={pending} disabled={!assignClientId} className="w-full">
+                Assign client
               </Button>
             </ActionSection>
           )}
@@ -794,8 +796,8 @@ export function AdminSessionSheet({
                     onChange={(e) => setSchoolGrade(e.target.value)}
                   />
                   <div className="flex gap-2">
-                    <Button onClick={addPupil} disabled={pending}>
-                      {pending ? <Spinner /> : "Add player"}
+                    <Button onClick={addPupil} loading={pending}>
+                      Add player
                     </Button>
                     <Button
                       variant="ghost"
@@ -839,7 +841,7 @@ export function AdminSessionSheet({
                   <button
                     key={r.coachId}
                     onClick={() => setTarget(r.coachId)}
-                    className={`flex w-full items-center justify-between rounded-[8px] border px-3 py-2 text-sm ${
+                    className={`pressable flex min-h-11 w-full items-center justify-between rounded-[8px] border px-3 py-2 text-sm ${
                       target === r.coachId
                         ? "border-ember bg-surface"
                         : "border-line hover:border-ember"
@@ -857,6 +859,14 @@ export function AdminSessionSheet({
               onChange={(e) => setTarget(e.target.value)}
             >
               <option value="">— pick a coach —</option>
+              {/* The coach who is actually on this session, even if they have
+                  since been deactivated. `coaches` is filtered to active, so a
+                  session still rostered to a retired coach bound the select to
+                  an id with no option and rendered it BLANK — the same failure
+                  the Length field had. */}
+              {target && !coaches.some((c) => c.id === target) && (
+                <option value={target}>{detail?.coachName ?? "Current coach"}</option>
+              )}
               {coaches.map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.name}
@@ -878,8 +888,8 @@ export function AdminSessionSheet({
                   >
                     Keep
                   </Button>
-                  <Button disabled={pending} onClick={applyCoachOverride}>
-                    {pending ? <Spinner /> : "Assign anyway"}
+                  <Button loading={pending} onClick={applyCoachOverride}>
+                    Assign anyway
                   </Button>
                 </div>
               </div>
@@ -892,55 +902,61 @@ export function AdminSessionSheet({
                  tab to do the same job. */
               <div className="grid grid-cols-2 gap-2">
                 <Button
-                  disabled={pending || !target}
+                  loading={pending}
+                  disabled={!target}
                   onClick={() => applyCoach("session")}
                 >
-                  {pending ? <Spinner /> : `Just this ${thisDayName}`}
+                  Just this {thisDayName}
                 </Button>
                 <Button
-                  disabled={pending || !target}
+                  loading={pending}
+                  disabled={!target}
                   onClick={() => applyCoach("class")}
                 >
-                  {pending ? <Spinner /> : `Every ${classDayName}`}
+                  Every {classDayName}
                 </Button>
               </div>
             ) : (
               <Button
                 onClick={() => applyCoach("session")}
-                disabled={pending || !target}
+                loading={pending}
+                disabled={!target}
                 className="w-full"
               >
-                {pending ? <Spinner /> : "Change coach"}
+                Change coach
               </Button>
             )}
           </ActionSection>
 
           {/* ── Move / edit — one form, scoped on save ── */}
           <ActionSection label={session.isPrivate ? "Move this class" : "Move / edit"}>
-            <div className="grid grid-cols-2 gap-3">
-              <Input
-                label="Day"
-                type="date"
-                value={date}
-                onChange={(e) => {
-                  const newDate = e.target.value;
-                  setDate(newDate);
-                  const newWeekday = weekdayOfDate(newDate);
-                  setForm(f => ({ ...f, weekday: newWeekday, title: generateClassTitle(newWeekday, f.time, venueNameOf(f.venueId)) }));
-                }}
-              />
-              <TimeSelect12h
-                label="Time"
-                value={form.time}
-                onChange={(time) => updateForm({ ...form, time })}
-              />
-            </div>
+            {/* Stacked, not two half-columns. The time picker in a half-column
+                had about 51px per control on a phone and clipped all three.
+                And it is "Date" here — this is a calendar date; "Day" is the
+                word the weekday chips use, and one label meant both. */}
+            <Input
+              label="Date"
+              type="date"
+              value={date}
+              onChange={(e) => {
+                const newDate = e.target.value;
+                setDate(newDate);
+                const newWeekday = weekdayOfDate(newDate);
+                setForm(f => ({ ...f, weekday: newWeekday, title: generateClassTitle(newWeekday, f.time, venueNameOf(f.venueId)) }));
+              }}
+            />
+            <TimeSelect12h
+              label="Time"
+              value={form.time}
+              onChange={(time) => updateForm({ ...form, time })}
+            />
             {!session.isPrivate && (
               <ClassDetailFields form={form} onChange={updateForm} venues={venues} />
             )}
             <Button
               className="w-full"
-              disabled={pending || (session.isPrivate ? !slotChanged : !anyChanged)}
+              loading={pending}
+              disabled={session.isPrivate ? !slotChanged : !anyChanged}
               onClick={() => {
                 setMessage(null);
                 if (session.isPrivate) {
@@ -961,7 +977,7 @@ export function AdminSessionSheet({
                 }
               }}
             >
-              {pending ? <Spinner /> : "Save changes"}
+              Save changes
             </Button>
           </ActionSection>
 

@@ -5,7 +5,14 @@
 
 export function ActionResult({ children }: { children: React.ReactNode }) {
   return (
-    <p className="flex items-start gap-1.5 rounded-[12px] border border-ok bg-surface-2 px-4 py-3 text-sm text-ok">
+    // role=status so the ✓ is announced, not just drawn. These lines carry the
+    // consequence ("6 booked weeks moved with it", "3 weeks need a coach") and
+    // are frequently the only place it is ever stated.
+    <p
+      role="status"
+      aria-live="polite"
+      className="flex items-start gap-1.5 rounded-[12px] border border-ok bg-surface-2 px-4 py-3 text-sm text-ok"
+    >
       <span aria-hidden>✓</span>
       <span>{children}</span>
     </p>

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { Button } from "@/components/ui/Button";
 
 /**
  * Bottom sheet on <768px, right side-panel on desktop.
@@ -33,11 +34,22 @@ export function Sheet({
   open,
   onClose,
   title,
+  dirty = false,
   children,
 }: {
   open: boolean;
   onClose: () => void;
   title?: string;
+  /**
+   * There are unsaved edits in here. Every way out — backdrop, ✕, Escape, and
+   * the drag — asks once instead of closing.
+   *
+   * It lives on the Sheet rather than in each caller because the drag is the
+   * dangerous one and only this component knows about it: a thumb resting on
+   * the title bar of a long sheet, drifting 96px while reading, silently threw
+   * away a half-filled form.
+   */
+  dirty?: boolean;
   children: React.ReactNode;
 }) {
   const panelRef = useRef<HTMLDivElement>(null);
@@ -62,14 +74,39 @@ export function Sheet({
   const closeTimerRef = useRef<number | null>(null);
   // How much of the screen the on-screen keyboard is covering, on iOS.
   const [keyboardInset, setKeyboardInset] = useState(0);
+  // Armed by any exit attempt while `dirty`.
+  const [confirmDiscard, setConfirmDiscard] = useState(false);
+  // Read through a ref so the close handlers below can stay stable.
+  const dirtyRef = useRef(dirty);
+  useEffect(() => {
+    dirtyRef.current = dirty;
+  });
+
+  /** Every exit goes through here. Returns whether it actually closed. */
+  const requestClose = useCallback(() => {
+    if (dirtyRef.current) {
+      setConfirmDiscard(true);
+      return false;
+    }
+    onCloseRef.current();
+    return true;
+  }, []);
+
 
   useEffect(() => {
     if (!open) return;
     closingRef.current = false;
 
+    // Where the founder was before this opened, so closing puts him back.
+    // Nothing restored focus before, and every caller mounts its sheet
+    // conditionally — so closing dropped focus onto <body> and a keyboard user
+    // started again from the top of the page each time.
+    const opener =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
+
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
-        onCloseRef.current();
+        requestClose();
         return;
       }
       if (e.key !== "Tab") return;
@@ -101,8 +138,12 @@ export function Sheet({
         window.clearTimeout(closeTimerRef.current);
         closeTimerRef.current = null;
       }
+      // Put focus back where it came from. Guarded on the opener still being in
+      // the document: several sheets close by removing the very card that
+      // opened them, and focusing a detached node silently does nothing.
+      if (opener && document.contains(opener)) opener.focus();
     };
-  }, [open]);
+  }, [open, requestClose]);
 
   // iOS ignores overflow:hidden on <body>; pinning it is the only lock that
   // holds. It also scrolls the page to the top as a side effect, so remember
@@ -241,7 +282,15 @@ export function Sheet({
     dragRef.current = null;
     const elapsed = Math.max(1, e.timeStamp - drag.prevT);
     const velocity = (e.clientY - drag.prevY) / elapsed;
-    settle(drag.y > DISMISS_PX || velocity > DISMISS_VELOCITY);
+    const wantsDismiss = drag.y > DISMISS_PX || velocity > DISMISS_VELOCITY;
+    // Spring back and ask, rather than following the finger out with a form in
+    // it. This is the exit that gets taken by accident.
+    if (wantsDismiss && dirtyRef.current) {
+      settle(false);
+      setConfirmDiscard(true);
+      return;
+    }
+    settle(wantsDismiss);
   }
 
   function onGrabCancel() {
@@ -258,7 +307,7 @@ export function Sheet({
         ref={backdropRef}
         aria-label="Close"
         className="sheet-backdrop absolute inset-0 bg-ink/60"
-        onClick={onClose}
+        onClick={() => requestClose()}
       />
       <div
         ref={panelRef}
@@ -291,7 +340,7 @@ export function Sheet({
             <div className="flex items-center justify-between border-b border-line px-5 py-4">
               <h2 className="font-display text-xl">{title}</h2>
               <button
-                onClick={onClose}
+                onClick={() => requestClose()}
                 aria-label="Close sheet"
                 className="pressable flex h-11 w-11 items-center justify-center rounded-[8px] text-fg-2 hover:text-fg"
               >
@@ -303,6 +352,36 @@ export function Sheet({
         <div className="px-5 pb-[max(1.25rem,calc(env(safe-area-inset-bottom)+0.75rem))] pt-5 md:pb-5">
           {children}
         </div>
+
+        {/* Pinned to the bottom of the panel, where the thumb already is, and
+            only ever on screen because he tried to leave. Gated on `dirty` as
+            well as on the attempt, so a save that lands while it is up takes it
+            away rather than leaving him a question about nothing. */}
+        {confirmDiscard && dirty && (
+          <div
+            role="alertdialog"
+            aria-label="Unsaved changes"
+            className="sticky bottom-0 z-20 border-t border-line bg-surface-2 px-5 pb-[max(1rem,calc(env(safe-area-inset-bottom)+0.75rem))] pt-4 shadow-[var(--shadow-sheet)]"
+          >
+            <p className="text-sm text-fg-2">
+              You&apos;ve changed things here and not saved them yet.
+            </p>
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              <Button variant="ghost" onClick={() => setConfirmDiscard(false)}>
+                Keep editing
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={() => {
+                  setConfirmDiscard(false);
+                  onCloseRef.current();
+                }}
+              >
+                Discard
+              </Button>
+            </div>
+          </div>
+        )}
       </div>
     </div>,
     document.body

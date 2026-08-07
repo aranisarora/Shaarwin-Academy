@@ -1,5 +1,6 @@
 import { forwardRef } from "react";
 import Link from "next/link";
+import { Spinner } from "@/components/ui/Spinner";
 
 type Variant = "primary" | "ghost" | "destructive";
 type Size = "md" | "lg";
@@ -26,16 +27,34 @@ const sizes: Record<Size, string> = {
 type ButtonProps = React.ButtonHTMLAttributes<HTMLButtonElement> & {
   variant?: Variant;
   size?: Size;
+  /**
+   * In flight: shows a spinner BESIDE the label and disables the button.
+   *
+   * The label stays. Every sheet in the admin used to write
+   * `{pending ? <Spinner /> : "Save changes"}`, which throws away the one thing
+   * telling the founder what he just set in motion — and collapses the button
+   * to spinner-width while his thumb is still on it, so the next tap lands on
+   * whatever slid underneath.
+   */
+  loading?: boolean;
 };
 
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
-  function Button({ variant = "primary", size = "md", className = "", ...props }, ref) {
+  function Button(
+    { variant = "primary", size = "md", className = "", loading = false, disabled, children, ...props },
+    ref
+  ) {
     return (
       <button
         ref={ref}
+        disabled={disabled || loading}
+        aria-busy={loading || undefined}
         className={`${base} ${variants[variant]} ${sizes[size]} ${className}`}
         {...props}
-      />
+      >
+        {loading && <Spinner />}
+        {children}
+      </button>
     );
   }
 );
