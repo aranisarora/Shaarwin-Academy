@@ -110,7 +110,8 @@ create table public.class_sessions (
   coach_arrived_at timestamptz,
   coach_confirmed_at timestamptz,
   coach_arrival_source text,
-  coach_arrival_distance_m integer
+  coach_arrival_distance_m integer,
+  coach_late_at timestamptz
 );
 
 create table public.classes (
@@ -3891,6 +3892,16 @@ begin
   v_time := to_char(v_starts at time zone 'Asia/Kolkata', 'FMHH12:MI AM');
 
   if p_late then
+    -- Late implies coming, exactly as arrived does. Recording BOTH is what
+    -- stops the founder escalation calling this coach silent, and stops the
+    -- confirm ladder chasing someone who has already answered.
+    -- coach_arrived_at is deliberately untouched: they are not there yet, and
+    -- the start+10 escalation still needs to fire if they never turn up. It
+    -- just has to say something true when it does.
+    update class_sessions
+       set coach_late_at      = coalesce(coach_late_at, now()),
+           coach_confirmed_at = coalesce(coach_confirmed_at, now())
+     where id = p_session;
     v_type  := 'coach_late';
     v_title := 'Coach running late';
     v_body  := 'Coach ' || v_name || ' is running a few minutes late for the '

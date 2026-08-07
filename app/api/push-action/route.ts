@@ -120,9 +120,11 @@ export async function POST(request: Request) {
       });
     }
     case "coach_late": {
+      // Same 'tap' reasoning as coach_arrived above — a tray tap is still a tap.
       const { error } = await supabase.rpc("coach_mark_arrival", {
         p_session: sessionId,
         p_late: true,
+        p_source: "tap",
       });
       if (error) return NextResponse.json({ error: "rpc_failed" }, { status: 400 });
       revalidatePath(`/coach/session/${sessionId}`);
