@@ -3,6 +3,7 @@
 
 import { getCoachSessions } from "@/lib/coach-data";
 import { academyWallToUtc, formatSessionDate, istDayBounds } from "@/lib/academy-time";
+import { bulkTool } from "./bulk";
 import { fail, ok, type WaTool } from "./types";
 
 const WEEKDAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
@@ -308,21 +309,39 @@ const addWindow: WaTool = {
 };
 
 const removeWindow: WaTool = {
-  name: "remove_availability_window",
-  description: "Remove a weekly availability window (window_id from my_availability). Confirm first.",
+  name: "remove_availability_windows",
+  description:
+    "Remove one or more weekly availability windows (window_ids from my_availability or find). Confirm first.",
   input_schema: {
     type: "object",
-    properties: { window_id: { type: "string" } },
-    required: ["window_id"],
+    properties: {
+      window_ids: {
+        type: "array",
+        items: { type: "string" },
+        description: "One or more availability window ids",
+      },
+    },
+    required: ["window_ids"],
   },
-  run: async (input, ctx) => {
-    await ctx.supabase!
-      .from("coach_availability")
-      .delete()
-      .eq("id", input.window_id)
-      .eq("coach_id", ctx.profile!.id);
-    return ok({ removed: true });
-  },
+  run: async (input, ctx) =>
+    bulkTool(
+      input.window_ids ?? input.window_id,
+      async (id) => {
+        // The delete used to be fired and forgotten, so a wrong id or an RLS
+        // block reported "removed" and the coach kept the slot they thought
+        // they'd cleared. Ask for the row back and treat none as a failure.
+        const { data, error } = await ctx.supabase!
+          .from("coach_availability")
+          .delete()
+          .eq("id", id)
+          .eq("coach_id", ctx.profile!.id)
+          .select("id");
+        if (error) return { ok: false, error: error.message };
+        if (!data?.length) return { ok: false, error: "That window isn't on your availability." };
+        return { ok: true };
+      },
+      { noun: "window" }
+    ),
 };
 
 const requestTimeOff: WaTool = {

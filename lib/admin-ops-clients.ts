@@ -3,6 +3,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/database.types";
+import { isMuted } from "@/lib/notification-prefs";
 import { normalizePhoneInput } from "@/lib/whatsapp/phone";
 import { adminClient, autoProvisionClient, linkPhoneToUser } from "@/lib/whatsapp/identity";
 import type { OpResult } from "@/lib/admin-ops-types";
@@ -210,9 +211,121 @@ export async function deletePendingClientCore(
 }
 
 /**
- * Send an announcement to every active coach or every active client. Rows land
- * in `notifications`; the delivery worker fans them out over push / WhatsApp /
+ * The notification types a human-composed message may be filed under.
+ *
+ * `notifications.type` is not decoration — supabase/functions/notify keys the
+ * whole delivery pipeline off it: which mute group silences it, whether it
+ * bypasses preferences (TRANSACTIONAL), whether it counts against the 3-a-day
+ * cap (CAP_EXEMPT), whether it goes push-and-WhatsApp rather than first-wins,
+ * and whether quiet hours can hold it. A type the worker doesn't know is
+ * UNMUTABLE by design ("an omission fails loud rather than silent"), so a free
+ * string here would let a typo build a channel no one can turn off.
+ *
+ * Both values below are in the worker's PREF_GROUP_FOR_TYPE, so both stay
+ * mutable, and neither is TRANSACTIONAL — a composed message can never
+ * impersonate an account-critical alert like session_cancelled, which the
+ * cancel path sends properly on its own.
+ */
+export const NOTIFY_TYPES = ["announcement", "class_updated"] as const;
+export type NotifyType = (typeof NOTIFY_TYPES)[number];
+
+/**
+ * Send an announcement to an explicit set of users. Rows land in
+ * `notifications`; the delivery worker fans them out over push / WhatsApp /
  * email per each user's preferences.
+ *
+ * This is the primitive: WHO is a parameter, not an enum. `broadcastNotificationCore`
+ * below is the same thing with the audience resolved from a role, and the
+ * WhatsApp `notify` tool is the same thing with the audience resolved from
+ * whatever `find` returned — "the coaches at La Plazza on Saturday", "the three
+ * clients whose payment failed". Recipient caps belong to the caller, not here:
+ * a broadcast legitimately reaches everyone, while a model-chosen set should be
+ * bounded (see NOTIFY_CAP in the bot's notify tool).
+ */
+export async function notifyUsersCore(
+  supabase: SupabaseClient<Database>,
+  actorId: string,
+  userIds: readonly string[],
+  message: string,
+  title?: string,
+  audit?: { action?: string; meta?: Record<string, unknown> },
+  type: NotifyType = "announcement"
+): Promise<OpResult & { recipients?: number; muted?: string[]; skipped_deleted?: number }> {
+  const body = message.trim();
+  if (!body) return { ok: false, error: "The message can't be empty." };
+
+  // The same person can arrive twice when a set is stitched from two queries
+  // (e.g. a coach who is also a parent); one message each is what's meant.
+  const requested = [...new Set(userIds.filter((id) => typeof id === "string" && id.trim()))];
+  if (requested.length === 0) return { ok: false, error: "No recipients found." };
+
+  // Two things the caller can't know from an id list, and both matter enough to
+  // report rather than swallow:
+  //
+  //  * Soft-deleted accounts. broadcastNotificationCore has always filtered
+  //    `deleted_at IS NULL`; a set assembled from a query has no such promise,
+  //    and messaging a closed account is a real-world wrong.
+  //  * Muted recipients. Delivery honours each person's preferences, so a
+  //    message can be queued, reported "sent", and never reach anyone. The
+  //    founder needs "3 queued, Ravi has announcements muted" — not a bare
+  //    success. We queue for them anyway: the row still shows in-app, and it is
+  //    the member's own toggle deciding the rest.
+  const { data: profiles } = await supabase
+    .from("profiles")
+    .select("id,full_name,deleted_at,notification_prefs")
+    .in("id", requested);
+
+  const known = new Map((profiles ?? []).map((p) => [p.id, p]));
+  const ids = requested.filter((id) => !known.get(id)?.deleted_at);
+  const skippedDeleted = requested.length - ids.length;
+  if (ids.length === 0) {
+    return { ok: false, error: "Those accounts are all closed — nobody to message." };
+  }
+
+  const muted = ids
+    .filter((id) =>
+      isMuted(type, known.get(id)?.notification_prefs as Record<string, boolean> | null)
+    )
+    .map((id) => known.get(id)?.full_name ?? "someone");
+
+  const heading = title?.trim() || "Message from the academy";
+  const { error } = await supabase.from("notifications").insert(
+    ids.map((id) => ({
+      user_id: id,
+      type,
+      title: heading,
+      body,
+    }))
+  );
+  if (error) return { ok: false, error: "Couldn't queue the messages." };
+
+  await supabase.from("audit_log").insert({
+    actor_id: actorId,
+    action: audit?.action ?? "notify.send",
+    entity: "notifications",
+    // The resolved ids are the point of this record: when a targeted send goes
+    // to the wrong group, the filter that produced it is gone but this isn't.
+    // Capped so one broadcast can't write a megabyte of jsonb.
+    meta: {
+      ...audit?.meta,
+      type,
+      title: heading,
+      body,
+      recipients: ids.length,
+      recipient_ids: ids.slice(0, 100),
+    },
+  });
+  return {
+    ok: true,
+    recipients: ids.length,
+    muted,
+    skipped_deleted: skippedDeleted,
+  };
+}
+
+/**
+ * Send an announcement to every active coach or every active client.
+ * A thin audience resolver over notifyUsersCore.
  */
 export async function broadcastNotificationCore(
   supabase: SupabaseClient<Database>,
@@ -221,8 +334,9 @@ export async function broadcastNotificationCore(
   message: string,
   title?: string
 ): Promise<OpResult & { recipients?: number }> {
-  const body = message.trim();
-  if (!body) return { ok: false, error: "The message can't be empty." };
+  // Ahead of resolving the audience, so an empty message is still reported as an
+  // empty message rather than as "no recipients".
+  if (!message.trim()) return { ok: false, error: "The message can't be empty." };
 
   const { data: targets, error: targetErr } = await supabase
     .from("profiles")
@@ -232,24 +346,14 @@ export async function broadcastNotificationCore(
   if (targetErr) return { ok: false, error: "Couldn't load the recipients." };
   if (!targets?.length) return { ok: false, error: "No recipients found." };
 
-  const heading = title?.trim() || "Message from the academy";
-  const { error } = await supabase.from("notifications").insert(
-    targets.map((t) => ({
-      user_id: t.id,
-      type: "announcement",
-      title: heading,
-      body,
-    }))
+  return notifyUsersCore(
+    supabase,
+    founderId,
+    targets.map((t) => t.id),
+    message,
+    title,
+    { action: "notify.broadcast", meta: { audience } }
   );
-  if (error) return { ok: false, error: "Couldn't queue the messages." };
-
-  await supabase.from("audit_log").insert({
-    actor_id: founderId,
-    action: "notify.broadcast",
-    entity: "notifications",
-    meta: { audience, title: heading, body, recipients: targets.length },
-  });
-  return { ok: true, recipients: targets.length };
 }
 
 /** Payment-dispute freeze: a blocked client can sign in but can't book. */

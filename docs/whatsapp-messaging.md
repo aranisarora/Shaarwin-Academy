@@ -502,14 +502,114 @@ prompt), except a founder giving a complete, unambiguous booking instruction.
 | Role | Tools | Coverage |
 | --- | --- | --- |
 | guest | 1 | `get_academy_info` (rare — unknown numbers are auto-provisioned to `client`) |
-| client | 16 | schedule, browse/book/cancel/reschedule group, private availability + booking, membership status, plans and one-off products, payment links, profile, players |
-| coach | 12 | sessions, confirm, mark arrival, roster, availability windows, time off, attendance, notes, can't-make-session |
-| founder | 44 | classes, sessions, coaches, clients, venues, settings, subscriptions, dunning, comps, credits, broadcast, time-off decisions |
+| client | 18 | schedule, browse/book/cancel/reschedule group, private availability + booking, membership status, plans and one-off products, payment links, profile, players, `find` |
+| coach | 15 | sessions, confirm, mark arrival, roster, availability windows, time off, attendance, notes, can't-make-session, `find` |
+| founder | 46 | classes, sessions, coaches, clients, venues, settings, subscriptions, dunning, comps, credits, broadcast, targeted `notify`, time-off decisions, `find` |
 
 Failure copy: bad signature → 403; media-only → `I can only read text messages
 for now — type what you need!`; rate limited → `You're messaging faster than I
 can think — give me a minute 🙂`; identity failure → `I'm having trouble
 reaching your account right now — please try again in a minute.`
+
+### 6.5 `find` — the generic reader
+
+Named tools answer the questions someone anticipated. `find` answers the rest:
+the caller picks an **entity**, a list of **filters**, and optionally
+**group_by + aggregate**, so "sessions at La Plazza this week", "clients whose
+membership lapses in 7 days" and "which coach took the most sessions last month"
+need no new code.
+
+It runs on the caller's own RLS-scoped session — never `ctx.admin` — and is
+read-only. Two allow-lists sit in front of RLS in
+`lib/whatsapp/tools/find-registry.ts`:
+
+- **Columns**, because RLS has no column granularity. `class_sessions.coach_notes`,
+  `bookings.coach_note`, `players.notes`, `coaches.base_address`, `venues.notes`
+  and the payment-processor ids are never selected. Two of those are readable by
+  the person asking — a parent *can* read `coach_note` on their own booking — so
+  RLS would not withhold them.
+- **Entities per role**, because a few read policies are broader than the screens
+  that rely on them (`student_notes`, `skill_assessments`, `skill_ratings` are
+  bare `is_coach() OR is_founder()` with no roster scoping; `settings` is
+  readable by any signed-in user). Those tables are simply not registered.
+
+Both database views are excluded, and `EntityDef.table` is typed as
+`keyof Database["public"]["Tables"]`, so registering a view is a build error
+rather than a decision someone has to remember. See the security note in
+§6.7 for why that matters for `coach_client_view`.
+
+Guests get no `find`: they have no RLS-scoped client and run on the service role.
+
+Unknown fields and out-of-vocabulary enum values are **rejected with the valid
+list**, never silently dropped — a dropped filter returns every row as though it
+had applied, which reads as a confident wrong answer.
+
+`count_only: true` returns a number with no rows transferred, which is also what
+keeps "how many clients" from silently capping at a page size.
+
+Aggregates are folded in TypeScript over a 1000-row scan (PostgREST aggregate
+functions are a project-wide switch), and the response carries `truncated` when
+that cap bites.
+
+### 6.6 Set-taking write tools
+
+The write tools take **arrays of ids**, so "cancel Saturday" is one call rather
+than one call per session inside a 2048-token output budget:
+
+`cancel_sessions`, `cancel_bookings`, `reassign_coach`, `adjust_private_credits`,
+`move_session` (also takes `shift_minutes` for a relative move — "push Tuesday
+back 30 minutes"), `set_session_capacity`, `set_class_active`, `set_coach_active`,
+`set_venue_active`, `block_client`, `archive_client`,
+`remove_availability_windows`, `notify`.
+
+Each still routes through the same `lib/admin-ops` core as the web app, so the
+cascades and `audit_log` rows are unchanged. `lib/whatsapp/tools/bulk.ts` caps a
+call at **50 ids**, runs them **sequentially**, and reports per-id outcomes —
+partial success comes back as `ok` with a `failed` count and the failing ids, so
+the assistant can say "11 cancelled, 3 failed" instead of a flat error.
+
+**This is not a database transaction.** supabase-js has no client-side
+transaction; a run can still stop part-way. What changed is that the partial
+state is now *reported* rather than invisible. True atomicity would need a
+Postgres function per operation.
+
+The system prompt requires the resolved set to be read back — count, names,
+and the total where money moves — before any action touching more than one
+person or session. A filter that quietly matched the wrong rows is the failure
+mode this design introduces, and reading the set back is what catches it.
+
+### 6.7 RLS gaps found while building `find` (pre-existing, not yet fixed)
+
+Auditing all 80 policies before exposing a free-form reader turned up problems
+that exist **today, independent of the bot**. `find` is designed not to depend
+on any of them — that is why the registry has its own allow-lists — but they
+should be fixed at the source. None is caused by this change and none is fixed
+by it.
+
+1. **`coach_client_view` bypasses RLS entirely.** `schema.sql:4958` creates it
+   with no `security_invoker`, so it executes as the view owner and ignores the
+   `profiles` policies. Any authenticated caller can read `id, full_name,
+   avatar_url` for **every** user — clients, coaches, school admins, the founder
+   — and `id` is the join key into everything else. Its sibling
+   `latest_skill_ratings` is correctly declared `WITH (security_invoker='true')`,
+   which is what makes this an oversight rather than a design. Fix: recreate with
+   `security_invoker = true`. **Highest priority.**
+2. **Coach reads are role-gated but not roster-gated.** `student_notes`,
+   `skill_assessments`, `skill_ratings` and `skills` all use bare
+   `USING (is_coach() OR is_founder())`. Any coach can read every safeguarding
+   note about every child. `players` *is* properly scoped via `coach_has_player()`,
+   so the intent was clearly roster-scoping — these four just never got it.
+3. **`coaches` exposes home addresses to anon.** `base_address` / `base_lat` /
+   `base_lng` are readable under `active = true`. `public_coach_roster()` already
+   exists as the safe projection.
+4. **`class_is_public_group()` omits `is_school = false`**, which the sibling
+   policy on `classes` applies. School-class sessions and their `coach_notes` are
+   world-readable while the parent class row is correctly hidden.
+5. **`settings` is readable by any signed-in user** (`auth.uid() IS NOT NULL`).
+6. **`own profile` is `FOR ALL` with no column restriction**, so unless a trigger
+   or column grant blocks it outside RLS, a client may be able to set their own
+   `role` to `founder` — which would defeat every founder-only policy. Worth
+   confirming before anything else on this list.
 
 ---
 
