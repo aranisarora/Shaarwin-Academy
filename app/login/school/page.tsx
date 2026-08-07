@@ -26,10 +26,10 @@ export const metadata: Metadata = {
 export default async function SchoolLoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ email?: string; next?: string }>;
+  searchParams: Promise<{ email?: string; next?: string; link?: string }>;
 }) {
   await redirectSignedInHome();
-  const { email, next } = await searchParams;
+  const { email, next, link } = await searchParams;
 
   // Only our own paths. `next` reaches this page from a query string, and
   // handing an arbitrary absolute URL to `location.replace` after a successful
@@ -40,6 +40,15 @@ export default async function SchoolLoginPage({
     <AuthLayout
       title="School log in"
       lead="Use the email and password we sent you. Anyone at the school can use the same login."
+      // Where a tap-to-enter link lands when it no longer works, which almost
+      // always means the password has been changed since the message was sent.
+      // It says so plainly: the alternative is a school retyping a dead
+      // password twice before thinking to ask us.
+      notice={
+        link === "stale"
+          ? "That link didn't work — the password has probably been changed since it was sent. Type the password from your most recent message, or ask us for new details."
+          : undefined
+      }
       alternatives={
         <>
           <AuthAlternative

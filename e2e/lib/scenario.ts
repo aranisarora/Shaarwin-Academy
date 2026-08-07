@@ -613,6 +613,11 @@ async function createSchoolVenue(name: string): Promise<string> {
       postcode: "560103",
       lat: 12.93,
       lng: 77.68,
+      // The flag is what makes a campus a school (migration 0059) — the founder's
+      // Schools list reads it, not the classes underneath. Without it this
+      // factory built a school that the school's own app could see and the
+      // founder's could not.
+      is_school: true,
     })
     .select("id")
     .single();
