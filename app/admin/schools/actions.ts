@@ -4,7 +4,6 @@ import { revalidatePath } from "next/cache";
 import { requireFounder } from "@/lib/founder";
 import {
   openSchoolLoginCore,
-  removeSchoolAccountCore,
   resetSchoolPasswordCore,
   type SchoolLogin,
 } from "@/lib/admin-ops-schools";
@@ -28,16 +27,16 @@ export async function openSchoolLogin(venueId: string): Promise<Result> {
   return result;
 }
 
+/**
+ * The one way to take a school's access away, and now the only destructive
+ * control on the screen: "Remove the login" sat next to this doing a rounder
+ * version of the same job, and undoing itself, since the next tap on the row
+ * mints the campus a fresh login anyway. `removeSchoolAccountCore` survives in
+ * `lib/admin-ops-schools` — it is still what an account deletion runs through —
+ * but nothing in the founder's app reaches for it any more.
+ */
 export async function resetSchoolPassword(userId: string): Promise<Result> {
   const { supabase, founder } = await requireFounder();
   if (!founder) return { ok: false, error: "Founder only." };
   return resetSchoolPasswordCore(supabase, founder.id, userId);
-}
-
-export async function removeSchoolAccount(userId: string): Promise<Result> {
-  const { supabase, founder } = await requireFounder();
-  if (!founder) return { ok: false, error: "Founder only." };
-  const result = await removeSchoolAccountCore(supabase, founder.id, userId);
-  if (result.ok) revalidatePath("/admin/schools");
-  return result;
 }

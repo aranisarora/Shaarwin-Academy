@@ -7,10 +7,19 @@ import { gateRedirect, roleHome, GATE_COLUMNS } from "@/lib/access-gates";
 // or slash-prefixed, so "/schools" never matches "/school".
 const PROTECTED_PREFIXES = ["/app", "/coach", "/admin", "/school"] as const;
 
-// Founder "view as coach" preview cookie (see lib/coach-preview.ts). While it is
-// set, a founder is allowed into /coach so the preview actually renders — the
-// coach pages verify the cookie server-side, so this can't be used to escalate.
-const PREVIEW_COOKIE = "preview_coach_id";
+// Founder preview cookies (see lib/coach-preview.ts and lib/school-preview.ts).
+// While one is set, a founder is allowed into that app so the preview actually
+// renders — both apps verify the cookie server-side, so this can't be used to
+// escalate. Duplicated here rather than imported because the proxy runs on every
+// request and must not pull the React/Supabase server modules those files bring.
+const COACH_PREVIEW_COOKIE = "preview_coach_id";
+const SCHOOL_PREVIEW_COOKIE = "preview_school_id";
+
+// Which prefix each preview unlocks.
+const PREVIEWS = [
+  { cookie: COACH_PREVIEW_COOKIE, prefix: "/coach" },
+  { cookie: SCHOOL_PREVIEW_COOKIE, prefix: "/school" },
+] as const;
 
 export async function proxy(request: NextRequest) {
   let response = NextResponse.next({ request });
@@ -79,14 +88,17 @@ export async function proxy(request: NextRequest) {
   const role = profile?.role ?? "client";
   const home = roleHome(role);
 
-  // A founder previewing a coach is allowed into /coach; without this the
-  // wrong-role redirect below would bounce them straight back to /admin and the
-  // preview would never render.
-  const previewingCoach =
+  // A founder previewing a coach or a school is allowed into that app; without
+  // this the wrong-role redirect below would bounce them straight back to /admin
+  // and the preview would never render.
+  const previewing =
     role === "founder" &&
-    !!request.cookies.get(PREVIEW_COOKIE)?.value &&
-    (pathname === "/coach" || pathname.startsWith("/coach/"));
-  if (previewingCoach) return response;
+    PREVIEWS.some(
+      (p) =>
+        !!request.cookies.get(p.cookie)?.value &&
+        (pathname === p.prefix || pathname.startsWith(`${p.prefix}/`))
+    );
+  if (previewing) return response;
 
   // Wrong-role access → redirect to own home.
   if (!pathname.startsWith(home)) {
