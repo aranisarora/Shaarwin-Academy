@@ -64,12 +64,22 @@ export function AdminSessionSheet({
   venues,
   clients,
   onClose,
+  openAt = "edit",
 }: {
   session: SessionRow;
   coaches: Coach[];
   venues: Venue[];
   clients: ClientOption[];
   onClose: () => void;
+  /** Open straight on the cancel question, for the hold-a-card menu.
+   *
+   *  It lands on the SCOPE STEP, not on a done deal. That is the whole point:
+   *  cancelling a session out of a recurring class can mean this Tuesday or
+   *  every Tuesday from now on, and those are wildly different messages to send
+   *  a dozen families. A hold that cancelled outright would be the one gesture
+   *  in the app with no answer to "which?", so the shortcut skips the reading
+   *  and keeps the question. */
+  openAt?: "edit" | "cancel";
 }) {
   // generateClassTitle's signature is (weekday, time, venueName). Every call in
   // this file used to pass (skillLevel, weekday, time), so each argument landed
@@ -106,12 +116,16 @@ export function AdminSessionSheet({
     });
   }
   const [date, setDate] = useState(wallDate(session.starts_at));
-  const [step, setStep] = useState<"edit" | "scope">("edit");
+  const [step, setStep] = useState<"edit" | "scope">(
+    openAt === "cancel" ? "scope" : "edit"
+  );
   const [scope, setScope] = useState<Scope>("session");
   // The scope step asks the same question for two different verbs. Cancel is
   // the destructive one, so it defaults to the reversible half and its confirm
   // button changes wording with the choice — the label IS the guard.
-  const [scopeMode, setScopeMode] = useState<"save" | "cancel">("save");
+  const [scopeMode, setScopeMode] = useState<"save" | "cancel">(
+    openAt === "cancel" ? "cancel" : "save"
+  );
 
   // Two tabs: what this session IS, and what you can do to it. Tapping a card
   // courtside is almost always the first question, and it used to arrive as a
@@ -295,7 +309,7 @@ export function AdminSessionSheet({
         const r = await endGroupClass(session.classId);
         if (r.ok) {
           okMsg(
-            `Class ended — every upcoming ${classDayName} is cancelled and everyone booked has been told. It stays on Weekly classes marked Ended, so you can restore it there.`
+            `Class ended — every upcoming ${classDayName} is cancelled and everyone booked has been told. It stays on the Timetable marked Ended, so you can restore it there.`
           );
           onClose();
         } else errMsg(r.error ?? "Failed.");
@@ -465,7 +479,7 @@ export function AdminSessionSheet({
                 </span>
                 <span className="block text-sm text-fg-2">
                   {scopeMode === "cancel"
-                    ? "All upcoming weeks are cancelled and everyone booked gets a message. Past sessions stay in the history — you can restore the class from Weekly classes."
+                    ? "All upcoming weeks are cancelled and everyone booked gets a message. Past sessions stay in the history — you can restore the class from the Timetable."
                     : `All upcoming weeks of ${session.title} change. Everyone booked gets a message automatically.`}
                 </span>
               </span>
@@ -692,12 +706,12 @@ export function AdminSessionSheet({
               ) : session.classRecurring ? (
                 <p className="text-sm text-fg-2">
                   Repeats every {classDayName}. Pausing, restoring and deleting the class
-                  live in{" "}
+                  live on the{" "}
                   <Link
                     href={`/admin/schedule?view=timetable&class=${session.classId}`}
                     className="text-ember hover:underline"
                   >
-                    Weekly classes
+                    Timetable
                   </Link>
                   .
                 </p>
@@ -711,11 +725,12 @@ export function AdminSessionSheet({
 
           {tab === "edit" && (
             <>
-              <p className="text-sm text-fg-2">
-                {session.isPrivate || !session.classRecurring
-                  ? "This runs on one date, so every change here is just that date."
-                  : `Changes here say what they touch — this ${thisDayName}, or every ${classDayName}.`}
-              </p>
+              {/* No preamble about what a change will reach. The Info tab already
+                  says whether this repeats, and the scope step asks "this
+                  {thisDayName}, or every {classDayName}?" at the moment he
+                  presses Save — which is when the answer matters and the only
+                  time it can be acted on. Saying it a third time here, in a
+                  third wording, was the panel talking to itself. */}
 
           {/* ── Assign a client — the reason an open private slot needs you ── */}
           {isOpenPrivate && (
@@ -1043,12 +1058,12 @@ export function AdminSessionSheet({
                 that it isn't here. */}
             {!session.isPrivate && session.classRecurring && (
               <p className="text-sm text-fg-2">
-                Deleting a class for good, and restoring an ended one, happen in{" "}
+                Deleting a class for good, and restoring an ended one, happen on the{" "}
                 <Link
                   href={`/admin/schedule?view=timetable&class=${session.classId}`}
                   className="text-ember hover:underline"
                 >
-                  Weekly classes
+                  Timetable
                 </Link>
                 .
               </p>

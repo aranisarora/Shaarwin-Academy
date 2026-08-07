@@ -758,7 +758,7 @@ export function AdminAddSheet({
 
             <div className="grid grid-cols-2 gap-3">
               <Select
-                label="Venue"
+                label="Location"
                 value={form.venueId}
                 onChange={(e) => setForm({ ...form, venueId: e.target.value })}
               >
@@ -942,85 +942,14 @@ export function AdminAddSheet({
               ))}
             </Select>
 
-            {/* Repeat itself is asked once at the top for every kind of class.
-                All that is left here is how long for — the one part of the
-                question that is genuinely private-only, because a group class
-                repeats until it is ended while a family books a block. */}
-            {privRecurring && (
-              <label className="flex min-h-11 items-center gap-2 text-sm">
-                <span className="label">For</span>
-                <select
-                  value={priv.recurWeeks}
-                  onChange={(e) => setPriv((p) => ({ ...p, recurWeeks: Number(e.target.value) }))}
-                  className="min-h-11 rounded-[8px] border border-line bg-surface-2 px-3 text-sm"
-                >
-                  {[2, 3, 4, 5, 6, 7, 8, 10, 12].map((w) => (
-                    <option key={w} value={w}>{w} weeks</option>
-                  ))}
-                </select>
-              </label>
-            )}
-
-            {/* Just once: single date picker */}
-            {!privRecurring && (
-              <div className="grid grid-cols-2 gap-3">
-                <Input
-                  label="Date"
-                  type="date"
-                  value={priv.date}
-                  onChange={(e) => setPriv({ ...priv, date: e.target.value })}
-                />
-                <TimeSelect12h
-                  label="Time"
-                  value={priv.time}
-                  onChange={(time) => setPriv({ ...priv, time })}
-                />
-              </div>
-            )}
-
-            {/* Recurring: day multiselect with per-day times + start-from anchor */}
-            {privRecurring && (
-              <>
-                <div>
-                  <p className="label mb-2">Days</p>
-                  <div className="mb-3 flex flex-wrap gap-2">
-                    {WEEKDAYS.map(([code, name]) => (
-                      <button
-                        key={code}
-                        type="button"
-                        onClick={() => togglePrivDay(code)}
-                        aria-pressed={privWeekdays.includes(code)}
-                        className={`rounded-full border px-4 py-1.5 text-sm font-medium transition-colors ${
-                          privWeekdays.includes(code)
-                            ? "border-ember bg-ember text-ivory"
-                            : "border-line hover:border-ember"
-                        }`}
-                      >
-                        {name.slice(0, 3)}
-                      </button>
-                    ))}
-                  </div>
-                  <ItemTimesList
-                    items={WEEKDAYS.map(([code]) => code).filter((c) => privWeekdays.includes(c))}
-                    labelOf={(c) => WEEKDAY_NAME[c] ?? c}
-                    times={privDayTimes}
-                    onSetTime={setPrivDayTime}
-                    noteOf={slotNote}
-                    railOf={(c) => (preview?.byKey[c]?.coachBusy.length ?? 0) > 0}
-                  />
-                </div>
-                <Input
-                  label="Start from"
-                  type="date"
-                  value={priv.startFrom}
-                  onChange={(e) => setPriv({ ...priv, startFrom: e.target.value })}
-                />
-              </>
-            )}
-
+            {/* Where and how long, ABOVE the schedule — the same order a group
+                class asks them in. They used to sit at the bottom here and near
+                the top there, so the two halves of one sheet read as two forms.
+                Location leads because it is the thing he changes least often and
+                the thing the clash preview below needs in order to say anything. */}
             <div className="grid grid-cols-2 gap-3">
               <Select
-                label="Venue"
+                label="Location"
                 value={priv.venueId}
                 onChange={(e) => setPriv({ ...priv, venueId: e.target.value })}
               >
@@ -1043,6 +972,114 @@ export function AdminAddSheet({
               </Select>
             </div>
 
+            {/* Just once: the same chips a one-time group class gets, so "today"
+                is one tap on both. It was a bare native date wheel here — the
+                one place in the sheet where the commonest answer was the most
+                work. Single-select, because a private is one family's hour:
+                the underlying booking takes one date, and pretending otherwise
+                would be a control that promises more than Save does. */}
+            {!privRecurring && (
+              <div>
+                <p className="label mb-2">Date</p>
+                <div className="mb-3 flex flex-wrap gap-2">
+                  {QUICK_DAYS.map(({ offset, label }) => {
+                    const d = shiftWallDate(today, offset);
+                    const on = priv.date === d;
+                    return (
+                      <button
+                        key={d}
+                        type="button"
+                        onClick={() => setPriv({ ...priv, date: d })}
+                        aria-pressed={on}
+                        className={`pressable min-h-11 rounded-full border px-4 text-sm font-medium transition-colors ${
+                          on ? "border-ember bg-ember text-ivory" : "border-line hover:border-ember"
+                        }`}
+                      >
+                        {label ?? formatWallDay(d)}
+                      </button>
+                    );
+                  })}
+                  <label
+                    className={`pressable flex min-h-11 cursor-pointer items-center rounded-full border px-4 text-sm font-medium ${
+                      QUICK_DAYS.every(({ offset }) => shiftWallDate(today, offset) !== priv.date)
+                        ? "border-ember bg-ember text-ivory"
+                        : "border-line hover:border-ember"
+                    }`}
+                  >
+                    {QUICK_DAYS.every(({ offset }) => shiftWallDate(today, offset) !== priv.date)
+                      ? formatWallDay(priv.date)
+                      : "＋"}
+                    <input
+                      type="date"
+                      value={priv.date}
+                      onChange={(e) => e.target.value && setPriv({ ...priv, date: e.target.value })}
+                      className="sr-only"
+                      aria-label="Pick another date"
+                    />
+                  </label>
+                </div>
+                <TimeSelect12h
+                  label="Time"
+                  value={priv.time}
+                  onChange={(time) => setPriv({ ...priv, time })}
+                />
+              </div>
+            )}
+
+            {/* Every week: day chips + a time each, identical to a group class.
+                The two extras below are genuinely private-only — a family books
+                a block from a date, a group class runs until it is ended. */}
+            {privRecurring && (
+              <>
+                <div>
+                  <p className="label mb-2">Days</p>
+                  <div className="mb-3 flex flex-wrap gap-2">
+                    {WEEKDAYS.map(([code, name]) => (
+                      <button
+                        key={code}
+                        type="button"
+                        onClick={() => togglePrivDay(code)}
+                        aria-pressed={privWeekdays.includes(code)}
+                        className={`pressable min-h-11 rounded-full border px-4 text-sm font-medium transition-colors ${
+                          privWeekdays.includes(code)
+                            ? "border-ember bg-ember text-ivory"
+                            : "border-line hover:border-ember"
+                        }`}
+                      >
+                        {name.slice(0, 3)}
+                      </button>
+                    ))}
+                  </div>
+                  <ItemTimesList
+                    items={WEEKDAYS.map(([code]) => code).filter((c) => privWeekdays.includes(c))}
+                    labelOf={(c) => WEEKDAY_NAME[c] ?? c}
+                    times={privDayTimes}
+                    onSetTime={setPrivDayTime}
+                    noteOf={slotNote}
+                    railOf={(c) => (preview?.byKey[c]?.coachBusy.length ?? 0) > 0}
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <Input
+                    label="Starting"
+                    type="date"
+                    value={priv.startFrom}
+                    onChange={(e) => setPriv({ ...priv, startFrom: e.target.value })}
+                  />
+                  <Select
+                    label="For"
+                    value={priv.recurWeeks}
+                    onChange={(e) =>
+                      setPriv((p) => ({ ...p, recurWeeks: Number(e.target.value) }))
+                    }
+                  >
+                    {[2, 3, 4, 5, 6, 7, 8, 10, 12].map((w) => (
+                      <option key={w} value={w}>{w} weeks</option>
+                    ))}
+                  </Select>
+                </div>
+              </>
+            )}
           </>
         )}
 

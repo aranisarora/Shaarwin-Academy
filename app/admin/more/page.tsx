@@ -6,10 +6,15 @@ import { WhatsAppAssistantCard } from "@/components/app/WhatsAppAssistantCard";
 
 export const metadata: Metadata = { title: "More" };
 
-// Alerts and Coaches both moved into the bottom bar, so they come off this
-// list — More owns what the bar doesn't, and listing a tab in both places is
-// how you end up with two doors to one room.
+// More owns exactly what the bar doesn't — listing a tab in both places is how
+// you end up with two doors to one room. Alerts is in the bar, so it is not
+// here; Coaches is not, so it is.
 const items = [
+  {
+    href: "/admin/coaches",
+    label: "Coaches",
+    hint: "Profiles, availability & time off",
+  },
   {
     href: "/admin/skills",
     label: "Skills",
