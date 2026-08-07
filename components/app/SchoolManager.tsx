@@ -27,7 +27,7 @@ import { Spinner } from "@/components/ui/Spinner";
 import { ConfirmAction } from "@/components/ui/ConfirmAction";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { isSyntheticEmail } from "@/lib/synthetic-email";
-import { handoverText, schoolLoginUrl } from "@/lib/school-handover";
+import { handoverText, instantLoginUrl } from "@/lib/school-handover";
 import { academyToday, formatDateFull, utcToAcademyWall } from "@/lib/academy-time";
 import {
   openSchoolLogin,
@@ -208,6 +208,12 @@ export function SchoolManager({ schools }: { schools: School[] }) {
       ? handoverText(label(selected), login.email, login.password)
       : null;
 
+  // Held next to `share` so the link he can test is the same one the message
+  // carries — built by the same function, from the same two values.
+  const instantUrl = login?.password
+    ? instantLoginUrl(login.email, login.password)
+    : null;
+
   return (
     <div className="space-y-4">
       {message && <p className="text-sm text-fg-2">{message}</p>}
@@ -215,19 +221,30 @@ export function SchoolManager({ schools }: { schools: School[] }) {
       <ul className="divide-y divide-line rounded-[12px] border border-line bg-surface-2">
         {schools.map((s) => (
           <li key={s.venueId}>
+            {/* The chevron the Coaches and Players lists already carry. Every
+                row here opens a sheet, and this was the one list of the three
+                that gave no sign of it — three lines of text in a box, which
+                reads as a report rather than something to tap. */}
             <button
               onClick={() => open(s)}
-              className="flex w-full flex-col items-start gap-0.5 px-4 py-4 text-left hover:bg-surface"
+              className="flex w-full items-center justify-between gap-3 px-4 py-4 text-left hover:bg-surface"
             >
-              <p className="w-full truncate font-medium">{label(s)}</p>
-              <p className="tnum w-full truncate text-xs text-fg-2">{facts(s)}</p>
-              <p
-                className={`w-full truncate text-xs ${
-                  s.lastSignInAt ? "text-fg-2" : "text-ember"
-                }`}
-              >
-                {signInLine(s.lastSignInAt)}
-              </p>
+              <div className="flex min-w-0 flex-col gap-0.5">
+                <p className="w-full truncate font-medium">{label(s)}</p>
+                <p className="tnum w-full truncate text-xs text-fg-2">
+                  {facts(s)}
+                </p>
+                <p
+                  className={`w-full truncate text-xs ${
+                    s.lastSignInAt ? "text-fg-2" : "text-ember"
+                  }`}
+                >
+                  {signInLine(s.lastSignInAt)}
+                </p>
+              </div>
+              <span aria-hidden className="shrink-0 text-fg-2">
+                ›
+              </span>
             </button>
           </li>
         ))}
@@ -338,9 +355,10 @@ export function SchoolManager({ schools }: { schools: School[] }) {
                       </Button>
                     </div>
                     <p className="text-sm text-fg-2">
-                      The message carries a link that opens the school&apos;s
-                      sign-in page with this email already filled in. Only the
-                      password has to be typed.
+                      The message leads with a link that signs the school in on
+                      tap, with nothing to type. The email and password are in
+                      it too, for anyone the link fails for — and it warns them
+                      not to forward it, because it lets in whoever opens it.
                     </p>
                     <div className="flex flex-wrap gap-x-4 gap-y-1">
                       <button
@@ -351,14 +369,17 @@ export function SchoolManager({ schools }: { schools: School[] }) {
                         {preview ? "Hide the message" : "See the message"}
                       </button>
                       {/* Opening it himself is the only way to know the handover
-                          works before a school finds out that it doesn't. */}
+                          works before a school finds out that it doesn't. It
+                          has to be a private window: he is signed in as the
+                          founder, and `/login/school` sends anyone with a
+                          session to their own home before the link is read. */}
                       <a
-                        href={schoolLoginUrl(login.email)}
+                        href={instantUrl ?? "#"}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="text-sm text-fg-2 underline-offset-4 hover:underline"
                       >
-                        Try the link
+                        Try the link (in a private window)
                       </a>
                     </div>
                     {preview && (

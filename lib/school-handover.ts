@@ -3,9 +3,11 @@
 // This lives in `lib` rather than inside SchoolManager because it is the whole
 // contract between two screens that never see each other. The founder's sheet
 // composes the text; the school's sign-in page has to make good on every
-// promise in it. If the URL shape here and the query string `/login/school`
-// reads ever drift apart, the failure lands on a head teacher who has no way to
+// promise in it. If the link written here and the link `/login/school` reads
+// ever drift apart, the failure lands on a head teacher who has no way to
 // diagnose it — so both ends import from this file, and it is unit-tested.
+// `pack`/`unpack` are the sharpest edge of that: one writes what the other
+// reads, and nothing else in the app can tell you they still agree.
 
 import { isSyntheticEmail } from "@/lib/synthetic-email";
 
@@ -24,19 +26,101 @@ export const APP_ORIGIN = (
 export const SCHOOL_LOGIN_PATH = "/login/school";
 
 /**
- * The prefilled link. `?email=` fills the address in for them, which is the
- * half of the credential they gain nothing from typing: it is minted, it is
- * long, and it is not a secret — nothing is ever delivered to it and it opens
- * nothing on its own.
+ * The half-prefilled link: address filled, password still to type. This is what
+ * `/login` redirects a school to when it types its minted address into the
+ * family form, and it is the shape a founder can hand over when he does not
+ * want a tap-to-enter link in the thread at all.
  *
- * The password is deliberately NOT in the URL. It is the whole of the secret,
- * and a URL is the one part of this that gets written down by machines — browser
- * history on a shared staff-room phone, a Referer header on the next outbound
- * click, an analytics path. It stays in the message body, where it is exactly as
- * exposed as the message already is and no more.
+ * `?email=` is a query string because the address is not a secret: it is minted,
+ * nothing is delivered to it, and on its own it opens nothing.
  */
 export function schoolLoginUrl(email: string): string {
   return `${APP_ORIGIN}${SCHOOL_LOGIN_PATH}?email=${encodeURIComponent(email)}`;
+}
+
+/**
+ * Both halves, packed into one string for the instant-login link.
+ *
+ * Not encryption and not pretending to be — anyone who can read the link can
+ * read the credential, exactly as anyone who can read the message can. What the
+ * packing buys is that the URL does not advertise "password=" to someone
+ * glancing at a screen, and that one opaque blob survives copy-paste as a unit
+ * where two separate parameters can be clipped apart.
+ *
+ * UTF-8 in, base64url out, so it is safe in a URL and symmetric between the
+ * founder's browser that writes it and the school's browser that reads it.
+ */
+function pack(email: string, password: string): string {
+  const payload = `${encodeURIComponent(email)}:${encodeURIComponent(password)}`;
+  const bytes = new TextEncoder().encode(payload);
+  let binary = "";
+  for (const b of bytes) binary += String.fromCharCode(b);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+/** The credential a link carries, or null if it carries nothing usable. Never
+ *  throws: this parses a string a stranger controls, and the honest answer to
+ *  anything malformed is the ordinary sign-in form. */
+export function unpack(token: string): { email: string; password: string } | null {
+  try {
+    const b64 = token.replace(/-/g, "+").replace(/_/g, "/");
+    const binary = atob(b64 + "=".repeat((4 - (b64.length % 4)) % 4));
+    const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
+    const [email, password] = new TextDecoder().decode(bytes).split(":");
+    if (!email || !password) return null;
+    return {
+      email: decodeURIComponent(email),
+      password: decodeURIComponent(password),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** The fragment key the link uses, and the entry screen reads. */
+export const LINK_TOKEN_KEY = "t";
+
+/**
+ * Where a tap-to-enter link lands: a screen whose only job is to redeem it.
+ *
+ * Its own route rather than a mode of `/login/school`, because the two screens
+ * owe the visitor opposite things. This one has no form, no fields and nothing
+ * to read — it is a spinner and a redirect, and a form flashing up before being
+ * replaced would be a step in a journey we promised had none. When redemption
+ * fails it forwards to `/login/school`, which is the screen that already knows
+ * how to explain itself.
+ */
+export const SCHOOL_ENTER_PATH = "/login/school/enter";
+
+/**
+ * The tap-to-enter link: the school opens it and is signed in, with nothing to
+ * type at all.
+ *
+ * The credential rides in the URL **fragment**, and that is the whole design.
+ * A fragment is never sent to a server — not to ours, not to a proxy, not in a
+ * Referer header on the next outbound click. Three consequences, all of which we
+ * need:
+ *
+ *   • It stays out of our own request logs. A query string carrying a live
+ *     password would be written to every log line that touches the request, and
+ *     those logs outlive the term.
+ *   • WhatsApp fetches a link to build its preview card. That crawler gets the
+ *     page and no credential, so it cannot sign itself in — which matters more
+ *     than it sounds: a crawler sign-in would stamp `last_sign_in_at` the moment
+ *     the founder pressed send, and "Never signed in" is exactly how he finds
+ *     the handovers that never landed.
+ *   • The school's own page strips it from the address bar on arrival, so the
+ *     live credential does not sit in the URL to be shoulder-read or shared by
+ *     someone copying what is on screen.
+ *
+ * What it emphatically is NOT is a second, weaker credential. The link *is* the
+ * password, so it grants nothing the message it travels in did not already
+ * grant, and — the part that matters for revocation — resetting a school's
+ * password kills every link ever sent to it, on the spot, with no second thing
+ * for the founder to remember to revoke.
+ */
+export function instantLoginUrl(email: string, password: string): string {
+  return `${APP_ORIGIN}${SCHOOL_ENTER_PATH}#${LINK_TOKEN_KEY}=${pack(email, password)}`;
 }
 
 /**
@@ -48,13 +132,17 @@ export function schoolLoginUrl(email: string): string {
  *
  *   • Plain text with bare URLs. WhatsApp renders no markdown, and a link in
  *     brackets arrives as literal brackets.
- *   • The tap comes first. One link that opens the right screen with the email
- *     already in it is the shortest path that exists, and it is the path almost
- *     everyone will take.
+ *   • The tap comes first, and it is a tap and nothing else — no field, no
+ *     password, no second screen. That is the path almost everyone takes.
  *   • The typed fallback comes second, in full. A link can be broken by a
- *     forward, a copy-paste that clips the query string, or a keyboard that
+ *     forward, a copy-paste that clips the fragment, or a keyboard that
  *     "helpfully" capitalises it — and when it breaks, the person holding this
- *     message must still be able to get in without asking anyone.
+ *     message must still be able to get in without asking anyone. This is also
+ *     the only way in on a browser with JavaScript switched off, since the
+ *     credential in the link is read by the page itself and never by a server.
+ *   • It warns that the link signs in whoever taps it. A school that forwards
+ *     the message to a parent group has handed over the account, and nothing
+ *     about a tidy-looking URL suggests that on its own.
  *   • Credentials sit alone between blank lines. On a narrow screen that is the
  *     difference between a field to copy and a wall of prose.
  *   • It never says "check your email". The address is a mailbox nothing is
@@ -75,14 +163,10 @@ export function handoverText(
     "",
     "You can now see how your pupils are getting on in our sessions: who attended, how each child is progressing, and the coaches' notes on them.",
     "",
-    "Tap here to open your sign-in page — your email is filled in already:",
-    schoolLoginUrl(email),
+    "Tap here and you will be signed in straight away — nothing to type:",
+    instantLoginUrl(email, password),
     "",
-    "Then type this password:",
-    "",
-    password,
-    "",
-    `If that link doesn't open, go to ${APP_ORIGIN}${SCHOOL_LOGIN_PATH} and type both of these:`,
+    `If that link doesn't work, go to ${APP_ORIGIN}${SCHOOL_LOGIN_PATH} and type these:`,
     "",
     `Email: ${email}`,
     `Password: ${password}`,
@@ -91,6 +175,6 @@ export function handoverText(
       ? 'That email is only a username — nothing is ever sent to it, and there is no "forgot password" link, so please keep this message.'
       : 'There is no "forgot password" link on this page, so please keep this message.',
     "",
-    "Anyone at the school can use the same login. Tell us if you would like it changed and we will send new details.",
+    "Anyone at the school can use the same login, so do share this with your colleagues — but not more widely: the link above signs in whoever taps it. Tell us if you would like the details changed and we will send new ones.",
   ].join("\n");
 }

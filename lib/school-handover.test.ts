@@ -4,13 +4,69 @@
 import { describe, it, expect } from "vitest";
 import {
   APP_ORIGIN,
+  LINK_TOKEN_KEY,
+  SCHOOL_ENTER_PATH,
   SCHOOL_LOGIN_PATH,
   handoverText,
+  instantLoginUrl,
   schoolLoginUrl,
+  unpack,
 } from "./school-handover";
 
 const EMAIL = "tisb-sports-block@schools.sharwin.local";
 const PASSWORD = "falcon-orchid-4821";
+
+/** What the school's page does with the link, in one line — so the round trip
+ *  is tested end to end and not just half of it. */
+const redeem = (url: string) =>
+  unpack(new URLSearchParams(new URL(url).hash.slice(1)).get(LINK_TOKEN_KEY) ?? "");
+
+describe("instantLoginUrl", () => {
+  it("hands the page back exactly what was packed", () => {
+    expect(redeem(instantLoginUrl(EMAIL, PASSWORD))).toEqual({
+      email: EMAIL,
+      password: PASSWORD,
+    });
+  });
+
+  it("survives a password with URL punctuation in it", () => {
+    // Generated passwords are word-word-digits today. This is here so the day
+    // someone widens the alphabet, the link does not quietly start truncating.
+    const awkward = "a+b/c=d&e?f#g h%i";
+    expect(redeem(instantLoginUrl(EMAIL, awkward))?.password).toBe(awkward);
+  });
+
+  it("survives a school's own address with a plus tag", () => {
+    const tagged = "sports+tt@inventureacademy.com";
+    expect(redeem(instantLoginUrl(tagged, PASSWORD))?.email).toBe(tagged);
+  });
+
+  it("keeps the credential in the fragment, never the query", () => {
+    const url = new URL(instantLoginUrl(EMAIL, PASSWORD));
+    // The whole design rests on this: a fragment is not sent to any server, so
+    // it stays out of our logs and out of WhatsApp's preview fetch.
+    expect(url.search).toBe("");
+    expect(url.hash).not.toBe("");
+    expect(url.pathname).toBe(SCHOOL_ENTER_PATH);
+    // And the plaintext itself must not be readable straight off the URL.
+    expect(url.hash).not.toContain(PASSWORD);
+  });
+
+  it("lands on the redeem screen, which sits under the school form", () => {
+    // Nested on purpose: whatever gates one gates the other.
+    expect(SCHOOL_ENTER_PATH.startsWith(`${SCHOOL_LOGIN_PATH}/`)).toBe(true);
+  });
+});
+
+describe("unpack", () => {
+  it("refuses rubbish rather than throwing", () => {
+    // This parses a string a stranger controls. Every one of these has to come
+    // back as "no credential", because the page's answer to null is the form.
+    for (const junk of ["", "!!!!", "not-base64", "YWJj", btoa("only-an-email")]) {
+      expect(unpack(junk)).toBeNull();
+    }
+  });
+});
 
 describe("schoolLoginUrl", () => {
   it("points at the school sign-in screen with the email prefilled", () => {
@@ -34,22 +90,30 @@ describe("schoolLoginUrl", () => {
 describe("handoverText", () => {
   const text = handoverText("TISB · Sports block", EMAIL, PASSWORD);
 
-  it("leads with the tappable prefilled link", () => {
-    expect(text).toContain(schoolLoginUrl(EMAIL));
-    // Before the typed fallback, or the fallback is what gets read first.
-    expect(text.indexOf(schoolLoginUrl(EMAIL))).toBeLessThan(
-      text.indexOf(`Email: ${EMAIL}`)
-    );
+  it("leads with the tap-to-enter link", () => {
+    const link = instantLoginUrl(EMAIL, PASSWORD);
+    expect(text).toContain(link);
+    // Before the typed fallback, or the fallback is what gets read first — and
+    // the whole point is that almost nobody should have to read it.
+    expect(text.indexOf(link)).toBeLessThan(text.indexOf(`Email: ${EMAIL}`));
+  });
+
+  it("carries a link that really does redeem to this credential", () => {
+    // The message is the only place these two are ever put side by side, so a
+    // link built from stale state would be invisible everywhere else.
+    const link = text.split("\n").find((l) => l.includes("#"));
+    expect(redeem(link!)).toEqual({ email: EMAIL, password: PASSWORD });
   });
 
   it("still spells out both halves for a broken link", () => {
     expect(text).toContain(`${APP_ORIGIN}${SCHOOL_LOGIN_PATH}`);
-    expect(text).toContain(`Email: ${EMAIL}`);
-    expect(text).toContain(`Password: ${PASSWORD}`);
+    expect(text.split("\n")).toContain(`Email: ${EMAIL}`);
+    expect(text.split("\n")).toContain(`Password: ${PASSWORD}`);
   });
 
-  it("puts the password on a line of its own to copy", () => {
-    expect(text.split("\n")).toContain(PASSWORD);
+  it("warns that the link lets in whoever taps it", () => {
+    // A school forwarding this to a parents' group has given away the account.
+    expect(text).toContain("signs in whoever taps it");
   });
 
   it("says a minted address is not an inbox", () => {
