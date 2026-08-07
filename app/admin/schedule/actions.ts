@@ -3,6 +3,7 @@
 import { revalidatePath, revalidateTag } from "next/cache";
 import { requireFounder } from "@/lib/founder";
 import { academyWallToUtc, formatDate, utcToAcademyWall } from "@/lib/academy-time";
+import { overlaps, weeklyOccurrences } from "@/lib/slot-clashes";
 import { asAddressDetails, fromDetails, type StructuredAddress } from "@/lib/address";
 import type { SessionRow } from "@/components/app/admin-calendar-types";
 import {
@@ -83,6 +84,7 @@ import {
 //   createPrivateSession ............. notifies the client
 //   assignPrivateSessionClient ....... notifies the client
 //   createPrivateSessionForInvite .... notifies the client
+//   previewSlotClashes ............... notifies nobody (read-only preview)
 // (cancelSession lives in app/admin/actions.ts: notifies everyone booked + coach.)
 type Result = { ok: boolean; error?: string; code?: string };
 
@@ -562,4 +564,163 @@ export async function fetchWeekSessions(
   const rangeLabel = `${formatDate(from)} – ${formatDate(to.getTime() - 86400000)}`;
 
   return { sessions, rangeLabel };
+}
+
+// ── What's already there ─────────────────────────────────────────────────────
+
+/** One session standing in the way of a slot the founder is picking. */
+export type SlotClash = {
+  startsAt: string; // ISO
+  endsAt: string; // ISO
+  title: string;
+  isPrivate: boolean;
+};
+
+export type SlotPreviewRow = {
+  /** The instants this pick would occupy, ISO ascending. */
+  occurrences: string[];
+  /** Occurrences the NAMED coach cannot take. Empty when left on automatic. */
+  coachBusy: { startsAt: string; clash: SlotClash }[];
+  /** Overlapping sessions in the same hall, whoever is teaching them. Never a
+   *  blocker — two classes in one venue is an ordinary arrangement. */
+  venueBusy: SlotClash[];
+};
+
+export type SlotPreview = {
+  byKey: Record<string, SlotPreviewRow>;
+  /** The lookup itself fell over. The sheet says so and publishing carries on —
+   *  a preview that fails must never become a gate. */
+  failed?: boolean;
+};
+
+/**
+ * What already occupies the day and time the founder is picking — asked while
+ * he is picking it, rather than after he taps Publish.
+ *
+ * Read-only, and deliberately NOT a validator: it returns facts and the sheet
+ * decides which of them are worth a sentence. For a repeating class nothing
+ * here can refuse anything at all — a week the chosen coach is busy on simply
+ * goes out for a coach to be picked automatically.
+ */
+export async function previewSlotClashes(input: {
+  mode: "recurring" | "dates";
+  /** "MO".."SU" for recurring, "YYYY-MM-DD" for dates. */
+  keys: string[];
+  timesByKey: Record<string, string>;
+  durationMinutes: number;
+  venueId: string;
+  coachId?: string;
+  weeks?: number;
+}): Promise<SlotPreview> {
+  const { supabase, founder } = await requireFounder();
+  if (!founder) return { byKey: {}, failed: true };
+
+  try {
+    const durationMs = input.durationMinutes * 60000;
+
+    // The same occurrence maths the insert uses, so the weeks named here are
+    // exactly the weeks that get written (lib/slot-clashes.ts).
+    const perKey = new Map<string, Date[]>();
+    for (const key of input.keys) {
+      const time = input.timesByKey[key];
+      if (!time) continue;
+      perKey.set(
+        key,
+        input.mode === "recurring"
+          ? weeklyOccurrences(key, time, input.weeks ?? 8)
+          : [academyWallToUtc(key, time)]
+      );
+    }
+
+    const all = [...perKey.values()].flat();
+    if (all.length === 0) return { byKey: {} };
+    const windowStart = new Date(Math.min(...all.map((d) => d.getTime())));
+    const windowEnd = new Date(Math.max(...all.map((d) => d.getTime())) + durationMs);
+
+    const SELECT = "starts_at,ends_at,classes!inner(title,class_type)";
+
+    // The coach's diary. Hits class_sessions_coach_id_starts_at_idx, which is
+    // partial on status='scheduled' — the same rows coach_no_overlap governs,
+    // so this asks exactly the question the database will ask.
+    const coachRows = input.coachId
+      ? (
+          await supabase
+            .from("class_sessions")
+            .select(SELECT)
+            .eq("coach_id", input.coachId)
+            .eq("status", "scheduled")
+            .lt("starts_at", windowEnd.toISOString())
+            .gt("ends_at", windowStart.toISOString())
+        ).data ?? []
+      : [];
+
+    // The hall. Matched on venue_id and never on name: `venues.unit` means two
+    // halls in one complex are separate rows, so a name match would have every
+    // class at a large site warning about every other one.
+    const { data: venueClasses } = await supabase
+      .from("classes")
+      .select("id")
+      .eq("venue_id", input.venueId);
+    const ids = (venueClasses ?? []).map((c) => c.id);
+    const venueRows = ids.length
+      ? (
+          await supabase
+            .from("class_sessions")
+            .select(SELECT)
+            .in("class_id", ids)
+            .eq("status", "scheduled")
+            .lt("starts_at", windowEnd.toISOString())
+            .gt("ends_at", windowStart.toISOString())
+        ).data ?? []
+      : [];
+
+    type Row = { starts_at: string; ends_at: string; classes: unknown };
+    const asClash = (r: Row): SlotClash => {
+      const cls = r.classes as { title: string; class_type: string };
+      return {
+        startsAt: r.starts_at,
+        endsAt: r.ends_at,
+        title: cls.title,
+        isPrivate: cls.class_type === "private",
+      };
+    };
+    const hits = (rows: Row[], start: Date) =>
+      rows.filter((r) =>
+        overlaps(
+          start.getTime(),
+          start.getTime() + durationMs,
+          new Date(r.starts_at).getTime(),
+          new Date(r.ends_at).getTime()
+        )
+      );
+
+    const byKey: Record<string, SlotPreviewRow> = {};
+    for (const [key, occurrences] of perKey) {
+      const coachBusy: { startsAt: string; clash: SlotClash }[] = [];
+      const venueBusy: SlotClash[] = [];
+      const seenVenue = new Set<string>();
+      for (const start of occurrences) {
+        for (const r of hits(coachRows as Row[], start)) {
+          coachBusy.push({ startsAt: start.toISOString(), clash: asClash(r) });
+        }
+        for (const r of hits(venueRows as Row[], start)) {
+          // One line per neighbouring class, not one per week — he is asking
+          // "what else is in this hall", not for a register of dates.
+          const k = `${r.starts_at}|${r.ends_at}`;
+          if (seenVenue.has(k)) continue;
+          seenVenue.add(k);
+          venueBusy.push(asClash(r));
+        }
+      }
+      byKey[key] = {
+        occurrences: occurrences.map((d) => d.toISOString()),
+        coachBusy,
+        venueBusy,
+      };
+    }
+
+    return { byKey };
+  } catch {
+    return { byKey: {}, failed: true };
+  }
 }
