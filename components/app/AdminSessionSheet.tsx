@@ -21,13 +21,16 @@ import {
   cancelAllFuturePrivateSessions,
   endGroupClass,
   moveSession,
+  reassignClassCoach,
   reassignSession,
+  getSessionDetail,
   getSessionRoster,
   setSessionCapacity,
   updateGroupClass,
   type RosterEntry,
+  type SessionDetail,
 } from "@/app/admin/schedule/actions";
-import { cancelSession, getRankedCoaches } from "@/app/admin/actions";
+import { cancelSession, getRankedCoaches, setClassActive } from "@/app/admin/actions";
 import { viewAsCoach } from "@/app/coach/preview-actions";
 import { AddressDisplay } from "@/components/app/AddressDisplay";
 import { ActionResult } from "@/components/app/ActionResult";
@@ -105,6 +108,25 @@ export function AdminSessionSheet({
   const [date, setDate] = useState(wallDate(session.starts_at));
   const [step, setStep] = useState<"edit" | "scope">("edit");
   const [scope, setScope] = useState<Scope>("session");
+  // The scope step asks the same question for two different verbs. Cancel is
+  // the destructive one, so it defaults to the reversible half and its confirm
+  // button changes wording with the choice — the label IS the guard.
+  const [scopeMode, setScopeMode] = useState<"save" | "cancel">("save");
+
+  // Two tabs: what this session IS, and what you can do to it. Tapping a card
+  // courtside is almost always the first question, and it used to arrive as a
+  // stack of six forms with the facts wedged above them. Landing on Edit when
+  // there's no coach preserves exactly what shipped before — that was the one
+  // case the sheet already opened ready to act on.
+  const [tab, setTab] = useState<"session" | "edit">(
+    session.coachId ? "session" : "edit"
+  );
+  // Which action the Edit tab should open at, when arriving from a callout.
+  const [focus, setFocus] = useState<string | null>(session.coachId ? null : "coach");
+  const goEdit = (section: string) => {
+    setTab("edit");
+    setFocus(section);
+  };
   const [target, setTarget] = useState(session.coachId ?? "");
   const [lock, setLock] = useState(false);
   // When the ranking rules reject a coach, we surface an in-sheet override
@@ -169,14 +191,22 @@ export function AdminSessionSheet({
 
   // Who's booked and whether they showed up — loaded alongside the coach ranks.
   const [roster, setRoster] = useState<RosterEntry[] | null>(null);
+  // The facts that aren't on the calendar row: the coach's name, what he said
+  // and did about turning up, and anything he wrote afterwards.
+  const [detail, setDetail] = useState<SessionDetail | null>(null);
 
   useEffect(() => {
     let alive = true;
+    // Three independent reads, none blocking the others — the roster paints as
+    // soon as it lands rather than waiting on a coach lookup it doesn't need.
     getRankedCoaches(session.id).then((r) => {
       if (alive) setRanked(r);
     });
-    getSessionRoster(session.id).then((r) => {
+    getSessionRoster(session.id, { includeWaitlisted: true }).then((r) => {
       if (alive) setRoster(r);
+    });
+    getSessionDetail(session.id).then((d) => {
+      if (alive) setDetail(d);
     });
     return () => {
       alive = false;
@@ -195,29 +225,83 @@ export function AdminSessionSheet({
     form.venueId !== (session.classVenueId ?? "");
   const anyChanged = slotChanged || spotsChanged || classChanged;
 
-  function applyCoach() {
-    if (!session || !target) return;
+  const thisDayName =
+    WEEKDAY_NAME[weekdayOfDate(wallDate(session.starts_at))] ?? "day";
+  const classDayName = WEEKDAY_NAME[session.classWeekday] ?? "week";
+
+  /** Changing the coach is the most frequent job in this sheet, and it has two
+   * honest answers: cover for one date, or move the class onto someone else.
+   * Both were reachable before — but only by leaving for the Weekly tab for the
+   * second one. Two labelled buttons say which is which without a question
+   * screen; a destructive scope choice still gets the step (see cancel). */
+  const [coachScope, setCoachScope] = useState<Scope>("session");
+
+  /** A class-wide reassign reports per-week: some weeks the new coach simply
+   *  cannot take, and they keep the coach they had. Saying only "done" over
+   *  that is how a founder finds out in three weeks' time. */
+  const classCoachDone = (r: { changed?: number; skipped?: number }) =>
+    okMsg(
+      r.skipped
+        ? `Coach set on ${r.changed} upcoming ${classDayName}s — ${r.skipped} couldn't take them (clashes) and kept their coach.`
+        : `Coach set on every upcoming ${classDayName} — everyone affected has been told.`
+    );
+
+  /** Both scopes reject a coach the same way (`filter_failed`), so the override
+   *  box below serves either. `force` replays whichever was asked for. */
+  async function runCoach(scope: Scope, force: boolean) {
+    if (scope === "session") {
+      const r = await reassignSession(session.id, target, lock, force);
+      if (!force && !r.ok && r.code === "filter_failed") return r;
+      if (r.ok)
+        okMsg(`Coach changed for this ${thisDayName} — everyone affected has been told.`);
+      else errMsg(r.error ?? "Failed.");
+      return null;
+    }
+    const r = await reassignClassCoach(session.classId, target, lock, force);
+    if (!force && !r.ok && r.code === "filter_failed") return r;
+    if (r.ok) classCoachDone(r);
+    else errMsg(r.error ?? "Failed.");
+    return null;
+  }
+
+  function applyCoach(scope: Scope) {
+    if (!target) return;
+    setCoachScope(scope);
     setCoachOverride(null);
     startTransition(async () => {
-      const r = await reassignSession(session.id, target, lock);
-      if (!r.ok && r.code === "filter_failed") {
-        // The rules say no — but the founder can override. A hard time clash is
-        // still blocked by the database either way. Ask in-sheet, not native.
-        setCoachOverride(r.error ?? "That coach doesn't fit the rules.");
-        return;
-      }
-      if (r.ok) okMsg("Coach changed — everyone affected has been told.");
-      else errMsg(r.error ?? "Failed.");
+      // The rules say no — but the founder can override. A hard time clash is
+      // still blocked by the database either way. Ask in-sheet, not native.
+      const rejected = await runCoach(scope, false);
+      if (rejected) setCoachOverride(rejected.error ?? "That coach doesn't fit the rules.");
     });
   }
 
   function applyCoachOverride() {
-    if (!session || !target) return;
+    if (!target) return;
     startTransition(async () => {
-      const r = await reassignSession(session.id, target, lock, true);
+      await runCoach(coachScope, true);
       setCoachOverride(null);
-      if (r.ok) okMsg("Coach changed — everyone affected has been told.");
-      else errMsg(r.error ?? "Failed.");
+    });
+  }
+
+  /** Cancel, once the scope step has been answered. */
+  function applyCancel(chosen: Scope) {
+    startTransition(async () => {
+      if (chosen === "session") {
+        const r = await cancelSession(session.id, "cancelled by academy");
+        if (r.ok) okMsg("Cancelled — everyone booked has been told.");
+        else errMsg(r.error ?? "Cancel failed.");
+      } else {
+        const r = await endGroupClass(session.classId);
+        if (r.ok) {
+          okMsg(
+            `Class ended — every upcoming ${classDayName} is cancelled and everyone booked has been told. It stays on Weekly classes marked Ended, so you can restore it there.`
+          );
+          onClose();
+        } else errMsg(r.error ?? "Failed.");
+      }
+      setStep("edit");
+      setScopeMode("save");
     });
   }
 
@@ -225,6 +309,7 @@ export function AdminSessionSheet({
     if (!session) return;
     startTransition(async () => {
       if (chosen === "session") {
+        let coachCleared = false;
         if (slotChanged) {
           const r = await moveSession(session.id, date, form.time);
           if (!r.ok) {
@@ -232,6 +317,7 @@ export function AdminSessionSheet({
             setStep("edit");
             return;
           }
+          coachCleared = !!r.coachCleared;
         }
         if (spotsChanged) {
           const r = await setSessionCapacity(session.id, form.capacity);
@@ -242,11 +328,15 @@ export function AdminSessionSheet({
           }
         }
         // A capacity-only change notifies nobody; a slot move tells everyone
-        // booked. Word the ✓ for whichever actually happened.
+        // booked. Word the ✓ for whichever actually happened — including the
+        // case where the new time clashed for the coach and the move went
+        // through without them.
         okMsg(
-          slotChanged
-            ? "Saved — just this session changed. Everyone booked has been told."
-            : "Saved — just this session changed."
+          coachCleared
+            ? "Session moved and everyone booked has been told. The coach couldn't take the new time, so it's off their calendar — the Schedule shows it needs someone."
+            : slotChanged
+              ? "Saved — just this session changed. Everyone booked has been told."
+              : "Saved — just this session changed."
         );
       } else {
         // Only fields the founder deliberately edited feed the class update —
@@ -264,7 +354,11 @@ export function AdminSessionSheet({
           time: timeChanged ? form.time : session.classTime,
         });
         if (r.ok)
-          okMsg("Saved for every week — upcoming sessions moved and everyone booked was told.");
+          okMsg(
+            r.stuck
+              ? `Saved for every week — upcoming sessions moved and everyone booked was told. ${r.stuck} ${r.stuck === 1 ? "week" : "weeks"} couldn't move and ${r.stuck === 1 ? "is" : "are"} still on the old slot; open ${r.stuck === 1 ? "it" : "them"} on the Schedule to move ${r.stuck === 1 ? "it" : "them"} by hand.`
+              : "Saved for every week — upcoming sessions moved and everyone booked was told."
+          );
         else errMsg(r.error ?? "Couldn't save the class.");
       }
       setStep("edit");
@@ -272,7 +366,15 @@ export function AdminSessionSheet({
   }
 
   // Booked players with attendance — attended/no-show set by the coach on the
-  // session sheet; "confirmed" means nobody has marked them yet.
+  // session sheet; "confirmed" means nobody has marked them yet. Waitlisted
+  // players are counted apart: they are not in the class, and folding them into
+  // "6 of 8 booked" would overstate a class that has room.
+  const booked = (roster ?? []).filter((p) => p.status !== "waitlisted");
+  const waitlisted = (roster ?? []).filter((p) => p.status === "waitlisted");
+  const markedCount = booked.filter(
+    (p) => p.status === "attended" || p.status === "no_show"
+  ).length;
+
   const rosterList =
     roster === null ? (
       <div className="flex justify-center py-2">
@@ -284,11 +386,15 @@ export function AdminSessionSheet({
       <ul className="space-y-1.5">
         {roster.map((p) => (
           <li key={p.id} className="flex items-center justify-between gap-3 text-sm">
-            <span>{p.name}</span>
+            <span className={p.status === "waitlisted" ? "text-fg-2" : undefined}>
+              {p.name}
+            </span>
             {p.status === "attended" ? (
               <Badge tone="ok">Present</Badge>
             ) : p.status === "no_show" ? (
               <Badge tone="err">Absent</Badge>
+            ) : p.status === "waitlisted" ? (
+              <Badge>Waiting{p.waitlistPosition ? ` · ${p.waitlistPosition}` : ""}</Badge>
             ) : (
               <Badge>Unmarked</Badge>
             )}
@@ -300,13 +406,19 @@ export function AdminSessionSheet({
   return (
     <Sheet open onClose={onClose} title={session.title}>
       {step === "scope" ? (
-        /* ── Google Calendar-style scope chooser ── */
+        /* ── Google Calendar-style scope chooser ──
+           One screen, two verbs. Saving asks it because the change is
+           ambiguous; cancelling asks it because the two answers are wildly
+           different sizes and the difference must be a deliberate tap, not a
+           button you were already reaching for. */
         <div className="space-y-4">
-          <p className="font-medium">Apply these changes to…</p>
+          <p className="font-medium">
+            {scopeMode === "cancel" ? "Cancel which?" : "Apply these changes to…"}
+          </p>
           <div className="space-y-2">
             <label
               className={`flex items-start gap-3 rounded-[8px] border p-3 ${
-                classChanged
+                classChanged && scopeMode === "save"
                   ? "cursor-not-allowed border-line opacity-50"
                   : scope === "session"
                     ? "cursor-pointer border-ember"
@@ -317,15 +429,18 @@ export function AdminSessionSheet({
                 name="scope"
                 className="mt-1"
                 checked={scope === "session"}
-                disabled={classChanged}
+                disabled={classChanged && scopeMode === "save"}
                 onChange={() => setScope("session")}
               />
               <span>
                 <span className="block font-medium">
-                  Just this {WEEKDAY_NAME[weekdayOfDate(wallDate(session.starts_at))] ?? "day"}
+                  Just this {thisDayName}
+                  {scopeMode === "cancel" ? ` — ${formatSessionDate(session.starts_at)}` : ""}
                 </span>
                 <span className="block text-sm text-fg-2">
-                  Only {formatSessionDate(session.starts_at)} changes. Other weeks stay as they are.
+                  {scopeMode === "cancel"
+                    ? "Everyone booked gets a message, and private lessons get their minutes back. Other weeks stay as they are."
+                    : `Only ${formatSessionDate(session.starts_at)} changes. Other weeks stay as they are.`}
                 </span>
               </span>
             </label>
@@ -344,115 +459,272 @@ export function AdminSessionSheet({
               />
               <span>
                 <span className="block font-medium">
-                  Every {WEEKDAY_NAME[session.classWeekday] ?? "week"} — the whole class
+                  {scopeMode === "cancel"
+                    ? `Every ${classDayName} — end the class`
+                    : `Every ${classDayName} — the whole class`}
                 </span>
                 <span className="block text-sm text-fg-2">
-                  All upcoming weeks of {session.title} change. Everyone booked gets a
-                  message automatically.
+                  {scopeMode === "cancel"
+                    ? "All upcoming weeks are cancelled and everyone booked gets a message. Past sessions stay in the history — you can restore the class from Weekly classes."
+                    : `All upcoming weeks of ${session.title} change. Everyone booked gets a message automatically.`}
                 </span>
               </span>
             </label>
           </div>
-          {classChanged && (
+          {classChanged && scopeMode === "save" && (
             <p className="text-sm text-fg-2">
               You changed the name, description, level, venue or length — those always apply
               to the whole class.
             </p>
           )}
           <div className="grid grid-cols-2 gap-2">
-            <Button variant="ghost" onClick={() => setStep("edit")} disabled={pending}>
+            <Button
+              variant="ghost"
+              onClick={() => {
+                setStep("edit");
+                setScopeMode("save");
+              }}
+              disabled={pending}
+            >
               Back
             </Button>
-            <Button onClick={() => apply(scope)} disabled={pending}>
-              {pending ? <Spinner /> : "Apply"}
+            {/* The label follows the choice rather than saying "Confirm" — the
+                same rule ConfirmAction follows everywhere else: a destructive
+                button names what it destroys. */}
+            <Button
+              variant={scopeMode === "cancel" ? "destructive" : "primary"}
+              onClick={() => (scopeMode === "cancel" ? applyCancel(scope) : apply(scope))}
+              disabled={pending}
+            >
+              {pending ? (
+                <Spinner />
+              ) : scopeMode === "cancel" ? (
+                scope === "session" ? (
+                  `Cancel this ${thisDayName}`
+                ) : (
+                  "End the class"
+                )
+              ) : (
+                "Apply"
+              )}
             </Button>
           </div>
         </div>
       ) : (
         <div className="space-y-4">
-          {/* ── Header block: the facts a founder checks courtside ── */}
-          <div>
-            <p className="tnum font-display text-3xl">{formatSessionDate(session.starts_at)}</p>
-            <p className="mt-1 text-fg-2">
-              {session.venueName ?? "Private address"} · {session.capacity} spots
-            </p>
-            {session.address && (
-              <AddressDisplay address={session.address} audience="staff" className="mt-2" />
-            )}
-            <div className="mt-2 flex flex-wrap gap-2">
-              {session.isPrivate && <Badge tone="ember">Private</Badge>}
-              {session.isSchool && <Badge tone="ember">School class</Badge>}
-              {!session.classActive && !session.isPrivate && (
-                <Badge tone="neutral">Booking paused</Badge>
-              )}
-              {session.coachId &&
-                (session.coachArrivedAt ? (
-                  <Badge tone="ok">Coach arrived {formatClock(session.coachArrivedAt)}</Badge>
-                ) : (
-                  <Badge tone="neutral">Coach not arrived yet</Badge>
-                ))}
-            </div>
-            {session.coachId &&
-              session.coachArrivedAt &&
-              (session.coachArrivalSource || session.coachArrivalDistanceM != null) && (
-                <p className="mt-1.5 text-sm text-fg-2">
-                  {session.coachArrivalSource && arrivalSourceLabel(session.coachArrivalSource)}
-                  {session.coachArrivalDistanceM != null && (
-                    <>
-                      {session.coachArrivalSource ? " · " : ""}
-                      <span className={session.coachArrivalDistanceM > 500 ? "text-err" : undefined}>
-                        {fmtDistance(session.coachArrivalDistanceM)}
-                      </span>
-                    </>
-                  )}
-                </p>
-              )}
-            {session.coachId && (
+          {/* ── Two tabs: what this is, and what you can do to it ──
+              Not sticky. Sheet.tsx already pins the title bar AND marks it
+              touch-none because it is the drag-to-dismiss grab area; a second
+              sticky strip would eat ~44px of an 88dvh panel and sit in the
+              gesture path. */}
+          <div className="grid grid-cols-2 gap-2">
+            {(["session", "edit"] as const).map((t) => (
               <button
+                key={t}
                 type="button"
-                onClick={() =>
-                  startTransition(async () => {
-                    const ok = await viewAsCoach(session.coachId as string);
-                    // Hard navigation: the preview cookie is set httpOnly by the
-                    // server action, so a soft router.push would re-render /coach
-                    // from the client cache without it. A full load re-reads it.
-                    if (ok) window.location.assign("/coach");
-                    else errMsg("Preview unavailable — only founders can view as coach.");
-                  })
-                }
-                disabled={pending}
-                className="mt-3 text-sm text-ember hover:underline disabled:opacity-50"
+                onClick={() => setTab(t)}
+                aria-pressed={tab === t}
+                className={`min-h-11 rounded-[8px] border px-2 text-sm font-semibold ${
+                  tab === t
+                    ? "border-ember bg-ember text-ivory"
+                    : "border-line hover:border-ember"
+                }`}
               >
-                View this coach&apos;s app →
+                {t === "session" ? "Session" : "Edit"}
               </button>
-            )}
-            {!session.isPrivate && session.classRecurring && (
-              <Link
-                href={`/admin/weekly?class=${session.classId}`}
-                className="mt-3 block text-sm text-fg-2 hover:text-ember hover:underline"
-              >
-                This repeats every {WEEKDAY_NAME[session.classWeekday] ?? "week"} — edit the
-                whole class →
-              </Link>
-            )}
+            ))}
           </div>
 
-          {/* ── Roster (always visible): who's booked and who showed ── */}
-          <div className="space-y-3 rounded-[12px] border border-line p-4">
-            <p className="label">
-              Players{" "}
-              {roster !== null && (
-                <span className="tnum text-fg-2">
-                  {roster.length}/{session.capacity}
-                </span>
+          {tab === "session" && (
+            <>
+              {/* ── When and where ── */}
+              <div>
+                <p className="tnum font-display text-3xl">
+                  {formatSessionDate(session.starts_at)}
+                </p>
+                <p className="mt-1 text-fg-2">
+                  {session.venueName ?? "Private address"} ·{" "}
+                  {formatClock(session.starts_at)}–{formatClock(session.ends_at)} ·{" "}
+                  {session.capacity} spots
+                  {/* A capacity override is invisible otherwise, and "12 spots"
+                      on a class of 8 is exactly the kind of thing he'd only
+                      discover by wondering why the numbers disagree. */}
+                  {session.capacity !== session.classCapacity
+                    ? ` (normally ${session.classCapacity})`
+                    : ""}
+                </p>
+                {session.address && (
+                  <AddressDisplay address={session.address} audience="staff" className="mt-2" />
+                )}
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {session.isPrivate && <Badge tone="ember">Private</Badge>}
+                  {session.isSchool && <Badge tone="ember">School class</Badge>}
+                  {detail?.status === "cancelled" && <Badge tone="err">Cancelled</Badge>}
+                  {!session.classActive && !session.isPrivate && (
+                    <Badge tone="neutral">Booking paused</Badge>
+                  )}
+                </div>
+                {detail?.status === "cancelled" && detail.cancelReason && (
+                  <p className="mt-1.5 text-sm text-fg-2">{detail.cancelReason}</p>
+                )}
+              </div>
+
+              {/* ── The one thing that needs him, if anything does ── */}
+              {!session.coachId && (
+                <div className="space-y-2 rounded-[12px] border border-err p-4">
+                  <p className="label !text-err">No coach yet</p>
+                  <p className="text-sm text-fg-2">
+                    Nobody is rostered on this session.
+                  </p>
+                  <Button className="w-full" onClick={() => goEdit("coach")}>
+                    Pick a coach
+                  </Button>
+                </div>
               )}
-            </p>
-            {rosterList}
-          </div>
+              {isOpenPrivate && (
+                <div className="space-y-2 rounded-[12px] border border-ember p-4">
+                  <p className="label">No client on this slot</p>
+                  <p className="text-sm text-fg-2">
+                    It is held with nobody in it. No minutes are charged until someone
+                    is booked in.
+                  </p>
+                  <Button className="w-full" onClick={() => goEdit("assign")}>
+                    Assign a player
+                  </Button>
+                </div>
+              )}
+
+              {/* ── The coach: who, and what we know about them turning up ── */}
+              {session.coachId && (
+                <div className="space-y-2 rounded-[12px] border border-line p-4">
+                  <p className="label">Coach</p>
+                  <p className="font-medium">{detail?.coachName ?? "—"}</p>
+                  {/* Saying he's coming and actually arriving are two different
+                      events, and the sheet used to collapse both into one
+                      badge — so "not arrived yet" read the same whether he had
+                      confirmed or had said nothing at all. */}
+                  <p className="text-sm text-fg-2">
+                    {detail?.coachConfirmedAt
+                      ? `Said he's coming ${formatClock(detail.coachConfirmedAt)}`
+                      : "Hasn't confirmed yet"}
+                    {session.coachArrivedAt
+                      ? ` · arrived ${formatClock(session.coachArrivedAt)}`
+                      : " — not arrived yet"}
+                    {session.coachArrivedAt && session.coachArrivalSource
+                      ? ` (${arrivalSourceLabel(session.coachArrivalSource)}`
+                      : ""}
+                    {session.coachArrivedAt && session.coachArrivalDistanceM != null ? (
+                      <>
+                        {session.coachArrivalSource ? ", " : " ("}
+                        <span
+                          className={
+                            session.coachArrivalDistanceM > 500 ? "text-err" : undefined
+                          }
+                        >
+                          {fmtDistance(session.coachArrivalDistanceM)}
+                        </span>
+                        )
+                      </>
+                    ) : session.coachArrivedAt && session.coachArrivalSource ? (
+                      ")"
+                    ) : (
+                      ""
+                    )}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      startTransition(async () => {
+                        const ok = await viewAsCoach(session.coachId as string);
+                        // Hard navigation: the preview cookie is set httpOnly by
+                        // the server action, so a soft router.push would re-render
+                        // /coach from the client cache without it.
+                        if (ok) window.location.assign("/coach");
+                        else errMsg("Preview unavailable — only founders can view as coach.");
+                      })
+                    }
+                    disabled={pending}
+                    className="text-sm text-ember hover:underline disabled:opacity-50"
+                  >
+                    View this coach&apos;s app →
+                  </button>
+                </div>
+              )}
+
+              {/* ── Who's booked, and who was marked ── */}
+              <div className="space-y-3 rounded-[12px] border border-line p-4">
+                <p className="label">
+                  Players{" "}
+                  {roster !== null && (
+                    <span className="tnum font-normal normal-case text-fg-2">
+                      {booked.length} of {session.capacity} booked ·{" "}
+                      {markedCount > 0 ? `${markedCount} marked` : "nobody marked"}
+                      {waitlisted.length > 0
+                        ? ` · ${waitlisted.length} waiting`
+                        : ""}
+                    </span>
+                  )}
+                </p>
+                {rosterList}
+                {detail && detail.cancelledCount > 0 && (
+                  <p className="text-sm text-fg-2">
+                    {detail.cancelledCount} cancelled.
+                  </p>
+                )}
+              </div>
+
+              {/* ── What the coach wrote afterwards ──
+                  Written from the coach's own session screen. Surfacing it here
+                  is a deliberate change to who that note is for. */}
+              {detail?.coachNotes && (
+                <div className="space-y-2 rounded-[12px] border border-line p-4">
+                  <p className="label">Coach&apos;s note</p>
+                  <p className="text-sm whitespace-pre-wrap">{detail.coachNotes}</p>
+                </div>
+              )}
+
+              {/* ── Where this session sits: one date, or a pattern ── */}
+              {session.isPrivate ? (
+                <p className="text-sm text-fg-2">
+                  A private session stands on its own — there&apos;s no weekly pattern
+                  behind it.
+                </p>
+              ) : session.classRecurring ? (
+                <p className="text-sm text-fg-2">
+                  Repeats every {classDayName}. Pausing, restoring and deleting the class
+                  live in{" "}
+                  <Link
+                    href={`/admin/weekly?class=${session.classId}`}
+                    className="text-ember hover:underline"
+                  >
+                    Weekly classes
+                  </Link>
+                  .
+                </p>
+              ) : (
+                <p className="text-sm text-fg-2">
+                  This is a one-time class — it runs on this date and never repeats.
+                </p>
+              )}
+            </>
+          )}
+
+          {tab === "edit" && (
+            <>
+              <p className="text-sm text-fg-2">
+                {session.isPrivate || !session.classRecurring
+                  ? "This runs on one date, so every change here is just that date."
+                  : `Changes here say what they touch — this ${thisDayName}, or every ${classDayName}.`}
+              </p>
 
           {/* ── Assign a client — the reason an open private slot needs you ── */}
           {isOpenPrivate && (
-            <ActionSection label="Assign a client" tone="ember" defaultOpen>
+            <ActionSection
+              key={`assign-${focus}`}
+              label="Assign a player"
+              tone="ember"
+              defaultOpen={focus === "assign" || focus === null}
+            >
               <p className="text-sm text-fg-2">
                 This slot is held with nobody in it. Pick the player to book in — their
                 family&apos;s minutes are debited when you do.
@@ -531,12 +803,13 @@ export function AdminSessionSheet({
             </ActionSection>
           )}
 
-          {/* ── Change coach ── */}
+          {/* ── Coach ── */}
           <ActionSection
-            label="Change coach"
-            summary={session.coachId ? undefined : "No coach yet"}
+            key={`coach-${focus}`}
+            label="Coach"
+            summary={detail?.coachName ?? (session.coachId ? undefined : "No coach yet")}
             tone={session.coachId ? "neutral" : "ember"}
-            defaultOpen={!session.coachId}
+            defaultOpen={focus === "coach"}
           >
             {ranked === null ? (
               <div className="flex justify-center py-3">
@@ -595,8 +868,33 @@ export function AdminSessionSheet({
                   </Button>
                 </div>
               </div>
+            ) : !session.isPrivate && session.classRecurring ? (
+              /* Two labelled buttons rather than a question screen. Changing a
+                 coach is the most frequent job in this sheet and it must not
+                 grow a step — and unlike cancelling, neither answer destroys
+                 anything, so naming both is enough of a guard. "Every Tuesday"
+                 is also the reason this no longer means a trip to the Weekly
+                 tab to do the same job. */
+              <div className="grid grid-cols-2 gap-2">
+                <Button
+                  disabled={pending || !target}
+                  onClick={() => applyCoach("session")}
+                >
+                  {pending ? <Spinner /> : `Just this ${thisDayName}`}
+                </Button>
+                <Button
+                  disabled={pending || !target}
+                  onClick={() => applyCoach("class")}
+                >
+                  {pending ? <Spinner /> : `Every ${classDayName}`}
+                </Button>
+              </div>
             ) : (
-              <Button onClick={applyCoach} disabled={pending || !target} className="w-full">
+              <Button
+                onClick={() => applyCoach("session")}
+                disabled={pending || !target}
+                className="w-full"
+              >
                 {pending ? <Spinner /> : "Change coach"}
               </Button>
             )}
@@ -634,7 +932,12 @@ export function AdminSessionSheet({
                   // Private sessions are one-offs — nothing to scope.
                   startTransition(async () => {
                     const r = await moveSession(session.id, date, form.time);
-                    if (r.ok) okMsg("Session moved — everyone booked has been told.");
+                    if (r.ok)
+                      okMsg(
+                        r.coachCleared
+                          ? "Session moved and the client has been told. The coach couldn't take the new time, so it's off their calendar — the Schedule shows it needs someone."
+                          : "Session moved — everyone booked has been told."
+                      );
                     else errMsg(r.error ?? "Move failed.");
                   });
                 } else {
@@ -649,36 +952,71 @@ export function AdminSessionSheet({
 
           {/* ── More: the rare, destructive actions — confirmed in-sheet ── */}
           <ActionSection label="More">
-            <ConfirmAction
-              label="Cancel this session"
-              confirmLabel="Cancel it"
-              prompt="Cancel this session? Everyone booked gets a message, and private lessons get their minutes back."
-              pending={pending}
-              onConfirm={() =>
-                startTransition(async () => {
-                  const r = await cancelSession(session.id, "cancelled by academy");
-                  if (r.ok) okMsg("Cancelled — everyone booked has been told.");
-                  else errMsg(r.error ?? "Cancel failed.");
-                })
-              }
-            />
-            {!session.isPrivate && (
+            {/* Cancelling one date and ending the whole class were two
+                separate controls sitting next to each other, one of them
+                reading "remove every week" in the same size type as the other.
+                They are the same verb at two wildly different sizes, so they
+                ask the same question everything else here asks. */}
+            {!session.isPrivate && session.classRecurring ? (
+              <Button
+                variant="destructive"
+                className="w-full"
+                disabled={pending}
+                onClick={() => {
+                  setMessage(null);
+                  setScope("session");
+                  setScopeMode("cancel");
+                  setStep("scope");
+                }}
+              >
+                Cancel…
+              </Button>
+            ) : (
               <ConfirmAction
-                label="End this class — remove every week"
-                confirmLabel="End the class"
-                prompt={`End ${session.title} completely? All upcoming weeks are cancelled and everyone booked gets a message. Past sessions stay in the history — and you can restore the class later from the weekly classes list.`}
+                label="Cancel this session"
+                confirmLabel="Cancel it"
+                prompt="Cancel this session? Everyone booked gets a message, and private lessons get their minutes back."
                 pending={pending}
                 onConfirm={() =>
                   startTransition(async () => {
-                    const r = await endGroupClass(session.classId);
-                    if (r.ok) {
-                      okMsg("Class ended — everyone affected has been told.");
-                      onClose();
-                    } else errMsg(r.error ?? "Failed.");
+                    const r = await cancelSession(session.id, "cancelled by academy");
+                    if (r.ok) okMsg("Cancelled — everyone booked has been told.");
+                    else errMsg(r.error ?? "Cancel failed.");
                   })
                 }
               />
             )}
+
+            {/* Pausing booking is a whole-class switch that existed only on the
+                Weekly tab, while THIS sheet rendered the "Booking paused" badge
+                — so the founder could read the state here and had to go
+                somewhere else to change it. */}
+            {!session.isPrivate && session.classRecurring && (
+              <button
+                type="button"
+                disabled={pending}
+                onClick={() =>
+                  startTransition(async () => {
+                    const r = await setClassActive(session.classId, !session.classActive);
+                    if (r.ok)
+                      okMsg(
+                        session.classActive
+                          ? "Booking paused for every week. The class stays on the schedule, marked Paused, until you reopen it."
+                          : "Booking reopened for every week."
+                      );
+                    else errMsg(r.error ?? "Failed.");
+                  })
+                }
+                className={`w-full text-center text-sm underline-offset-4 hover:underline disabled:opacity-50 ${
+                  session.classActive ? "text-ok" : "text-err"
+                }`}
+              >
+                {session.classActive
+                  ? "Open for booking — pause every week"
+                  : "Paused — reopen every week"}
+              </button>
+            )}
+
             {session.isPrivate && session.privateClientId && (
               <ConfirmAction
                 label="Cancel all upcoming sessions for this client"
@@ -700,7 +1038,24 @@ export function AdminSessionSheet({
                 }
               />
             )}
+
+            {/* Say where the rest lives rather than leaving him to find out
+                that it isn't here. */}
+            {!session.isPrivate && session.classRecurring && (
+              <p className="text-sm text-fg-2">
+                Deleting a class for good, and restoring an ended one, happen in{" "}
+                <Link
+                  href={`/admin/weekly?class=${session.classId}`}
+                  className="text-ember hover:underline"
+                >
+                  Weekly classes
+                </Link>
+                .
+              </p>
+            )}
           </ActionSection>
+            </>
+          )}
 
           {message &&
             (message.ok ? (

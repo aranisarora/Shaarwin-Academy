@@ -51,47 +51,66 @@ export function generateClassTitle(weekday: string, time: string, venueName?: st
 
 /** One time picker per selected item (a weekday code or an ISO date) — used
  * wherever a multi-select needs a distinct time for each pick. `onRemove`
- * adds a ✕ per row; omit it when the caller has its own toggle (day chips). */
+ * adds a ✕ per row; omit it when the caller has its own toggle (day chips).
+ *
+ * `noteOf` puts a line under the picker saying what is already in that slot.
+ * It belongs on the row rather than in one block at the foot of the sheet
+ * because the founder picks several days at once, and "Ravi is busy" is
+ * useless unless it is attached to the Tuesday it is about. `railOf` draws the
+ * ember left edge on a row whose note is about the coach — the one thing on
+ * this screen with a consequence he might want to act on. */
 export function ItemTimesList({
   items,
   labelOf,
   times,
   onSetTime,
   onRemove,
+  noteOf,
+  railOf,
 }: {
   items: string[];
   labelOf: (item: string) => string;
   times: Record<string, string>;
   onSetTime: (item: string, time: string) => void;
   onRemove?: (item: string) => void;
+  noteOf?: (item: string) => React.ReactNode;
+  railOf?: (item: string) => boolean;
 }) {
   if (items.length === 0) return null;
   return (
     <div className="space-y-2">
-      {items.map((item) => (
-        <div
-          key={item}
-          className="flex items-center gap-3 rounded-[12px] border border-line bg-surface-2 px-3 py-2.5"
-        >
-          <span className="w-24 shrink-0 text-sm font-medium">{labelOf(item)}</span>
-          <div className="flex-1">
-            <TimeSelect12h
-              value={times[item] ?? "18:30"}
-              onChange={(t) => onSetTime(item, t)}
-            />
+      {items.map((item) => {
+        const note = noteOf?.(item);
+        return (
+          <div
+            key={item}
+            className={`flex flex-col gap-2 rounded-[12px] border border-line bg-surface-2 px-3 py-2.5 ${
+              railOf?.(item) ? "border-l-[3px] border-l-ember" : ""
+            }`}
+          >
+            <div className="flex items-center gap-3">
+              <span className="w-24 shrink-0 text-sm font-medium">{labelOf(item)}</span>
+              <div className="flex-1">
+                <TimeSelect12h
+                  value={times[item] ?? "18:30"}
+                  onChange={(t) => onSetTime(item, t)}
+                />
+              </div>
+              {onRemove && (
+                <button
+                  type="button"
+                  onClick={() => onRemove(item)}
+                  className="text-fg-2 hover:text-err"
+                  aria-label={`Remove ${labelOf(item)}`}
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+            {note != null && <div className="text-sm text-fg-2">{note}</div>}
           </div>
-          {onRemove && (
-            <button
-              type="button"
-              onClick={() => onRemove(item)}
-              className="text-fg-2 hover:text-err"
-              aria-label={`Remove ${labelOf(item)}`}
-            >
-              ✕
-            </button>
-          )}
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }

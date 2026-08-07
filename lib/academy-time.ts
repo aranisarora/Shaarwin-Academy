@@ -60,9 +60,11 @@ export function utcToAcademyWall(date: Date): { date: string; time: string; isoW
   };
 }
 
-/** Today's date on the academy wall clock, "YYYY-MM-DD". */
-export function academyToday(): string {
-  return utcToAcademyWall(new Date(nowMs())).date;
+/** Today's date on the academy wall clock, "YYYY-MM-DD". Takes an explicit
+ * instant so slot arithmetic can be tested across the IST midnight boundary
+ * without waiting for midnight; defaults to now. */
+export function academyToday(now: Date = new Date(nowMs())): string {
+  return utcToAcademyWall(now).date;
 }
 
 /**

@@ -10,8 +10,8 @@
 // picker means — weekdays that repeat vs specific dates — and each picked
 // day/date carries its own time.
 
-import { useState, useTransition } from "react";
-import { formatWallDay } from "@/lib/academy-time";
+import { useEffect, useState, useTransition } from "react";
+import { formatClock, formatDay, formatWallDay } from "@/lib/academy-time";
 import { Sheet } from "@/components/ui/Sheet";
 import { Radio } from "@/components/ui/Checkbox";
 import { Button } from "@/components/ui/Button";
@@ -23,6 +23,8 @@ import {
   createOneOffClass,
   createPrivateSession,
   createPrivateSessionForInvite,
+  previewSlotClashes,
+  type SlotPreview,
 } from "@/app/admin/schedule/actions";
 import {
   EMPTY_CLASS_FORM,
@@ -212,6 +214,145 @@ export function AdminAddSheet({
   // "open" → hold a private slot with no client, to be assigned later.
   const isOpen = priv.clientId === "open";
 
+  // ── What's already in the slot he's picking ────────────────────────────────
+  //
+  // Asked while he picks, not after he taps Publish. The old flow gave him a
+  // sentence about a coach clash only once the class had failed to appear —
+  // and by then the class row existed with nothing on it. This is the same
+  // question the database is about to ask, put to it early.
+  //
+  // It is never a gate. For a repeating class a busy coach cannot refuse
+  // anything any more; for a one-off it still can, so that row alone gets a
+  // one-tap way out.
+  const isClassMode = mode === "weekly" || mode === "school";
+  const previewKeys = isClassMode
+    ? variant === "create"
+      ? weekdays
+      : dates
+    : priv.recurring
+      ? privWeekdays
+      : priv.date
+        ? [priv.date]
+        : [];
+  const previewTimes = isClassMode
+    ? variant === "create"
+      ? dayTimes
+      : dateTimes
+    : priv.recurring
+      ? privDayTimes
+      : { [priv.date]: priv.time };
+  const previewVenueId = isClassMode ? form.venueId : priv.venueId;
+  const previewCoachId = isClassMode ? form.coachId : priv.coachId;
+  const previewDuration = isClassMode ? form.durationMinutes : priv.duration;
+  const previewMode: "recurring" | "dates" =
+    isClassMode ? (variant === "create" ? "recurring" : "dates") : priv.recurring ? "recurring" : "dates";
+
+  // Serialised so the lookup re-runs on a real change of the question, not on
+  // every keystroke elsewhere in the form.
+  const previewSignature = JSON.stringify([
+    previewMode,
+    previewKeys,
+    previewKeys.map((k) => previewTimes[k] ?? null),
+    previewVenueId,
+    previewCoachId,
+    previewDuration,
+  ]);
+  const previewReady =
+    !!previewVenueId && previewKeys.length > 0 && previewKeys.every((k) => previewTimes[k]);
+
+  // The answer is STAMPED with the question it answers. That is what makes
+  // "have we got an answer yet" a derived fact rather than a second piece of
+  // state to keep in step — change the day and the old answer stops matching,
+  // so it stops being shown, with nothing to clear and no window in which the
+  // row says something confident about a slot he has already moved off.
+  const [answered, setAnswered] = useState<{ sig: string; data: SlotPreview } | null>(null);
+  const preview = answered?.sig === previewSignature ? answered.data : null;
+  const checking = previewReady && !preview;
+
+  useEffect(() => {
+    if (!previewReady) return;
+    let alive = true;
+    // Debounced: the day chips and the time wheel both fire fast, and a lookup
+    // per tap would have the line flickering under his thumb.
+    const t = setTimeout(async () => {
+      let data: SlotPreview;
+      try {
+        data = await previewSlotClashes({
+          mode: previewMode,
+          keys: previewKeys,
+          timesByKey: Object.fromEntries(previewKeys.map((k) => [k, previewTimes[k]])),
+          durationMinutes: previewDuration,
+          venueId: previewVenueId,
+          coachId: previewCoachId || undefined,
+        });
+      } catch {
+        data = { byKey: {}, failed: true };
+      }
+      if (alive) setAnswered({ sig: previewSignature, data });
+    }, 300);
+    return () => {
+      alive = false;
+      clearTimeout(t);
+    };
+    // Every value read inside is covered by previewSignature, which is what the
+    // effect is really keyed on.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [previewSignature, previewReady]);
+
+  /** Up to three dates, then "and N more" — a founder scanning a row wants to
+   *  know which weeks, not to read a register. */
+  function namedDates(isos: string[]): string {
+    const shown = isos.slice(0, 3).map((d) => formatDay(d));
+    return isos.length > 3
+      ? `${shown.join(", ")} and ${isos.length - 3} more`
+      : shown.join(", ");
+  }
+
+  /** The line under one day/date row. Coach first — it is the only part with a
+   *  consequence — then the hall, which is information and nothing more. */
+  function slotNote(key: string): React.ReactNode {
+    if (checking) return "Checking what's already on…";
+    if (!preview) return null;
+    if (preview.failed)
+      return "Couldn't check what's already on. Publishing still works.";
+    const row = preview.byKey[key];
+    if (!row) return null;
+
+    const coachName = coaches.find((c) => c.id === previewCoachId)?.name;
+    const lines: string[] = [];
+
+    if (row.coachBusy.length > 0 && coachName) {
+      const dates = namedDates(row.coachBusy.map((b) => b.startsAt));
+      lines.push(
+        previewMode === "recurring"
+          ? `${coachName} is already teaching on ${row.coachBusy.length} of these ${row.occurrences.length} — ${dates}. Those weeks still go on; they arrive with no coach and one is picked automatically.`
+          : `${coachName} is already teaching then (${dates}). Nothing is created while he's on it — pick another coach, or leave it on automatic.`
+      );
+    }
+    if (row.venueBusy.length > 0) {
+      const first = row.venueBusy[0];
+      const more = row.venueBusy.length - 1;
+      lines.push(
+        `Also in this hall then: ${first.title}, ${formatClock(first.startsAt)}–${formatClock(first.endsAt)}${
+          more > 0 ? ` and ${more} more` : ""
+        }. Two classes in one hall is fine — just check a table is free.`
+      );
+    }
+    if (lines.length === 0)
+      return coachName
+        ? `Nothing else here then, and ${coachName} is free.`
+        : "Nothing else here then.";
+    return lines.map((l, i) => <p key={i} className={i > 0 ? "mt-1" : ""}>{l}</p>);
+  }
+
+  /** Only a one-off or a private can still be REFUSED for a coach clash — the
+   *  recurring path routes round it. That is the one case worth a button. */
+  const hardCoachClash =
+    previewMode === "dates" &&
+    !!previewCoachId &&
+    !!preview &&
+    previewKeys.some((k) => (preview.byKey[k]?.coachBusy.length ?? 0) > 0);
+
   function resetMode(next: Mode) {
     setMode(next);
     setMessage(null);
@@ -290,8 +431,17 @@ export function AdminAddSheet({
               : `One-time ${isSchool ? "school class" : "class"} added to the schedule.`
           );
         } else {
+          // Publishing several weekdays is several classes, one call each. A
+          // failure part-way used to `return` with only that day's error, so
+          // the days already published went unmentioned and the founder had no
+          // way to know whether to try the whole thing again. Now every day is
+          // attempted and the outcome is reported as a whole.
+          const done: string[] = [];
+          const failed: { day: string; error: string }[] = [];
+          let coachless = 0;
           for (const day of weekdays) {
             const time = dayTimes[day] ?? lastTime;
+            const dayName = WEEKDAY_NAME[day] ?? day;
             const r = await createGroupClass({
               ...form,
               weekday: day,
@@ -299,18 +449,42 @@ export function AdminAddSheet({
               title: generateClassTitle(day, time, venueName),
               isSchool,
             });
-            if (!r.ok) {
-              setMessage(r.error ?? "Couldn't create the class.");
-              return;
+            if (r.ok) {
+              done.push(dayName);
+              coachless += r.coachless ?? 0;
+            } else {
+              failed.push({ day: dayName, error: r.error ?? "Couldn't create the class." });
             }
           }
-          const dayNames = weekdays.map((d) => WEEKDAY_NAME[d] ?? d).join(", ");
+
           const noun = isSchool ? "school class" : "class";
-          setSuccess(
-            weekdays.length > 1
-              ? `${weekdays.length} ${noun}es published — ${dayNames}.`
-              : `${isSchool ? "School class" : "Class"} published — the next 8 weeks of sessions are on the schedule.`
-          );
+          // Weeks the chosen coach was already busy on still exist — they just
+          // went out for the engine to fill. Saying so is the difference between
+          // a class the founder can trust and one he finds holes in later.
+          const coachLine =
+            coachless > 0
+              ? ` ${coachless} ${coachless === 1 ? "week" : "weeks"} clashed with that coach's diary and went out for a coach to be picked automatically — the Schedule shows any that still need one.`
+              : "";
+
+          if (failed.length === 0) {
+            setSuccess(
+              (done.length > 1
+                ? `${done.length} ${noun}es published — ${done.join(", ")}.`
+                : `${isSchool ? "School class" : "Class"} published — the next 8 weeks of sessions are on the schedule.`) +
+                coachLine
+            );
+          } else if (done.length === 0) {
+            setMessage(failed[0].error);
+          } else {
+            // Part published. Name both halves: what exists now, and what to
+            // try again — leaving either out is how the same class gets made
+            // twice.
+            setSuccess(
+              `${done.join(", ")} published${coachLine ? "." + coachLine : "."} ${failed
+                .map((f) => f.day)
+                .join(", ")} didn't go through — ${failed[0].error}`
+            );
+          }
         }
       } else {
         const venue = venues.find((v) => v.id === priv.venueId);
@@ -511,7 +685,7 @@ export function AdminAddSheet({
             )}
             <Select
               label="Coach"
-              hint="Leave on automatic and the best-fitting coach is picked for you."
+              hint="Leave on automatic and each week gets whoever's free. A week with nobody free arrives with no coach, and shows red on the Schedule."
               value={form.coachId}
               onChange={(e) => setForm({ ...form, coachId: e.target.value })}
             >
@@ -586,6 +760,8 @@ export function AdminAddSheet({
                   labelOf={(c) => WEEKDAY_NAME[c] ?? c}
                   times={dayTimes}
                   onSetTime={setDayTime}
+                  noteOf={slotNote}
+                  railOf={(c) => (preview?.byKey[c]?.coachBusy.length ?? 0) > 0}
                 />
               </div>
             ) : (
@@ -600,6 +776,8 @@ export function AdminAddSheet({
                   times={dateTimes}
                   onSetTime={setDateTime}
                   onRemove={removeDate}
+                  noteOf={slotNote}
+                  railOf={(d) => (preview?.byKey[d]?.coachBusy.length ?? 0) > 0}
                 />
                 <input
                   key={dateKey}
@@ -608,6 +786,24 @@ export function AdminAddSheet({
                   className="mt-2 rounded-[8px] border border-line bg-surface-2 px-3 py-2 text-sm focus:border-ember focus:outline-none"
                   aria-label="Add a date"
                 />
+              </div>
+            )}
+
+            {/* A one-off is the only class a busy coach can still refuse — the
+                repeating kind routes round him week by week. So this is the one
+                place worth handing back a way out rather than a sentence. */}
+            {hardCoachClash && (
+              <div className="space-y-2">
+                <Button
+                  variant="ghost"
+                  className="w-full"
+                  onClick={() => setForm({ ...form, coachId: "" })}
+                >
+                  Leave the coach on automatic
+                </Button>
+                <p className="text-sm text-fg-2">
+                  Automatic gives each date whoever is free.
+                </p>
               </div>
             )}
 
@@ -676,7 +872,7 @@ export function AdminAddSheet({
 
             <Select
               label="Coach"
-              hint="Leave on automatic and the best-fitting coach is picked for you."
+              hint="Leave on automatic and each week gets whoever's free. A week with nobody free arrives with no coach, and shows red on the Schedule."
               value={priv.coachId}
               onChange={(e) => setPriv({ ...priv, coachId: e.target.value })}
             >
@@ -773,6 +969,8 @@ export function AdminAddSheet({
                     labelOf={(c) => WEEKDAY_NAME[c] ?? c}
                     times={privDayTimes}
                     onSetTime={setPrivDayTime}
+                    noteOf={slotNote}
+                    railOf={(c) => (preview?.byKey[c]?.coachBusy.length ?? 0) > 0}
                   />
                 </div>
                 <Input

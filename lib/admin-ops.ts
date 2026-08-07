@@ -4,7 +4,8 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/database.types";
-import { academyOffsetMinutes, academyWallToUtc } from "@/lib/academy-time";
+import { academyToday, academyWallToUtc } from "@/lib/academy-time";
+import { overlaps, weeklyOccurrences } from "@/lib/slot-clashes";
 import { toSkillLevel, type OpResult } from "@/lib/admin-ops-types";
 
 // OpResult lives in a leaf module (admin-ops-types) so the domain cores can
@@ -37,11 +38,80 @@ export type NewClass = {
   isSchool?: boolean;
 };
 
+export type CreateClassResult = OpResult & {
+  /** Weeks actually put on the schedule. */
+  weeks?: number;
+  /** Of those, how many could NOT take the chosen coach and went out coachless
+   * for the engine to fill. Zero when no coach was named. */
+  coachless?: number;
+};
+
+/**
+ * Publish a repeating group class, plus its next 8 weeks of sessions.
+ *
+ * A clashing week no longer takes the class down with it. It used to: every
+ * occurrence went in as ONE array insert, and `coach_no_overlap` is a
+ * non-deferrable EXCLUDE, so a single week where the chosen coach was already
+ * booked aborted all nine rows. The `classes` row is written in a separate
+ * PostgREST call — a separate transaction — so it had already been committed,
+ * and nothing cleaned it up. The founder was left with a class holding zero
+ * sessions, told to "pick a different coach in the calendar" when the calendar
+ * had nothing of his to pick. The class then sat empty indefinitely, because
+ * `generate_class_sessions` is on no cron job and only a manual top-up refills
+ * it.
+ *
+ * The rule now: the SLOT is what the founder is creating, and one busy week is
+ * a fact about a coach's diary, not a reason the Tuesday class cannot exist. So
+ * we ask the coach's diary first, hand the weeks he can take to him and let the
+ * rest go out coachless for the assignment engine — and say plainly which is
+ * which, rather than reporting a clean success over weeks that quietly have
+ * nobody on them.
+ */
 export async function createGroupClassCore(
   supabase: SupabaseClient<Database>,
   founderId: string,
   input: NewClass
-): Promise<OpResult> {
+): Promise<CreateClassResult> {
+  // Occurrences are built on the ACADEMY wall clock, not the server's. This
+  // used to walk `new Date()` in local time and stamp `starts_on` from a UTC
+  // date string, so a deploy region west of IST could drop or add an occurrence
+  // and record a start date a day out.
+  const todayWall = academyToday();
+  const durationMs = input.durationMinutes * 60000;
+
+  // Shared with the Add sheet's clash preview (lib/slot-clashes.ts), so what
+  // the founder was shown and what actually gets written are the same weeks.
+  const slots = weeklyOccurrences(input.weekday, input.time, 8);
+
+  // Which of those weeks the chosen coach genuinely cannot take. Asked BEFORE
+  // anything is written, so the insert is shaped to succeed rather than being
+  // fired hopefully at a constraint. Only `scheduled` sessions count — the
+  // constraint ignores cancelled and completed ones, and so must we, or we'd
+  // hand a week to nobody over a session that was called off weeks ago.
+  const clashing = new Set<number>();
+  if (input.coachId && slots.length) {
+    const windowStart = slots[0];
+    const windowEnd = new Date(slots[slots.length - 1].getTime() + durationMs);
+    const { data: busy } = await supabase
+      .from("class_sessions")
+      .select("starts_at,ends_at")
+      .eq("coach_id", input.coachId)
+      .eq("status", "scheduled")
+      .lt("starts_at", windowEnd.toISOString())
+      .gt("ends_at", windowStart.toISOString());
+    for (const [i, start] of slots.entries()) {
+      const hit = (busy ?? []).some((b) =>
+        overlaps(
+          start.getTime(),
+          start.getTime() + durationMs,
+          new Date(b.starts_at).getTime(),
+          new Date(b.ends_at).getTime()
+        )
+      );
+      if (hit) clashing.add(i);
+    }
+  }
+
   const { data: cls, error } = await supabase
     .from("classes")
     .insert({
@@ -54,45 +124,60 @@ export async function createGroupClassCore(
       duration_minutes: input.durationMinutes,
       venue_id: input.venueId,
       recurrence_rule: `FREQ=WEEKLY;BYDAY=${input.weekday}`,
-      starts_on: new Date().toISOString().slice(0, 10),
+      starts_on: todayWall,
       created_by: founderId,
     })
     .select("id")
     .single();
   if (error || !cls) return { ok: false, error: "Couldn't create the class." };
 
-  // Publish → sessions 8 weeks ahead, wall-clock Asia/Kolkata.
-  const weekdayNum = { MO: 1, TU: 2, WE: 3, TH: 4, FR: 5, SA: 6, SU: 7 }[input.weekday] ?? 1;
-  const [hh, mm] = input.time.split(":").map(Number);
-  const sessions: { class_id: string; coach_id: string | null; starts_at: string; ends_at: string }[] = [];
-  const today = new Date();
-  for (let d = 0; d <= 56; d++) {
-    const day = new Date(today.getFullYear(), today.getMonth(), today.getDate() + d);
-    const isoDow = ((day.getDay() + 6) % 7) + 1;
-    if (isoDow !== weekdayNum) continue;
-    const naive = new Date(Date.UTC(day.getFullYear(), day.getMonth(), day.getDate(), hh, mm));
-    const offset = academyOffsetMinutes(naive);
-    const start = new Date(naive.getTime() - offset * 60000);
-    if (start <= new Date()) continue;
-    sessions.push({
-      class_id: cls.id,
-      coach_id: input.coachId || null,
-      starts_at: start.toISOString(),
-      ends_at: new Date(start.getTime() + input.durationMinutes * 60000).toISOString(),
-    });
-  }
-  if (sessions.length) {
-    const { error: sessErr } = await supabase.from("class_sessions").insert(sessions);
-    if (sessErr) {
-      return {
-        ok: false,
-        error: sessErr.message.includes("coach_no_overlap")
-          ? "That coach already has overlapping sessions at this time — class created, pick a different coach in the calendar."
-          : "Class created but sessions failed to generate.",
-      };
+  const rows = slots.map((start, i) => ({
+    class_id: cls.id,
+    coach_id: input.coachId && !clashing.has(i) ? input.coachId : null,
+    starts_at: start.toISOString(),
+    ends_at: new Date(start.getTime() + durationMs).toISOString(),
+  }));
+
+  let created = 0;
+  let coachless = rows.filter((r) => input.coachId && r.coach_id === null).length;
+  if (rows.length) {
+    const { error: sessErr } = await supabase.from("class_sessions").insert(rows);
+    if (!sessErr) created = rows.length;
+    else {
+      // The pre-check lost a race, or something else refused the batch. Go week
+      // by week so one bad row costs one week rather than the whole term, and
+      // retry a rejected coached week without the coach — the week matters more
+      // than who is on it, and the engine gets a go at it below.
+      for (const row of rows) {
+        const { error: rowErr } = await supabase.from("class_sessions").insert(row);
+        if (!rowErr) {
+          created += 1;
+          continue;
+        }
+        if (!row.coach_id) continue;
+        const { error: bareErr } = await supabase
+          .from("class_sessions")
+          .insert({ ...row, coach_id: null });
+        if (!bareErr) {
+          created += 1;
+          coachless += 1;
+        }
+      }
     }
   }
-  if (!input.coachId) {
+
+  // Nothing at all landed on the schedule, so there is no class — only a shell
+  // that would show up on the weekly list with no slot of its own to read. Take
+  // it back out, the way the one-off path always has.
+  if (rows.length && created === 0) {
+    await supabase.from("classes").delete().eq("id", cls.id);
+    return {
+      ok: false,
+      error: "Couldn't put any weeks of this class on the schedule, so nothing was created. Try again, or pick a different time.",
+    };
+  }
+
+  if (coachless > 0 || !input.coachId) {
     await supabase.rpc("assign_unassigned_sessions");
   }
 
@@ -101,10 +186,10 @@ export async function createGroupClassCore(
     action: "class.create",
     entity: "classes",
     entity_id: cls.id,
-    meta: { sessions: sessions.length },
+    meta: { sessions: created, coachless },
   });
 
-  return { ok: true };
+  return { ok: true, weeks: created, coachless };
 }
 
 export type NewOneOffClass = {

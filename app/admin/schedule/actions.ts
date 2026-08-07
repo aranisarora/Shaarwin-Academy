@@ -3,6 +3,7 @@
 import { revalidatePath, revalidateTag } from "next/cache";
 import { requireFounder } from "@/lib/founder";
 import { academyWallToUtc, formatDate, utcToAcademyWall } from "@/lib/academy-time";
+import { overlaps, weeklyOccurrences } from "@/lib/slot-clashes";
 import { asAddressDetails, fromDetails, type StructuredAddress } from "@/lib/address";
 import type { SessionRow } from "@/components/app/admin-calendar-types";
 import {
@@ -83,6 +84,8 @@ import {
 //   createPrivateSession ............. notifies the client
 //   assignPrivateSessionClient ....... notifies the client
 //   createPrivateSessionForInvite .... notifies the client
+//   previewSlotClashes ............... notifies nobody (read-only preview)
+//   getSessionDetail ................. notifies nobody (read-only)
 // (cancelSession lives in app/admin/actions.ts: notifies everyone booked + coach.)
 type Result = { ok: boolean; error?: string; code?: string };
 
@@ -114,13 +117,15 @@ export async function moveSession(
   sessionId: string,
   date: string,
   time: string
-): Promise<Result> {
+): Promise<Result & { coachCleared?: boolean }> {
   const { supabase, founder } = await requireFounder();
   if (!founder) return { ok: false, error: "Founder only." };
   const result = await moveSessionCore(supabase, founder.id, sessionId, date, time);
   if (!result.ok) return result;
   refresh();
-  return { ok: true };
+  // Passed through so the ✓ can say the coach came off — the move succeeds
+  // either way, but "moved" alone hides a session that now needs someone.
+  return { ok: true, coachCleared: result.coachCleared };
 }
 
 export async function setSessionCapacity(
@@ -137,13 +142,17 @@ export async function setSessionCapacity(
 
 // ── The whole class ("every week") ───────────────────────────────────────────
 
-export async function updateGroupClass(input: ClassUpdate): Promise<Result> {
+export async function updateGroupClass(
+  input: ClassUpdate
+): Promise<Result & { moved?: number; stuck?: number }> {
   const { supabase, founder } = await requireFounder();
   if (!founder) return { ok: false, error: "Founder only." };
   const result = await updateGroupClassCore(supabase, founder.id, input);
   if (!result.ok) return result;
   refresh();
-  return { ok: true };
+  // `stuck` is weeks that refused to move even without their coach. They stay
+  // on the old slot, so a bare "Saved" would be a false report.
+  return { ok: true, moved: result.moved, stuck: result.stuck };
 }
 
 export async function endGroupClass(classId: string): Promise<Result> {
@@ -424,28 +433,106 @@ export async function createPrivateSessionForInvite(
 export type RosterEntry = {
   id: string;
   name: string;
-  /** "attended" = present, "no_show" = absent, "confirmed" = unmarked. */
-  status: "confirmed" | "attended" | "no_show";
+  /** "attended" = present, "no_show" = absent, "confirmed" = unmarked,
+   *  "waitlisted" = holding a place in the queue, not in the class. */
+  status: "confirmed" | "attended" | "no_show" | "waitlisted";
+  /** Where in the queue, for a waitlisted booking. Null for everyone else. */
+  waitlistPosition: number | null;
 };
 
-/** Who's booked on a session and whether they were marked present or absent —
- * shown in the admin session sheet. */
-export async function getSessionRoster(sessionId: string): Promise<RosterEntry[]> {
+/**
+ * Who's booked on a session and whether they were marked present or absent —
+ * shown in the admin session sheet.
+ *
+ * The waitlist is opt-in per caller, and deliberately so: the weekly class
+ * sheet asks this same question to list "Regulars", and a queue appearing in
+ * that list would be answering a question nobody asked there.
+ */
+export async function getSessionRoster(
+  sessionId: string,
+  opts?: { includeWaitlisted?: boolean }
+): Promise<RosterEntry[]> {
   const { supabase, founder } = await requireFounder();
   if (!founder) return [];
+  const statuses: RosterEntry["status"][] = opts?.includeWaitlisted
+    ? ["confirmed", "attended", "no_show", "waitlisted"]
+    : ["confirmed", "attended", "no_show"];
   const { data } = await supabase
     .from("bookings")
-    .select("id,status,players(full_name)")
+    .select("id,status,waitlist_position,players(full_name)")
     .eq("session_id", sessionId)
-    .in("status", ["confirmed", "attended", "no_show"]);
+    .in("status", statuses);
   return (data ?? [])
     .map((b) => ({
       id: b.id,
-      name:
-        b.players?.full_name ?? "Unknown player",
+      name: b.players?.full_name ?? "Unknown player",
       status: b.status as RosterEntry["status"],
+      waitlistPosition: b.waitlist_position ?? null,
     }))
-    .sort((a, b) => a.name.localeCompare(b.name));
+    .sort((a, b) => {
+      // Booked first, then the queue in its own order — a waitlisted name
+      // sorted alphabetically among the booked would read as being in.
+      const aQ = a.status === "waitlisted";
+      const bQ = b.status === "waitlisted";
+      if (aQ !== bQ) return aQ ? 1 : -1;
+      if (aQ && bQ) return (a.waitlistPosition ?? 0) - (b.waitlistPosition ?? 0);
+      return a.name.localeCompare(b.name);
+    });
+}
+
+/**
+ * The facts about one session that aren't already on the calendar row — the
+ * coach's name, what he has said and done about turning up, anything he wrote
+ * afterwards, and how many places were given back.
+ *
+ * Kept off `SessionRow` on purpose. That row's select string is duplicated
+ * byte-for-byte in two files and is fetched for every session in a week, so
+ * widening it to serve one open sheet would put all of this on a phone's wire
+ * for sessions nobody is looking at.
+ */
+export type SessionDetail = {
+  status: "scheduled" | "completed" | "cancelled";
+  coachName: string | null;
+  coachConfirmedAt: string | null;
+  coachNotes: string | null;
+  cancelReason: string | null;
+  /** Places that were held and given back — the ones the roster can't show. */
+  cancelledCount: number;
+};
+
+export async function getSessionDetail(sessionId: string): Promise<SessionDetail | null> {
+  const { supabase, founder } = await requireFounder();
+  if (!founder) return null;
+
+  const { data: s } = await supabase
+    .from("class_sessions")
+    .select("status,coach_id,coach_notes,coach_confirmed_at,cancel_reason")
+    .eq("id", sessionId)
+    .maybeSingle();
+  if (!s) return null;
+
+  // Resolved from profiles rather than the sheet's `coaches` prop, which is
+  // filtered to active coaches — a session still rostered to a coach who has
+  // since been paused would otherwise show no name at all.
+  const [{ data: prof }, { count }] = await Promise.all([
+    s.coach_id
+      ? supabase.from("profiles").select("full_name").eq("id", s.coach_id).maybeSingle()
+      : Promise.resolve({ data: null }),
+    supabase
+      .from("bookings")
+      .select("id", { count: "exact", head: true })
+      .eq("session_id", sessionId)
+      .in("status", ["cancelled_by_client", "cancelled_by_academy"]),
+  ]);
+
+  return {
+    status: s.status as SessionDetail["status"],
+    coachName: prof?.full_name ?? null,
+    coachConfirmedAt: s.coach_confirmed_at,
+    coachNotes: s.coach_notes,
+    cancelReason: s.cancel_reason,
+    cancelledCount: count ?? 0,
+  };
 }
 
 // ── Week data for client-side navigation ─────────────────────────────────────
@@ -562,4 +649,163 @@ export async function fetchWeekSessions(
   const rangeLabel = `${formatDate(from)} – ${formatDate(to.getTime() - 86400000)}`;
 
   return { sessions, rangeLabel };
+}
+
+// ── What's already there ─────────────────────────────────────────────────────
+
+/** One session standing in the way of a slot the founder is picking. */
+export type SlotClash = {
+  startsAt: string; // ISO
+  endsAt: string; // ISO
+  title: string;
+  isPrivate: boolean;
+};
+
+export type SlotPreviewRow = {
+  /** The instants this pick would occupy, ISO ascending. */
+  occurrences: string[];
+  /** Occurrences the NAMED coach cannot take. Empty when left on automatic. */
+  coachBusy: { startsAt: string; clash: SlotClash }[];
+  /** Overlapping sessions in the same hall, whoever is teaching them. Never a
+   *  blocker — two classes in one venue is an ordinary arrangement. */
+  venueBusy: SlotClash[];
+};
+
+export type SlotPreview = {
+  byKey: Record<string, SlotPreviewRow>;
+  /** The lookup itself fell over. The sheet says so and publishing carries on —
+   *  a preview that fails must never become a gate. */
+  failed?: boolean;
+};
+
+/**
+ * What already occupies the day and time the founder is picking — asked while
+ * he is picking it, rather than after he taps Publish.
+ *
+ * Read-only, and deliberately NOT a validator: it returns facts and the sheet
+ * decides which of them are worth a sentence. For a repeating class nothing
+ * here can refuse anything at all — a week the chosen coach is busy on simply
+ * goes out for a coach to be picked automatically.
+ */
+export async function previewSlotClashes(input: {
+  mode: "recurring" | "dates";
+  /** "MO".."SU" for recurring, "YYYY-MM-DD" for dates. */
+  keys: string[];
+  timesByKey: Record<string, string>;
+  durationMinutes: number;
+  venueId: string;
+  coachId?: string;
+  weeks?: number;
+}): Promise<SlotPreview> {
+  const { supabase, founder } = await requireFounder();
+  if (!founder) return { byKey: {}, failed: true };
+
+  try {
+    const durationMs = input.durationMinutes * 60000;
+
+    // The same occurrence maths the insert uses, so the weeks named here are
+    // exactly the weeks that get written (lib/slot-clashes.ts).
+    const perKey = new Map<string, Date[]>();
+    for (const key of input.keys) {
+      const time = input.timesByKey[key];
+      if (!time) continue;
+      perKey.set(
+        key,
+        input.mode === "recurring"
+          ? weeklyOccurrences(key, time, input.weeks ?? 8)
+          : [academyWallToUtc(key, time)]
+      );
+    }
+
+    const all = [...perKey.values()].flat();
+    if (all.length === 0) return { byKey: {} };
+    const windowStart = new Date(Math.min(...all.map((d) => d.getTime())));
+    const windowEnd = new Date(Math.max(...all.map((d) => d.getTime())) + durationMs);
+
+    const SELECT = "starts_at,ends_at,classes!inner(title,class_type)";
+
+    // The coach's diary. Hits class_sessions_coach_id_starts_at_idx, which is
+    // partial on status='scheduled' — the same rows coach_no_overlap governs,
+    // so this asks exactly the question the database will ask.
+    const coachRows = input.coachId
+      ? (
+          await supabase
+            .from("class_sessions")
+            .select(SELECT)
+            .eq("coach_id", input.coachId)
+            .eq("status", "scheduled")
+            .lt("starts_at", windowEnd.toISOString())
+            .gt("ends_at", windowStart.toISOString())
+        ).data ?? []
+      : [];
+
+    // The hall. Matched on venue_id and never on name: `venues.unit` means two
+    // halls in one complex are separate rows, so a name match would have every
+    // class at a large site warning about every other one.
+    const { data: venueClasses } = await supabase
+      .from("classes")
+      .select("id")
+      .eq("venue_id", input.venueId);
+    const ids = (venueClasses ?? []).map((c) => c.id);
+    const venueRows = ids.length
+      ? (
+          await supabase
+            .from("class_sessions")
+            .select(SELECT)
+            .in("class_id", ids)
+            .eq("status", "scheduled")
+            .lt("starts_at", windowEnd.toISOString())
+            .gt("ends_at", windowStart.toISOString())
+        ).data ?? []
+      : [];
+
+    type Row = { starts_at: string; ends_at: string; classes: unknown };
+    const asClash = (r: Row): SlotClash => {
+      const cls = r.classes as { title: string; class_type: string };
+      return {
+        startsAt: r.starts_at,
+        endsAt: r.ends_at,
+        title: cls.title,
+        isPrivate: cls.class_type === "private",
+      };
+    };
+    const hits = (rows: Row[], start: Date) =>
+      rows.filter((r) =>
+        overlaps(
+          start.getTime(),
+          start.getTime() + durationMs,
+          new Date(r.starts_at).getTime(),
+          new Date(r.ends_at).getTime()
+        )
+      );
+
+    const byKey: Record<string, SlotPreviewRow> = {};
+    for (const [key, occurrences] of perKey) {
+      const coachBusy: { startsAt: string; clash: SlotClash }[] = [];
+      const venueBusy: SlotClash[] = [];
+      const seenVenue = new Set<string>();
+      for (const start of occurrences) {
+        for (const r of hits(coachRows as Row[], start)) {
+          coachBusy.push({ startsAt: start.toISOString(), clash: asClash(r) });
+        }
+        for (const r of hits(venueRows as Row[], start)) {
+          // One line per neighbouring class, not one per week — he is asking
+          // "what else is in this hall", not for a register of dates.
+          const k = `${r.starts_at}|${r.ends_at}`;
+          if (seenVenue.has(k)) continue;
+          seenVenue.add(k);
+          venueBusy.push(asClash(r));
+        }
+      }
+      byKey[key] = {
+        occurrences: occurrences.map((d) => d.toISOString()),
+        coachBusy,
+        venueBusy,
+      };
+    }
+
+    return { byKey };
+  } catch {
+    return { byKey: {}, failed: true };
+  }
 }

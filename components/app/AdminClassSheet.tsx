@@ -423,7 +423,11 @@ export function AdminClassSheet({
                   time: form.time,
                 });
                 if (r.ok)
-                  onDone("Saved — upcoming sessions moved with it and everyone booked was told.");
+                  onDone(
+                    r.stuck
+                      ? `Saved — upcoming sessions moved with it and everyone booked was told. ${r.stuck} ${r.stuck === 1 ? "week" : "weeks"} couldn't move and ${r.stuck === 1 ? "is" : "are"} still on the old slot; open ${r.stuck === 1 ? "it" : "them"} on the Schedule to move ${r.stuck === 1 ? "it" : "them"} by hand.`
+                      : "Saved — upcoming sessions moved with it and everyone booked was told."
+                  );
                 else setMessage(r.error ?? "Couldn't save the class.");
               } catch {
                 setMessage(UNREACHABLE);
