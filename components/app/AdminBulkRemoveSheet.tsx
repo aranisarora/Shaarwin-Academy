@@ -2,42 +2,56 @@
 
 // Confirm step for clearing a selection of weekly classes.
 //
-// "Delete" means four different things in this domain and the founder shouldn't
-// have to hold that in his head, so the server buckets the selection and this
-// sheet names each number:
+// There is exactly ONE question here: keep the history, or don't.
 //
-//   • stopped, nothing on it     → deleted outright, nobody is told
-//   • running, nobody booked yet → deleted only if he ticks for it; no parent is
-//                                  told, but the coaches rostered on it are
-//   • running, people on it      → ended, or ended AND deleted (told either way)
-//   • already ended, has history → deleting it destroys that history
+// "Delete" means four different things in this domain — a stopped husk, a
+// running class nobody booked, a class people hold places in, an already-ended
+// class with a term of registers behind it — and this sheet used to ask about
+// each of them separately. Four opt-in checkboxes and a nested radio is 32
+// reachable outcomes, and the founder had to do the sorting himself to reach
+// any of them.
 //
-// The first is the default and needs one tap. The rest are opt-in, because each
-// costs something he can't undo. Nothing is destroyed until the button at the
-// bottom is tapped.
+// He never had to. The server already sorts them: `planClassRemoval` returns
+// the buckets. So the sorting became REPORTING — the "What happens" list — and
+// the only thing left to ask is the one thing the server cannot know, which is
+// whether he wants the record afterwards.
 //
-// The third bucket used to offer only "end", which meant a founder who selected
-// every class and tapped Remove could land on a disabled button reading
-// "Nothing selected to remove" — the delete he asked for was two more
-// operations away and the screen never said so. He is the admin: the option to
-// delete outright belongs here, next to the one that spares the history.
+//   End them ................ off the schedule, everyone told, rows survive
+//                             under "Ended" and can be restored
+//   Delete them completely .. same cancellations, same messages, rows and every
+//                             register ever marked on them gone
 //
-// The second bucket is newer and it is here for the opposite reason. It used to
-// be folded into the first, so "Select all 47" on prod offered to delete 46
-// classes under a heading saying they held nothing — 36 of which were still
-// running that term, 28 of those school classes, empty only because a school
-// register is marked in the hall rather than booked online. The line below is
-// suppressed entirely when there are none of them, so clearing husks stays one
-// tap with no new ceremony; when there are, it is unticked and it names them.
+// Three things are deliberately NOT choices:
+//
+//   • Stopped classes holding nothing are deleted under both. There is no
+//     history on them to keep, so "keep the history" has no meaning — and
+//     making the everyday clear-out of husks pay for the rare decision was the
+//     whole problem. The list still says out loud that they go.
+//   • Running classes nobody has booked follow the choice. They used to be
+//     reachable only through a delete, which is why `endRunningEmpty` exists:
+//     "End them" over a whole timetable quietly skipped 36 school classes.
+//   • Weekly private slots follow the choice too, and can only ever be ended —
+//     deleting the generated weeks is what makes a retired slot come back the
+//     next night. The list names the families and the minutes.
+//
+// The radio itself disappears when it changes nothing: a selection of pure
+// husks, or of nothing but private slots, has one possible outcome and gets one
+// button. Nothing is destroyed until that button is tapped, and the destructive
+// half asks twice.
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useMemo, useState, useTransition } from "react";
 import { Sheet } from "@/components/ui/Sheet";
 import { Button } from "@/components/ui/Button";
-import { Checkbox, Radio } from "@/components/ui/Checkbox";
+import { Radio } from "@/components/ui/Checkbox";
 import { Spinner } from "@/components/ui/Spinner";
+import { ConfirmAction } from "@/components/ui/ConfirmAction";
 import { bulkRemoveClasses, planClassRemoval } from "@/app/admin/schedule/actions";
 
 const plural = (n: number, one: string, many = `${one}es`) => (n === 1 ? one : many);
+/** "1 class" / "12 classes" — the count and its noun, which is what almost every
+ *  line of the report below actually wants. */
+const count = (x: number, one: string, many = `${one}s`) =>
+  `${x} ${x === 1 ? one : many}`;
 
 /** "3 classes deleted · 2 ended — everyone booked has been told." */
 function resultLine(
@@ -138,15 +152,9 @@ export function AdminBulkRemoveSheet({
   const [plan, setPlan] = useState<Plan | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
-  // The extras with a cost are opt-in — none of them is ticked by default, so
-  // the safe deletes are always one tap and nothing else moves.
-  const [endBooked, setEndBooked] = useState(false);
-  const [purgeEnded, setPurgeEnded] = useState(false);
-  const [deleteRunningEmpty, setDeleteRunningEmpty] = useState(false);
-  const [endPrivateSeries, setEndPrivateSeries] = useState(false);
-  // What to do with the classes people are booked on, once they're included.
-  // "end" keeps the record; "delete" removes it too. Both message everyone.
-  const [bookedMode, setBookedMode] = useState<"end" | "delete">("end");
+  // The one question. "end" is the default because it is the recoverable half:
+  // the same cancellations and the same messages, but nothing is destroyed.
+  const [mode, setMode] = useState<"end" | "delete">("end");
 
   // A rejected server action is the one failure that used to look like nothing
   // at all: the spinner never stopped, and there was no `.catch` to say why. A
@@ -189,18 +197,24 @@ export function AdminBulkRemoveSheet({
     };
   }, [classIds, seriesIds]);
 
+  const deleting = mode === "delete";
+
   function run() {
-    const deleteBooked = endBooked && bookedMode === "delete";
     setError(null);
     startTransition(async () => {
       try {
+        // The two modes, and the whole of the founder's input, expressed against
+        // the options the core already had. `endBooked` and `endRunningEmpty`
+        // are on in BOTH: ending is what cancels the sessions and sends the
+        // messages, and a delete is an ending that also removes the row.
         const r = await bulkRemoveClasses(classIds, {
-          endBooked,
-          purgeEnded,
-          deleteBooked,
-          deleteRunningEmpty,
+          endBooked: true,
+          endRunningEmpty: true,
+          deleteBooked: deleting,
+          deleteRunningEmpty: deleting,
+          purgeEnded: deleting,
           privateSeriesIds: seriesIds,
-          endPrivateSeries,
+          endPrivateSeries: true,
         });
         if (r.ok)
           onDone(
@@ -227,27 +241,40 @@ export function AdminBulkRemoveSheet({
   const nDel = plan?.deletable.length ?? 0;
   const nRun = plan?.deletableRunning.length ?? 0;
   const nEnd = plan?.endable.length ?? 0;
-  // The two purge lists go under one tick — the founder's choice is "delete the
-  // ended ones", and splitting that into two questions would be pedantry. They
-  // are separate lists because only one of them owes somebody a message.
+  // The two purge lists are one number to the founder — "the ended ones" — and
+  // separate lists only because one of them owes somebody a message.
   const nPurge = (plan?.purgeable.length ?? 0) + (plan?.purgeableLive.length ?? 0);
   const nSeries = plan?.series.endable.length ?? 0;
   const nUnsupported = plan?.unsupported.length ?? 0;
-  const deletingBooked = endBooked && bookedMode === "delete";
-  const willRemove =
-    nDel +
-    (deleteRunningEmpty ? nRun : 0) +
-    (purgeEnded ? nPurge : 0) +
-    (deletingBooked ? nEnd : 0);
-  const willEnd =
-    (endBooked && !deletingBooked ? nEnd : 0) + (endPrivateSeries ? nSeries : 0);
+  const nActionable = nDel + nRun + nEnd + nPurge + nSeries;
 
-  /** "Delete 4 · end 2" — the button says everything that's ticked. */
+  // The radio only earns its place when the two answers differ. A selection of
+  // pure husks is deleted either way; a selection of nothing but private slots
+  // can only be ended. Showing a choice with one outcome is ceremony, and this
+  // is the everyday case — clearing husks stays exactly one tap.
+  const choiceMatters = nRun + nEnd + nPurge > 0;
+
+  /** How many things move, and under which verb. Ending and deleting are not
+   *  the same word and the button refuses to pretend they are. */
+  const willDelete = deleting ? nDel + nRun + nEnd + nPurge : nDel;
+  const willEnd = deleting ? nSeries : nRun + nEnd + nSeries;
+
+  // A selection of nothing but already-ended classes moves nothing under "End
+  // them" — they have already ended. The button has to say so and stay dead
+  // rather than offer an empty label over an action with no effect; the line
+  // below points at the radio that WOULD do something.
+  const nothingMoves = willDelete === 0 && willEnd === 0;
+
   const actionLabel = (() => {
+    if (nothingMoves) return "Nothing to remove";
+    if (deleting)
+      return willEnd
+        ? `Delete ${willDelete} · end ${willEnd}`
+        : `Delete ${willDelete} for good`;
     const bits: string[] = [];
-    if (willRemove) bits.push(`Delete ${willRemove}`);
-    if (willEnd) bits.push(`end ${willEnd}`);
-    return bits.length ? bits.join(" · ") : "Nothing ticked yet";
+    if (willDelete) bits.push(`Delete ${willDelete}`);
+    if (willEnd) bits.push(`${willDelete ? "end" : "End"} ${willEnd}`);
+    return bits.join(" · ");
   })();
 
   /** "Remove 12 classes and 3 private slots" — two kinds, counted apart. */
@@ -258,6 +285,90 @@ export function AdminBulkRemoveSheet({
       bits.push(`${seriesIds.length} private ${plural(seriesIds.length, "slot", "slots")}`);
     return `Remove ${bits.join(" and ")}`;
   })();
+
+  // What actually happens, in the founder's units — hours off a coach's
+  // calendar, minutes back on a family's account — rather than a row count. One
+  // short line per bucket that has anything in it; most selections produce two
+  // or three. This is the five paragraphs of opt-in copy, turned back into what
+  // they always were: a report.
+  const happenings = useMemo(() => {
+    if (!plan) return [];
+    const c = plan.purgeCost;
+    const s = plan.series.cost;
+    const out: string[] = [];
+
+    if (nDel > 0)
+      out.push(
+        `${count(nDel, "stopped class", "stopped classes")} ${nDel === 1 ? "is" : "are"} deleted outright — ${nDel === 1 ? "it has" : "they have"} already stopped and hold nothing live, so there is no history to keep` +
+          (c.unmarked > 0
+            ? `, though ${count(c.unmarked, "booking")} on sessions that came and went with no register marked go too`
+            : "") +
+          `. Nobody is messaged.`
+      );
+
+    if (nRun > 0)
+      out.push(
+        deleting
+          ? `${count(nRun, "running class", "running classes")} nobody has booked ${nRun === 1 ? "is" : "are"} deleted` +
+            (c.runningSessions > 0
+              ? `, taking ${count(c.runningSessions, "upcoming session")} off the schedule and off ${nRun === 1 ? "its coach's" : "their coaches'"} calendars`
+              : "") +
+            (c.runningUnmarked > 0
+              ? `, along with ${count(c.runningUnmarked, "unmarked booking")}`
+              : "") +
+            `. A school class fills its register in the hall, so an empty one can be mid-term.`
+          : `${count(nRun, "running class", "running classes")} nobody has booked ${nRun === 1 ? "ends" : "end"}` +
+            (c.runningSessions > 0
+              ? ` — ${count(c.runningSessions, "upcoming session")} come off ${nRun === 1 ? "its coach's" : "their coaches'"} calendars`
+              : "") +
+            `. No parent is messaged; nobody had booked a place.`
+      );
+
+    if (nEnd > 0)
+      out.push(
+        deleting
+          ? `${count(nEnd, "running class", "running classes")} people hold places in ${nEnd === 1 ? "is" : "are"} cancelled, then deleted with every register ever marked on ${nEnd === 1 ? "it" : "them"}.`
+          : `${count(nEnd, "running class", "running classes")} people hold places in ${nEnd === 1 ? "ends" : "end"} — upcoming sessions are cancelled, past ones stay in the history, and you can restore ${nEnd === 1 ? "it" : "them"}.`
+      );
+
+    if (nPurge > 0)
+      out.push(
+        deleting
+          ? (c.liveBookings > 0
+              ? `${count(c.liveBookings, "place")} on ${c.liveBookings === 1 ? "an hour" : "hours"} still ahead of us ${c.liveBookings === 1 ? "is" : "are"} cancelled first and those families are told, then `
+              : "") +
+            `${count(nPurge, "already-ended class", "already-ended classes")} go for good, with ${count(c.sessions, "session")} and ${count(c.bookings, "booking")} of history.`
+          : `${count(nPurge, "already-ended class", "already-ended classes")} stay exactly as ${nPurge === 1 ? "it is" : "they are"} — ${nPurge === 1 ? "it has" : "they have"} already ended, so ending ${nPurge === 1 ? "it" : "them"} again does nothing.`
+      );
+
+    if (nSeries > 0)
+      out.push(
+        `${count(nSeries, "weekly private slot")} stop putting new weeks on the calendar` +
+          (s.futureSessions > 0
+            ? ` — ${count(s.futureSessions, "session")} already booked in ${s.futureSessions === 1 ? "is" : "are"} cancelled` +
+              (s.minutesReturned > 0
+                ? ` and ${count(s.minutesReturned, "minute")} go back to ${count(s.families, "family", "families")} in full, including any week inside the 24-hour window a family cancelling would forfeit`
+                : "")
+            : "") +
+          `. Setting a slot up again is a new booking, not an undo.`
+      );
+
+    if (nEnd > 0 || nSeries > 0 || (deleting && nPurge > 0 && c.liveBookings > 0))
+      out.push(
+        `Everyone booked gets one message each — one, however many classes and slots go.`
+      );
+
+    return out;
+  }, [plan, deleting, nDel, nRun, nEnd, nPurge, nSeries]);
+
+  // Two deliberate acts before anything irreversible: the radio is not the
+  // default, and then the button asks again. Only when there is genuinely
+  // history to lose — a delete that destroys nothing does not need ceremony.
+  const destroysHistory =
+    deleting &&
+    ((plan?.purgeCost.bookings ?? 0) > 0 ||
+      (plan?.purgeCost.sessions ?? 0) > 0 ||
+      nEnd > 0);
 
   return (
     <Sheet open onClose={onClose} title={title}>
@@ -270,247 +381,64 @@ export function AdminBulkRemoveSheet({
 
         {plan && (
           <>
-            {/* The one bucket that goes on the plain button, so its heading has
-                to be exactly true twice over. It leads with "stopped", because
-                that — not the absence of bookings — is what makes these safe.
-                And "no bookings" was a lie for the commonest class of all: one
-                whose registers were never marked, so its places sit there
-                'confirmed' on sessions long past. Nothing about it is live and
-                it still goes on one tap — but it is not empty, and the card
-                that destroys those rows has to say how many. */}
-            {nDel > 0 && (
-              <div className="space-y-1 rounded-[12px] border border-line p-4">
-                <p className="label">
-                  {plan.purgeCost.unmarked > 0
-                    ? `${nDel} stopped ${plural(nDel, "class")}, nothing live and no attendance marked — ${plural(nDel, "it", "they")} can go`
-                    : `${nDel} stopped ${plural(nDel, "class")} with no bookings — ${plural(nDel, "it", "they")} can go`}
-                </p>
-                <p className="text-sm text-fg-2">
-                  {plan.purgeCost.unmarked > 0 ? (
-                    <>
-                      {nDel === 1 ? "It has" : "They have"} already been ended or paused and
-                      nobody holds a place in {nDel === 1 ? "it" : "them"}, so nobody is
-                      messaged. {nDel === 1 ? "It goes" : "They go"} for good — and so do{" "}
-                      {plan.purgeCost.unmarked}{" "}
-                      {plural(plan.purgeCost.unmarked, "booking", "bookings")} on sessions that
-                      came and went with no register marked.
-                    </>
-                  ) : (
-                    <>
-                      {nDel === 1 ? "This class has" : `These ${nDel} classes have`} already
-                      been ended or paused and nobody is on{" "}
-                      {nDel === 1 ? "it" : "them"}.{" "}
-                      {nDel === 1 ? "It is" : "They are"} deleted for good, along with the
-                      sessions nobody took. Nobody is messaged.
-                    </>
-                  )}
-                </p>
-              </div>
-            )}
-
-            {/* Suppressed entirely when the bucket is empty, so the ordinary
-                clear-out of husks keeps its single tap. When it isn't, it is the
-                line that has to stop him: 36 of these sat on prod, 28 of them
-                live school classes, empty only because a school register is
-                marked in the hall rather than booked online — and 261 hours of
-                coaching between them. */}
-            {nRun > 0 && (
-              <label className="flex gap-3 rounded-[12px] border border-err p-4">
-                <Checkbox
-                  size="md"
-                  className="mt-0.5 shrink-0"
-                  checked={deleteRunningEmpty}
-                  onChange={(e) => setDeleteRunningEmpty(e.target.checked)}
-                />
-                <span className="space-y-1">
-                  <span className="label block">
-                    Also delete {nRun} running {plural(nRun, "class", "classes")} nobody has
-                    booked yet
-                  </span>
-                  <span className="block text-sm text-fg-2">
-                    {nRun === 1 ? "It is" : "They are"} still on the timetable — a school
-                    class fills its register in the hall, so an empty one can be mid-term.{" "}
-                    {plan.purgeCost.runningSessions > 0 && (
-                      <>
-                        Deleting takes {plan.purgeCost.runningSessions}{" "}
-                        {plural(plan.purgeCost.runningSessions, "session", "sessions")} off
-                        the schedule for good, and off the calendar of every coach rostered
-                        on {nRun === 1 ? "it" : "them"} — they get one message each.{" "}
-                      </>
-                    )}
-                    Nobody has booked a place, so no parent is messaged
-                    {plan.purgeCost.runningUnmarked > 0 && (
-                      <>
-                        {" "}
-                        — but {plan.purgeCost.runningUnmarked}{" "}
-                        {plural(plan.purgeCost.runningUnmarked, "booking", "bookings")} on
-                        sessions that came and went with no register marked go too
-                      </>
-                    )}
-                    . This can&apos;t be undone.
-                  </span>
-                </span>
-              </label>
-            )}
-
-            {nEnd > 0 && (
+            {/* The one decision. Red only on the branch that earns it — when
+                every card was red, none of them read as a warning. */}
+            {choiceMatters && (
               <div
                 className={`space-y-3 rounded-[12px] border p-4 ${
-                  deletingBooked ? "border-err" : "border-line"
+                  deleting ? "border-err" : "border-line"
                 }`}
               >
                 <label className="flex gap-3">
-                  <Checkbox
-                    size="md"
-                    className="mt-0.5 shrink-0"
-                    checked={endBooked}
-                    onChange={(e) => setEndBooked(e.target.checked)}
+                  <Radio
+                    className="mt-1 shrink-0"
+                    name="removeMode"
+                    checked={!deleting}
+                    onChange={() => setMode("end")}
                   />
-                  <span className="space-y-1">
-                    <span className="label block">
-                      Also remove {nEnd} running {plural(nEnd, "class", "classes")} that hold
-                      bookings
-                    </span>
+                  <span>
+                    <span className="block text-sm font-medium">End them</span>
                     <span className="block text-sm text-fg-2">
-                      Upcoming sessions are cancelled and everyone booked gets one message —
-                      one, however many classes go.
+                      Everything comes off the schedule and everyone booked is told. The
+                      classes stay on the list under “Ended” with their attendance intact —
+                      and you can restore any of them.
                     </span>
                   </span>
                 </label>
-
-                {/* Ending and deleting both cancel the sessions and message the
-                    same people; they differ only in whether the class itself
-                    survives. Asking that as a second question keeps the safe
-                    answer selected while making the outright delete reachable
-                    in the same pass. */}
-                {endBooked && (
-                  <div className="space-y-2 border-t border-line pt-3 pl-8">
-                    <label className="flex gap-3">
-                      <Radio
-                        className="mt-1 shrink-0"
-                        name="bookedMode"
-                        checked={bookedMode === "end"}
-                        onChange={() => setBookedMode("end")}
-                      />
-                      <span>
-                        <span className="block text-sm font-medium">End them</span>
-                        <span className="block text-sm text-fg-2">
-                          Past sessions stay in the history and you can restore the class
-                          later. It stays on this list under “Ended”.
-                        </span>
-                      </span>
-                    </label>
-                    <label className="flex gap-3">
-                      <Radio
-                        className="mt-1 shrink-0"
-                        name="bookedMode"
-                        checked={bookedMode === "delete"}
-                        onChange={() => setBookedMode("delete")}
-                      />
-                      <span>
-                        <span className="block text-sm font-medium">
-                          Delete them completely
-                        </span>
-                        <span className="block text-sm text-fg-2">
-                          Cancels and messages exactly the same, then removes the{" "}
-                          {plural(nEnd, "class", "classes")} and{" "}
-                          {nEnd === 1 ? "its" : "their"} history for good. Can’t be undone.
-                        </span>
-                      </span>
-                    </label>
-                  </div>
-                )}
+                <label className="flex gap-3">
+                  <Radio
+                    className="mt-1 shrink-0"
+                    name="removeMode"
+                    checked={deleting}
+                    onChange={() => setMode("delete")}
+                  />
+                  <span>
+                    <span className="block text-sm font-medium">Delete them completely</span>
+                    <span className="block text-sm text-fg-2">
+                      Cancels and messages exactly the same, then removes the classes and
+                      every register ever marked on them. Can’t be undone.
+                    </span>
+                  </span>
+                </label>
               </div>
             )}
 
-            {nPurge > 0 && (
-              <label className="flex gap-3 rounded-[12px] border border-err p-4">
-                <Checkbox
-                  size="md"
-                  className="mt-0.5 shrink-0"
-                  checked={purgeEnded}
-                  onChange={(e) => setPurgeEnded(e.target.checked)}
-                />
-                <span className="space-y-1">
-                  <span className="label block">
-                    Also delete {nPurge} already-ended {plural(nPurge, "class", "classes")} for
-                    good
-                  </span>
-                  <span className="block text-sm text-fg-2">
-                    {/* This used to assert flatly that nobody is messaged again.
-                        That is only true of the ones holding nothing live: an
-                        ended class can still carry a place on an hour that
-                        hasn't happened, and deleting one of those used to take a
-                        child's booking with it in silence. */}
-                    {plan.purgeCost.liveBookings > 0 ? (
-                      <>
-                        {plan.purgeCost.liveBookings}{" "}
-                        {plural(plan.purgeCost.liveBookings, "place", "places")} on{" "}
-                        {plan.purgeCost.liveBookings === 1 ? "an hour" : "hours"} still ahead of
-                        us {plan.purgeCost.liveBookings === 1 ? "is" : "are"} cancelled first and
-                        those families are told; the rest have already been ended, so nobody is
-                        messaged again.{" "}
-                      </>
-                    ) : (
-                      <>
-                        {nPurge === 1 ? "It has" : "They have"} already been ended, so nobody is
-                        messaged again —{" "}
-                      </>
-                    )}
-                    {nPurge === 1 ? "It" : "They"} still hold {plan.purgeCost.sessions}{" "}
-                    {plural(plan.purgeCost.sessions, "session", "sessions")} and{" "}
-                    {plan.purgeCost.bookings}{" "}
-                    {plural(plan.purgeCost.bookings, "booking", "bookings")} of history, which
-                    this deletes too. This can&apos;t be undone.
-                  </span>
-                </span>
-              </label>
-            )}
-
-            {/* Weekly private slots. Opt-in and unticked, like every other
-                bucket with a cost — but the cost here is a paying family's
-                standing arrangement, so the copy names the families and the
-                minutes rather than counting rows. Ending is also the recoverable
-                half: it destroys no history and removes no class. */}
-            {nSeries > 0 && (
-              <label className="flex gap-3 rounded-[12px] border border-err p-4">
-                <Checkbox
-                  size="md"
-                  className="mt-0.5 shrink-0"
-                  checked={endPrivateSeries}
-                  onChange={(e) => setEndPrivateSeries(e.target.checked)}
-                />
-                <span className="space-y-1">
-                  <span className="label block">
-                    Also end {nSeries} weekly private {plural(nSeries, "slot", "slots")}
-                  </span>
-                  <span className="block text-sm text-fg-2">
-                    {nSeries === 1 ? "This is" : "These are"} standing arrangements, not classes
-                    — ending {nSeries === 1 ? "one" : "them"} stops{" "}
-                    {nSeries === 1 ? "it" : "them"} putting new weeks on the calendar.
-                    {plan.series.cost.futureSessions > 0 && (
-                      <>
-                        {" "}
-                        {plan.series.cost.futureSessions}{" "}
-                        {plural(plan.series.cost.futureSessions, "session", "sessions")} already
-                        booked in are cancelled
-                        {plan.series.cost.minutesReturned > 0 && (
-                          <>
-                            , and {plan.series.cost.minutesReturned} minutes go back to{" "}
-                            {plan.series.cost.families}{" "}
-                            {plural(plan.series.cost.families, "family", "families")} in full —
-                            including any week inside the 24-hour window a family cancelling
-                            would forfeit
-                          </>
-                        )}
-                        .
-                      </>
-                    )}{" "}
-                    Everyone affected gets one message. Setting a slot up again is a new
-                    booking, not an undo.
-                  </span>
-                </span>
-              </label>
+            {/* The five opt-in paragraphs, turned back into the report they
+                always were. Nothing here is a control. */}
+            {happenings.length > 0 && (
+              <div className="space-y-2">
+                <p className="label">What happens</p>
+                <ul className="space-y-1.5">
+                  {happenings.map((line, i) => (
+                    <li key={i} className="flex gap-2 text-sm text-fg-2">
+                      <span aria-hidden className="select-none">
+                        ·
+                      </span>
+                      <span>{line}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
             )}
 
             {/* Picked but unactionable — a class that has gone since the page
@@ -525,37 +453,44 @@ export function AdminBulkRemoveSheet({
               </p>
             )}
 
-            {nDel === 0 && nRun === 0 && nEnd === 0 && nPurge === 0 && nSeries === 0 && (
-              <p className="text-sm text-fg-2">Nothing selected.</p>
-            )}
-
             <div className="space-y-2">
-              {/* The button disables itself when nothing is ticked, and a
-                  disabled button explains nothing — this is the line that used
-                  to be missing, when a founder who had selected every class
-                  tapped Remove and met a greyed-out control with no reason. */}
-              {willRemove === 0 && willEnd === 0 && (
+              {/* A disabled button explains nothing, so whenever it is dead
+                  this says why — and, when there is a way forward, where. */}
+              {nothingMoves && (
                 <p id="bulk-remove-why" className="text-sm text-fg-2">
-                  {nRun > 0 || nEnd > 0 || nPurge > 0 || nSeries > 0
-                    ? "Everything you picked is either still running, or holds bookings or history, so nothing will go until you tick one of the boxes above."
-                    : "There is nothing here to remove. Close this and refresh the list."}
+                  {nActionable === 0
+                    ? "There is nothing here to remove. Close this and refresh the list."
+                    : `Everything you picked has already ended, so ending ${nPurge === 1 ? "it" : "them"} again does nothing. Choose “Delete them completely” above to remove ${nPurge === 1 ? "it" : "them"} for good.`}
                 </p>
               )}
               {/* Next to the button that failed, not at the foot of a long
                   scrolling sheet — a message below the fold reads as nothing
                   having happened at all. */}
               {error && <p className="text-sm text-err">{error}</p>}
-              <Button
-                variant="destructive"
-                className="w-full"
-                aria-describedby={
-                  willRemove === 0 && willEnd === 0 ? "bulk-remove-why" : undefined
-                }
-                disabled={pending || (willRemove === 0 && willEnd === 0)}
-                onClick={run}
-              >
-                {pending ? <Spinner /> : actionLabel}
-              </Button>
+              {destroysHistory ? (
+                <ConfirmAction
+                  label={actionLabel}
+                  confirmLabel="Delete for good"
+                  keepLabel="Back"
+                  prompt={
+                    plan.purgeCost.bookings > 0
+                      ? `This also destroys ${count(plan.purgeCost.bookings, "booking")} of attendance history. There is no undo.`
+                      : "The classes and everything recorded against them go for good. There is no undo."
+                  }
+                  pending={pending}
+                  onConfirm={run}
+                />
+              ) : (
+                <Button
+                  variant="destructive"
+                  className="w-full"
+                  aria-describedby={nothingMoves ? "bulk-remove-why" : undefined}
+                  disabled={pending || nothingMoves}
+                  onClick={run}
+                >
+                  {pending ? <Spinner /> : actionLabel}
+                </Button>
+              )}
               <Button variant="ghost" className="w-full" disabled={pending} onClick={onClose}>
                 Keep everything
               </Button>

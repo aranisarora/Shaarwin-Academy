@@ -289,13 +289,22 @@ export function AdminClassSheet({
               <Badge tone="neutral">{cls.endsOn ? "Ended" : "Booking paused"}</Badge>
             )}
           </div>
+          {/* Everything in this sheet changes the class for EVERY week, which
+              is not obvious from a sheet titled "Edit class" — and the founder
+              who wanted to move one Tuesday had nowhere to learn otherwise
+              except a paragraph buried in a menu. Said here, next to the link
+              that does the one-week job. */}
           {cls.nextSessionId && cls.nextSessionStart && (
-            <Link
-              href={`/admin/schedule?date=${wallDate(cls.nextSessionStart)}&session=${cls.nextSessionId}`}
-              className="mt-3 block text-sm text-ember hover:underline"
-            >
-              Open this week&apos;s session ({formatSessionDate(cls.nextSessionStart)}) →
-            </Link>
+            <p className="mt-3 text-sm text-fg-2">
+              Changes here apply every week. For one week only,{" "}
+              <Link
+                href={`/admin/schedule?date=${wallDate(cls.nextSessionStart)}&session=${cls.nextSessionId}`}
+                className="text-ember hover:underline"
+              >
+                open the {formatSessionDate(cls.nextSessionStart)} session
+              </Link>
+              .
+            </p>
           )}
           {cls.nextCoachId && (
             <button

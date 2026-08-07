@@ -64,6 +64,8 @@ import {
 //   bulkRemoveClasses ................ classes holding nothing delete silently, whether they
 //                                      had stopped or (on deleteRunningEmpty) were still
 //                                      running; every class it ends — including the ones it
+//                                      only ends because they were running and empty
+//                                      (endRunningEmpty, coaches only) and the ones it
 //                                      ends AND deletes (deleteBooked) — notifies everyone
 //                                      booked + their coaches, ONE message each no matter how
 //                                      many classes went. That guarantee now spans BOTH
@@ -261,6 +263,7 @@ export async function bulkRemoveClasses(
     purgeEnded?: boolean;
     deleteBooked?: boolean;
     deleteRunningEmpty?: boolean;
+    endRunningEmpty?: boolean;
     privateSeriesIds?: string[];
     endPrivateSeries?: boolean;
   }

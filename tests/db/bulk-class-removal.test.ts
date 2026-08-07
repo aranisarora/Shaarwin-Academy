@@ -168,6 +168,59 @@ describe("bulk class removal", () => {
     expect(coachRows[0].data.collapsed).toBe(true);
   });
 
+  // ── "End them" has to reach this bucket too ───────────────────────────────
+  // The running-but-empty classes were reachable ONLY through the delete, so a
+  // founder who selected his whole timetable and asked for the recoverable half
+  // got everything ended except these — the 36 on prod, 28 of them live school
+  // classes, left sitting on a list he had just cleared. Ending is the safer
+  // answer to the same question and it needs a way to be asked.
+  it("ends a running class nobody has booked without deleting it", async () => {
+    const db = admin();
+    const coach = await createCoach();
+    const tag = uniq();
+    const ids = await Promise.all([
+      createGroupClass(`Bulk end-running A ${tag}`),
+      createGroupClass(`Bulk end-running B ${tag}`),
+    ]);
+    for (const [i, id] of ids.entries())
+      await createWeeklySlot({ weeks: 2, classId: id, coachId: coach.id, istHour: 16 + i });
+
+    const founder = await asUser(FOUNDER_EMAIL);
+    const plan = await planClassRemovalCore(typed(founder), ids);
+    expect(plan.deletableRunning.sort()).toEqual([...ids].sort());
+
+    const r = await bulkRemoveClassesCore(typed(founder), SEED.founder, ids, {
+      endBooked: true,
+      endRunningEmpty: true,
+    });
+    expect(r.ok).toBe(true);
+    // Ended, and NOT deleted — that difference is the whole point of the flag.
+    expect(r.ended).toBe(2);
+    expect(r.deletedRunning).toBe(0);
+    expect(r.deleted).toBe(0);
+    // Nothing was skipped: "kept" is what he still has that we neither ended
+    // nor removed, and under "End them" that has to be nothing.
+    expect(r.kept).toBe(0);
+
+    // The rows survive, off the timetable, restorable.
+    const { data: left } = await db.from("classes").select("id,active,ends_on").in("id", ids);
+    expect(left ?? []).toHaveLength(2);
+    for (const c of left ?? []) {
+      expect(c.active).toBe(false);
+      expect(c.ends_on).not.toBeNull();
+    }
+
+    // Nobody was booked, but the coach was rostered on every hour of both, and
+    // those hours have just left his calendar. He hears — once for the pair.
+    const coachRows = await expectNotificationCount(
+      db,
+      { userId: coach.id, type: "session_cancelled" },
+      1
+    );
+    expect(coachRows[0].data.class_count).toBe(2);
+    expect(coachRows[0].data.collapsed).toBe(true);
+  });
+
   it("tells a coach once when both buckets of a clear-out take his classes", async () => {
     // The reason `endBooked` and `deleteRunningEmpty` share one ending call. One
     // coach teaches a class a parent is booked into and a class nobody has

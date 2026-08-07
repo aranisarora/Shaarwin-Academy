@@ -1022,7 +1022,9 @@ export async function endGroupClassesCore(
  * clearing away husks is the ordinary job and it stays one tap. Every bucket
  * with a cost is opt-in: `deleteRunningEmpty` removes classes still on the
  * timetable that simply haven't been booked into (telling the coaches rostered
- * on them), `endBooked` ends the running classes people hold places in (telling
+ * on them), `endRunningEmpty` takes those same classes off the timetable and
+ * tells the same coaches but leaves the rows behind to be restored, `endBooked`
+ * ends the running classes people hold places in (telling
  * each person once, via `endGroupClassesCore`), `deleteBooked` does the same and
  * then removes the class as well, and `purgeEnded` deletes already-ended classes
  * together with the history they still hold. Anything the founder didn't opt
@@ -1057,6 +1059,11 @@ export async function bulkRemoveClassesCore(
     purgeEnded?: boolean;
     deleteBooked?: boolean;
     deleteRunningEmpty?: boolean;
+    /** End the running-but-empty classes instead of deleting them: they come off
+     * the timetable, their coaches are told, and the row survives so it can be
+     * restored. Implied by `deleteRunningEmpty`, which ends them and then
+     * removes them as well. */
+    endRunningEmpty?: boolean;
     /** `private_booking_series` ids. A DIFFERENT id space — no foreign key to
      * `classes` — kept apart all the way down rather than merged into
      * `classIds`, where they would match nothing and evaporate. */
@@ -1086,6 +1093,7 @@ export async function bulkRemoveClassesCore(
     purgeEnded = false,
     deleteBooked = false,
     deleteRunningEmpty = false,
+    endRunningEmpty = false,
     privateSeriesIds = [],
     endPrivateSeries = false,
   } = opts;
@@ -1106,9 +1114,16 @@ export async function bulkRemoveClassesCore(
   // `purgeableLive` is on it because an already-ended class can still hold a
   // place on an hour that hasn't happened; deleting one used to cascade a
   // child's booking away in silence.
+  //
+  // `endRunningEmpty` is on the same line as `deleteRunningEmpty` because the
+  // running-but-empty bucket used to be reachable ONLY through the delete. So
+  // "end everything I picked" quietly skipped it, and a founder who chose the
+  // recoverable half of a timetable clear-out found 36 classes still on the
+  // list — the very ones a school term lives in. Ending them is the safer
+  // answer to the same question and it now has a way to be asked.
   const toEnd = [
     ...(endFirst ? plan.endable : []),
-    ...(deleteRunningEmpty ? plan.deletableRunning : []),
+    ...(deleteRunningEmpty || endRunningEmpty ? plan.deletableRunning : []),
     ...(purgeEnded ? plan.purgeableLive : []),
   ];
 
