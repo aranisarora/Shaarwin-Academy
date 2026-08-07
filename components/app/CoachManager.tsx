@@ -602,8 +602,8 @@ export function CoachManager({
                 confirmLabel="Remove"
                 prompt={
                   coaches.find((c) => c.id === replacementId)?.name
-                    ? `Remove this coach and move their upcoming classes to ${coaches.find((c) => c.id === replacementId)?.name}?`
-                    : "Remove this coach? Their upcoming classes will be left unassigned."
+                    ? `Move their upcoming classes to ${coaches.find((c) => c.id === replacementId)?.name} and delete this coach's account? Their login stops working and can't be restored.`
+                    : "Delete this coach's account? Their upcoming classes will be left unassigned, and their login stops working and can't be restored."
                 }
                 pending={isPending || uploadingPhoto}
                 onConfirm={submitDelete}

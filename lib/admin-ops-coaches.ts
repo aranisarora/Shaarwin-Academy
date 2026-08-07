@@ -7,6 +7,7 @@ import { normalizePhoneInput } from "@/lib/whatsapp/phone";
 import { reassignSessionCore } from "@/lib/admin-ops-calendar";
 import type { OpResult, TableUpdate } from "@/lib/admin-ops-types";
 import { BENGALURU } from "@/lib/coverage";
+import { createAdminClient, hasServiceRoleKey } from "@/lib/supabase/admin";
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -260,17 +261,48 @@ export async function deletePendingCoachCore(
   return { ok: true };
 }
 
+/** Tables that would make a hard delete destroy paying-customer records. A coach
+ *  promoted from an existing client account (see `promoteToCoachCore`) can still
+ *  have a child enrolled and a payment history; those rows cascade off
+ *  `profiles` and do not come back. */
+const CLIENT_FOOTPRINT = [
+  ["bookings", "client_id", "bookings"],
+  ["players", "client_id", "players"],
+  ["subscriptions", "client_id", "subscriptions"],
+  ["orders", "client_id", "orders"],
+  ["invoices", "client_id", "invoices"],
+  ["class_credits", "client_id", "class credits"],
+  ["private_credit_ledger", "client_id", "private-minute entries"],
+] as const;
+
 /**
  * Remove a coach from the roster after handing their upcoming sessions to a
  * replacement. Every future scheduled session they own is reassigned (the
  * engine notifies the old coach, new coach and booked clients); private-series
- * preferences pointing at them are repointed; then the coach row is deleted
- * (cascading their assignments/availability/time-off) and their login is
- * demoted back to a client account so it — and its history — survives.
+ * preferences pointing at them are repointed; then the account itself is
+ * deleted.
  *
- * Caveat: class_sessions.coach_id → coaches is ON DELETE SET NULL, so past
- * completed sessions lose the record of who taught them. That is inherent to
- * taking a coach off the roster; the account itself is preserved.
+ * Removed means removed. This academy is closed — membership is by invitation
+ * and approval — so a coach who is taken off the roster must not keep a working
+ * login. Demoting them to `role = 'client'` (what this used to do) left them
+ * signed in as a customer, listed among the families, offerable in the private
+ * booking dropdown, and still bound to the WhatsApp bot through `wa_links`.
+ *
+ * Deleting the auth user is the whole operation: `profiles.id` → `auth.users`
+ * is ON DELETE CASCADE, and everything hanging off the profile — the `coaches`
+ * row with its assignments/availability/time-off, notifications, wa_links —
+ * goes with it. `audit_log.actor_id` and the `coach_invites` row are ON DELETE
+ * SET NULL, so the record that they were here, and were removed, survives them.
+ *
+ * Two things this deliberately will not do:
+ *   • Run without a service-role key. Deleting an auth user needs one, and
+ *     falling back to a demote would quietly reinstate the bug this fixes.
+ *   • Delete an account that carries client-side records. That is a family's
+ *     enrolment and billing history, it cascades, and it does not come back —
+ *     so the founder is told what is there and decides.
+ *
+ * Caveat, unchanged: class_sessions.coach_id → coaches is ON DELETE SET NULL,
+ * so past completed sessions lose the record of who taught them.
  */
 export async function deleteCoachCore(
   supabase: SupabaseClient<Database>,
@@ -284,6 +316,30 @@ export async function deleteCoachCore(
   const replacement = replacementCoachId || null;
   if (replacement === coachId) {
     return { ok: false, error: "Pick a different coach to take over their classes." };
+  }
+
+  // Both guards run before a single session is moved: refusing after a handover
+  // would leave the roster rearranged around a coach who is still on it.
+  if (!hasServiceRoleKey()) {
+    return { ok: false, error: "Coaches can't be removed from this deployment." };
+  }
+
+  const carries: string[] = [];
+  for (const [table, column, label] of CLIENT_FOOTPRINT) {
+    const { count } = await supabase
+      .from(table)
+      .select("*", { count: "exact", head: true })
+      .eq(column, coachId);
+    if (count) carries.push(`${count} ${label}`);
+  }
+  if (carries.length > 0) {
+    return {
+      ok: false,
+      error:
+        `This account is also a family here — it holds ${carries.join(", ")}. ` +
+        `Removing the coach would delete that too. Pause them instead, or clear ` +
+        `the family's records first.`,
+    };
   }
 
   let changed = 0;
@@ -320,11 +376,11 @@ export async function deleteCoachCore(
     .update({ preferred_coach: replacement })
     .eq("preferred_coach", coachId);
 
-  // Drop the coach row (cascades assignments/availability/time-off) and demote
-  // the login back to a client.
-  const { error: delErr } = await supabase.from("coaches").delete().eq("id", coachId);
+  // Delete the account. One call: profiles cascades off auth.users, and the
+  // coaches row (with its assignments, availability and time-off), the
+  // notifications and the wa_links binding all cascade off profiles.
+  const { error: delErr } = await createAdminClient().auth.admin.deleteUser(coachId);
   if (delErr) return { ok: false, error: "Couldn't remove the coach." };
-  await supabase.from("profiles").update({ role: "client" }).eq("id", coachId);
 
   await supabase.from("audit_log").insert({
     actor_id: founderId,
