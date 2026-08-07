@@ -1,44 +1,60 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import { Suspense } from "react";
-import { redirect } from "next/navigation";
-import { StageShell } from "@/components/shells/StageShell";
+import { AuthLayout, AuthAlternative } from "@/components/auth/AuthLayout";
 import { AuthForm } from "@/components/auth/AuthForm";
-import { getCurrentUser } from "@/lib/auth";
-import { createClient } from "@/lib/supabase/server";
-import { roleHome } from "@/lib/access-gates";
+import { redirectSignedInHome } from "@/lib/auth";
 
 export const metadata: Metadata = { title: "Log in" };
 
-export default async function LoginPage() {
-  // An already-signed-in visitor goes to their own app, not always to /app.
-  // The proxy would correct a wrong guess on the next hop, but that is a second
-  // round trip for a coach, a founder or a school to reach their own home.
-  const user = await getCurrentUser();
-  if (user) {
-    const supabase = await createClient();
-    const { data } = await supabase
-      .from("profiles")
-      .select("role")
-      .eq("id", user.id)
-      .maybeSingle();
-    redirect(roleHome(data?.role));
-  }
+/**
+ * The general way in. Everything on it is for a parent — a code to their inbox,
+ * or Google — and the audience that can use neither is sent onward from the
+ * block at the foot rather than served by a hidden step in the middle.
+ *
+ * "Log in with a password" is kept as the wording of the school link on purpose.
+ * Messages sent before this change tell schools to open this page and choose
+ * exactly that, and those messages are sitting in WhatsApp threads on phones we
+ * cannot reach. The phrase still appears, still on this page, and now leads
+ * somewhere better than a third step in a form.
+ */
+export default async function LoginPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ error?: string }>;
+}) {
+  await redirectSignedInHome();
+  const { error } = await searchParams;
 
   return (
-    <StageShell>
-      <div className="mx-auto flex min-h-[70dvh] max-w-md flex-col justify-center px-6 pb-20 pt-32">
-        <h1 className="font-display mb-2 text-4xl">Welcome back</h1>
-        <p className="mb-8 text-fg-2">
-          New here?{" "}
-          <Link href="/signup" className="text-ember underline-offset-4 hover:underline">
-            Create an account
-          </Link>
-        </p>
-        <Suspense>
-          <AuthForm mode="login" />
-        </Suspense>
-      </div>
-    </StageShell>
+    <AuthLayout
+      title="Welcome back"
+      lead="Enter your email and we'll send you a six-digit code."
+      // `/auth/callback` has redirected here with ?error=auth since it was
+      // written, and until now nothing read it: a failed Google hop dropped the
+      // visitor on a blank login form with no sign anything had gone wrong.
+      notice={
+        error === "auth"
+          ? "We couldn't finish that sign-in. Try again below, or use a code instead."
+          : undefined
+      }
+      alternatives={
+        <>
+          <AuthAlternative
+            question="Signing in for a school?"
+            href="/login/school"
+            label="Log in with a password"
+          />
+          <AuthAlternative
+            question="New here?"
+            href="/signup"
+            label="Create an account"
+          />
+        </>
+      }
+    >
+      <Suspense>
+        <AuthForm mode="login" />
+      </Suspense>
+    </AuthLayout>
   );
 }

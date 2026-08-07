@@ -6,6 +6,7 @@ import { auditViewport } from "./viewport";
 const routes: [path: string, shot: string][] = [
   ["/", "home"],
   ["/login", "login"],
+  ["/login/school", "login-school"],
   ["/signup", "signup"],
   ["/schools", "schools"],
   ["/styleguide", "styleguide"],

@@ -1,32 +1,36 @@
 "use client";
 
 import { useState } from "react";
-import { useSearchParams } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Spinner } from "@/components/ui/Spinner";
+import { isSyntheticEmail } from "@/lib/synthetic-email";
 
 /**
- * One-screen auth: email OTP + Google OAuth, plus a password path on login.
- * `mode` only changes copy — Supabase OTP signs up on first use.
- * Booking intent survives auth via ?next= and sessionStorage.
+ * The way in for a family: email OTP plus Google, and nothing to choose between
+ * them beyond which one they trust. `mode` only changes copy — Supabase OTP
+ * signs up on first use. Booking intent survives auth via ?next= and
+ * sessionStorage.
  *
- * The password step exists for school accounts, which are shared by several
- * people (a sports head, a coordinator) — a six-digit code lands in one inbox
- * and cannot be shared, so a credential is the only thing that works for them.
- * It is sign-IN only and never offered on /signup: accounts without a password
- * simply can't be reached this way, so the surface it adds is small.
+ * The password path used to live here as a third step behind a small link under
+ * the Google button. It has moved to `/login/school`, which is where the link we
+ * send a school now points. Two reasons it is better off there. It was the least
+ * prominent control on the page and the only way into a school account, which is
+ * exactly backwards for an audience that has never seen the app. And a school
+ * screen can say the true thing about a shared, un-emailed credential — no code,
+ * no reset link, ask us — which a form serving both audiences at once cannot.
  */
 export function AuthForm({ mode }: { mode: "login" | "signup" }) {
   const params = useSearchParams();
+  const router = useRouter();
   const supabase = createClient();
 
   const [email, setEmail] = useState("");
   const [name, setName] = useState("");
   const [code, setCode] = useState("");
-  const [password, setPassword] = useState("");
-  const [step, setStep] = useState<"email" | "code" | "password">("email");
+  const [step, setStep] = useState<"email" | "code">("email");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -41,11 +45,26 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
 
   async function sendCode(e: React.FormEvent) {
     e.preventDefault();
+    const typed = email.trim();
+
+    // A school address gets sent to the school screen instead of a code.
+    //
+    // These addresses are minted, have no inbox and are never delivered to, so
+    // `signInWithOtp` here would succeed, send a code into nothing, and leave a
+    // head teacher staring at "we sent you a six-digit code" until they give up
+    // and ring the founder. That is the exact failure the old layout invited:
+    // the school's own way in was a footnote and this form was the obvious one.
+    // Carrying the address across means the rescue costs them no typing.
+    if (typed && isSyntheticEmail(typed)) {
+      router.push(`/login/school?email=${encodeURIComponent(typed)}`);
+      return;
+    }
+
     setBusy(true);
     setError(null);
     sessionStorage.setItem("auth_next", target);
     const { error } = await supabase.auth.signInWithOtp({
-      email,
+      email: typed,
       options: {
         data: mode === "signup" && name ? { full_name: name } : undefined,
       },
@@ -60,7 +79,7 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
     setBusy(true);
     setError(null);
     const { error } = await supabase.auth.verifyOtp({
-      email,
+      email: email.trim(),
       token: code,
       type: "email",
     });
@@ -69,21 +88,6 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
     sessionStorage.removeItem("auth_next");
     // Hard navigate so the browser sends the fresh auth cookie in the server
     // request — router.push fires an RSC fetch before the cookie is committed.
-    window.location.replace(target);
-  }
-
-  async function signInWithPassword(e: React.FormEvent) {
-    e.preventDefault();
-    setBusy(true);
-    setError(null);
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
-    setBusy(false);
-    if (error) return setError("That email and password didn't match.");
-    sessionStorage.removeItem("auth_next");
-    // Hard navigate, for the same reason the code path does: the server needs
-    // the fresh auth cookie, and router.push fires its RSC fetch before the
-    // cookie is committed. `target` is /app by default; the proxy redirects a
-    // school account on to /school from there.
     window.location.replace(target);
   }
 
@@ -126,43 +130,6 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
     );
   }
 
-  if (step === "password") {
-    return (
-      <form onSubmit={signInWithPassword} className="flex flex-col gap-4">
-        <Input
-          label="Email"
-          type="email"
-          autoComplete="username"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          required
-        />
-        <Input
-          label="Password"
-          type="password"
-          autoComplete="current-password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          error={error ?? undefined}
-          required
-        />
-        <Button type="submit" disabled={busy || !email || !password}>
-          {busy ? <Spinner /> : "Log in"}
-        </Button>
-        <button
-          type="button"
-          onClick={() => {
-            setStep("email");
-            setError(null);
-          }}
-          className="text-sm text-fg-2 underline-offset-4 hover:underline"
-        >
-          Email me a code instead
-        </button>
-      </form>
-    );
-  }
-
   return (
     <div className="flex flex-col gap-4">
       <form onSubmit={sendCode} className="flex flex-col gap-4">
@@ -196,18 +163,6 @@ export function AuthForm({ mode }: { mode: "login" | "signup" }) {
       <Button variant="ghost" onClick={google}>
         Continue with Google
       </Button>
-      {mode === "login" && (
-        <button
-          type="button"
-          onClick={() => {
-            setStep("password");
-            setError(null);
-          }}
-          className="text-sm text-fg-2 underline-offset-4 hover:underline"
-        >
-          Log in with a password
-        </button>
-      )}
     </div>
   );
 }
