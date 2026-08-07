@@ -36,6 +36,9 @@ import { ActionResult } from "./ActionResult";
 import {
   WEEKDAYS,
   WEEKDAY_NAME,
+  playerChoiceValue,
+  playerChoices,
+  splitPlayerChoice,
   type ClientOption,
   type Coach,
   type InviteOption,
@@ -208,8 +211,6 @@ export function AdminAddSheet({
   const isInvite = priv.clientId.startsWith("invite:");
   // "open" → hold a private slot with no client, to be assigned later.
   const isOpen = priv.clientId === "open";
-  const client =
-    isInvite || isOpen ? null : (clients.find((c) => c.id === priv.clientId) ?? null);
 
   function resetMode(next: Mode) {
     setMode(next);
@@ -625,19 +626,23 @@ export function AdminAddSheet({
         {/* ── Private session ───────────────────────────────────────────────── */}
         {mode === "private" && (
           <>
+            {/* Player-first: the founder is booking a child, not an account.
+                The family name rides along in brackets so two players with the
+                same first name stay tellable apart. */}
             <Select
-              label="Client"
-              value={priv.clientId}
-              onChange={(e) =>
-                setPriv({ ...priv, clientId: e.target.value, playerId: "" })
-              }
+              label="Player"
+              value={playerChoiceValue(priv.clientId, priv.playerId)}
+              onChange={(e) => {
+                const { clientId, playerId } = splitPlayerChoice(e.target.value);
+                setPriv({ ...priv, clientId, playerId });
+              }}
             >
-              <option value="">— pick a client —</option>
+              <option value="">— pick a player —</option>
               <option value="open">No client — open slot (assign later)</option>
               {clients.length > 0 && (
-                <optgroup label="Clients">
-                  {clients.map((c) => (
-                    <option key={c.id} value={c.id}>{c.name || "Unnamed client"}</option>
+                <optgroup label="Players">
+                  {playerChoices(clients).map((p) => (
+                    <option key={p.value} value={p.value}>{p.label}</option>
                   ))}
                 </optgroup>
               )}
@@ -667,19 +672,6 @@ export function AdminAddSheet({
                   ? " Repeating holds exactly that many weeks: with no client there's no standing slot to keep rolling."
                   : ""}
               </p>
-            )}
-
-            {client && client.players.length > 1 && (
-              <Select
-                label="Player"
-                value={priv.playerId}
-                onChange={(e) => setPriv({ ...priv, playerId: e.target.value })}
-              >
-                <option value="">{client.players[0].name} (default)</option>
-                {client.players.map((p) => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
-                ))}
-              </Select>
             )}
 
             <Select

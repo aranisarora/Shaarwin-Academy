@@ -43,6 +43,9 @@ import {
   arrivalSourceLabel,
   fmtDistance,
   weekdayOfDate,
+  playerChoiceValue,
+  playerChoices,
+  splitPlayerChoice,
   WEEKDAY_NAME,
   type ClientOption,
   type Coach,
@@ -122,7 +125,6 @@ export function AdminSessionSheet({
   const isOpenPrivate = session.isPrivate && !session.privateClientId;
   const [assignClientId, setAssignClientId] = useState("");
   const [assignPlayerId, setAssignPlayerId] = useState("");
-  const assignClient = clients.find((c) => c.id === assignClientId) ?? null;
 
   // School class: register a walk-in pupil (name + grade).
   const [schoolAdding, setSchoolAdding] = useState(false);
@@ -452,38 +454,28 @@ export function AdminSessionSheet({
           {isOpenPrivate && (
             <ActionSection label="Assign a client" tone="ember" defaultOpen>
               <p className="text-sm text-fg-2">
-                This slot is held with no client yet. Pick one to book them in — their
-                minutes are debited when you do.
+                This slot is held with nobody in it. Pick the player to book in — their
+                family&apos;s minutes are debited when you do.
               </p>
+              {/* Player-first, family in brackets — the same picker as the
+                  create sheet, so filling a held slot and booking a new one ask
+                  the same question. */}
               <Select
-                label="Client"
-                value={assignClientId}
+                label="Player"
+                value={playerChoiceValue(assignClientId, assignPlayerId)}
                 onChange={(e) => {
-                  setAssignClientId(e.target.value);
-                  setAssignPlayerId("");
+                  const { clientId, playerId } = splitPlayerChoice(e.target.value);
+                  setAssignClientId(clientId);
+                  setAssignPlayerId(playerId);
                 }}
               >
-                <option value="">— pick a client —</option>
-                {clients.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name || "Unnamed client"}
+                <option value="">— pick a player —</option>
+                {playerChoices(clients).map((p) => (
+                  <option key={p.value} value={p.value}>
+                    {p.label}
                   </option>
                 ))}
               </Select>
-              {assignClient && assignClient.players.length > 1 && (
-                <Select
-                  label="Player"
-                  value={assignPlayerId}
-                  onChange={(e) => setAssignPlayerId(e.target.value)}
-                >
-                  <option value="">{assignClient.players[0].name} (default)</option>
-                  {assignClient.players.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name}
-                    </option>
-                  ))}
-                </Select>
-              )}
               <Button onClick={assign} disabled={pending || !assignClientId} className="w-full">
                 {pending ? <Spinner /> : "Assign client"}
               </Button>
