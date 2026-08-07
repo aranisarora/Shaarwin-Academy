@@ -340,6 +340,7 @@ export type Database = {
           coach_arrived_at: string | null
           coach_confirmed_at: string | null
           coach_id: string | null
+          coach_late_at: string | null
           coach_notes: string | null
           created_at: string
           ends_at: string
@@ -356,6 +357,7 @@ export type Database = {
           coach_arrived_at?: string | null
           coach_confirmed_at?: string | null
           coach_id?: string | null
+          coach_late_at?: string | null
           coach_notes?: string | null
           created_at?: string
           ends_at: string
@@ -372,6 +374,7 @@ export type Database = {
           coach_arrived_at?: string | null
           coach_confirmed_at?: string | null
           coach_id?: string | null
+          coach_late_at?: string | null
           coach_notes?: string | null
           created_at?: string
           ends_at?: string

@@ -10,16 +10,19 @@
 // reads, and nothing else in the app can tell you they still agree.
 
 import { isSyntheticEmail } from "@/lib/synthetic-email";
+import { appBaseUrl } from "@/lib/app-url";
 
 /**
  * Where the school is told to go. Deliberately not `window.location.origin`:
  * this text gets pasted into WhatsApp and lives on a head teacher's phone for a
  * term, and a founder who opened the admin app from a Vercel preview URL would
  * be sending a link that stops resolving the week after.
+ *
+ * `appBaseUrl()` rather than reading the env directly: the same reasoning one
+ * step further on. A dev-valued NEXT_PUBLIC_APP_URL doesn't stop resolving next
+ * week — it never resolved for the head teacher at all.
  */
-export const APP_ORIGIN = (
-  process.env.NEXT_PUBLIC_APP_URL ?? "https://sharwinacademy.com"
-).replace(/\/$/, "");
+export const APP_ORIGIN = appBaseUrl();
 
 /** The school sign-in screen, without the query string. Shown in the message as
  *  the thing to type when a tapped link doesn't survive being forwarded. */

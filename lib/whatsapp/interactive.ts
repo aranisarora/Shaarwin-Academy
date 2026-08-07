@@ -17,6 +17,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database, Json } from "@/lib/database.types";
 import type { Profile } from "@/lib/auth";
 import { formatClock } from "@/lib/academy-time";
+import { appBaseUrl } from "@/lib/app-url";
 
 const WA_BUTTON = {
   COACH_CONFIRM: "coach_confirm",
@@ -41,6 +42,11 @@ const WA_BUTTON = {
 const COVER_WORDS = new Set([
   "claim",
   "claim it",
+  // The literal title of the button on coach_cover_offer. A tap normally
+  // arrives as the `cover_claim` payload, but the plain-text fallback of that
+  // template invites the same words, and the one spelling the button itself
+  // uses was the one spelling this set didn't have.
+  "claim this session",
   "cover",
   "i'll cover",
   "ill cover",
@@ -85,6 +91,11 @@ const COACH_TITLE_TO_ID: Record<string, ButtonId> = {
   "cant make it": WA_BUTTON.COACH_CANT,
   "i've arrived": WA_BUTTON.COACH_ARRIVED,
   "ive arrived": WA_BUTTON.COACH_ARRIVED,
+  // The other button on the same template. It was only in the LOOSE map, which
+  // gave the two halves of one prompt different fallback rules: with no
+  // resolvable session, "I've arrived" got "which class did you mean?" and
+  // "Running late" fell silently through to the assistant.
+  "running late": WA_BUTTON.COACH_LATE,
   "all present ✅": WA_BUTTON.AC_PRESENT,
   "all present": WA_BUTTON.AC_PRESENT,
   "some absent": WA_BUTTON.AC_ABSENT,
@@ -116,8 +127,10 @@ const COACH_LOOSE_TO_ID: Record<string, ButtonId> = {
   absent: WA_BUTTON.AC_ABSENT,
 };
 
+// Every link below is read on a coach's or parent's phone, so it has to be the
+// public origin — see lib/app-url.ts for why `?? PRODUCTION` was not enough.
 function appUrl(): string {
-  return process.env.NEXT_PUBLIC_APP_URL ?? "https://sharwinacademy.com";
+  return appBaseUrl();
 }
 
 /**
@@ -295,9 +308,13 @@ async function handleCoachReply(opts: {
       return "📍 Marked you as arrived — the parents have been notified. Have a great session!";
     }
     case WA_BUTTON.COACH_LATE: {
+      // p_source alongside p_late, the same way the arrived branch above sends
+      // it. It only steers the parent-ping delay today (only 'auto' is held
+      // back), but leaving it off meant this call claimed to be a screen tap.
       const { error } = await supabase.rpc("coach_mark_arrival", {
         p_session: sessionId,
         p_late: true,
+        p_source: "wa",
       });
       if (error) return errorReply(error.message);
       return "🏃 Thanks for the heads-up — we've let everyone know you're running a little late.";

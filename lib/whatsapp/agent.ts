@@ -6,6 +6,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/database.types";
 import type { Profile } from "@/lib/auth";
 import { formatFullDateTime } from "@/lib/academy-time";
+import { appBaseUrl } from "@/lib/app-url";
 import { getVertexToken, vertexUrl } from "@/lib/vertex";
 import { toolsForRole, type ToolContext, type WaTool } from "./tools";
 
@@ -46,7 +47,9 @@ type Role = "guest" | "client" | "coach" | "founder";
  * appended to the user's turn at the tail of the conversation.
  */
 function staticSystem(role: Role): string {
-  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "https://sharwinacademy.com";
+  // The assistant quotes this at people over WhatsApp, so it must be the public
+  // origin even when the process running it was started with a dev env.
+  const appUrl = appBaseUrl();
 
   const who =
     role === "guest"

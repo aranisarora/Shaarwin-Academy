@@ -109,6 +109,28 @@ Escalations only — `ops_coach_unconfirmed` (T−10, coach fully silent) and
 `ops_coach_not_arrived` (start+10) — plus `signup_request` (Approve/Deny) and
 one `ops_daily_digest` at 21:00 IST. Everything else is the in-app feed.
 
+`ops_coach_not_arrived` picks one of **three** sentences, ordered by how much
+the coach has told us, because that is what decides whether the founder should
+pick up the phone (`supabase/functions/notify/escalation.ts`, pinned by
+`escalation.test.ts`):
+
+| Session state | What the founder is told | Action implied |
+| --- | --- | --- |
+| `coach_late_at` set | "said at 6:32 pm they were running late … worth a check" | watch |
+| `coach_confirmed_at` set, no lateness | "confirmed they were coming … call them now" | call |
+| neither | "never responded at all today — likely a no-show" | act |
+
+The first row is why `class_sessions.coach_late_at` exists (migration `0071`).
+Before it, `coach_mark_arrival(p_late => true)` sent the "running late"
+notifications and wrote **nothing** to the session — so a coach who tapped
+**Running late** was indistinguishable from one who had ignored every message
+all day, and the founder got "never responded at all today" minutes after
+their phone buzzed with that same coach's lateness. Reporting lateness now also
+stamps `coach_confirmed_at` (late implies coming), which stops the T−30 nudge
+and the T−10 escalation chasing someone who has already answered.
+`coach_arrived_at` stays NULL — they are not there yet, and start+10 must still
+fire if they never turn up.
+
 There is no separate "admin" role: `profiles.role` is `founder`, `coach` or
 `client`, and admin *is* founder.
 
@@ -525,6 +547,24 @@ Re-verified against production, Twilio and the deployed worker on 2026-07-31
    time and is safe; a URL in a button `url:` is frozen at provision time.** That
    is why `coach_class_complete`'s link always worked — it arrives as `{{3}}`,
    built by the worker from its own (correct) `APP_URL` function secret.
+
+   **"Resolved at send time" is only half a guarantee, and the other half bit
+   us.** It is safe when the sender reads a *trustworthy* variable. The Deno
+   worker does: `APP_URL` is a function secret that defaults to production. The
+   Next.js side — every link the WhatsApp *bot* composes in its replies, plus
+   the school handover message — read `NEXT_PUBLIC_APP_URL ?? production`, and
+   `??` only fires when a variable is **unset**. `.env.local` sets it to
+   `http://localhost:3000`, so any bot reply composed by a process holding that
+   env sent a coach `http://localhost:3000/coach/session/…` — resolved at send
+   time, and dead on arrival.
+
+   Outbound links from the app now go through `appBaseUrl()`
+   (`lib/app-url.ts`), which *validates* rather than null-checks: any public
+   https origin passes (so Vercel previews still work), while localhost,
+   loopback, LAN addresses and plain http fall back to production and log once.
+   `lib/app-url.test.ts` pins it. In-app links (`app/layout.tsx`, `sitemap.ts`,
+   `robots.ts`) deliberately still use the raw env — they *want* the local
+   origin in dev.
    </details>
 
    Also verified while fixing this: Twilio **accepts extra `ContentVariables`**
