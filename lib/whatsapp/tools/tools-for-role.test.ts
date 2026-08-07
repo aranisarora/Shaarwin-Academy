@@ -11,7 +11,7 @@ describe("toolsForRole", () => {
     for (const tool of [
       "my_schedule",
       "book_group_session",
-      "cancel_booking",
+      "cancel_bookings",
       "reschedule_booking",
       "book_private_session",
       "send_membership_checkout_link",
@@ -62,6 +62,62 @@ describe("toolsForRole", () => {
       "list_dunning",
     ]) {
       expect(n).toContain(tool);
+    }
+  });
+
+  it("gives every signed-in role the generic reader, and guests none of it", () => {
+    for (const role of ["client", "coach", "founder"] as const) {
+      expect(names(role)).toContain("find");
+    }
+    // Guests run on the service-role client, so a generic reader there would be
+    // an unauthenticated query surface.
+    expect(names("guest")).not.toContain("find");
+  });
+
+  it("scopes find's advertised entities to the role", () => {
+    const forRole = (role: "client" | "coach" | "founder") =>
+      toolsForRole(role).find((t) => t.name === "find")!.description;
+    expect(forRole("founder")).toContain("subscriptions:");
+    expect(forRole("client")).not.toContain("subscriptions:");
+    expect(forRole("client")).not.toContain("clients:");
+    expect(forRole("coach")).toContain("coach_availability:");
+    expect(forRole("client")).not.toContain("coach_availability:");
+  });
+
+  it("only the founder can message an arbitrary set of people", () => {
+    expect(names("founder")).toContain("notify");
+    expect(names("client")).not.toContain("notify");
+    expect(names("coach")).not.toContain("notify");
+  });
+
+  it("exposes the set-taking write tools under their plural names", () => {
+    expect(names("founder")).toContain("cancel_sessions");
+    expect(names("founder")).not.toContain("cancel_session");
+    expect(names("client")).not.toContain("cancel_booking");
+    expect(names("coach")).toContain("remove_availability_windows");
+  });
+
+  it("every set-taking tool asks for an array, not a single id", () => {
+    const plural: Record<string, string> = {
+      cancel_sessions: "session_ids",
+      reassign_coach: "session_ids",
+      adjust_private_credits: "client_ids",
+      move_session: "session_ids",
+      set_session_capacity: "session_ids",
+      set_class_active: "class_ids",
+      set_coach_active: "coach_ids",
+      block_client: "client_ids",
+      archive_client: "client_ids",
+      set_venue_active: "venue_ids",
+      notify: "user_ids",
+    };
+    const founder = toolsForRole("founder");
+    for (const [tool, field] of Object.entries(plural)) {
+      const def = founder.find((t) => t.name === tool);
+      expect(def, `${tool} missing`).toBeDefined();
+      const prop = def!.input_schema.properties[field] as { type?: string } | undefined;
+      expect(prop?.type, `${tool}.${field}`).toBe("array");
+      expect(def!.input_schema.required).toContain(field);
     }
   });
 

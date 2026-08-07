@@ -27,11 +27,14 @@ import {
   updateGroupClassCore,
   getSettingsCore,
   saveSettingsCore,
+  notifyUsersCore,
+  NOTIFY_TYPES,
 } from "@/lib/admin-ops";
 import { formatSessionDate, utcToAcademyWall } from "@/lib/academy-time";
 import { BENGALURU } from "@/lib/coverage";
 import { geocode } from "@/lib/whatsapp/geocode";
 import { venueDisplayName } from "@/lib/venue-display";
+import { bulkTool, idList } from "./bulk";
 import { fail, ok, type ToolContext, type WaTool } from "./types";
 
 const SUBSCRIPTION_STATUSES = [
@@ -198,21 +201,22 @@ const deleteClass: WaTool = {
 
 const setClassActive: WaTool = {
   name: "set_class_active",
-  description: "Activate or deactivate a class (class_id from list_classes).",
+  description:
+    "Activate or deactivate one class or several (class_ids from find or list_classes). The same active flag applies to every class listed.",
   input_schema: {
     type: "object",
-    properties: { class_id: { type: "string" }, active: { type: "boolean" } },
-    required: ["class_id", "active"],
+    properties: {
+      class_ids: { type: "array", items: { type: "string" }, description: "One or more class ids" },
+      active: { type: "boolean" },
+    },
+    required: ["class_ids", "active"],
   },
-  run: async (input, ctx) => {
-    const result = await setClassActiveCore(
-      ctx.supabase!,
-      ctx.profile!.id,
-      String(input.class_id),
-      Boolean(input.active)
-    );
-    return result.ok ? ok({ active: Boolean(input.active) }) : fail(result.error ?? "Failed.");
-  },
+  run: async (input, ctx) =>
+    bulkTool(
+      input.class_ids ?? input.class_id,
+      (id) => setClassActiveCore(ctx.supabase!, ctx.profile!.id, id, Boolean(input.active)),
+      { noun: "class" }
+    ),
 };
 
 const topUpSessions: WaTool = {
@@ -230,47 +234,86 @@ const topUpSessions: WaTool = {
 const moveSession: WaTool = {
   name: "move_session",
   description:
-    "Move one session to a new day/time — the JUST-THIS-SESSION scope: other weeks of the class stay put (use update_class to move every week). session_id from list_sessions. Notifies booked members and the coach. Date is YYYY-MM-DD, time HH:MM, both academy time (IST). If it's ambiguous whether the founder means one week or every week, ask before calling. Confirm first.",
+    "Move sessions — the JUST-THIS-SESSION scope: other weeks of the class stay put (use update_class to move every week). Two ways to say where: date + time puts EVERY listed session at that same moment (only sensible for one), or shift_minutes moves each one relative to where it already is — that's what 'push Tuesday's classes back 30 minutes' means (shift_minutes: 30; negative moves earlier). Notifies booked members and the coach. Date is YYYY-MM-DD, time HH:MM, both academy time (IST). If it's ambiguous whether the founder means one week or every week, ask before calling. Confirm first.",
   input_schema: {
     type: "object",
     properties: {
-      session_id: { type: "string" },
-      date: { type: "string", description: "YYYY-MM-DD (IST)" },
-      time: { type: "string", description: "HH:MM (IST)" },
+      session_ids: {
+        type: "array",
+        items: { type: "string" },
+        description: "One or more session ids",
+      },
+      date: { type: "string", description: "YYYY-MM-DD (IST) — absolute move" },
+      time: { type: "string", description: "HH:MM (IST) — absolute move" },
+      shift_minutes: {
+        type: "number",
+        description: "Relative move: minutes to add to each session's current start (negative = earlier)",
+      },
     },
-    required: ["session_id", "date", "time"],
+    required: ["session_ids"],
   },
   run: async (input, ctx) => {
-    const result = await moveSessionCore(
-      ctx.supabase!,
-      ctx.profile!.id,
-      String(input.session_id),
-      String(input.date),
-      String(input.time)
+    const supabase = ctx.supabase!;
+    const shift = input.shift_minutes != null ? Number(input.shift_minutes) : null;
+    const absolute = input.date != null && input.time != null;
+    if (shift === null && !absolute) {
+      return fail("Give either date and time, or shift_minutes.");
+    }
+    if (shift !== null && !Number.isFinite(shift)) {
+      return fail("shift_minutes must be a number.");
+    }
+
+    return bulkTool(
+      input.session_ids ?? input.session_id,
+      async (id) => {
+        let date = String(input.date ?? "");
+        let time = String(input.time ?? "");
+        if (shift !== null) {
+          // A relative move has to be computed per session, and in academy wall
+          // clock — the core takes a date and a time, not an offset.
+          const { data } = await supabase
+            .from("class_sessions")
+            .select("starts_at")
+            .eq("id", id)
+            .maybeSingle();
+          if (!data) return { ok: false, error: "Session not found." };
+          const wall = utcToAcademyWall(new Date(new Date(data.starts_at).getTime() + shift * 60000));
+          date = wall.date;
+          time = wall.time;
+        }
+        return moveSessionCore(supabase, ctx.profile!.id, id, date, time);
+      },
+      { noun: "session" }
     );
-    return result.ok ? ok({ moved: true }) : fail(result.error ?? "Failed.");
   },
 };
 
 const setSessionCapacity: WaTool = {
   name: "set_session_capacity",
   description:
-    "Override the spots for a single session — the JUST-THIS-SESSION scope (use update_class capacity to change every week). session_id from list_sessions. Pass capacity=0 or omit to clear the override and use the class default.",
+    "Override the spots for one session or several — the JUST-THIS-SESSION scope (use update_class capacity to change every week). session_ids from find or list_sessions. Pass capacity=0 or omit it to CLEAR the override and fall back to the class default.",
   input_schema: {
     type: "object",
-    properties: { session_id: { type: "string" }, capacity: { type: "number" } },
-    required: ["session_id"],
+    properties: {
+      session_ids: {
+        type: "array",
+        items: { type: "string" },
+        description: "One or more session ids",
+      },
+      capacity: { type: "number", description: "Seats; 0 or omitted clears the override" },
+    },
+    required: ["session_ids"],
   },
   run: async (input, ctx) => {
+    // 0 and omitted both mean "clear the override" — a sentinel, not a capacity
+    // of zero, which would create a session nobody can book.
     const cap =
       input.capacity == null || Number(input.capacity) === 0 ? null : Number(input.capacity);
-    const result = await setSessionCapacityCore(
-      ctx.supabase!,
-      ctx.profile!.id,
-      String(input.session_id),
-      cap
+    return bulkTool(
+      input.session_ids ?? input.session_id,
+      (id) => setSessionCapacityCore(ctx.supabase!, ctx.profile!.id, id, cap),
+      { noun: "session" }
     );
-    return result.ok ? ok({ capacity: cap }) : fail(result.error ?? "Failed.");
   },
 };
 
@@ -540,21 +583,21 @@ const updateCoach: WaTool = {
 const setCoachActive: WaTool = {
   name: "set_coach_active",
   description:
-    "Activate or pause a coach (coach_id from list_coaches). Pausing stops new assignments; existing sessions stay until reassigned.",
+    "Activate or pause one coach or several (coach_ids from find or list_coaches). Pausing stops new assignments; existing sessions stay until reassigned.",
   input_schema: {
     type: "object",
-    properties: { coach_id: { type: "string" }, active: { type: "boolean" } },
-    required: ["coach_id", "active"],
+    properties: {
+      coach_ids: { type: "array", items: { type: "string" }, description: "One or more coach ids" },
+      active: { type: "boolean" },
+    },
+    required: ["coach_ids", "active"],
   },
-  run: async (input, ctx) => {
-    const result = await setCoachActiveCore(
-      ctx.supabase!,
-      ctx.profile!.id,
-      String(input.coach_id),
-      Boolean(input.active)
-    );
-    return result.ok ? ok({ active: Boolean(input.active) }) : fail(result.error ?? "Failed.");
-  },
+  run: async (input, ctx) =>
+    bulkTool(
+      input.coach_ids ?? input.coach_id,
+      (id) => setCoachActiveCore(ctx.supabase!, ctx.profile!.id, id, Boolean(input.active)),
+      { noun: "coach" }
+    ),
 };
 
 // ── Clients ──────────────────────────────────────────────────────────────────
@@ -772,6 +815,59 @@ const broadcastMessage: WaTool = {
   },
 };
 
+/** Ceiling on a model-chosen recipient set. broadcast_message has no cap because
+ *  its audience is a role the founder named out loud, not a query result. */
+const NOTIFY_CAP = 50;
+
+const notify: WaTool = {
+  name: "notify",
+  description:
+    "Message specific people — one person or a chosen group. Use find to get the user ids first, then send: 'message the coach taking Saturday's La Plazza session', 'tell everyone booked into tomorrow's beginner class it's moved indoors', 'message the three clients whose payment failed'. For bookings, the person to message is the booking's client_id (the parent), not the player. To reach EVERY active coach or EVERY active client, use broadcast_message instead — it resolves the audience itself and skips deleted accounts. Restate who (by name, and the count) and the exact message, and get an explicit yes, before calling — this cannot be unsent.",
+  input_schema: {
+    type: "object",
+    properties: {
+      user_ids: {
+        type: "array",
+        items: { type: "string" },
+        description: `Profile ids of the recipients (max ${NOTIFY_CAP})`,
+      },
+      message: { type: "string", description: "The message text, sent verbatim" },
+      title: { type: "string", description: "Optional heading; defaults to 'Message from the academy'" },
+      type: {
+        type: "string",
+        enum: [...NOTIFY_TYPES],
+        description:
+          "announcement (default) for news and general messages; class_updated for an operational change to a session or class someone is booked into — it sits with reminders rather than news, so it isn't silenced by the news toggle.",
+      },
+    },
+    required: ["user_ids", "message"],
+  },
+  run: async (input, ctx) => {
+    const ids = idList(input.user_ids);
+    if (ids.length === 0) return fail("No recipients — use find to get the user ids first.");
+    if (ids.length > NOTIFY_CAP) {
+      return fail(
+        `That's ${ids.length} people — more than the ${NOTIFY_CAP} a targeted message can reach. Narrow it down, or use broadcast_message if you really mean everyone.`
+      );
+    }
+    const type = (NOTIFY_TYPES as readonly string[]).includes(String(input.type))
+      ? (String(input.type) as (typeof NOTIFY_TYPES)[number])
+      : "announcement";
+
+    const result = await notifyUsersCore(
+      ctx.supabase!,
+      ctx.profile!.id,
+      ids,
+      String(input.message ?? ""),
+      input.title != null ? String(input.title) : undefined,
+      { action: "notify.targeted" },
+      type
+    );
+    if (!result.ok) return fail(result.error ?? "Failed.");
+    return ok({ sent: true, recipients: result.recipients, type });
+  },
+};
+
 const updateClient: WaTool = {
   name: "update_client",
   description:
@@ -806,41 +902,41 @@ const updateClient: WaTool = {
 const blockClient: WaTool = {
   name: "block_client",
   description:
-    "Block or unblock a client (payment-dispute freeze — they can sign in but can't book). client_id from list_clients. Confirm first.",
+    "Block or unblock one client or several (payment-dispute freeze — they can sign in but can't book). client_ids from find or list_clients. DESTRUCTIVE — name every client and get an explicit yes first.",
   input_schema: {
     type: "object",
-    properties: { client_id: { type: "string" }, blocked: { type: "boolean" } },
-    required: ["client_id", "blocked"],
+    properties: {
+      client_ids: { type: "array", items: { type: "string" }, description: "One or more client ids" },
+      blocked: { type: "boolean" },
+    },
+    required: ["client_ids", "blocked"],
   },
-  run: async (input, ctx) => {
-    const result = await setClientBlockedCore(
-      ctx.supabase!,
-      ctx.profile!.id,
-      String(input.client_id),
-      Boolean(input.blocked)
-    );
-    return result.ok ? ok({ blocked: Boolean(input.blocked) }) : fail(result.error ?? "Failed.");
-  },
+  run: async (input, ctx) =>
+    bulkTool(
+      input.client_ids ?? input.client_id,
+      (id) => setClientBlockedCore(ctx.supabase!, ctx.profile!.id, id, Boolean(input.blocked)),
+      { noun: "client" }
+    ),
 };
 
 const archiveClient: WaTool = {
   name: "archive_client",
   description:
-    "Archive or restore a client (archiving hides them from lists; reversible). client_id from list_clients. Confirm first.",
+    "Archive or restore one client or several (archiving hides them from lists; reversible). client_ids from find or list_clients. DESTRUCTIVE — name every client and get an explicit yes first.",
   input_schema: {
     type: "object",
-    properties: { client_id: { type: "string" }, archived: { type: "boolean" } },
-    required: ["client_id", "archived"],
+    properties: {
+      client_ids: { type: "array", items: { type: "string" }, description: "One or more client ids" },
+      archived: { type: "boolean" },
+    },
+    required: ["client_ids", "archived"],
   },
-  run: async (input, ctx) => {
-    const result = await setClientArchivedCore(
-      ctx.supabase!,
-      ctx.profile!.id,
-      String(input.client_id),
-      Boolean(input.archived)
-    );
-    return result.ok ? ok({ archived: Boolean(input.archived) }) : fail(result.error ?? "Failed.");
-  },
+  run: async (input, ctx) =>
+    bulkTool(
+      input.client_ids ?? input.client_id,
+      (id) => setClientArchivedCore(ctx.supabase!, ctx.profile!.id, id, Boolean(input.archived)),
+      { noun: "client" }
+    ),
 };
 
 // ── Venues ─────────────────────────────────────────────────────────────────
@@ -876,21 +972,22 @@ const saveVenue: WaTool = {
 
 const setVenueActive: WaTool = {
   name: "set_venue_active",
-  description: "Show or hide a venue (venue_id from list_venues).",
+  description:
+    "Show or hide one venue or several (venue_ids from find or list_venues) — 'deactivate every venue except La Plazza' is one call.",
   input_schema: {
     type: "object",
-    properties: { venue_id: { type: "string" }, active: { type: "boolean" } },
-    required: ["venue_id", "active"],
+    properties: {
+      venue_ids: { type: "array", items: { type: "string" }, description: "One or more venue ids" },
+      active: { type: "boolean" },
+    },
+    required: ["venue_ids", "active"],
   },
-  run: async (input, ctx) => {
-    const result = await setVenueActiveCore(
-      ctx.supabase!,
-      ctx.profile!.id,
-      String(input.venue_id),
-      Boolean(input.active)
-    );
-    return result.ok ? ok({ active: Boolean(input.active) }) : fail(result.error ?? "Failed.");
-  },
+  run: async (input, ctx) =>
+    bulkTool(
+      input.venue_ids ?? input.venue_id,
+      (id) => setVenueActiveCore(ctx.supabase!, ctx.profile!.id, id, Boolean(input.active)),
+      { noun: "venue" }
+    ),
 };
 
 const deleteVenue: WaTool = {
@@ -1022,6 +1119,7 @@ export const founderAdminTools: WaTool[] = [
   clientNotes,
   clientPayments,
   broadcastMessage,
+  notify,
   saveVenue,
   setVenueActive,
   deleteVenue,

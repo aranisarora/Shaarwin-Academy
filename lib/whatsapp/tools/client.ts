@@ -11,6 +11,7 @@ import { getRazorpay } from "@/lib/razorpay";
 import { geocode } from "@/lib/whatsapp/geocode";
 import { formatSessionDate, istDayBounds } from "@/lib/academy-time";
 import { formatPrice } from "@/lib/format";
+import { bulkTool } from "./bulk";
 import { fail, ok, type ToolContext, type WaTool } from "./types";
 
 const RPC_ERROR_COPY: Record<string, string> = {
@@ -268,21 +269,32 @@ const bookGroup: WaTool = {
 };
 
 const cancelBooking: WaTool = {
-  name: "cancel_booking",
+  name: "cancel_bookings",
   description:
-    "Cancel one of the user's bookings (booking_id from my_schedule). Always confirm with the user first, and warn that cancelling under 24h before start counts as late.",
+    "Cancel one or more of the user's bookings (booking_ids from my_schedule) — 'cancel everything next week, we're away' is one call with all of them. Always read the list back and confirm first, and warn that cancelling under 24h before start counts as late.",
   input_schema: {
     type: "object",
-    properties: { booking_id: { type: "string" } },
-    required: ["booking_id"],
+    properties: {
+      booking_ids: {
+        type: "array",
+        items: { type: "string" },
+        description: "One or more booking ids",
+      },
+    },
+    required: ["booking_ids"],
   },
-  run: async (input, ctx) => {
-    const { error } = await ctx.supabase!.rpc("cancel_booking", {
-      p_booking: input.booking_id,
-    });
-    if (error) return fail(friendlyRpcError(error.message));
-    return ok({ cancelled: true });
-  },
+  run: async (input, ctx) =>
+    bulkTool(
+      input.booking_ids ?? input.booking_id,
+      async (id) => {
+        const { error } = await ctx.supabase!.rpc("cancel_booking", { p_booking: id });
+        // Decode per booking, not per call: one late cancellation shouldn't
+        // hide behind a generic batch error, and "under the 24h window" is the
+        // difference between a useful sentence and a constraint violation.
+        return error ? { ok: false, error: friendlyRpcError(error.message) } : { ok: true };
+      },
+      { noun: "booking" }
+    ),
 };
 
 const rescheduleBooking: WaTool = {

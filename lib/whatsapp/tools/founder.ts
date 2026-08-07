@@ -10,6 +10,7 @@ import {
   grantCompCore,
 } from "@/lib/admin-ops";
 import { formatSessionDate } from "@/lib/academy-time";
+import { bulkTool } from "./bulk";
 import { fail, ok, type WaTool } from "./types";
 import { founderAdminTools } from "./founder-admin";
 
@@ -108,28 +109,32 @@ const listSessions: WaTool = {
   },
 };
 
-const cancelSession: WaTool = {
-  name: "cancel_session",
+const cancelSessions: WaTool = {
+  name: "cancel_sessions",
   description:
-    "Cancel a whole session: bookings become cancelled_by_academy, private clients get minutes refunded, everyone affected is notified. DESTRUCTIVE — always restate the session and get an explicit yes first. Reason is optional (defaults to 'Cancelled by the academy').",
+    "Cancel one session or many in a single call: bookings become cancelled_by_academy, private clients get minutes refunded, everyone affected is notified. Pass session_ids as an array — 'cancel Saturday' means find the sessions first, then cancel them all here rather than one call each. DESTRUCTIVE — always list the exact sessions back to the founder and get an explicit yes before calling. Reason is optional (defaults to 'Cancelled by the academy').",
   input_schema: {
     type: "object",
     properties: {
-      session_id: { type: "string" },
+      session_ids: {
+        type: "array",
+        items: { type: "string" },
+        description: "One or more session ids (from find or list_sessions)",
+      },
       reason: { type: "string", description: "Optional — defaults to 'Cancelled by the academy'" },
     },
-    required: ["session_id"],
+    required: ["session_ids"],
   },
   run: async (input, ctx) => {
-    const result = await cancelSessionCore(
-      ctx.supabase!,
-      ctx.profile!.id,
-      String(input.session_id),
+    const reason =
       input.reason != null && String(input.reason).trim()
         ? String(input.reason)
-        : "Cancelled by the academy"
+        : "Cancelled by the academy";
+    return bulkTool(
+      input.session_ids ?? input.session_id,
+      (id) => cancelSessionCore(ctx.supabase!, ctx.profile!.id, id, reason),
+      { noun: "session" }
     );
-    return result.ok ? ok({ cancelled: true }) : fail(result.error ?? "Failed.");
   },
 };
 
@@ -165,27 +170,35 @@ const rankCoaches: WaTool = {
 const reassign: WaTool = {
   name: "reassign_coach",
   description:
-    "Assign or reassign a coach to a session (coach_id from rank_coaches_for_session or list_coaches). lock=true stops the engine from moving them later. If it fails with filter_failed_*, tell the founder why and ask before retrying with force=true, which overrides the rule (a hard time clash is still blocked). Confirm with the founder first.",
+    "Assign or reassign a coach across one session or many (coach_id from rank_coaches_for_session or list_coaches) — 'give Ravi all of next week's La Plazza sessions' is one call. lock=true stops the engine from moving them later. If a session fails with filter_failed_*, tell the founder which one and why, and ask before retrying with force=true, which overrides the rule (a hard time clash is still blocked). Confirm with the founder first.",
   input_schema: {
     type: "object",
     properties: {
-      session_id: { type: "string" },
+      session_ids: {
+        type: "array",
+        items: { type: "string" },
+        description: "One or more session ids to give to this coach",
+      },
       coach_id: { type: "string" },
       lock: { type: "boolean" },
       force: { type: "boolean" },
     },
-    required: ["session_id", "coach_id"],
+    required: ["session_ids", "coach_id"],
   },
-  run: async (input, ctx) => {
-    const { error } = await ctx.supabase!.rpc("founder_reassign", {
-      p_session: input.session_id,
-      p_coach: input.coach_id,
-      p_lock: Boolean(input.lock),
-      p_force: Boolean(input.force),
-    });
-    if (error) return fail(error.message);
-    return ok({ reassigned: true });
-  },
+  run: async (input, ctx) =>
+    bulkTool(
+      input.session_ids ?? input.session_id,
+      async (id) => {
+        const { error } = await ctx.supabase!.rpc("founder_reassign", {
+          p_session: id,
+          p_coach: String(input.coach_id),
+          p_lock: Boolean(input.lock),
+          p_force: Boolean(input.force),
+        });
+        return error ? { ok: false, error: error.message } : { ok: true };
+      },
+      { noun: "session" }
+    ),
 };
 
 const createClass: WaTool = {
@@ -415,25 +428,34 @@ const grantComp: WaTool = {
 const adjustCredits: WaTool = {
   name: "adjust_private_credits",
   description:
-    "Add or remove private-coaching minutes for a client (positive or negative delta). MONEY-ADJACENT — restate client and delta, get an explicit yes first. Note is optional (defaults to 'Adjusted by admin').",
+    "Add or remove private-coaching minutes (positive or negative delta), for one client or many at once — 'give everyone in the class I cancelled 60 free minutes' is one call with all their client_ids. The same delta applies to every client listed. MONEY-ADJACENT — restate who and how much, get an explicit yes first. Note is optional (defaults to 'Adjusted by admin').",
   input_schema: {
     type: "object",
     properties: {
-      client_id: { type: "string" },
+      client_ids: {
+        type: "array",
+        items: { type: "string" },
+        description: "One or more client ids to adjust by the same delta",
+      },
       delta_minutes: { type: "number" },
       note: { type: "string", description: "Optional — defaults to 'Adjusted by admin'" },
     },
-    required: ["client_id", "delta_minutes"],
+    required: ["client_ids", "delta_minutes"],
   },
   run: async (input, ctx) => {
-    const result = await adjustCreditsCore(
-      ctx.supabase!,
-      ctx.profile!.id,
-      String(input.client_id),
-      Number(input.delta_minutes),
-      input.note != null && String(input.note).trim() ? String(input.note) : "Adjusted by admin"
+    const delta = Number(input.delta_minutes);
+    // The core rejects a zero/NaN delta per client; catching it once here means
+    // a bad argument doesn't produce fifty identical failure rows.
+    if (!Number.isFinite(delta) || delta === 0) {
+      return fail("Give a non-zero number of minutes.");
+    }
+    const note =
+      input.note != null && String(input.note).trim() ? String(input.note) : "Adjusted by admin";
+    return bulkTool(
+      input.client_ids ?? input.client_id,
+      (id) => adjustCreditsCore(ctx.supabase!, ctx.profile!.id, id, delta, note),
+      { noun: "client" }
     );
-    return result.ok ? ok({ adjusted: true }) : fail(result.error ?? "Failed.");
   },
 };
 
@@ -483,7 +505,7 @@ const decideTimeOff: WaTool = {
 export const founderTools: WaTool[] = [
   overview,
   listSessions,
-  cancelSession,
+  cancelSessions,
   rankCoaches,
   reassign,
   createClass,
