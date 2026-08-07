@@ -117,7 +117,13 @@ export function ItemTimesList({
 
 /** Venue, spots and length — everything about a class except its weekly slot
  * (day/time live with the caller). Level is not surfaced here since it is not
- * meaningful for this academy. Title is derived automatically. */
+ * meaningful for this academy. Title is derived automatically.
+ *
+ * Description is gone from both places it appeared. It was optional, it was
+ * never filled in, and it cost two lines of a form the founder fills in on a
+ * phone between classes. A field nobody uses is not free: it is one more thing
+ * to read past on the way to the one that matters. The column stays on the
+ * table for the classes that already have one. */
 export function ClassDetailFields({
   form,
   onChange,
@@ -129,12 +135,6 @@ export function ClassDetailFields({
 }) {
   return (
     <>
-      <Input
-        label="Description"
-        value={form.description}
-        onChange={(e) => onChange({ ...form, description: e.target.value })}
-        hint="Optional — shown to clients when they book."
-      />
       <div className="grid grid-cols-2 gap-3">
         <Select
           label="Venue"

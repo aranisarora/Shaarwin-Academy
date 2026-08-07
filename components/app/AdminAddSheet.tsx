@@ -1,19 +1,29 @@
 "use client";
 
-// One sheet, two homes:
-//  - "create" (Weekly classes tab): create a repeating group, school or
-//    private class.
-//  - "oneoff" (Schedule tab): put a brand-new one-off group/school class or a
-//    one-off private session on the calendar — nothing here repeats.
+// One sheet. One ＋.
 //
-// Both variants share the same forms; the only difference is what the schedule
-// picker means — weekdays that repeat vs specific dates — and each picked
-// day/date carries its own time.
+// Whether a class repeats used to be decided by WHICH TAB you tapped ＋ on —
+// the schedule's button could only make one-offs, the weekly list's could only
+// make repeats, and if you were on the wrong one you had to back out and switch
+// tabs. That is a mode you cannot see, and it doubled the sheet: two variants ×
+// three types was six forms in one file.
+//
+// Repeat is a field now, the way it is in every calendar app: pick the kind of
+// class, then say whether it happens once or every week. The tab you came from
+// only chooses which one starts selected. Six forms collapse to two, because a
+// school class is a group class with a longer default and a flag — only a
+// private is genuinely a different shape (it needs a family, and it spends
+// their minutes).
 
 import { useEffect, useState, useTransition } from "react";
-import { formatClock, formatDay, formatWallDay } from "@/lib/academy-time";
+import {
+  academyToday,
+  formatClock,
+  formatDay,
+  formatWallDay,
+  shiftWallDate,
+} from "@/lib/academy-time";
 import { Sheet } from "@/components/ui/Sheet";
-import { Radio } from "@/components/ui/Checkbox";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
@@ -46,23 +56,31 @@ import {
   type InviteOption,
   type Venue,
 } from "./admin-calendar-types";
-import { composeLocationLabel, venueDisplayName } from "@/lib/venue-display";
+import { venueDisplayName } from "@/lib/venue-display";
 
 type Mode = "weekly" | "school" | "private";
-type Variant = "create" | "oneoff";
+/** Does it happen once, or every week? The one question the tabs used to
+ *  answer behind his back. */
+export type RepeatChoice = "once" | "weekly";
 
-const MODE_SETS: Record<Variant, { value: Mode; label: string }[]> = {
-  create: [
-    { value: "weekly", label: "Group class" },
-    { value: "school", label: "School class" },
-    { value: "private", label: "Private class" },
-  ],
-  oneoff: [
-    { value: "weekly", label: "Group class" },
-    { value: "school", label: "School class" },
-    { value: "private", label: "Private session" },
-  ],
-};
+// The three kinds of class, named the same whichever way they repeat. They used
+// to be "Private class" when repeating and "Private session" when not, which is
+// two names for one thing on a screen whose whole job is telling three things
+// apart.
+const MODES: { value: Mode; label: string }[] = [
+  { value: "weekly", label: "Group" },
+  { value: "school", label: "School" },
+  { value: "private", label: "Private" },
+];
+
+// The dates a one-time class is nearly always for. Two named days and then
+// whatever the week is calling the day after — beyond that he wants a calendar,
+// and the ＋ beside them is it.
+const QUICK_DAYS: { offset: number; label?: string }[] = [
+  { offset: 0, label: "Today" },
+  { offset: 1, label: "Tomorrow" },
+  { offset: 2 },
+];
 
 // School blocks run far longer than a normal group class.
 const WEEKLY_DURATIONS = [60, 90, 120, 150, 180, 210, 240];
@@ -84,7 +102,8 @@ function firstOccurrenceOnOrAfter(startDate: string, weekdayCode: string): strin
 /** "2025-07-14" → "Mon 14 Jul" */
 
 export function AdminAddSheet({
-  variant = "create",
+  defaultRepeat = "once",
+  seed,
   onClose,
   onDone,
   coaches,
@@ -92,7 +111,19 @@ export function AdminAddSheet({
   clients,
   invites,
 }: {
-  variant?: Variant;
+  /** Which way the Repeat field starts. This is all the calling view decides —
+   *  he can change it here, which is exactly what he could not do before. */
+  defaultRepeat?: RepeatChoice;
+  /** Prefill from an existing class ("Duplicate"). Everything but the day and
+   *  time carries over, because the thing being duplicated is the setup — the
+   *  slot is the one part he is about to change. */
+  seed?: {
+    mode?: Mode;
+    venueId?: string | null;
+    coachId?: string | null;
+    capacity?: number;
+    durationMinutes?: number;
+  };
   onClose: () => void;
   onDone: (message: string) => void;
   coaches: Coach[];
@@ -100,8 +131,9 @@ export function AdminAddSheet({
   clients: ClientOption[];
   invites: InviteOption[];
 }) {
-  const modes = MODE_SETS[variant];
-  const [mode, setMode] = useState<Mode>(modes[0].value);
+  const [mode, setMode] = useState<Mode>(seed?.mode ?? "weekly");
+  const [repeat, setRepeat] = useState<RepeatChoice>(defaultRepeat);
+  const today = academyToday();
 
   // The most recently chosen time anywhere in the sheet — newly picked
   // days/dates start from it so a run of same-time picks needs no re-entry.
@@ -110,10 +142,13 @@ export function AdminAddSheet({
   // ── Group / school class state ──────────────────────────────────────────────
   const [form, setForm] = useState<ClassFormState>(() => ({
     ...EMPTY_CLASS_FORM,
-    venueId: venues[0]?.id ?? "",
+    venueId: seed?.venueId ?? venues[0]?.id ?? "",
+    coachId: seed?.coachId ?? "",
+    ...(seed?.capacity ? { capacity: seed.capacity } : {}),
+    ...(seed?.durationMinutes ? { durationMinutes: seed.durationMinutes } : {}),
   }));
 
-  // "create": repeating weekdays, each with its own time.
+  // "Every week": repeating weekdays, each with its own time.
   const [weekdays, setWeekdays] = useState<string[]>(["MO"]);
   const [dayTimes, setDayTimes] = useState<Record<string, string>>({ MO: "18:30" });
 
@@ -129,9 +164,16 @@ export function AdminAddSheet({
     setLastTime(time);
   }
 
-  // "oneoff": specific dates, each with its own time.
-  const [dates, setDates] = useState<string[]>([]);
-  const [dateTimes, setDateTimes] = useState<Record<string, string>>({});
+  // "Just once": specific dates, each with its own time.
+  //
+  // Today is already picked. A one-time class is nearly always something he is
+  // putting on today or tomorrow — a make-up session, a hall that came free —
+  // and this used to open with nothing selected and no way forward but the
+  // phone's native date wheel. The repeating path had a default day and a
+  // default time from the start; the urgent path had neither, which was exactly
+  // backwards.
+  const [dates, setDates] = useState<string[]>([today]);
+  const [dateTimes, setDateTimes] = useState<Record<string, string>>({ [today]: "18:30" });
   const [dateKey, setDateKey] = useState(0);
 
   function addDate(d: string) {
@@ -154,19 +196,14 @@ export function AdminAddSheet({
   const [priv, setPriv] = useState({
     clientId: "",
     playerId: "",
-    date: "",       // used when one-off
-    startFrom: "",  // used when recurring — anchor for weekday calculation
+    // Both default to today for the same reason the class dates do — a private
+    // booked on the phone is nearly always for this week.
+    date: today,        // used when it happens once
+    startFrom: today,   // used when it repeats — anchor for the weekday maths
     time: "17:00",
     duration: 60,
-    coachId: "",
-    venueId: venues[0]?.id ?? "",
-    /** Where inside the venue. Optional here — a venue with its own table
-     *  needs no further directions — but it's the only way to say "the villas'
-     *  clubhouse" rather than a clubhouse the coach may not be let into. */
-    unit: "",
-    // On the Weekly classes tab a private class repeats by default; the
-    // Schedule tab only ever books one-offs.
-    recurring: variant === "create",
+    coachId: seed?.coachId ?? "",
+    venueId: seed?.venueId ?? venues[0]?.id ?? "",
     recurWeeks: 4,
   });
   const [privWeekdays, setPrivWeekdays] = useState<string[]>(["MO"]);
@@ -200,8 +237,8 @@ export function AdminAddSheet({
     if (mode === "weekly" || mode === "school") {
       setWeekdays([]);
       setDayTimes({});
-      setDates([]);
-      setDateTimes({});
+      setDates([today]);
+      setDateTimes({ [today]: lastTime });
       setDateKey((k) => k + 1);
     } else {
       setPriv((p) => ({ ...p, clientId: "", playerId: "", date: "", startFrom: "" }));
@@ -213,6 +250,13 @@ export function AdminAddSheet({
   const isInvite = priv.clientId.startsWith("invite:");
   // "open" → hold a private slot with no client, to be assigned later.
   const isOpen = priv.clientId === "open";
+
+  // Derived from the one Repeat field rather than kept as a second flag. An
+  // open slot is a single held hour with nobody on it, so it never repeats
+  // however Repeat is set — that exception lives here, once, instead of being
+  // re-asserted at every call site the way `privRecurring` had to be.
+  const repeats = repeat === "weekly";
+  const privRecurring = repeats && !isOpen;
 
   // ── What's already in the slot he's picking ────────────────────────────────
   //
@@ -226,26 +270,26 @@ export function AdminAddSheet({
   // one-tap way out.
   const isClassMode = mode === "weekly" || mode === "school";
   const previewKeys = isClassMode
-    ? variant === "create"
+    ? repeats
       ? weekdays
       : dates
-    : priv.recurring
+    : privRecurring
       ? privWeekdays
       : priv.date
         ? [priv.date]
         : [];
   const previewTimes = isClassMode
-    ? variant === "create"
+    ? repeats
       ? dayTimes
       : dateTimes
-    : priv.recurring
+    : privRecurring
       ? privDayTimes
       : { [priv.date]: priv.time };
   const previewVenueId = isClassMode ? form.venueId : priv.venueId;
   const previewCoachId = isClassMode ? form.coachId : priv.coachId;
   const previewDuration = isClassMode ? form.durationMinutes : priv.duration;
   const previewMode: "recurring" | "dates" =
-    isClassMode ? (variant === "create" ? "recurring" : "dates") : priv.recurring ? "recurring" : "dates";
+    isClassMode ? (repeats ? "recurring" : "dates") : privRecurring ? "recurring" : "dates";
 
   // Serialised so the lookup re-runs on a real change of the question, not on
   // every keystroke elsewhere in the form.
@@ -360,8 +404,8 @@ export function AdminAddSheet({
       setForm({ ...EMPTY_CLASS_FORM, venueId: venues[0]?.id ?? "" });
       setWeekdays(["MO"]);
       setDayTimes({ MO: lastTime });
-      setDates([]);
-      setDateTimes({});
+      setDates([today]);
+      setDateTimes({ [today]: lastTime });
       setDateKey((k) => k + 1);
     }
     if (next === "school") {
@@ -369,22 +413,20 @@ export function AdminAddSheet({
       setForm({ ...EMPTY_CLASS_FORM, venueId: venues[0]?.id ?? "", capacity: 30, durationMinutes: 120 });
       setWeekdays(["MO"]);
       setDayTimes({ MO: lastTime });
-      setDates([]);
-      setDateTimes({});
+      setDates([today]);
+      setDateTimes({ [today]: lastTime });
       setDateKey((k) => k + 1);
     }
     if (next === "private") {
       setPriv({
         clientId: "",
         playerId: "",
-        date: "",
-        startFrom: "",
+        date: today,
+        startFrom: today,
         time: "17:00",
         duration: 60,
         coachId: "",
         venueId: venues[0]?.id ?? "",
-        unit: "",
-        recurring: variant === "create",
         recurWeeks: 4,
       });
       setPrivWeekdays(["MO"]);
@@ -409,11 +451,11 @@ export function AdminAddSheet({
     startTransition(async () => {
       if (mode === "weekly" || mode === "school") {
         const isSchool = mode === "school";
-        if (variant === "oneoff") {
+        if (!repeats) {
           const r = await createOneOffClass({
             title: oneOffTitle(),
-            description: form.description,
-            skillLevel: form.skillLevel,
+            description: "",
+            skillLevel: "any",
             capacity: form.capacity,
             durationMinutes: form.durationMinutes,
             venueId: form.venueId,
@@ -503,7 +545,6 @@ export function AdminAddSheet({
           // to force every read-time surface to parse a display name back out
           // of a geocoded string.
           venueId: venue.id,
-          unitLabel: priv.unit.trim() || undefined,
           coachId: priv.coachId || undefined,
         };
 
@@ -512,7 +553,7 @@ export function AdminAddSheet({
           // difference is downstream: with no client there's no series to key a
           // standing slot to, so a repeat holds exactly N weeks of empty
           // sessions. No booking and no minutes debit until one is assigned.
-          if (priv.recurring) {
+          if (privRecurring) {
             for (const day of privWeekdays) {
               const r = await createPrivateSession({
                 ...locationDetails,
@@ -540,7 +581,7 @@ export function AdminAddSheet({
               setSuccess("Open private slot added — assign a client to it any time.");
             } else setMessage(r.error ?? "Couldn't add the slot.");
           }
-        } else if (priv.recurring) {
+        } else if (privRecurring) {
           // Recurring: one series per selected weekday at that day's own time,
           // starting from the first occurrence of that weekday on or after
           // startFrom.
@@ -598,16 +639,16 @@ export function AdminAddSheet({
 
   const canSubmit =
     mode === "weekly" || mode === "school"
-      ? variant === "oneoff"
+      ? !repeats
         ? !!form.venueId && dates.length > 0
         : !!form.venueId && weekdays.length > 0
       : !!priv.clientId && !!priv.time && !!priv.venueId &&
-        (priv.recurring ? privWeekdays.length > 0 && !!priv.startFrom : !!priv.date);
+        (privRecurring ? privWeekdays.length > 0 && !!priv.startFrom : !!priv.date);
 
   const totalPrivSessions = privWeekdays.length * priv.recurWeeks;
   const submitLabel =
     mode === "weekly" || mode === "school"
-      ? variant === "oneoff"
+      ? !repeats
         ? dates.length > 1
           ? `Add ${dates.length} sessions`
           : "Add to the schedule"
@@ -617,21 +658,17 @@ export function AdminAddSheet({
             ? "Publish school class"
             : "Publish class"
       : isOpen
-        ? priv.recurring
+        ? privRecurring
           ? `Hold ${totalPrivSessions} open slots`
           : "Add open slot"
-        : priv.recurring
+        : privRecurring
           ? privWeekdays.length > 1
             ? `Book ${totalPrivSessions} sessions`
             : `Book ${priv.recurWeeks} weekly sessions`
           : "Book private session";
 
   return (
-    <Sheet
-      open
-      onClose={onClose}
-      title={variant === "oneoff" ? "Add a one-time class" : "Create a class"}
-    >
+    <Sheet open onClose={onClose} title="New class">
       {success ? (
         <div className="space-y-5">
           <ActionResult>{success}</ActionResult>
@@ -648,41 +685,65 @@ export function AdminAddSheet({
         </div>
       ) : (
       <div className="space-y-5">
-        {/* Mode tabs */}
-        <div className="grid grid-cols-3 gap-2">
-          {modes.map((m) => (
-            <button
-              key={m.value}
-              type="button"
-              onClick={() => resetMode(m.value)}
-              aria-pressed={mode === m.value}
-              className={`min-h-11 rounded-[8px] border px-2 text-sm font-semibold ${
-                mode === m.value
-                  ? "border-ember bg-ember text-ivory"
-                  : "border-line hover:border-ember"
-              }`}
-            >
-              {m.label}
-            </button>
-          ))}
+        {/* The two questions that decide everything below, asked together and
+            answered in one tap each: what kind of class, and how often.
+            Neither used to be visible — the kind was three buttons whose labels
+            changed depending on where you came from, and how often was not a
+            control at all. */}
+        <div>
+          <p className="label mb-2">Kind</p>
+          <div className="grid grid-cols-3 gap-2">
+            {MODES.map((m) => (
+              <button
+                key={m.value}
+                type="button"
+                onClick={() => resetMode(m.value)}
+                aria-pressed={mode === m.value}
+                className={`pressable min-h-11 rounded-[8px] border px-2 text-sm font-semibold ${
+                  mode === m.value
+                    ? "border-ember bg-ember text-ivory"
+                    : "border-line hover:border-ember"
+                }`}
+              >
+                {m.label}
+              </button>
+            ))}
+          </div>
         </div>
+
+        {/* An open slot is one held hour by definition, so the question does not
+            apply and asking it would only offer an answer that gets ignored. */}
+        {!isOpen && (
+          <div>
+            <p className="label mb-2">Repeats</p>
+            <div className="grid grid-cols-2 gap-2">
+              {(
+                [
+                  { value: "once", label: "Just once" },
+                  { value: "weekly", label: "Every week" },
+                ] as const
+              ).map((r) => (
+                <button
+                  key={r.value}
+                  type="button"
+                  onClick={() => setRepeat(r.value)}
+                  aria-pressed={repeat === r.value}
+                  className={`pressable min-h-11 rounded-[8px] border px-2 text-sm font-semibold ${
+                    repeat === r.value
+                      ? "border-ember bg-ember text-ivory"
+                      : "border-line hover:border-ember"
+                  }`}
+                >
+                  {r.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
         {/* ── Group / school class ──────────────────────────────────────────── */}
         {(mode === "weekly" || mode === "school") && (
           <>
-            {mode === "school" && (
-              <p className="rounded-[12px] border border-line bg-surface-2 px-4 py-3 text-sm text-fg-2">
-                A school class is held at a school or university and isn&apos;t bookable online.
-                Pick the school as the venue — coaches add the pupils who turn up, right from
-                the session.
-              </p>
-            )}
-            {variant === "oneoff" && (
-              <p className="rounded-[12px] border border-line bg-surface-2 px-4 py-3 text-sm text-fg-2">
-                A one-time class appears on the schedule only on the dates you pick — it never
-                repeats. Repeating classes live in the Weekly classes tab.
-              </p>
-            )}
             <Select
               label="Coach"
               hint="Leave on automatic and each week gets whoever's free. A week with nobody free arrives with no coach, and shows red on the Schedule."
@@ -725,19 +786,12 @@ export function AdminAddSheet({
               />
             </div>
 
-            <Input
-              label="Description"
-              value={form.description}
-              onChange={(e) => setForm({ ...form, description: e.target.value })}
-              hint="Optional — shown to clients when they book."
-            />
-
-            {variant === "create" ? (
+            {repeats ? (
               <div>
+                {/* No sentence explaining that picking two days makes two
+                    classes. The chips show what is picked and a time row
+                    appears under each one — the control already says it. */}
                 <p className="label mb-2">Days</p>
-                <p className="mb-2 text-sm text-fg-2">
-                  Pick one or more — a separate class is created for each, at its own time.
-                </p>
                 <div className="mb-3 flex flex-wrap gap-2">
                   {WEEKDAYS.map(([code, name]) => (
                     <button
@@ -767,9 +821,39 @@ export function AdminAddSheet({
             ) : (
               <div>
                 <p className="label mb-2">Dates</p>
-                <p className="mb-2 text-sm text-fg-2">
-                  Add one or more — a session is created for each, at its own time.
-                </p>
+                {/* The days he actually means, one tap each. Opening a native
+                    date wheel to say "today" was the single worst tap in the
+                    app: the thing he wants most often was the thing furthest
+                    away. Anything else is still one tap, on the ＋. */}
+                <div className="mb-3 flex flex-wrap gap-2">
+                  {QUICK_DAYS.map(({ offset, label }) => {
+                    const d = shiftWallDate(today, offset);
+                    const on = dates.includes(d);
+                    return (
+                      <button
+                        key={d}
+                        type="button"
+                        onClick={() => (on ? removeDate(d) : addDate(d))}
+                        aria-pressed={on}
+                        className={`pressable min-h-11 rounded-full border px-4 text-sm font-medium transition-colors ${
+                          on ? "border-ember bg-ember text-ivory" : "border-line hover:border-ember"
+                        }`}
+                      >
+                        {label ?? formatWallDay(d)}
+                      </button>
+                    );
+                  })}
+                  <label className="pressable flex min-h-11 cursor-pointer items-center rounded-full border border-line px-4 text-sm font-medium hover:border-ember">
+                    ＋
+                    <input
+                      key={dateKey}
+                      type="date"
+                      onChange={(e) => addDate(e.target.value)}
+                      className="sr-only"
+                      aria-label="Add another date"
+                    />
+                  </label>
+                </div>
                 <ItemTimesList
                   items={dates}
                   labelOf={formatWallDay}
@@ -778,13 +862,6 @@ export function AdminAddSheet({
                   onRemove={removeDate}
                   noteOf={slotNote}
                   railOf={(d) => (preview?.byKey[d]?.coachBusy.length ?? 0) > 0}
-                />
-                <input
-                  key={dateKey}
-                  type="date"
-                  onChange={(e) => addDate(e.target.value)}
-                  className="mt-2 rounded-[8px] border border-line bg-surface-2 px-3 py-2 text-sm focus:border-ember focus:outline-none"
-                  aria-label="Add a date"
                 />
               </div>
             )}
@@ -807,7 +884,7 @@ export function AdminAddSheet({
               </div>
             )}
 
-            {variant === "create" && weekdays.length > 0 && form.venueId && (
+            {repeats && weekdays.length > 0 && form.venueId && (
               <p className="rounded-[12px] border border-line bg-surface-2 px-4 py-3 text-sm text-fg-2">
                 {weekdays.length === 1
                   ? `Will create: ${generateClassTitle(weekdays[0], dayTimes[weekdays[0]] ?? lastTime, venueName)}`
@@ -853,23 +930,6 @@ export function AdminAddSheet({
               )}
             </Select>
 
-            {isInvite && (
-              <p className="text-sm text-fg-2">
-                Booking this creates their account right away — when they sign in with
-                this phone number, the session is already on their schedule.
-              </p>
-            )}
-
-            {isOpen && (
-              <p className="text-sm text-fg-2">
-                Holds an empty private slot — pick a coach, venue and time now, then assign
-                a client from the session later. No minutes are charged until you do.
-                {priv.recurring
-                  ? " Repeating holds exactly that many weeks: with no client there's no standing slot to keep rolling."
-                  : ""}
-              </p>
-            )}
-
             <Select
               label="Coach"
               hint="Leave on automatic and each week gets whoever's free. A week with nobody free arrives with no coach, and shows red on the Schedule."
@@ -882,46 +942,27 @@ export function AdminAddSheet({
               ))}
             </Select>
 
-            {/* One-off sessions from the Schedule tab never repeat — the
-                repeating kind lives in the Weekly classes tab. Open slots
-                repeat the same way; they just hold N weeks of empty sessions
-                rather than a standing series (which needs a client to key to). */}
-            {variant === "create" && (
-            <fieldset className="space-y-2">
-              <legend className="label">Repeat</legend>
-              <label className="flex min-h-11 cursor-pointer items-center gap-3 rounded-[12px] border border-line bg-surface-2 px-4 py-3">
-                <Radio
-                  name="priv-repeat"
-                  checked={!priv.recurring}
-                  onChange={() => setPriv((p) => ({ ...p, recurring: false }))}
-                />
-                <span className="text-sm">Just this once</span>
+            {/* Repeat itself is asked once at the top for every kind of class.
+                All that is left here is how long for — the one part of the
+                question that is genuinely private-only, because a group class
+                repeats until it is ended while a family books a block. */}
+            {privRecurring && (
+              <label className="flex min-h-11 items-center gap-2 text-sm">
+                <span className="label">For</span>
+                <select
+                  value={priv.recurWeeks}
+                  onChange={(e) => setPriv((p) => ({ ...p, recurWeeks: Number(e.target.value) }))}
+                  className="min-h-11 rounded-[8px] border border-line bg-surface-2 px-3 text-sm"
+                >
+                  {[2, 3, 4, 5, 6, 7, 8, 10, 12].map((w) => (
+                    <option key={w} value={w}>{w} weeks</option>
+                  ))}
+                </select>
               </label>
-              <label className="flex min-h-11 cursor-pointer items-center gap-3 rounded-[12px] border border-line bg-surface-2 px-4 py-3">
-                <Radio
-                  name="priv-repeat"
-                  checked={priv.recurring}
-                  onChange={() => setPriv((p) => ({ ...p, recurring: true }))}
-                />
-                <span className="flex items-center gap-2 text-sm">
-                  Every week for
-                  <select
-                    value={priv.recurWeeks}
-                    onChange={(e) => setPriv((p) => ({ ...p, recurWeeks: Number(e.target.value) }))}
-                    className="rounded-[6px] border border-line bg-surface-2 px-2 py-0.5 text-sm"
-                    onClick={() => setPriv((p) => ({ ...p, recurring: true }))}
-                  >
-                    {[2, 3, 4, 5, 6, 7, 8, 10, 12].map((w) => (
-                      <option key={w} value={w}>{w} weeks</option>
-                    ))}
-                  </select>
-                </span>
-              </label>
-            </fieldset>
             )}
 
-            {/* One-off: single date picker */}
-            {!priv.recurring && (
+            {/* Just once: single date picker */}
+            {!privRecurring && (
               <div className="grid grid-cols-2 gap-3">
                 <Input
                   label="Date"
@@ -938,15 +979,10 @@ export function AdminAddSheet({
             )}
 
             {/* Recurring: day multiselect with per-day times + start-from anchor */}
-            {priv.recurring && (
+            {privRecurring && (
               <>
                 <div>
                   <p className="label mb-2">Days</p>
-                  <p className="mb-2 text-sm text-fg-2">
-                    {isOpen
-                      ? "Pick one or more — a slot is held for each day, at its own time."
-                      : "Pick one or more — a recurring series is created for each day, at its own time."}
-                  </p>
                   <div className="mb-3 flex flex-wrap gap-2">
                     {WEEKDAYS.map(([code, name]) => (
                       <button
@@ -1007,31 +1043,6 @@ export function AdminAddSheet({
               </Select>
             </div>
 
-            <Input
-              label="Where inside (optional)"
-              value={priv.unit}
-              onChange={(e) => setPriv({ ...priv, unit: e.target.value })}
-              placeholder="Clubhouse · Villa 659 · Tower 1, flat 171"
-            />
-            <p className="-mt-3 text-sm text-fg-2">
-              Goes into the coach&apos;s message as{" "}
-              <span className="font-medium">
-                {composeLocationLabel(
-                  venues.find((v) => v.id === priv.venueId)
-                    ? venueDisplayName(venues.find((v) => v.id === priv.venueId)!)
-                    : null,
-                  priv.unit
-                ) ?? "—"}
-              </span>
-              .
-            </p>
-
-            {!isOpen && (
-              <p className="text-sm text-fg-2">
-                This takes the session&apos;s minutes from the client&apos;s private balance —
-                top it up from the Clients tab if needed.
-              </p>
-            )}
           </>
         )}
 

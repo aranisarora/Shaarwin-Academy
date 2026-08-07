@@ -9,6 +9,11 @@ export type SessionRow = {
   id: string;
   starts_at: string;
   ends_at: string;
+  // Cancelled sessions used to be filtered out of the query, so a called-off
+  // class simply vanished and Tuesday read as a day we don't run. They are
+  // fetched now and shown as cancelled — see lib/session-deviation.ts.
+  status: "scheduled" | "completed" | "cancelled";
+  cancelReason: string | null;
   coachId: string | null;
   coachArrivedAt: string | null;
   coachArrivalSource: string | null; // 'auto' | 'tap' | 'wa' — how arrival was marked
@@ -38,8 +43,13 @@ export type SessionRow = {
   classDuration: number;
   classVenueId: string | null;
   classWeekday: string; // MO..SU from the recurrence rule
-  classTime: string; // HH:MM canonical slot (next session's wall time)
-  classRecurring: boolean; // has a recurrence rule — i.e. edited in Weekly classes
+  classTime: string; // HH:MM — the NEXT session's wall time; seeds the class editor
+  // HH:MM — the slot this class actually keeps, as the mode over its own
+  // sessions. Distinct from classTime on purpose: "the next one" is wrong
+  // exactly when the next one is the session that moved, which is the case this
+  // field exists to catch. Null for a one-off, which has no pattern to keep.
+  classSlotTime: string | null;
+  classRecurring: boolean; // has a recurrence rule — i.e. edited on the timetable
 };
 
 export type ClassRow = {
