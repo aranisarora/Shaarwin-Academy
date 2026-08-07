@@ -4,13 +4,14 @@ import { requireUser } from "@/lib/auth";
 import {
   academyToday,
   academyWallToUtc,
-  formatDate,
   shiftWallDate,
   utcToAcademyWall,
 } from "@/lib/academy-time";
 import { AdminShell } from "@/components/app/AdminShell";
-import { AdminCalendarNav } from "@/components/app/AdminCalendarNav";
+import { AdminActionSheet } from "@/components/app/AdminActionSheet";
+import { AdminScheduleTabs } from "@/components/app/AdminScheduleTabs";
 import { PageSkeleton } from "@/components/ui/Skeleton";
+import { fetchAttention } from "@/lib/admin-attention";
 import type {
   ClientOption,
   InviteOption,
@@ -18,16 +19,25 @@ import type {
 } from "@/components/app/admin-calendar-types";
 import { asAddressDetails, fromDetails, type StructuredAddress } from "@/lib/address";
 import { withVenueAddress } from "@/lib/venue-display";
+import { modalTimeByClass } from "@/lib/session-deviation";
 
 export const metadata: Metadata = { title: "Schedule" };
 
-type SearchParams = Promise<{ date?: string; week?: string; session?: string }>;
+type SearchParams = Promise<{
+  date?: string;
+  week?: string;
+  session?: string;
+  /** "timetable" opens on the repeating classes; anything else on this week. */
+  view?: string;
+  /** Deep link straight to a class's editor, from a session sheet. */
+  class?: string;
+}>;
 
 async function Schedule({ searchParams }: { searchParams: SearchParams }) {
-  const [{ supabase }, { date, week, session: openSessionId }] = await Promise.all([
-    requireUser("/admin/schedule"),
-    searchParams,
-  ]);
+  const [
+    { supabase },
+    { date, week, session: openSessionId, view, class: openClassId },
+  ] = await Promise.all([requireUser("/admin/schedule"), searchParams]);
 
   // The schedule shows a 7-day window starting on an anchor date. Prefer an
   // explicit ?date=, fall back to a legacy ?week= offset (old links / stored
@@ -54,12 +64,16 @@ async function Schedule({ searchParams }: { searchParams: SearchParams }) {
     { data: clients },
     { data: invites },
   ] = await Promise.all([
+    // Cancelled sessions are fetched too. Leaving them out is what made a
+    // called-off class vanish rather than read as cancelled, so the founder
+    // could not tell "we don't run Tuesdays" from "Tuesday was called off" —
+    // and had to go to a second tab to find out which.
     supabase
       .from("class_sessions")
       .select(
-        "id,starts_at,ends_at,coach_id,coach_arrived_at,coach_arrival_source,coach_arrival_distance_m,capacity_override,classes!inner(id,title,description,skill_level,capacity,duration_minutes,recurrence_rule,active,venue_id,class_type,is_school,location_label,venues(name,address,postcode,lat,lng,address_details),private_class_details(client_id,address,postcode,lat,lng,access_notes,address_details,players(full_name)))"
+        "id,starts_at,ends_at,status,cancel_reason,coach_id,coach_arrived_at,coach_arrival_source,coach_arrival_distance_m,capacity_override,classes!inner(id,title,description,skill_level,capacity,duration_minutes,recurrence_rule,active,venue_id,class_type,is_school,location_label,venues(name,address,postcode,lat,lng,address_details),private_class_details(client_id,address,postcode,lat,lng,access_notes,address_details,players(full_name)))"
       )
-      .in("status", ["scheduled", "completed"])
+      .in("status", ["scheduled", "completed", "cancelled"])
       .gte("starts_at", from.toISOString())
       .lt("starts_at", to.toISOString())
       .order("starts_at"),
@@ -128,6 +142,11 @@ async function Schedule({ searchParams }: { searchParams: SearchParams }) {
   for (const s of nextSessions ?? []) {
     if (!nextByClass.has(s.class_id)) nextByClass.set(s.class_id, s.starts_at);
   }
+
+  // The slot each class actually keeps, from the very same rows — the mode over
+  // every future session, not just the first. Free: this query already returns
+  // all of them and we were throwing the rest away.
+  const slotByClass = modalTimeByClass(nextSessions ?? []);
   const classTime = (classId: string, fallbackIso: string) => {
     const iso = nextByClass.get(classId) ?? fallbackIso;
     return utcToAcademyWall(new Date(iso)).time;
@@ -160,6 +179,8 @@ async function Schedule({ searchParams }: { searchParams: SearchParams }) {
       id: s.id,
       starts_at: s.starts_at,
       ends_at: s.ends_at,
+      status: s.status,
+      cancelReason: s.cancel_reason,
       coachId: s.coach_id,
       coachArrivedAt: s.coach_arrived_at,
       coachArrivalSource: s.coach_arrival_source,
@@ -183,6 +204,7 @@ async function Schedule({ searchParams }: { searchParams: SearchParams }) {
       classVenueId: cls.venue_id,
       classWeekday: cls.recurrence_rule?.match(/BYDAY=(..)/)?.[1] ?? "MO",
       classTime: classTime(cls.id, s.starts_at),
+      classSlotTime: slotByClass[cls.id] ?? null,
       classRecurring: !!cls.recurrence_rule,
     };
   });
@@ -207,27 +229,35 @@ async function Schedule({ searchParams }: { searchParams: SearchParams }) {
     phone: i.phone,
   }));
 
-  // The "(this week)" suffix is owned by AdminCalendarNav so SSR and
-  // client-side week navigation render the label identically.
-  const rangeLabel = `${formatDate(from)} – ${formatDate(to.getTime() - 86400000)}`;
-
   // Serialise the Map to a plain object for the client component prop.
   const nextByClassObj = Object.fromEntries(nextByClass);
 
   return (
-    <AdminCalendarNav
+    <AdminScheduleTabs
       initialAnchor={anchor}
       today={today}
       initialSessions={rows}
-      initialRangeLabel={rangeLabel}
       nextByClass={nextByClassObj}
+      slotByClass={slotByClass}
       coaches={coachList}
       venues={withVenueAddress(venues)}
       clients={clientRows}
       invites={inviteRows}
       openSessionId={openSessionId ?? null}
+      openClassId={openClassId ?? null}
+      initialView={view === "timetable" ? "timetable" : "week"}
     />
   );
+}
+
+/**
+ * The one thing waiting on him, if there is exactly one. Streamed in its own
+ * boundary so a queue that needs five queries never holds up the schedule —
+ * `requireUser` is React-cached, so this costs no second auth round trip.
+ */
+async function ArrivalPrompt() {
+  const { supabase } = await requireUser("/admin/schedule");
+  return <AdminActionSheet items={await fetchAttention(supabase)} />;
 }
 
 export default function AdminCalendarPage({
@@ -239,6 +269,11 @@ export default function AdminCalendarPage({
     <AdminShell title="Schedule">
       <Suspense fallback={<PageSkeleton />}>
         <Schedule searchParams={searchParams} />
+      </Suspense>
+      {/* This route is the founder's home — /admin redirects here — so it is
+          where an arrival prompt belongs. */}
+      <Suspense fallback={null}>
+        <ArrivalPrompt />
       </Suspense>
     </AdminShell>
   );

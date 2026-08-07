@@ -2,20 +2,14 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { AdminShell } from "@/components/app/AdminShell";
 import { SignOutButton } from "@/components/app/SignOutButton";
+import { WhatsAppAssistantCard } from "@/components/app/WhatsAppAssistantCard";
 
 export const metadata: Metadata = { title: "More" };
 
+// Alerts and Coaches both moved into the bottom bar, so they come off this
+// list — More owns what the bar doesn't, and listing a tab in both places is
+// how you end up with two doors to one room.
 const items = [
-  {
-    href: "/admin/notifications",
-    label: "Notifications",
-    hint: "Everything we've sent you, including the ops feed",
-  },
-  {
-    href: "/admin/coaches",
-    label: "Coaches",
-    hint: "Profiles, availability & time off",
-  },
   {
     href: "/admin/skills",
     label: "Skills",
@@ -74,6 +68,11 @@ export default function AdminMorePage() {
             ))}
           </ul>
         </nav>
+        {/* Came off the old Today tab. It is a standing reference — how to reach
+            the assistant — not something that needs answering, so it belongs
+            with the other things you go and look up rather than above the list
+            of what is on today. */}
+        <WhatsAppAssistantCard />
       </div>
     </AdminShell>
   );

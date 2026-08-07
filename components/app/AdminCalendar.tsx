@@ -1,19 +1,31 @@
 "use client";
 
-// The admin schedule: this week's session instances, one lane per coach.
-// Tap a session to change it — "just this session" or "every week", Google
-// Calendar-style. The repeating classes that generate these sessions live in
-// the Weekly classes tab; here you only add one-offs.
+// This week: the session instances, day by day. Tap one to change it — "just
+// this session" or "every week", Google Calendar-style. The repeating classes
+// that generate these live one tap away on the Timetable view; here you only
+// add one-offs.
+//
+// Cancelled sessions are shown. They used not to be fetched at all, so a
+// called-off class simply left a hole and the founder could not tell a day we
+// don't run from a day that fell through — the single thing that made this
+// screen untrustworthy enough to need a second one beside it. They do not go
+// back in the main flow, though: they sit behind one quiet line under their own
+// day, because a dead card between two live ones is noise on every normal week
+// bought to gain clarity on the rare bad one.
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/Button";
 import { FilterBar, type FilterDef } from "@/components/ui/FilterBar";
 import { Fab } from "@/components/ui/Fab";
+import { GroupCard } from "@/components/ui/GroupCard";
+import { ToastSlot, useAutoClearMessage } from "@/components/ui/Toast";
 import { ActionResult } from "./ActionResult";
 import { AdminSessionSheet } from "./AdminSessionSheet";
 import { AdminAddSheet } from "./AdminAddSheet";
+import { DayHeading } from "./DayHeading";
 import { SessionCard } from "./ClassCard";
-import { formatDay, sessionTimeStatus, wallDate } from "@/lib/academy-time";
+import { groupSessionsByDay } from "@/lib/group-by-day";
+import { wallDate } from "@/lib/academy-time";
 import {
   type ClientOption,
   type Coach,
@@ -22,29 +34,47 @@ import {
   type Venue,
 } from "./admin-calendar-types";
 
-// Sessions arrive already sorted by start time, so grouping them by academy
-// wall-date yields days in chronological order with each day's sessions in
-// order. Within a day, finished sessions sink to the bottom so what's next
-// reads first. `today` (an academy YYYY-MM-DD) flags the current day.
-type DayGroup = { key: string; label: string; isToday: boolean; rows: SessionRow[] };
-function groupByDay(rows: SessionRow[], today: string): DayGroup[] {
-  const groups: DayGroup[] = [];
-  for (const s of rows) {
-    const key = wallDate(s.starts_at);
-    let g = groups[groups.length - 1];
-    if (!g || g.key !== key) {
-      g = { key, label: formatDay(s.starts_at), isToday: key === today, rows: [] };
-      groups.push(g);
-    }
-    g.rows.push(s);
-  }
-  for (const g of groups) {
-    g.rows = [
-      ...g.rows.filter((s) => sessionTimeStatus(s.starts_at, s.ends_at) !== "completed"),
-      ...g.rows.filter((s) => sessionTimeStatus(s.starts_at, s.ends_at) === "completed"),
-    ];
-  }
-  return groups;
+/** The cancellations for one day, folded into a line. Collapsed by default:
+ *  the count is the fact he needs while scanning, the reason the fact he needs
+ *  only once he has stopped. */
+function CancelledLine({
+  rows,
+  onOpen,
+  coachNameOf,
+}: {
+  rows: SessionRow[];
+  onOpen: (s: SessionRow) => void;
+  coachNameOf: (s: SessionRow) => string | null;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="col-span-full">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        className="pressable flex min-h-9 w-full items-center gap-1.5 rounded-[8px] px-1 text-left text-sm text-fg-2 hover:text-ember"
+      >
+        <span aria-hidden className={`transition-transform ${open ? "rotate-90" : ""}`}>
+          ›
+        </span>
+        {rows.length} cancelled
+      </button>
+      {open && (
+        <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+          {rows.map((s) => (
+            <SessionCard
+              key={s.id}
+              session={s}
+              showDay
+              coachName={coachNameOf(s)}
+              onClick={() => onOpen(s)}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 export function AdminCalendar({
@@ -62,19 +92,16 @@ export function AdminCalendar({
   clients: ClientOption[];
   invites: InviteOption[];
   onRefresh?: () => void;
-  // Deep-link from the Weekly classes tab — open this session on first render.
+  /** Deep-link from a notification or the Timetable — open this session. */
   openSessionId?: string | null;
 }) {
   const [selected, setSelected] = useState<SessionRow | null>(
     () => sessions.find((s) => s.id === openSessionId) ?? null
   );
   const [adding, setAdding] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
+  const [message, setMessage] = useAutoClearMessage();
 
-  // Filters — coach, venue, class type. Three is what fits on a 390px phone:
-  // the row held five, of which only 3.3 were ever painted, the scrollbar is
-  // hidden and there was no fade, so the founder never discovered "All types" —
-  // the one chip that answers his "I can't tell a private from a school class".
+  // Filters — coach, venue, class type. Three is what fits on a 390px phone.
   // Day went because the list is already grouped by day and every day is on
   // screen; client went because that question belongs on the Players tab.
   const [coachFilter, setCoachFilter] = useState("all");
@@ -104,14 +131,23 @@ export function AdminCalendar({
     [sessions, coachFilter, venueFilter, typeFilter]
   );
 
+  // Everything below reads `live`. A cancelled session needs no coach, so it
+  // raises no alarm, fills no lane, and counts towards nothing that is "on" —
+  // it exists only on its own day's cancelled line.
+  const live = useMemo(() => filtered.filter((s) => s.status !== "cancelled"), [filtered]);
+  const cancelled = useMemo(
+    () => filtered.filter((s) => s.status === "cancelled"),
+    [filtered]
+  );
+
   const lanes = useMemo(() => {
-    const unassigned = filtered.filter((s) => !s.coachId);
+    const unassigned = live.filter((s) => !s.coachId);
     const byCoach = coaches.map((coach) => ({
       coach,
-      rows: filtered.filter((s) => s.coachId === coach.id),
+      rows: live.filter((s) => s.coachId === coach.id),
     }));
     return { unassigned, byCoach };
-  }, [filtered, coaches]);
+  }, [live, coaches]);
 
   const today = wallDate(new Date().toISOString());
   const filtersActive =
@@ -125,29 +161,13 @@ export function AdminCalendar({
     for (const c of coaches) m.set(c.id, c.name);
     return m;
   }, [coaches]);
-  const coachNameOf = (s: SessionRow) => (s.coachId ? coachNameById.get(s.coachId) ?? null : null);
-
-  // Success toasts from Add auto-clear so they never reserve layout space.
-  useEffect(() => {
-    if (!message) return;
-    const t = setTimeout(() => setMessage(null), 5000);
-    return () => clearTimeout(t);
-  }, [message]);
+  const coachNameOf = (s: SessionRow) =>
+    s.coachId ? (coachNameById.get(s.coachId) ?? null) : null;
 
   const openSession = (session: SessionRow) => {
     setMessage(null);
     setSelected(session);
   };
-
-  // Card look + border language live in the shared ClassCard; here we only wire
-  // the tap. Under a day header the card shows just the time; the ungrouped
-  // "no coach" box carries the full weekday + date via showDay.
-  //
-  // This used to be a `Block` wrapper declared here in the render body, which
-  // gave it a new component type on every render — so every card in the
-  // unassigned box and every card in the desktop lanes unmounted and remounted
-  // each time a filter moved. The phone list never went through it, so the two
-  // halves of this screen behaved differently for no reason anyone chose.
 
   const filterDefs: FilterDef[] = [
     {
@@ -191,9 +211,10 @@ export function AdminCalendar({
     },
   ];
 
-  // Day-first grouping for the phone: chronological days, all of them open.
-  // Coach moves onto each card (line 3).
-  const dayGroups = useMemo(() => groupByDay(filtered, today), [filtered, today]);
+  // Day-first for the phone. Days come from every session including the
+  // cancelled ones, so a day whose only class was called off still appears —
+  // saying so is the entire point.
+  const dayGroups = useMemo(() => groupSessionsByDay(filtered, today), [filtered, today]);
 
   return (
     <div className="space-y-5">
@@ -205,7 +226,7 @@ export function AdminCalendar({
             setMessage(null);
           }}
         >
-          Add a one-time class
+          Add a class
         </Button>
       </div>
 
@@ -219,9 +240,8 @@ export function AdminCalendar({
 
       {/* Desktop only. The desktop view is one lane per coach, so a session with
           no coach has no lane and would vanish without this bucket. The phone is
-          grouped by day, where every coachless session is already sitting in its
-          own day with a red border and "No coach yet" on the card — so on the
-          phone this box listed all of them a second time. */}
+          grouped by day, where every coachless session already sits in its own
+          day with a red border and "No coach yet" on the card. */}
       {lanes.unassigned.length > 0 && (
         <div className="hidden rounded-[12px] border border-err p-4 lg:block">
           <p className="label mb-3 !text-err">No coach yet — tap to fix</p>
@@ -233,39 +253,45 @@ export function AdminCalendar({
         </div>
       )}
 
-      {/* ── Phone: day-first, every day open. ──
-          These were <details> with only today expanded, so the tab whose job is
-          "show me my week" opened on one class and six grey bars, and answering
-          "what's on tomorrow?" cost a tap. Today is also the one day the Today
-          tab already covers. They are plain headings now: no toggle to catch a
-          stray thumb, and no collapse state to lose on every week change. */}
+      {/* ── Phone: day-first, every day open. ── */}
       <div className="space-y-2 lg:hidden">
-        {dayGroups.map((day) => (
-          <div
-            key={day.key}
-            className="overflow-hidden rounded-[12px] border border-line bg-surface-2"
-          >
-            <div className="flex items-center justify-between gap-3 px-4 py-3">
-              <span className={`font-semibold ${day.isToday ? "text-ember" : "text-fg"}`}>
-                {day.label}
-                {day.isToday ? " · Today" : ""}
-              </span>
-              <span className="tnum shrink-0 text-sm text-fg-2">
-                {day.rows.length} class{day.rows.length === 1 ? "" : "es"}
-              </span>
+        {dayGroups.map((day) => {
+          const dayLive = day.rows.filter((s) => s.status !== "cancelled");
+          const dayOff = day.rows.filter((s) => s.status === "cancelled");
+          return (
+            // The scroll target the week strip aims at. scroll-mt clears the
+            // sticky toggle + strip, which would otherwise sit on the heading.
+            <div key={day.key} id={`day-${day.key}`} className="scroll-mt-40">
+              <GroupCard
+                title={<DayHeading label={day.label} isToday={day.isToday} />}
+                meta={`${dayLive.length} class${dayLive.length === 1 ? "" : "es"}`}
+              >
+                <div className="grid gap-2 p-3">
+                  {dayLive.map((s) => (
+                    <SessionCard
+                      key={s.id}
+                      session={s}
+                      coachName={coachNameOf(s)}
+                      onClick={() => openSession(s)}
+                    />
+                  ))}
+                  {dayLive.length === 0 && dayOff.length > 0 && (
+                    <p className="px-1 text-sm text-fg-2">
+                      Nothing running — everything on this day was called off.
+                    </p>
+                  )}
+                  {dayOff.length > 0 && (
+                    <CancelledLine
+                      rows={dayOff}
+                      onOpen={openSession}
+                      coachNameOf={coachNameOf}
+                    />
+                  )}
+                </div>
+              </GroupCard>
             </div>
-            <div className="grid gap-2 border-t border-line p-3">
-              {day.rows.map((s) => (
-                <SessionCard
-                  key={s.id}
-                  session={s}
-                  coachName={coachNameOf(s)}
-                  onClick={() => openSession(s)}
-                />
-              ))}
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
 
       {/* ── Desktop: one lane per coach, days grouped inside. ── */}
@@ -278,13 +304,10 @@ export function AdminCalendar({
                 {coach.name}
               </p>
               <div className="space-y-3">
-                {groupByDay(rows, today).map((day) => (
+                {groupSessionsByDay(rows, today).map((day) => (
                   <div key={day.key}>
-                    <p
-                      className={`mb-2 text-xs font-medium ${day.isToday ? "text-ember" : "text-fg-2"}`}
-                    >
-                      {day.label}
-                      {day.isToday ? " · Today" : ""}
+                    <p className="mb-2">
+                      <DayHeading label={day.label} isToday={day.isToday} size="sub" />
                     </p>
                     <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                       {day.rows.map((s) => (
@@ -303,6 +326,15 @@ export function AdminCalendar({
             <span className="text-fg">{emptyCoaches.map((c) => c.name).join(", ")}</span>.
           </p>
         )}
+
+        {/* The lanes are per coach, and a cancellation belongs to no coach's
+            working week — so on desktop they gather once here rather than being
+            scattered through seven day sub-headings. */}
+        {cancelled.length > 0 && (
+          <div className="grid">
+            <CancelledLine rows={cancelled} onOpen={openSession} coachNameOf={coachNameOf} />
+          </div>
+        )}
       </div>
 
       {coaches.length === 0 && (
@@ -313,18 +345,17 @@ export function AdminCalendar({
 
       {/* Phone: the primary add action as a floating button above the tab bar. */}
       <Fab
-        label="Add a one-time class"
+        label="Add a class"
         onClick={() => {
           setAdding(true);
           setMessage(null);
         }}
       />
 
-      {/* Transient success line as a bottom toast — no reserved layout space. */}
       {message && (
-        <div className="fixed inset-x-4 bottom-[calc(env(safe-area-inset-bottom)+4.75rem)] z-40 mx-auto max-w-md lg:bottom-6">
+        <ToastSlot>
           <ActionResult>{message}</ActionResult>
-        </div>
+        </ToastSlot>
       )}
 
       {selected && (
@@ -343,7 +374,6 @@ export function AdminCalendar({
 
       {adding && (
         <AdminAddSheet
-          variant="oneoff"
           onClose={() => setAdding(false)}
           onDone={(m) => {
             setMessage(m);

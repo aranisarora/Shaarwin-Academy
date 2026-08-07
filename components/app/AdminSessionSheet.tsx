@@ -694,7 +694,7 @@ export function AdminSessionSheet({
                   Repeats every {classDayName}. Pausing, restoring and deleting the class
                   live in{" "}
                   <Link
-                    href={`/admin/weekly?class=${session.classId}`}
+                    href={`/admin/schedule?view=timetable&class=${session.classId}`}
                     className="text-ember hover:underline"
                   >
                     Weekly classes
@@ -1045,7 +1045,7 @@ export function AdminSessionSheet({
               <p className="text-sm text-fg-2">
                 Deleting a class for good, and restoring an ended one, happen in{" "}
                 <Link
-                  href={`/admin/weekly?class=${session.classId}`}
+                  href={`/admin/schedule?view=timetable&class=${session.classId}`}
                   className="text-ember hover:underline"
                 >
                   Weekly classes

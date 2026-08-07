@@ -1,26 +1,33 @@
 "use client";
 
-// The Weekly classes tab: every repeating class, grouped under the venue it
-// runs at and then by day within that venue. Each venue is a card; under a
-// day sub-heading the classes read coach · time. Tap a class to change it for
-// every week; one-week-only changes happen on that session in the Schedule tab.
+// The Timetable view: every repeating class, grouped under the venue it runs
+// at and then by day within that venue. Each venue is a card; under a day
+// sub-heading the classes read coach · time. Tap a class to change it for every
+// week; one-week-only changes happen on that session in This week.
+//
+// Nothing here reads class_sessions, which is what makes the two views of the
+// Schedule tab safe to sit behind one switch: no amount of cancelling and
+// moving can reach this list, so the standing pattern stays readable however
+// messy the actual week gets.
 
-import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState, useTransition } from "react";
+import { useMemo, useState, useTransition } from "react";
 import { Button } from "@/components/ui/Button";
 import { FilterBar, type FilterDef } from "@/components/ui/FilterBar";
 import { Fab } from "@/components/ui/Fab";
+import { GroupCard } from "@/components/ui/GroupCard";
 import { Sheet } from "@/components/ui/Sheet";
+import { Toast, ToastSlot, useAutoClearMessage } from "@/components/ui/Toast";
 import { topUpSessions } from "@/app/admin/schedule/actions";
+import { WEEKDAY_ORDER } from "@/lib/group-by-day";
 import { AdminClassSheet } from "./AdminClassSheet";
 import { AdminAddSheet } from "./AdminAddSheet";
+import { CardActionMenu } from "./CardActionMenu";
+import { time12h } from "./ClassFields";
 import { AdminBulkRemoveSheet } from "./AdminBulkRemoveSheet";
 import { AdminWipeCalendarSheet } from "./AdminWipeCalendarSheet";
 import { PrivateSeriesCard, WeeklyClassCard } from "./ClassCard";
 import {
   WEEKDAY_NAME,
-  WEEKDAYS,
   type ClassRow,
   type ClientOption,
   type Coach,
@@ -28,8 +35,6 @@ import {
   type PrivateSeriesRow,
   type Venue,
 } from "./admin-calendar-types";
-
-const WEEKDAY_ORDER = WEEKDAYS.map(([code]) => code) as string[];
 
 export function AdminWeeklyClasses({
   classes,
@@ -40,28 +45,39 @@ export function AdminWeeklyClasses({
   clients,
   invites,
   openClassId = null,
+  onRefresh,
+  onShowThisWeek,
 }: {
   classes: ClassRow[];
   // Active client weekly privates, grouped under the same locations as classes.
   privateSeries?: PrivateSeriesRow[];
   // Group classes that run on a date rather than every week, and so aren't on
-  // this list at all. Only the count reaches here — see the note in page.tsx.
+  // this list at all. Only the count reaches here — see fetchTimetable.
   oneOffCount?: number;
   coaches: Coach[];
   venues: Venue[];
   clients: ClientOption[];
   invites: InviteOption[];
-  // Deep-link from the Schedule tab ("edit the weekly class") — open this class
-  // straight away so the two tabs feel like one thing.
+  // Deep-link from a session sheet ("edit the weekly class") — open this class
+  // straight away so the two views feel like one thing.
   openClassId?: string | null;
+  /** Re-fetch the timetable after a mutation. This data is no longer held by
+   *  the server page — it is fetched on demand — so router.refresh() would
+   *  reload the route without touching what this list is showing. */
+  onRefresh?: () => void;
+  /** Flip the tab to This week. The one-off classes genuinely live over there. */
+  onShowThisWeek?: () => void;
 }) {
-  const router = useRouter();
   const [editingClass, setEditingClass] = useState<ClassRow | null>(
     () => classes.find((c) => c.id === openClassId) ?? null
   );
   const [creating, setCreating] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
+  const [message, setMessage] = useAutoClearMessage();
   const [clearOpen, setClearOpen] = useState(false);
+  // The class a hold is currently offering actions for, and the class a
+  // Duplicate is seeding the add sheet from.
+  const [held, setHeld] = useState<ClassRow | null>(null);
+  const [duplicating, setDuplicating] = useState<ClassRow | null>(null);
   const [pending, startTransition] = useTransition();
 
   // Selection mode — clearing a timetable is a bulk job, so the founder flips
@@ -108,14 +124,6 @@ export function AdminWeeklyClasses({
   const toggleClass = (id: string) => toggleIn(setSelected, id);
   const toggleSeries = (id: string) => toggleIn(setSelectedSeries, id);
 
-  // Success/status lines show as a bottom toast that clears itself, so they
-  // never reserve layout space above the list.
-  useEffect(() => {
-    if (!message) return;
-    const t = setTimeout(() => setMessage(null), 5000);
-    return () => clearTimeout(t);
-  }, [message]);
-
   function topUp() {
     startTransition(async () => {
       try {
@@ -127,7 +135,7 @@ export function AdminWeeklyClasses({
               : "The schedule is already fully topped up."
             : (r.error ?? "Failed.")
         );
-        if (r.ok) router.refresh();
+        if (r.ok) onRefresh?.();
       } catch {
         setMessage("Couldn't reach the server. Nothing changed — try again.");
       }
@@ -418,24 +426,13 @@ export function AdminWeeklyClasses({
           groupIds.every((id) => selected.has(id)) &&
           groupSeriesIds.every((id) => selectedSeries.has(id));
         return (
-        <div
+        <GroupCard
           key={key}
-          className="overflow-hidden rounded-[14px] border border-line bg-surface-2"
-        >
-          <div className="flex items-center border-b border-line">
-          <button
-            type="button"
-            aria-expanded={open}
-            onClick={() => toggleVenue(key, open)}
-            className="flex min-w-0 flex-1 items-baseline justify-between gap-3 px-4 py-3 text-left hover:bg-surface"
-          >
-            <span className="flex items-baseline gap-2">
-              <span
-                className={`text-fg-2 transition-transform lg:rotate-90 ${open ? "rotate-90" : ""}`}
-                aria-hidden
-              >
-                ›
-              </span>
+          collapsible
+          open={open}
+          onToggle={() => toggleVenue(key, open)}
+          title={
+            <>
               <span className="font-semibold">{group.venue || "No venue"}</span>
               {/* A client's own home, not a venue we run. The same plum dot the
                   cards inside it use — the uppercase pill said it twice. */}
@@ -443,29 +440,33 @@ export function AdminWeeklyClasses({
                 <span
                   aria-label="Private location"
                   title="Private location"
-                  className="h-1.5 w-1.5 shrink-0 rounded-full bg-priv"
+                  className="h-1.5 w-1.5 shrink-0 self-center rounded-full bg-priv"
                 />
               )}
-            </span>
-            <span className="shrink-0 text-sm text-fg-2">
+            </>
+          }
+          meta={
+            <>
               {group.classCount > 0 &&
                 `${group.classCount} class${group.classCount === 1 ? "" : "es"}`}
               {group.classCount > 0 && group.privateCount > 0 && " · "}
               {group.privateCount > 0 && `${group.privateCount} private`}
-            </span>
-          </button>
-          {selecting && groupIds.length + groupSeriesIds.length > 0 && (
-            <button
-              type="button"
-              aria-label={`${groupAllSelected ? "Clear" : "Select"} everything at ${group.venue || "No venue"}`}
-              onClick={() => toggleVenueSelection(groupIds, groupSeriesIds, groupAllSelected)}
-              className="shrink-0 px-4 py-3 text-sm text-ember underline-offset-4 hover:underline"
-            >
-              {groupAllSelected ? "None" : "All"}
-            </button>
-          )}
-          </div>
-          <div className={`divide-y divide-line lg:block ${open ? "block" : "hidden"}`}>
+            </>
+          }
+          headerAction={
+            selecting && groupIds.length + groupSeriesIds.length > 0 ? (
+              <button
+                type="button"
+                aria-label={`${groupAllSelected ? "Clear" : "Select"} everything at ${group.venue || "No venue"}`}
+                onClick={() => toggleVenueSelection(groupIds, groupSeriesIds, groupAllSelected)}
+                className="shrink-0 px-4 py-3 text-sm text-ember underline-offset-4 hover:underline"
+              >
+                {groupAllSelected ? "None" : "All"}
+              </button>
+            ) : undefined
+          }
+        >
+          <div className="divide-y divide-line">
             {group.days.map((day) => (
               <div key={day.weekday} className="px-4 py-3">
                 {/* Every row on this screen repeats weekly, so this always has a
@@ -489,13 +490,14 @@ export function AdminWeeklyClasses({
                         setMessage(null);
                         setEditingClass(c);
                       }}
-                      // Press and hold to start picking, with the held card
+                      // Press and hold asks what he wants, rather than assuming
+                      // he meant to start a selection. Selection is still one
+                      // tap away in that menu, and still arrives with this card
                       // already ticked — a hold that dropped him into an empty
                       // selection would make him aim at the same card twice.
                       onLongPress={() => {
                         setMessage(null);
-                        setSelecting(true);
-                        setSelected(new Set([c.id]));
+                        setHeld(c);
                       }}
                     />
                   ))}
@@ -527,7 +529,7 @@ export function AdminWeeklyClasses({
               </div>
             ))}
           </div>
-        </div>
+        </GroupCard>
         );
       })}
       {classes.length + privateSeries.length === 0 && (
@@ -550,14 +552,20 @@ export function AdminWeeklyClasses({
           aren't part of it — but they were being left out in silence, which is
           how two of them ended up with real attendance on them and no way off
           any screen the founder was looking at. Saying the number and pointing
-          at the Schedule costs one line and ends the guessing. */}
+          at This week costs one line and ends the guessing.
+          It is a button rather than a link now: both views live in this one tab,
+          so "go and look" is a switch, not a page load. */}
       {oneOffCount > 0 && (
         <p className="px-1 text-sm text-fg-2">
           {oneOffCount} one-off {oneOffCount === 1 ? "class isn't" : "classes aren't"} on this
           list — {oneOffCount === 1 ? "it runs" : "they run"} on a date rather than every week.{" "}
-          <Link href="/admin/schedule" className="text-ember hover:underline">
-            Find {oneOffCount === 1 ? "it" : "them"} on the Schedule
-          </Link>
+          <button
+            type="button"
+            onClick={onShowThisWeek}
+            className="text-ember underline-offset-4 hover:underline"
+          >
+            Find {oneOffCount === 1 ? "it" : "them"} in This week
+          </button>
           .
         </p>
       )}
@@ -607,7 +615,7 @@ export function AdminWeeklyClasses({
           count and the destructive button stay in reach on a phone. The toast
           stands down while it's here rather than landing on top of it. */}
       {selectionBarShowing && (
-        <div className="fixed inset-x-4 bottom-[calc(env(safe-area-inset-bottom)+4.75rem)] z-40 mx-auto flex max-w-md items-center gap-3 rounded-[12px] border border-line bg-surface-2 px-4 py-3 shadow-[var(--shadow-sheet)] lg:bottom-6">
+        <ToastSlot className="flex items-center gap-3 rounded-[12px] border border-line bg-surface-2 px-4 py-3 shadow-[var(--shadow-sheet)]">
           {/* Counted apart, never merged into one number — "15 selected" over a
               mix of classes and families' standing slots hides which is which,
               and they are not the same kind of thing to lose. */}
@@ -629,7 +637,7 @@ export function AdminWeeklyClasses({
           >
             Remove
           </Button>
-        </div>
+        </ToastSlot>
       )}
 
       {/* The Clear hub — every way of clearing this calendar, in the order the
@@ -737,10 +745,65 @@ export function AdminWeeklyClasses({
           for. Nothing sets a message from inside selection mode, and everything
           that finishes a selection clears it in the same tick, so the line still
           arrives; it just waits until the bar has gone. */}
-      {message && !selectionBarShowing && (
-        <div className="fixed inset-x-4 bottom-[calc(env(safe-area-inset-bottom)+4.75rem)] z-40 mx-auto max-w-md rounded-[12px] border border-line bg-surface-2 px-4 py-3 text-sm text-fg-2 shadow-[var(--shadow-sheet)] lg:bottom-6">
-          {message}
-        </div>
+      {message && !selectionBarShowing && <Toast>{message}</Toast>}
+
+      <CardActionMenu
+        open={!!held}
+        title={
+          held
+            ? `${WEEKDAY_NAME[held.weekday] ?? held.weekday} ${time12h(held.time)}${held.venueName ? ` · ${held.venueName}` : ""}`
+            : ""
+        }
+        onClose={() => setHeld(null)}
+        actions={
+          held
+            ? [
+                {
+                  label: "Edit",
+                  hint: "Changes every week from now on",
+                  onSelect: () => setEditingClass(held),
+                },
+                {
+                  label: "Duplicate",
+                  hint: "Same venue, coach, length and spots — pick a new day",
+                  onSelect: () => setDuplicating(held),
+                },
+                {
+                  label: "Select",
+                  hint: "Pick several to remove together",
+                  onSelect: () => {
+                    setSelecting(true);
+                    setSelected(new Set([held.id]));
+                  },
+                },
+              ]
+            : []
+        }
+      />
+
+      {duplicating && (
+        <AdminAddSheet
+          // Seeded with the setup and nothing else. The slot is the one part he
+          // is duplicating IN ORDER to change, so leaving it filled in would
+          // hand him a clash to clear before he could start.
+          defaultRepeat="weekly"
+          seed={{
+            mode: duplicating.isSchool ? "school" : "weekly",
+            venueId: duplicating.venueId,
+            capacity: duplicating.capacity,
+            durationMinutes: duplicating.duration,
+          }}
+          onClose={() => setDuplicating(null)}
+          onDone={(m) => {
+            setMessage(m);
+            setDuplicating(null);
+            onRefresh?.();
+          }}
+          coaches={coaches}
+          venues={venues}
+          clients={clients}
+          invites={invites}
+        />
       )}
 
       {editingClass && (
@@ -753,7 +816,7 @@ export function AdminWeeklyClasses({
           onDone={(m) => {
             setMessage(m);
             setEditingClass(null);
-            router.refresh();
+            onRefresh?.();
           }}
         />
       )}
@@ -766,7 +829,7 @@ export function AdminWeeklyClasses({
           onDone={(m) => {
             setMessage(m);
             exitSelect();
-            router.refresh();
+            onRefresh?.();
           }}
         />
       )}
@@ -778,19 +841,19 @@ export function AdminWeeklyClasses({
             setMessage(m);
             setWiping(false);
             exitSelect();
-            router.refresh();
+            onRefresh?.();
           }}
         />
       )}
 
       {creating && (
         <AdminAddSheet
-          variant="create"
+          defaultRepeat="weekly"
           onClose={() => setCreating(false)}
           onDone={(m) => {
             setMessage(m);
             setCreating(false);
-            router.refresh();
+            onRefresh?.();
           }}
           coaches={coaches}
           venues={venues}

@@ -44,6 +44,7 @@ import { Badge } from "@/components/ui/Badge";
 import { time12h } from "./ClassFields";
 import { ClassTypeLine, KIND_RAIL, classKind } from "./class-type";
 import { useLongPress } from "./use-long-press";
+import { sessionDeviation } from "@/lib/session-deviation";
 import {
   formatClock,
   formatSessionDate,
@@ -79,6 +80,15 @@ function slotLine(weekday: string, time: string, duration: number): string {
 
 /** Status badges for a session — same order, tones and casing everywhere. */
 function SessionBadges({ session }: { session: SessionRow }) {
+  // Neutral, not red. A class that was called off is information; red is
+  // reserved for the things still waiting on him to do something about them.
+  if (session.status === "cancelled") {
+    return (
+      <span className="mt-1.5 inline-flex flex-wrap gap-1.5">
+        <Badge>Cancelled</Badge>
+      </span>
+    );
+  }
   const status = sessionTimeStatus(session.starts_at, session.ends_at);
   const show =
     status !== "upcoming" || (session.coachId != null && session.coachArrivedAt != null);
@@ -193,18 +203,33 @@ export function SessionCard({
   href?: string;
 }) {
   const status = sessionTimeStatus(session.starts_at, session.ends_at);
+  const off = session.status === "cancelled";
+  // Where this sits relative to the class's standing slot. A moved session
+  // stays in the list at its real time — it is happening — and says where it
+  // came from, which is the difference between "the timetable changed" and
+  // "this one week is different" that the schedule used to swallow.
+  const moved = off ? null : sessionDeviation(session);
   const tone = `${stateTone({
-    dim: status === "completed",
-    alert: !session.coachId,
-    ring: status === "in_progress",
+    dim: off || status === "completed",
+    alert: !off && !session.coachId,
+    ring: !off && status === "in_progress",
   })} ${kindStripe(session)}`;
   const inner = (
     <>
       <p className="font-semibold">{session.venueName ?? "Location TBC"}</p>
-      <p className="tnum text-fg-2">
+      <p className={`tnum text-fg-2 ${off ? "line-through" : ""}`}>
         {showDay ? formatSessionDate(session.starts_at) : formatClock(session.starts_at)} –{" "}
         {formatClock(session.ends_at)}
       </p>
+      {moved && (
+        <p className="tnum text-xs text-fg-2">
+          Moved from {WEEKDAY_NAME[moved.weekday]?.slice(0, 3) ?? moved.weekday}{" "}
+          {time12h(moved.time)}
+        </p>
+      )}
+      {off && session.cancelReason && (
+        <p className="text-xs text-fg-2">{session.cancelReason}</p>
+      )}
       {/* A red card always says why it is red, on every screen. Naming the
           coach is the surface's choice — the desktop lane already is the coach,
           so it would only repeat itself — but "no coach yet" is not, because
@@ -216,8 +241,10 @@ export function SessionCard({
           session.isPrivate
             ? (session.privatePlayerName ?? session.playerName ?? "no client yet")
             : null,
+          // A cancelled session needs nobody, so shouting red about its empty
+          // coach slot would be an alarm about work that no longer exists.
           !session.coachId ? (
-            <span className="text-err">No coach yet</span>
+            off ? null : <span className="text-err">No coach yet</span>
           ) : coachName !== undefined && coachName ? (
             coachName
           ) : null,

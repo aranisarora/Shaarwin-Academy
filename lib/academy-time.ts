@@ -228,6 +228,25 @@ export function formatWallDay(dateStr: string): string {
 }
 
 /**
+ * "August 2026", or "Jul – Aug 2026" when the two dates straddle a month —
+ * the caption over the admin week strip, which has the seven day numbers
+ * underneath it and so needs the month and nothing else.
+ *
+ * UTC-formatted for the same reason as `formatWallDay`.
+ */
+export function formatWallMonthRange(from: string, to: string): string {
+  const fmt = (d: string, opts: Intl.DateTimeFormatOptions) => {
+    const [y, m, day] = d.split("-").map(Number);
+    return new Intl.DateTimeFormat("en-GB", { timeZone: "UTC", ...opts }).format(
+      new Date(Date.UTC(y, m - 1, day))
+    );
+  };
+  return from.slice(0, 7) === to.slice(0, 7)
+    ? fmt(from, { month: "long", year: "numeric" })
+    : `${fmt(from, { month: "short" })} – ${fmt(to, { month: "short", year: "numeric" })}`;
+}
+
+/**
  * "12 Jul 2026" for a bare "YYYY-MM-DD" wall date — the `formatDateFull` shape
  * for calendar dates that carry no time (date of birth, term dates). Formatted
  * in UTC for the same reason as `formatWallDay`: `new Date("2015-03-01")` is

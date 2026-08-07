@@ -5,7 +5,13 @@ import { requireFounder } from "@/lib/founder";
 import { academyWallToUtc, formatDate, utcToAcademyWall } from "@/lib/academy-time";
 import { overlaps, weeklyOccurrences } from "@/lib/slot-clashes";
 import { asAddressDetails, fromDetails, type StructuredAddress } from "@/lib/address";
-import type { SessionRow } from "@/components/app/admin-calendar-types";
+import {
+  WEEKDAYS,
+  type ClassRow,
+  type PrivateSeriesRow,
+  type SessionRow,
+} from "@/components/app/admin-calendar-types";
+import { venueDisplayName } from "@/lib/venue-display";
 import {
   assignPrivateSessionClientCore,
   bulkRemoveClassesCore,
@@ -540,7 +546,7 @@ export async function getSessionDetail(sessionId: string): Promise<SessionDetail
 
 /**
  * Fetches the 7-day window of sessions starting on `anchor` (a "YYYY-MM-DD"
- * academy wall date) and maps them to SessionRow[]. Called by AdminCalendarNav
+ * academy wall date) and maps them to SessionRow[]. Called by AdminScheduleTabs
  * for client-side navigation — avoids a full page reload and only re-fetches
  * the window-specific session data.
  *
@@ -549,7 +555,11 @@ export async function getSessionDetail(sessionId: string): Promise<SessionDetail
  */
 export async function fetchWeekSessions(
   anchor: string,
-  nextByClass: Record<string, string>
+  nextByClass: Record<string, string>,
+  /** classId → the slot the class keeps, "HH:MM". Computed once on the server
+   *  page from every future session; passed back in so paging to another week
+   *  can still tell a moved session from one sitting where it belongs. */
+  slotByClass: Record<string, string> = {}
 ): Promise<{ sessions: SessionRow[]; rangeLabel: string }> {
   const { supabase, founder } = await requireFounder();
   if (!founder) return { sessions: [], rangeLabel: "" };
@@ -561,9 +571,10 @@ export async function fetchWeekSessions(
     supabase
       .from("class_sessions")
       .select(
-        "id,starts_at,ends_at,coach_id,coach_arrived_at,coach_arrival_source,coach_arrival_distance_m,capacity_override,classes!inner(id,title,description,skill_level,capacity,duration_minutes,recurrence_rule,active,venue_id,class_type,is_school,location_label,venues(name,address,postcode,lat,lng,address_details),private_class_details(client_id,address,postcode,lat,lng,access_notes,address_details,players(full_name)))"
+        "id,starts_at,ends_at,status,cancel_reason,coach_id,coach_arrived_at,coach_arrival_source,coach_arrival_distance_m,capacity_override,classes!inner(id,title,description,skill_level,capacity,duration_minutes,recurrence_rule,active,venue_id,class_type,is_school,location_label,venues(name,address,postcode,lat,lng,address_details),private_class_details(client_id,address,postcode,lat,lng,access_notes,address_details,players(full_name)))"
       )
-      .in("status", ["scheduled", "completed"])
+      // Cancelled included — see the note on the same query in page.tsx.
+      .in("status", ["scheduled", "completed", "cancelled"])
       .gte("starts_at", from.toISOString())
       .lt("starts_at", to.toISOString())
       .order("starts_at"),
@@ -619,6 +630,8 @@ export async function fetchWeekSessions(
       id: s.id,
       starts_at: s.starts_at,
       ends_at: s.ends_at,
+      status: s.status,
+      cancelReason: s.cancel_reason,
       coachId: s.coach_id,
       coachArrivedAt: s.coach_arrived_at,
       coachArrivalSource: s.coach_arrival_source,
@@ -642,6 +655,7 @@ export async function fetchWeekSessions(
       classVenueId: cls.venue_id,
       classWeekday: cls.recurrence_rule?.match(/BYDAY=(..)/)?.[1] ?? "MO",
       classTime: classTime(cls.id, s.starts_at),
+      classSlotTime: slotByClass[cls.id] ?? null,
       classRecurring: !!cls.recurrence_rule,
     };
   });
@@ -808,4 +822,245 @@ export async function previewSlotClashes(input: {
   } catch {
     return { byKey: {}, failed: true };
   }
+}
+
+// ── The timetable ────────────────────────────────────────────────────────────
+// The repeating classes behind the schedule, fetched on demand rather than on
+// every page load. The Schedule tab opens on This week; the founder may never
+// flip to Timetable in a given visit, and making him pay for that query on
+// first paint was the one real cost of merging the two screens into one tab.
+
+/** "Monday 3:30 pm · Mantri Espana" → "15:30".
+ *
+ * Last resort, for a class that never had a single session generated. The title
+ * is written from the slot by `generateClassTitle`, so it is the only record of
+ * that slot left once there are no sessions to read it off — `recurrence_rule`
+ * carries the day and nothing else. Anything unparseable falls through. */
+function timeFromTitle(title: string): string | null {
+  const m = /(\d{1,2}):(\d{2})\s*(am|pm)/i.exec(title);
+  if (!m) return null;
+  const h = (Number(m[1]) % 12) + (m[3].toLowerCase() === "pm" ? 12 : 0);
+  return `${String(h).padStart(2, "0")}:${m[2]}`;
+}
+
+export type Timetable = {
+  classes: ClassRow[];
+  privateSeries: PrivateSeriesRow[];
+  /** Group classes that run on a date, not every week — not on this list at
+   *  all. Counted so the screen can say where they are instead of going quiet. */
+  oneOffCount: number;
+};
+
+export async function fetchTimetable(): Promise<Timetable> {
+  const { supabase, founder } = await requireFounder();
+  if (!founder) return { classes: [], privateSeries: [], oneOffCount: 0 };
+
+  const [
+    { data: classes },
+    { count: oneOffCount },
+    { data: coaches },
+    { data: venues },
+    { data: series },
+  ] = await Promise.all([
+    supabase
+      .from("classes")
+      .select(
+        "id,title,description,skill_level,capacity,duration_minutes,recurrence_rule,active,ends_on,venue_id,is_school,venues(name,unit)"
+      )
+      .eq("class_type", "group")
+      .not("recurrence_rule", "is", null)
+      .order("title"),
+    supabase
+      .from("classes")
+      .select("id", { count: "exact", head: true })
+      .eq("class_type", "group")
+      .is("recurrence_rule", null),
+    supabase
+      .from("coaches")
+      .select("id,active,profiles!inner(full_name)")
+      .eq("active", true),
+    supabase.from("venues").select("id,name,unit").order("name"),
+    supabase
+      .from("private_booking_series")
+      .select(
+        "id,weekday,start_time,duration_minutes,preferred_coach,venue_id,venue_label," +
+          "venues(name,unit)," +
+          "player:players!private_booking_series_player_id_fkey(full_name)," +
+          "client:profiles!private_booking_series_client_id_fkey(full_name)"
+      )
+      .eq("active", true),
+  ]);
+
+  const classIds = (classes ?? []).map((c) => c.id);
+  const { data: nextSessions } = classIds.length
+    ? await supabase
+        .from("class_sessions")
+        .select("id,class_id,starts_at,coach_id,coaches(profiles!inner(full_name))")
+        .in("class_id", classIds)
+        .eq("status", "scheduled")
+        .gt("starts_at", new Date().toISOString())
+        .order("starts_at")
+    : {
+        data: [] as {
+          id: string;
+          class_id: string;
+          starts_at: string;
+          coach_id: string | null;
+          coaches: unknown;
+        }[],
+      };
+
+  const nextByClass = new Map<
+    string,
+    { sessionId: string; starts_at: string; coachName: string | null; coachId: string | null }
+  >();
+  for (const s of nextSessions ?? []) {
+    if (nextByClass.has(s.class_id)) continue;
+    const coachName =
+      (s.coaches as unknown as { profiles: { full_name: string } } | null)?.profiles?.full_name ??
+      null;
+    nextByClass.set(s.class_id, {
+      sessionId: s.id,
+      starts_at: s.starts_at,
+      coachName,
+      coachId: s.coach_id,
+    });
+  }
+
+  // Ending a class cancels every future session, so the lookup above finds
+  // nothing for one. Its own past sessions still hold the truth about its slot;
+  // a hardcoded fallback here used to rewrite that slot on the next save.
+  const slotlessIds = classIds.filter((id) => !nextByClass.has(id));
+  const lastSessionsPromise = slotlessIds.length
+    ? supabase
+        .from("class_sessions")
+        .select("class_id,starts_at")
+        .in("class_id", slotlessIds)
+        .order("starts_at", { ascending: false })
+        .then((r) => r.data)
+    : Promise.resolve(null);
+
+  const seriesIds = ((series ?? []) as unknown as { id: string }[]).map((s) => s.id);
+  const seriesBookingsPromise = seriesIds.length
+    ? supabase
+        .from("bookings")
+        .select("private_series_id,class_sessions(id,starts_at,status)")
+        .in("private_series_id", seriesIds)
+        .then((r) => r.data)
+    : Promise.resolve(null);
+
+  const nextSessionIds = [...nextByClass.values()].map((n) => n.sessionId);
+  const bookedBySession = new Map<string, number>();
+  if (nextSessionIds.length) {
+    const { data: bookings } = await supabase
+      .from("bookings")
+      .select("session_id")
+      .in("session_id", nextSessionIds)
+      .in("status", ["confirmed", "attended"]);
+    for (const b of bookings ?? [])
+      bookedBySession.set(b.session_id, (bookedBySession.get(b.session_id) ?? 0) + 1);
+  }
+
+  const lastByClass = new Map<string, string>();
+  for (const s of (await lastSessionsPromise) ?? []) {
+    if (!lastByClass.has(s.class_id)) lastByClass.set(s.class_id, s.starts_at);
+  }
+
+  const classRows: ClassRow[] = (classes ?? []).map((c) => {
+    const next = nextByClass.get(c.id);
+    const last = lastByClass.get(c.id);
+    const time = next
+      ? utcToAcademyWall(new Date(next.starts_at)).time
+      : last
+        ? utcToAcademyWall(new Date(last)).time
+        : (timeFromTitle(c.title) ?? "18:30");
+    const v = c.venues as unknown as { name: string; unit: string | null } | null;
+    return {
+      id: c.id,
+      title: c.title,
+      description: c.description ?? "",
+      level: c.skill_level,
+      capacity: c.capacity,
+      duration: c.duration_minutes,
+      weekday: c.recurrence_rule?.match(/BYDAY=(..)/)?.[1] ?? "MO",
+      time,
+      active: c.active,
+      endsOn: c.ends_on,
+      venueId: c.venue_id,
+      venueName: v ? venueDisplayName(v) : null,
+      isSchool: c.is_school,
+      coachName: next?.coachName ?? null,
+      bookedCount: next ? (bookedBySession.get(next.sessionId) ?? 0) : 0,
+      nextSessionId: next?.sessionId ?? null,
+      nextSessionStart: next?.starts_at ?? null,
+      nextCoachId: next?.coachId ?? null,
+    };
+  });
+
+  const coachNameById = new Map(
+    (coaches ?? []).map((c) => [
+      c.id,
+      (c.profiles as unknown as { full_name: string }).full_name,
+    ])
+  );
+
+  type SeriesRow = {
+    id: string;
+    weekday: number;
+    start_time: string;
+    duration_minutes: number;
+    preferred_coach: string | null;
+    venue_id: string | null;
+    venue_label: string | null;
+    venues: { name: string; unit: string | null } | null;
+    player: { full_name: string } | null;
+    client: { full_name: string } | null;
+  };
+  const seriesRows = (series ?? []) as unknown as SeriesRow[];
+
+  // Sessions link to a series through their booking's private_series_id, so the
+  // deep-link target is the earliest scheduled future session across those.
+  const nextBySeriesId = new Map<string, { id: string; starts_at: string }>();
+  {
+    const seriesBookings = await seriesBookingsPromise;
+    const nowIso = new Date().toISOString();
+    for (const b of seriesBookings ?? []) {
+      const sid = b.private_series_id as string | null;
+      const cs = b.class_sessions as unknown as {
+        id: string;
+        starts_at: string;
+        status: string;
+      } | null;
+      if (!sid || !cs || cs.status !== "scheduled" || cs.starts_at <= nowIso) continue;
+      const cur = nextBySeriesId.get(sid);
+      if (!cur || cs.starts_at < cur.starts_at)
+        nextBySeriesId.set(sid, { id: cs.id, starts_at: cs.starts_at });
+    }
+  }
+
+  const knownVenueNames = new Set(
+    (venues ?? []).map((v) => venueDisplayName(v).toLowerCase())
+  );
+  const isoWeekdayCode = WEEKDAYS.map(([code]) => code); // 0-based: [MO..SU]
+
+  const privateSeries: PrivateSeriesRow[] = seriesRows.map((s) => {
+    const venueName =
+      (s.venues ? venueDisplayName(s.venues) : s.venue_label?.trim()) ?? "Private location";
+    const next = nextBySeriesId.get(s.id);
+    return {
+      id: s.id,
+      playerName: s.player?.full_name ?? "Player",
+      clientName: s.client?.full_name ?? "",
+      weekday: isoWeekdayCode[s.weekday - 1] ?? "MO",
+      time: String(s.start_time).slice(0, 5),
+      duration: s.duration_minutes,
+      coachName: s.preferred_coach ? (coachNameById.get(s.preferred_coach) ?? null) : null,
+      venueName,
+      knownVenue: knownVenueNames.has(venueName.toLowerCase()),
+      nextSessionId: next?.id ?? null,
+      nextSessionStart: next?.starts_at ?? null,
+    };
+  });
+
+  return { classes: classRows, privateSeries, oneOffCount: oneOffCount ?? 0 };
 }
