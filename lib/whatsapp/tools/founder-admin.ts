@@ -837,7 +837,7 @@ const notify: WaTool = {
         type: "string",
         enum: [...NOTIFY_TYPES],
         description:
-          "announcement (default) for news and general messages; class_updated for an operational change to a session or class someone is booked into — it sits with reminders rather than news, so it isn't silenced by the news toggle.",
+          "class_updated for anything operational — a session moved, a coach swapped, a venue changed — because it sits with reminders, which people keep on. announcement (the default) is for news and offers and is silenced by the News toggle, so DON'T use it for something someone needs to act on. Neither type bypasses a member's preferences: the result tells you who has it muted, and you must pass that on.",
       },
     },
     required: ["user_ids", "message"],
@@ -864,7 +864,18 @@ const notify: WaTool = {
       type
     );
     if (!result.ok) return fail(result.error ?? "Failed.");
-    return ok({ sent: true, recipients: result.recipients, type });
+    return ok({
+      // "queued", not "sent": delivery runs through each person's channel
+      // preferences and a 3-a-day cap on non-essential messages, so a message
+      // can be accepted here and still not reach a phone tonight.
+      queued: result.recipients,
+      type,
+      skipped_deleted: result.skipped_deleted || undefined,
+      muted_for: result.muted?.length ? result.muted : undefined,
+      note: result.muted?.length
+        ? `Queued. ${result.muted.join(" and ")} ${result.muted.length === 1 ? "has" : "have"} this kind of message muted, so ${result.muted.length === 1 ? "they" : "they"} will only see it in the app — tell the founder, and offer to call instead if it's urgent.`
+        : undefined,
+    });
   },
 };
 

@@ -3,6 +3,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/database.types";
+import { isMuted } from "@/lib/notification-prefs";
 import { normalizePhoneInput } from "@/lib/whatsapp/phone";
 import { adminClient, autoProvisionClient, linkPhoneToUser } from "@/lib/whatsapp/identity";
 import type { OpResult } from "@/lib/admin-ops-types";
@@ -249,14 +250,43 @@ export async function notifyUsersCore(
   title?: string,
   audit?: { action?: string; meta?: Record<string, unknown> },
   type: NotifyType = "announcement"
-): Promise<OpResult & { recipients?: number }> {
+): Promise<OpResult & { recipients?: number; muted?: string[]; skipped_deleted?: number }> {
   const body = message.trim();
   if (!body) return { ok: false, error: "The message can't be empty." };
 
   // The same person can arrive twice when a set is stitched from two queries
   // (e.g. a coach who is also a parent); one message each is what's meant.
-  const ids = [...new Set(userIds.filter((id) => typeof id === "string" && id.trim()))];
-  if (ids.length === 0) return { ok: false, error: "No recipients found." };
+  const requested = [...new Set(userIds.filter((id) => typeof id === "string" && id.trim()))];
+  if (requested.length === 0) return { ok: false, error: "No recipients found." };
+
+  // Two things the caller can't know from an id list, and both matter enough to
+  // report rather than swallow:
+  //
+  //  * Soft-deleted accounts. broadcastNotificationCore has always filtered
+  //    `deleted_at IS NULL`; a set assembled from a query has no such promise,
+  //    and messaging a closed account is a real-world wrong.
+  //  * Muted recipients. Delivery honours each person's preferences, so a
+  //    message can be queued, reported "sent", and never reach anyone. The
+  //    founder needs "3 queued, Ravi has announcements muted" — not a bare
+  //    success. We queue for them anyway: the row still shows in-app, and it is
+  //    the member's own toggle deciding the rest.
+  const { data: profiles } = await supabase
+    .from("profiles")
+    .select("id,full_name,deleted_at,notification_prefs")
+    .in("id", requested);
+
+  const known = new Map((profiles ?? []).map((p) => [p.id, p]));
+  const ids = requested.filter((id) => !known.get(id)?.deleted_at);
+  const skippedDeleted = requested.length - ids.length;
+  if (ids.length === 0) {
+    return { ok: false, error: "Those accounts are all closed — nobody to message." };
+  }
+
+  const muted = ids
+    .filter((id) =>
+      isMuted(type, known.get(id)?.notification_prefs as Record<string, boolean> | null)
+    )
+    .map((id) => known.get(id)?.full_name ?? "someone");
 
   const heading = title?.trim() || "Message from the academy";
   const { error } = await supabase.from("notifications").insert(
@@ -278,13 +308,19 @@ export async function notifyUsersCore(
     // Capped so one broadcast can't write a megabyte of jsonb.
     meta: {
       ...audit?.meta,
+      type,
       title: heading,
       body,
       recipients: ids.length,
       recipient_ids: ids.slice(0, 100),
     },
   });
-  return { ok: true, recipients: ids.length };
+  return {
+    ok: true,
+    recipients: ids.length,
+    muted,
+    skipped_deleted: skippedDeleted,
+  };
 }
 
 /**
@@ -298,6 +334,10 @@ export async function broadcastNotificationCore(
   message: string,
   title?: string
 ): Promise<OpResult & { recipients?: number }> {
+  // Ahead of resolving the audience, so an empty message is still reported as an
+  // empty message rather than as "no recipients".
+  if (!message.trim()) return { ok: false, error: "The message can't be empty." };
+
   const { data: targets, error: targetErr } = await supabase
     .from("profiles")
     .select("id")
