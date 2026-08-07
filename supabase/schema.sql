@@ -5064,6 +5064,7 @@ CREATE POLICY "founder all coaches" ON public.coaches AS PERMISSIVE FOR ALL TO p
 CREATE POLICY "founder all coach invites" ON public.coach_invites AS PERMISSIVE FOR ALL TO public USING (( SELECT is_founder() AS is_founder));
 CREATE POLICY "public reads active coaches" ON public.coaches AS PERMISSIVE FOR SELECT TO public USING (((active = true) OR (id = ( SELECT auth.uid() AS uid)) OR ( SELECT is_founder() AS is_founder)));
 CREATE POLICY "own invoices" ON public.invoices AS PERMISSIVE FOR SELECT TO public USING (((client_id = ( SELECT auth.uid() AS uid)) OR ( SELECT is_founder() AS is_founder)));
+CREATE POLICY "founder reads notifications" ON public.notifications AS PERMISSIVE FOR SELECT TO public USING (( SELECT is_founder() AS is_founder));
 CREATE POLICY "founder writes notifications" ON public.notifications AS PERMISSIVE FOR INSERT TO public WITH CHECK (( SELECT is_founder() AS is_founder));
 CREATE POLICY "mark own notifications read" ON public.notifications AS PERMISSIVE FOR UPDATE TO public USING ((user_id = ( SELECT auth.uid() AS uid)));
 CREATE POLICY "own notifications" ON public.notifications AS PERMISSIVE FOR SELECT TO public USING ((user_id = ( SELECT auth.uid() AS uid)));
@@ -5097,6 +5098,9 @@ CREATE POLICY "founder all school admins" ON public.school_admins AS PERMISSIVE 
 CREATE POLICY "school reads own link" ON public.school_admins AS PERMISSIVE FOR SELECT TO public USING ((user_id = ( SELECT auth.uid() AS uid)));
 CREATE POLICY "founder writes venues" ON public.venues AS PERMISSIVE FOR ALL TO public USING (( SELECT is_founder() AS is_founder));
 CREATE POLICY "public reads active venues" ON public.venues AS PERMISSIVE FOR SELECT TO public USING (((active = true) OR ( SELECT is_founder() AS is_founder)));
+-- The only wa_* policy there will be: whether a phone is linked is a question
+-- the founder asks, the transcript in wa_messages is not.
+CREATE POLICY "founder reads wa links" ON public.wa_links AS PERMISSIVE FOR SELECT TO public USING (( SELECT is_founder() AS is_founder));
 CREATE POLICY "founder reads webhook events" ON public.webhook_events AS PERMISSIVE FOR SELECT TO public USING (( SELECT is_founder() AS is_founder));
 CREATE POLICY "staff reads categories" ON public.skill_categories AS PERMISSIVE FOR SELECT TO public USING ((( SELECT is_coach() AS is_coach) OR ( SELECT is_founder() AS is_founder)));
 CREATE POLICY "founder manages categories" ON public.skill_categories AS PERMISSIVE FOR ALL TO public USING (( SELECT is_founder() AS is_founder)) WITH CHECK (( SELECT is_founder() AS is_founder));

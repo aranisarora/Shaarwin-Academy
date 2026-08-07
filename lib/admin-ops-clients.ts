@@ -215,9 +215,8 @@ export async function deletePendingClientCore(
  *
  * `notifications.type` is not decoration — supabase/functions/notify keys the
  * whole delivery pipeline off it: which mute group silences it, whether it
- * bypasses preferences (TRANSACTIONAL), whether it counts against the 3-a-day
- * cap (CAP_EXEMPT), whether it goes push-and-WhatsApp rather than first-wins,
- * and whether quiet hours can hold it. A type the worker doesn't know is
+ * bypasses preferences (TRANSACTIONAL), whether it goes push-and-WhatsApp
+ * rather than first-wins (PUSH_ADDITIVE), and whether quiet hours can hold it. A type the worker doesn't know is
  * UNMUTABLE by design ("an omission fails loud rather than silent"), so a free
  * string here would let a typo build a channel no one can turn off.
  *
@@ -326,6 +325,11 @@ export async function notifyUsersCore(
 /**
  * Send an announcement to every active coach or every active client.
  * A thin audience resolver over notifyUsersCore.
+ *
+ * The return type carries everything notifyUsersCore reports, mutes included:
+ * a narrower type here used to drop them on the floor, and the bot told the
+ * founder his message had gone to all 8 active coaches when 6 of them had
+ * announcements muted and only 2 ever saw it.
  */
 export async function broadcastNotificationCore(
   supabase: SupabaseClient<Database>,
@@ -333,7 +337,7 @@ export async function broadcastNotificationCore(
   audience: "coaches" | "clients",
   message: string,
   title?: string
-): Promise<OpResult & { recipients?: number }> {
+): Promise<OpResult & { recipients?: number; muted?: string[]; skipped_deleted?: number }> {
   // Ahead of resolving the audience, so an empty message is still reported as an
   // empty message rather than as "no recipients".
   if (!message.trim()) return { ok: false, error: "The message can't be empty." };

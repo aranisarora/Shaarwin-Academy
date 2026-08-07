@@ -108,8 +108,11 @@ beforeAll(async () => {
   await markAsSchool(flagged.venueId);
 
   // Runs school classes but nobody said it was a school. The flag is the whole
-  // answer now, so it must not appear.
+  // answer now, so it must not appear. createSchool flags the venue it builds,
+  // so this case has to take the flag back off — the class underneath stays a
+  // school class, which is the whole point of it.
   unflagged = await createSchool({ name: "Unflagged Campus" });
+  await admin().from("venues").update({ is_school: false }).eq("id", unflagged.venueId);
 
   // Flagged, but its only class got published as an ordinary Group class. The
   // old derivation lost the entire school over this.

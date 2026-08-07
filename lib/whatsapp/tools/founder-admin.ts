@@ -798,7 +798,7 @@ const clientPayments: WaTool = {
 const broadcastMessage: WaTool = {
   name: "broadcast_message",
   description:
-    "Send an announcement to EVERY active coach or EVERY active client (delivered by push/WhatsApp/email per each person's preferences). e.g. 'notify all coaches that Saturday sessions move indoors'. Restate the audience and exact message and get an explicit yes BEFORE calling — this cannot be unsent.",
+    "Send an announcement to EVERY active coach or EVERY active client (delivered by push/WhatsApp/email per each person's preferences). e.g. 'notify all coaches that Saturday sessions move indoors'. Restate the audience and exact message and get an explicit yes BEFORE calling — this cannot be unsent. This QUEUES the announcement, it doesn't send it: delivery bypasses nobody's preferences, so never tell the founder it reached everyone. The result names who has this kind of message muted — they'll only see it in the app, and you must pass that on so he can reach them another way.",
   input_schema: {
     type: "object",
     properties: {
@@ -818,7 +818,18 @@ const broadcastMessage: WaTool = {
       input.title != null ? String(input.title) : undefined
     );
     if (!result.ok) return fail(result.error ?? "Failed.");
-    return ok({ sent: true, audience, recipients: result.recipients });
+    return ok({
+      // "queued", not "sent", for the same reason as notify below — and it bit
+      // hardest here, where the audience is a whole role and a flat success read
+      // as "all 8 coaches got it" when 2 did.
+      queued: result.recipients,
+      audience,
+      skipped_deleted: result.skipped_deleted || undefined,
+      muted_for: result.muted?.length ? result.muted : undefined,
+      note: result.muted?.length
+        ? `Queued. ${result.muted.join(" and ")} ${result.muted.length === 1 ? "has" : "have"} this kind of message muted, so they will only see it in the app — tell the founder, and offer to call instead if it's urgent.`
+        : undefined,
+    });
   },
 };
 
@@ -872,9 +883,9 @@ const notify: WaTool = {
     );
     if (!result.ok) return fail(result.error ?? "Failed.");
     return ok({
-      // "queued", not "sent": delivery runs through each person's channel
-      // preferences and a 3-a-day cap on non-essential messages, so a message
-      // can be accepted here and still not reach a phone tonight.
+      // "queued", not "sent": a separate worker delivers this over whichever
+      // channel each person's preferences allow, so a message can be accepted
+      // here and still not reach a phone.
       queued: result.recipients,
       type,
       skipped_deleted: result.skipped_deleted || undefined,

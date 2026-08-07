@@ -182,24 +182,23 @@ const DEFERRABLE = new Set([
   // hour of lead time that is the entire reason the message exists.
 ]);
 
-// ── Per-user daily cap (notification-fix-plan 2.2) ──────────────────────────
+// ── The urgent set ──────────────────────────────────────────────────────────
 //
-// The structural guarantee behind "don't spam anyone", designed to survive
-// every message type added later: nobody receives more than DAILY_SEND_CAP
-// non-essential messages in one IST day. Overflow is held to the next morning
-// rather than dropped, so nothing is silently lost.
+// A miss on any of these causes a real-world failure, not just a quieter phone:
+// a coach teaching four classes needs all four before-class prompts, and a
+// parent needs to hear their coach is running late whether or not it is their
+// fourth message of the day.
 //
-// CAP_EXEMPT is the important half. The plan states the rule as "max 3
-// non-transactional sends per user per day", but applied literally that muzzles
-// the flow production shows working best: a coach teaching four classes needs
-// four before-class prompts and four after-class summaries, and a parent needs
-// to hear their coach is running late whether or not it's their fourth message.
-// Suppressing any of these causes a real-world failure, not just a quieter
-// phone — so time-critical and session-operational types are exempt, and the
-// cap bites on the informational tail (schedule changes, receipts, progress
-// updates, offers) where a fourth message in a day is genuinely noise.
-const DAILY_SEND_CAP = 3;
-
+// The name is what it used to do. These types were exempt from a per-user daily
+// cap, and that cap is gone: on 7 Aug a founder broadcast to 8 coaches reached
+// 2, because the counter behind it made no distinction by type. A day of
+// ordinary coaching traffic — before-class, after-class, arrival checks — spent
+// an allowance those same messages could never themselves be charged against,
+// so the harder a coach worked the less reachable they became.
+//
+// The set outlived the rule because PUSH_ADDITIVE is derived from it. Its one
+// remaining job is to say which types are urgent enough that a push must not
+// stand in for a WhatsApp.
 const CAP_EXEMPT = new Set([
   // Coach: running their own class.
   "coach_before_class",
@@ -213,7 +212,7 @@ const CAP_EXEMPT = new Set([
   // Parent: did my child turn up, where is their coach, is the session still on.
   // Both outcome types are at most one per player per session, so a family with
   // three children legitimately gets three — the Progress toggle is the right
-  // lever for that, not the daily cap.
+  // lever for that.
   "player_absent",
   "session_outcome",
   "coach_arrived",
@@ -226,15 +225,10 @@ const CAP_EXEMPT = new Set([
   "ops_daily_digest",
   // The morning briefings. Both are once per day and both are the message the
   // whole day is planned from — a coach who doesn't get theirs drives to the
-  // wrong venue. Capping them would be capping the plan, not the noise.
+  // wrong venue.
   "coach_day_ahead",
   "founder_morning_brief",
 ]);
-
-// Capped rows this old are past being worth holding — a "your coach changed"
-// for a session that already happened helps nobody. Dropped (claimed, never
-// delivered) rather than deferred forever.
-const CAP_DROP_AFTER_MS = 3 * 86400000;
 
 // ── Push is ADDITIVE for these, not a substitute ────────────────────────────
 //
@@ -394,25 +388,6 @@ Deno.serve(async () => {
       }
     }
 
-    // Per-user daily cap (2.2). Checked after prefs so a muted type never
-    // consumes someone's allowance, and before the claim so a deferred row
-    // stays pending.
-    if (!TRANSACTIONAL.has(row.type) && !CAP_EXEMPT.has(row.type)) {
-      const alreadySent = await deliveredTodayCount(row.user_id);
-      if (alreadySent >= DAILY_SEND_CAP) {
-        if (Date.now() - new Date(row.created_at).getTime() > CAP_DROP_AFTER_MS) {
-          await markSent(row.id); // stale — claim it and move on
-        } else {
-          await supabase
-            .from("notifications")
-            .update({ scheduled_for: nextMorningIst() })
-            .eq("id", row.id)
-            .eq("status", "pending");
-        }
-        continue;
-      }
-    }
-
     // Claim: only proceed if we flip pending → sent first (idempotent workers).
     const { data: claimed } = await supabase
       .from("notifications")
@@ -517,59 +492,6 @@ function quietHoursDefer(): string | null {
   const eightAm = new Date(`${istDate}T08:00:00+05:30`);
   // Before 08:00 IST → today's 08:00; after 21:30 IST → tomorrow's 08:00.
   return (mins >= 8 * 60 ? new Date(eightAm.getTime() + 86400000) : eightAm).toISOString();
-}
-
-/** Start of the current IST calendar day, as an ISO instant. */
-function istDayStart(): string {
-  const istDate = new Intl.DateTimeFormat("en-CA", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    timeZone: IST,
-  }).format(new Date());
-  return new Date(`${istDate}T00:00:00+05:30`).toISOString();
-}
-
-/** The next 08:00 IST strictly in the future. Used to hold capped overflow. */
-function nextMorningIst(): string {
-  const now = new Date();
-  const istDate = new Intl.DateTimeFormat("en-CA", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    timeZone: IST,
-  }).format(now);
-  const eight = new Date(`${istDate}T08:00:00+05:30`);
-  return (eight.getTime() > now.getTime()
-    ? eight
-    : new Date(eight.getTime() + 86400000)
-  ).toISOString();
-}
-
-/**
- * How many messages we have actually pushed to this user so far today. Counts
- * only rows that reached a channel — `channel_attempted` is null for feed-only
- * rows (claimed, never delivered) and for pref-muted rows, so neither eats into
- * anyone's daily allowance. (notification-fix-plan 2.2.)
- *
- * Push-only rows are excluded, and the reasoning matters. The cap exists to
- * stop us interrupting a family three times a day on their phone's messaging
- * app; it was written when every delivery cost a WhatsApp. A push banner is a
- * different, quieter thing — free, dismissible, and already opt-in per device.
- * Counting it would mean that turning notifications ON silently REDUCED how
- * many WhatsApps you could receive, so the feature would punish the people who
- * adopted it. `push+whatsapp` still counts: a WhatsApp genuinely went out.
- */
-async function deliveredTodayCount(userId: string): Promise<number> {
-  const { count } = await supabase
-    .from("notifications")
-    .select("id", { count: "exact", head: true })
-    .eq("user_id", userId)
-    .eq("status", "sent")
-    .not("channel_attempted", "is", null)
-    .neq("channel_attempted", "push")
-    .gte("sent_at", istDayStart());
-  return count ?? 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -1555,7 +1477,7 @@ async function sweepWaitlistOffers() {
  * Since push arrived it can also be compound — "push+whatsapp", "push+email" —
  * for the PUSH_ADDITIVE types, where both legs are sent on purpose. Anything
  * reading this column should treat it as a set, not an enum: `= 'push'` means
- * push ALONE, which is why deliveredTodayCount can exclude it safely.
+ * push ALONE, so "did a banner go out" is `like 'push%'`.
  */
 /**
  * `note` is the reason a *preferred* channel was skipped on a delivery that
