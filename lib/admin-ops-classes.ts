@@ -6,6 +6,9 @@ import type { Database } from "@/lib/database.types";
 import { academyWallToUtc, utcToAcademyWall } from "@/lib/academy-time";
 import { reassignSessionCore } from "@/lib/admin-ops-calendar";
 import { toSkillLevel, type OpResult } from "@/lib/admin-ops-types";
+import { chunked } from "@/lib/admin-ops-chunk";
+import { CancellationNotice } from "@/lib/admin-ops-removal-notice";
+import { endPrivateSeriesCore } from "@/lib/admin-ops-private-series";
 
 const WEEKDAY_NUM: Record<string, number> = { MO: 1, TU: 2, WE: 3, TH: 4, FR: 5, SA: 6, SU: 7 };
 const WEEKDAY_LABEL: Record<string, string> = {
@@ -187,10 +190,17 @@ export async function endGroupClassCore(
   founderId: string,
   classId: string
 ): Promise<OpResult> {
+  // Group only. This was the one lifecycle core with no type guard, and the
+  // WhatsApp founder tool passes it an arbitrary id — so a private class could
+  // be "ended" here with group copy ("your allowance is unaffected"), no minutes
+  // refund, and no way back, because `restoreGroupClassCore` does filter on type
+  // and would then refuse to undo it. A weekly private slot is ended through
+  // `endPrivateSeriesCore` instead, which refunds and retires the template.
   const { data: cls } = await supabase
     .from("classes")
     .select("id,title")
     .eq("id", classId)
+    .eq("class_type", "group")
     .maybeSingle();
   if (!cls) return { ok: false, error: "Class not found." };
 
@@ -578,13 +588,23 @@ export async function deleteGroupClassCore(
     };
   }
 
-  // A running class people still hold places in is ended before it is deleted,
-  // so its members get the cancellation they are owed. `endGroupClassesCore`
-  // collapses that to one message per person however many sessions they held.
-  // Here the end has to succeed: deleting the class while the message failed
-  // would take their sessions away without a word, which is the one outcome
-  // this whole path exists to prevent.
-  if (weight.held > 0 && !isEnded(cls)) {
+  // A class people still hold places in is ended before it is deleted, so its
+  // members get the cancellation they are owed. `endGroupClassesCore` collapses
+  // that to one message per person however many sessions they held. Here the end
+  // has to succeed: deleting the class while the message failed would take their
+  // sessions away without a word, which is the one outcome this whole path
+  // exists to prevent.
+  //
+  // This used to be gated on `&& !isEnded(cls)`, on the reasoning that an ended
+  // class has already sent its cancellations. It hasn't necessarily: `held`
+  // counts places on sessions still AHEAD of us, and an ended class can hold
+  // those — `createOneOffSessionCore` will add a session to one, and nothing
+  // stops a school register being taken against it. So an ended class with a
+  // live future booking was hard-deleted in silence, cascading the child's
+  // booking away, under a ✓ line that said "Nobody was still holding a place, so
+  // nobody needed telling." Gate on the live weight alone; ending is idempotent
+  // for a class that has already stopped.
+  if (weight.held > 0) {
     const ending = await endGroupClassesCore(supabase, founderId, [classId]);
     if (!ending.ok) {
       return { ok: false, error: ending.error ?? "Couldn't cancel the sessions first." };
@@ -614,9 +634,14 @@ export async function deleteGroupClassCore(
   // were on has to say they were told, one nobody was on must not claim a
   // message that never went, and one carrying only unmarked registers must not
   // claim nobody was ever booked on it.
+  //
+  // `cancelledBookings` is the live weight outright, not `isEnded ? 0 : ...`.
+  // The old form was the second half of the bug above: an ended class holding
+  // live places reported zero, so the sheet printed the "nobody needed telling"
+  // line over the exact case where somebody did.
   return {
     ok: true,
-    cancelledBookings: isEnded(cls) ? 0 : weight.held,
+    cancelledBookings: weight.held,
     unmarkedBookings: weight.lapsed,
   };
 }
@@ -663,17 +688,32 @@ export type ClassRemovalPlan = {
   deletableRunning: string[];
   endable: string[];
   purgeable: string[];
+  /** Already ended, but STILL holding a live place on a session ahead of us.
+   * Deleted under the same tick as `purgeable`, but routed through the ending
+   * first so somebody is actually told. Kept as its own list rather than folded
+   * into `endable`, because the founder's choice about it is "delete the ended
+   * ones", not "end the running ones" — putting it in `endable` would hide it
+   * behind a tick he has no reason to look at. */
+  purgeableLive: string[];
+  /** Ids the founder picked that this plan cannot speak for: a private class, a
+   * one-off, or a class that has gone since the page rendered. Reported rather
+   * than dropped — they used to be counted in neither `deleted` nor `kept`, so
+   * a selection could shrink between the tap and the ✓ line with nothing said. */
+  unsupported: string[];
   /** The price of each destructive bucket, for the warning copy: `sessions` and
    * `bookings` are what deleting the `purgeable` classes destroys; `unmarked` is
    * what the plain `deletable` ones still carry; the `running*` pair is what the
    * opt-in running bucket takes with it — the sessions still ahead of it on the
-   * schedule, and any places on hours that came and went unmarked. */
+   * schedule, and any places on hours that came and went unmarked;
+   * `liveBookings` is what `purgeableLive` still holds, and the one number that
+   * stops the purge card claiming nobody is messaged. */
   purgeCost: {
     sessions: number;
     bookings: number;
     unmarked: number;
     runningSessions: number;
     runningUnmarked: number;
+    liveBookings: number;
   };
 };
 
@@ -683,6 +723,7 @@ const NO_PURGE_COST = {
   unmarked: 0,
   runningSessions: 0,
   runningUnmarked: 0,
+  liveBookings: 0,
 };
 
 export async function planClassRemovalCore(
@@ -694,9 +735,11 @@ export async function planClassRemovalCore(
     deletableRunning: [],
     endable: [],
     purgeable: [],
+    purgeableLive: [],
+    unsupported: classIds,
     purgeCost: NO_PURGE_COST,
   };
-  if (!classIds.length) return empty;
+  if (!classIds.length) return { ...empty, unsupported: [] };
 
   // Group classes only. The buckets feed straight into `endGroupClassesCore`,
   // which ends group classes and refuses outright when it is handed a list that
@@ -722,12 +765,19 @@ export async function planClassRemovalCore(
   const deletableRunning: string[] = [];
   const endable: string[] = [];
   const purgeable: string[] = [];
+  const purgeableLive: string[] = [];
   for (const c of classes) {
     const w = weights.get(c.id);
     if (!w || w.recorded + w.held === 0) (c.active ? deletableRunning : deletable).push(c.id);
-    else if (isEnded(c)) purgeable.push(c.id);
+    // An ended class can still hold a place on an hour that hasn't happened.
+    // Both go under the same tick, but only one of them owes somebody a message.
+    else if (isEnded(c)) (w.held > 0 ? purgeableLive : purgeable).push(c.id);
     else endable.push(c.id);
   }
+  // Whatever the founder picked that isn't a group class we can act on — a
+  // private class, a series id that strayed in, or a class already gone.
+  const known = new Set(classes.map((c) => c.id));
+  const unsupported = classIds.filter((id) => !known.has(id));
 
   // What each unconditional-looking delete takes with it. Free — the weights are
   // already counted — and the one number standing between the founder and a card
@@ -737,11 +787,17 @@ export async function planClassRemovalCore(
   const unmarked = lapsedIn(deletable);
   const runningUnmarked = lapsedIn(deletableRunning);
 
+  // How many live places the ended-but-not-finished classes still hold. This is
+  // what stops the purge card asserting "nobody is messaged again" over a child
+  // whose booking is about to disappear.
+  const liveBookings = purgeableLive.reduce((n, id) => n + (weights.get(id)?.held ?? 0), 0);
+
   // The purge needs a price tag of its own: `endable` is the only bucket that
-  // destroys nothing on its own terms, because ending is reversible.
+  // destroys nothing on its own terms, because ending is reversible. Both purge
+  // lists are priced together — they go under one tick, so one number.
   let sessions = 0;
   let bookings = 0;
-  for (const part of chunked(purgeable)) {
+  for (const part of chunked([...purgeable, ...purgeableLive])) {
     const { count: sc } = await supabase
       .from("class_sessions")
       .select("id", { count: "exact", head: true })
@@ -776,18 +832,17 @@ export async function planClassRemovalCore(
     deletableRunning,
     endable,
     purgeable,
-    purgeCost: { sessions, bookings, unmarked, runningSessions, runningUnmarked },
+    purgeableLive,
+    unsupported,
+    purgeCost: {
+      sessions,
+      bookings,
+      unmarked,
+      runningSessions,
+      runningUnmarked,
+      liveBookings,
+    },
   };
-}
-
-/** PostgREST puts `.in()` lists in the query string, so a selection worth of
- * session ids can outgrow the URL. Every filter below that takes ids derived
- * from the selection (rather than the selection itself) goes through here. */
-const ID_CHUNK = 100;
-function chunked<T>(xs: T[], size = ID_CHUNK): T[][] {
-  const out: T[][] = [];
-  for (let i = 0; i < xs.length; i += size) out.push(xs.slice(i, i + size));
-  return out;
 }
 
 /**
@@ -806,7 +861,13 @@ function chunked<T>(xs: T[], size = ID_CHUNK): T[][] {
 export async function endGroupClassesCore(
   supabase: SupabaseClient<Database>,
   founderId: string,
-  classIds: string[]
+  classIds: string[],
+  /** When given, recipients accumulate here and nothing is sent — the caller
+   * flushes once for the whole operation, so a person losing a group class AND
+   * a weekly private slot in the same clear-out still hears once. Omitted, this
+   * makes its own and flushes, which is every existing caller's behaviour
+   * unchanged. */
+  notice?: CancellationNotice
 ): Promise<OpResult & { ended?: number; cancelledSessions?: number }> {
   if (!classIds.length) return { ok: true, ended: 0, cancelledSessions: 0 };
 
@@ -836,11 +897,18 @@ export async function endGroupClassesCore(
   }
   const sessionIds = sessions.map((s) => s.id);
 
+  // Every mutating step below is CHECKED. None of them used to be, and the
+  // success payload was computed from the reads above — so if RLS or a
+  // constraint rejected the writes, this still returned ok, the caller believed
+  // the cancellations had gone out, and (under `deleteBooked`) went on to hard
+  // delete the classes on the strength of a message that was never sent. The
+  // whole `endError` path downstream was unreachable decoration.
   for (const part of chunked(ids)) {
-    await supabase
+    const { error } = await supabase
       .from("classes")
       .update({ active: false, ends_on: nowIso.slice(0, 10) })
       .in("id", part);
+    if (error) return { ok: false, error: "Couldn't stop those classes." };
   }
 
   await settlePastSessions(supabase, ids, nowIso);
@@ -864,17 +932,18 @@ export async function endGroupClassesCore(
     }
 
     for (const part of chunked(sessionIds)) {
-      await supabase
+      const { error } = await supabase
         .from("class_sessions")
         .update({ status: "cancelled", cancel_reason: "class ended" })
         .in("id", part);
+      if (error) return { ok: false, error: "Couldn't cancel those sessions." };
     }
 
     // One update per chunk rather than per booking — the previous per-row loop
     // was the slowest part of ending a single class.
     const bookingIds = bookings.map((b) => b.id);
     for (const part of chunked(bookingIds)) {
-      await supabase
+      const { error } = await supabase
         .from("bookings")
         .update({
           status: "cancelled_by_academy",
@@ -882,6 +951,7 @@ export async function endGroupClassesCore(
           cancel_reason: "class ended",
         })
         .in("id", part);
+      if (error) return { ok: false, error: "Couldn't cancel those bookings." };
     }
 
     for (const b of bookings) {
@@ -898,34 +968,32 @@ export async function endGroupClassesCore(
     }
   }
 
-  /** "Monday 6pm Andheri and 3 other classes" — names one, counts the rest. */
-  const subject = (clsIds: Set<string>) => {
-    const [first] = [...clsIds];
-    const title = titleById.get(first) ?? "Your class";
-    const rest = clsIds.size - 1;
-    if (rest <= 0) return title;
-    return `${title} and ${rest} other ${rest === 1 ? "class" : "classes"}`;
-  };
+  // The collapse itself now lives in CancellationNotice, so that a clear-out
+  // taking group classes AND weekly private slots can still promise one message
+  // per person. Handed a `notice`, this adds to it and sends nothing; the caller
+  // flushes once at the end of the whole operation.
+  const own = notice == null;
+  const acc = notice ?? new CancellationNotice();
+  const asItem = (clsId: string) => ({
+    kind: "class" as const,
+    id: clsId,
+    title: titleById.get(clsId) ?? "Your class",
+  });
+  for (const [clientId, clsIds] of classesByClient)
+    for (const clsId of clsIds) acc.add("client", clientId, asItem(clsId));
+  for (const [coachId, clsIds] of classesByCoach)
+    for (const clsId of clsIds) acc.add("coach", coachId, asItem(clsId));
 
-  for (const [clientId, clsIds] of classesByClient) {
-    const many = clsIds.size > 1;
-    await supabase.from("notifications").insert({
-      user_id: clientId,
-      type: "session_cancelled",
-      title: many ? "Classes ended" : "Class ended",
-      body: `${subject(clsIds)} ${many ? "have" : "has"} finished ${many ? "their" : "its"} run. Your remaining sessions in ${many ? "them" : "it"} are cancelled — your allowance is unaffected.`,
-      data: { url: "/app/book", class_count: clsIds.size, collapsed: many },
-    });
-  }
-  for (const [coachId, clsIds] of classesByCoach) {
-    const many = clsIds.size > 1;
-    await supabase.from("notifications").insert({
-      user_id: coachId,
-      type: "session_cancelled",
-      title: many ? "Classes ended" : "Class ended",
-      body: `${subject(clsIds)} ${many ? "have" : "has"} ended — ${many ? "their" : "its"} sessions are off your calendar.`,
-      data: { url: "/coach", class_count: clsIds.size, collapsed: many },
-    });
+  if (own) {
+    const { failed } = await acc.flush(supabase);
+    // A rejected notification is not a cosmetic failure here: this function is
+    // the ONLY thing that tells anybody a class stopped, and its caller may
+    // delete the class next on the strength of it.
+    if (failed > 0)
+      return {
+        ok: false,
+        error: "Those classes were stopped, but telling everyone affected failed. Try again.",
+      };
   }
 
   return { ok: true, ended: ids.length, cancelledSessions: sessionIds.length };
@@ -974,6 +1042,11 @@ export async function bulkRemoveClassesCore(
     purgeEnded?: boolean;
     deleteBooked?: boolean;
     deleteRunningEmpty?: boolean;
+    /** `private_booking_series` ids. A DIFFERENT id space — no foreign key to
+     * `classes` — kept apart all the way down rather than merged into
+     * `classIds`, where they would match nothing and evaporate. */
+    privateSeriesIds?: string[];
+    endPrivateSeries?: boolean;
   } = {}
 ): Promise<
   OpResult & {
@@ -983,17 +1056,26 @@ export async function bulkRemoveClassesCore(
     purged?: number;
     deletedBooked?: number;
     kept?: number;
+    /** Weekly private slots retired, and the minutes handed back for them. */
+    privateSeriesEnded?: number;
+    minutesReturned?: number;
+    /** Picked, but not something this path can act on. Reported so a selection
+     * can never quietly shrink between the tap and the ✓ line. */
+    unsupported?: number;
     /** Why part of the selection didn't move, when the rest of it did. */
     warning?: string;
   }
 > {
-  if (!classIds.length) return { ok: false, error: "Nothing selected." };
   const {
     endBooked = false,
     purgeEnded = false,
     deleteBooked = false,
     deleteRunningEmpty = false,
+    privateSeriesIds = [],
+    endPrivateSeries = false,
   } = opts;
+  if (!classIds.length && !privateSeriesIds.length)
+    return { ok: false, error: "Nothing selected." };
   const plan = await planClassRemovalCore(supabase, classIds);
 
   // Deleting a class people are on *is* ending it and then removing the record,
@@ -1006,10 +1088,34 @@ export async function bulkRemoveClassesCore(
   // and two calls would text a coach who teaches classes in both buckets twice.
   // The running-but-empty classes are on this list for the coaches alone: nobody
   // holds a place in them, but somebody is rostered on every remaining hour.
+  // `purgeableLive` is on it because an already-ended class can still hold a
+  // place on an hour that hasn't happened; deleting one used to cascade a
+  // child's booking away in silence.
   const toEnd = [
     ...(endFirst ? plan.endable : []),
     ...(deleteRunningEmpty ? plan.deletableRunning : []),
+    ...(purgeEnded ? plan.purgeableLive : []),
   ];
+
+  // ONE accumulator for the whole operation. This is what keeps the guarantee at
+  // one message per person now that a single clear-out can take a group class
+  // and a family's weekly private slot in the same breath.
+  const notice = new CancellationNotice();
+
+  // Private slots FIRST. Retiring the template before anything else means a
+  // failure from here on leaves a dormant series rather than a live one that
+  // refills tonight the very weeks we cancelled this afternoon.
+  let privateSeriesEnded = 0;
+  let minutesReturned = 0;
+  let seriesError: string | undefined;
+  if (endPrivateSeries && privateSeriesIds.length) {
+    const r = await endPrivateSeriesCore(supabase, founderId, privateSeriesIds, notice);
+    if (!r.ok) seriesError = r.error ?? "Couldn't end those weekly private slots.";
+    else {
+      privateSeriesEnded = r.ended ?? 0;
+      minutesReturned = r.minutesReturned ?? 0;
+    }
+  }
 
   // If the ending fails, the classes it would have ended are the only ones that
   // lose out: everything else in the selection is a delete that owes nobody a
@@ -1018,23 +1124,37 @@ export async function bulkRemoveClassesCore(
   // rather than thrown, and only the buckets that depended on it are dropped.
   let endError: string | undefined;
   if (toEnd.length) {
-    const r = await endGroupClassesCore(supabase, founderId, toEnd);
+    const r = await endGroupClassesCore(supabase, founderId, toEnd, notice);
     if (!r.ok) endError = r.error ?? "Couldn't end those classes.";
   }
+
+  // The single flush — the collapse. Before any delete, so that a delete which
+  // fails leaves people correctly told rather than silently robbed.
+  const { failed: noticeFailed } = await notice.flush(supabase);
+  const noticeError =
+    noticeFailed > 0
+      ? `${noticeFailed} ${noticeFailed === 1 ? "person" : "people"} could not be told — check the notifications log.`
+      : undefined;
+
   // Which classes were actually told about — the one honest basis for both
   // "ended" and "kept" below. Counting instead of subtracting matters: a class
   // that vanished between the plan and now used to make `ended - deletedBooked`
   // go negative.
   const endedIds = new Set(endError ? [] : toEnd);
 
-  // Four buckets can be deleted in one statement, but they have to be counted
+  // Five buckets can be deleted in one statement, but they have to be counted
   // apart: "3 deleted", "36 running classes nobody had booked", "2 ended classes
   // wiped with their history" and "1 class people were on, cancelled and
-  // deleted" are four different sentences and the founder is owed the right one.
+  // deleted" are different sentences and the founder is owed the right one.
+  // `purgeableLive` is counted with `purged` — the founder ticked one box.
   const buckets = {
     deleted: plan.deletable,
     deletedRunning: deleteRunningEmpty && !endError ? plan.deletableRunning : [],
-    purged: purgeEnded ? plan.purgeable : [],
+    purged: purgeEnded
+      ? endError
+        ? plan.purgeable
+        : [...plan.purgeable, ...plan.purgeableLive]
+      : [],
     deletedBooked: deleteBooked && !endError ? plan.endable : [],
   };
   const toDelete = [
@@ -1044,24 +1164,33 @@ export async function bulkRemoveClassesCore(
     ...buckets.deletedBooked,
   ];
 
+  // Reminders already queued for the hours we are about to remove. bookings
+  // cascade away with their session, but the pending 'reminder_upcoming' row
+  // naming it does not — `notifications` has no DELETE policy, so this RPC is
+  // the only way to reach them. Best-effort: a missed reminder is bad, but not a
+  // reason to abandon a clear-out the founder asked for.
+  if (toDelete.length) {
+    await supabase.rpc("purge_pending_session_reminders", { p_class_ids: toDelete });
+  }
+
   const removedIds = new Set<string>();
+  let deleteError: string | undefined;
   for (const part of chunked(toDelete)) {
     const { data, error } = await supabase
       .from("classes")
       .delete()
       .in("id", part)
       .select("id");
-    // A delete that fails after the ending went through is not "nothing
-    // happened": the sessions are cancelled and the messages are out. Saying so
-    // is the difference between a founder retrying and a founder wondering why
-    // his coaches were told about classes that are still on the list.
-    if (error)
-      return {
-        ok: false,
-        error: endedIds.size
-          ? "Those classes were ended and everyone affected was told, but removing them failed. They're still on the list — try again."
-          : "Couldn't delete the classes.",
-      };
+    // Do NOT abandon the run here. Returning mid-loop left up to a chunk's worth
+    // of classes already deleted and reported nowhere — the founder was told
+    // "couldn't delete the classes" about a list that was partly gone. Remember
+    // the failure, keep going, and let the counts below say what actually moved.
+    if (error) {
+      deleteError ??= endedIds.size
+        ? "Some of those classes were ended and everyone affected was told, but removing them failed. They're still on the list — try again."
+        : "Some of those classes couldn't be deleted — try again.";
+      continue;
+    }
     for (const c of data ?? []) removedIds.add(c.id);
   }
   const countIn = (ids: string[]) => ids.filter((id) => removedIds.has(id)).length;
@@ -1072,18 +1201,22 @@ export async function bulkRemoveClassesCore(
 
   // Nothing moved at all and the ending is why — that is a failure, and the
   // founder should hear the real reason rather than a cheerful "nothing changed".
-  if (endError && removedIds.size === 0) return { ok: false, error: endError };
+  if ((endError || seriesError) && removedIds.size === 0 && privateSeriesEnded === 0)
+    return { ok: false, error: endError ?? seriesError };
 
   // A class that was ended and then deleted is reported as deleted, not as
   // ended — it was both, and counting it twice would overstate what is left.
   const endedOnly = [...endedIds].filter((id) => !removedIds.has(id)).length;
 
   // "Kept" is simply what the founder still has: everything he picked that we
-  // neither deleted nor ended.
+  // neither deleted nor ended. `unsupported` is deliberately NOT in here — it is
+  // reported on its own line, because "left alone" and "we couldn't find it" are
+  // different things to hear.
   const kept = [
     ...plan.deletable,
     ...plan.deletableRunning,
     ...plan.purgeable,
+    ...plan.purgeableLive,
     ...plan.endable,
   ].filter((id) => !removedIds.has(id) && !endedIds.has(id)).length;
 
@@ -1093,11 +1226,15 @@ export async function bulkRemoveClassesCore(
     entity: "classes",
     meta: {
       selected: classIds.length,
+      selected_series: privateSeriesIds.length,
       deleted,
       deleted_running: deletedRunning,
       ended: endedOnly,
       purged,
       deletedBooked,
+      private_series_ended: privateSeriesEnded,
+      minutes_returned: minutesReturned,
+      unsupported: plan.unsupported.length,
       kept,
     },
   });
@@ -1108,6 +1245,9 @@ export async function bulkRemoveClassesCore(
   // ending fails, and the screen says "3 classes deleted. 2 were left alone."
   // — worst under deleteBooked, where classes he asked to DELETE come back as
   // "left alone" with nothing to explain why.
+  const warning =
+    [endError, seriesError, deleteError, noticeError].filter(Boolean).join(" ") || undefined;
+
   return {
     ok: true,
     deleted,
@@ -1116,7 +1256,10 @@ export async function bulkRemoveClassesCore(
     purged,
     deletedBooked,
     kept,
-    warning: endError,
+    privateSeriesEnded,
+    minutesReturned,
+    unsupported: plan.unsupported.length,
+    warning,
   };
 }
 

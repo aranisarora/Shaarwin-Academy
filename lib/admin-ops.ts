@@ -15,6 +15,10 @@ export type { OpResult } from "@/lib/admin-ops-types";
 // stays the single import surface for both the admin actions and the bot.
 export * from "@/lib/admin-ops-classes";
 export * from "@/lib/admin-ops-calendar";
+export * from "@/lib/admin-ops-private-series";
+export * from "@/lib/admin-ops-wipe";
+export * from "@/lib/admin-ops-removal-notice";
+export * from "@/lib/admin-ops-chunk";
 export * from "@/lib/admin-ops-coaches";
 export * from "@/lib/admin-ops-clients";
 export * from "@/lib/admin-ops-venues";
