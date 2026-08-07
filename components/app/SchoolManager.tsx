@@ -27,6 +27,7 @@ import { Spinner } from "@/components/ui/Spinner";
 import { ConfirmAction } from "@/components/ui/ConfirmAction";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { isSyntheticEmail } from "@/lib/synthetic-email";
+import { handoverText, schoolLoginUrl } from "@/lib/school-handover";
 import { academyToday, formatDateFull, utcToAcademyWall } from "@/lib/academy-time";
 import {
   openSchoolLogin,
@@ -51,16 +52,6 @@ type Login = {
   saved: boolean;
   lastSignInAt: string | null;
 };
-
-/**
- * Where the school is told to go. Deliberately not `window.location.origin`:
- * this text gets pasted into WhatsApp and lives on a head teacher's phone for a
- * term, and a founder who opened the admin app from a Vercel preview URL would
- * be sending a link that stops resolving the week after.
- */
-const APP_ORIGIN = (
-  process.env.NEXT_PUBLIC_APP_URL ?? "https://sharwinacademy.com"
-).replace(/\/$/, "");
 
 const label = (s: School) => (s.unit ? `${s.name} · ${s.unit}` : s.name);
 
@@ -106,45 +97,6 @@ function facts(s: School): string {
   // A real address is worth showing on a row; the one we minted is plumbing.
   if (s.account && !isSyntheticEmail(s.account.email)) parts.push(s.account.email);
   return parts.join(" · ");
-}
-
-/**
- * The message the founder actually sends. One body, whichever button he uses,
- * so the copied text and the WhatsApp text can never drift apart.
- *
- * Written for a school administrator who has never heard of the app and will
- * read it on a phone. Every constraint in it is load-bearing:
- *
- *   • Plain text with a bare URL. WhatsApp renders no markdown, and a link in
- *     brackets arrives as literal brackets.
- *   • The credentials sit alone between blank lines. On a narrow screen that is
- *     the difference between two fields to copy and a wall of prose.
- *   • It never says "check your email". The address is a mailbox nothing is
- *     delivered to, so a school waiting on a confirmation would wait forever.
- *   • It says there is no reset link, because there isn't one — a lost password
- *     comes back through us, and a school that doesn't know that will assume
- *     the page is broken.
- *   • It says the login is shared, so the first person to receive it doesn't
- *     treat it as personal and sit on it.
- */
-function handoverText(school: string, email: string, password: string): string {
-  return [
-    `Sharwin Academy — ${school}`,
-    "",
-    "You can now see how your pupils are getting on in our sessions: who attended, how each child is progressing, and the coaches' notes on them.",
-    "",
-    'Open this page and choose "Log in with a password":',
-    `${APP_ORIGIN}/login`,
-    "",
-    `Email: ${email}`,
-    `Password: ${password}`,
-    "",
-    isSyntheticEmail(email)
-      ? 'Type both exactly as written. That email is only a username — nothing is ever sent to it, and there is no "forgot password" link, so please keep this message.'
-      : 'Type both exactly as written. There is no "forgot password" link on this page, so please keep this message.',
-    "",
-    "Anyone at the school can use the same login. Tell us if you would like it changed and we will send new details.",
-  ].join("\n");
 }
 
 export function SchoolManager({ schools }: { schools: School[] }) {
@@ -385,13 +337,30 @@ export function SchoolManager({ schools }: { schools: School[] }) {
                         {copied ? "Copied" : "Copy"}
                       </Button>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => setPreview((p) => !p)}
-                      className="text-sm text-fg-2 underline-offset-4 hover:underline"
-                    >
-                      {preview ? "Hide the message" : "See the message"}
-                    </button>
+                    <p className="text-sm text-fg-2">
+                      The message carries a link that opens the school&apos;s
+                      sign-in page with this email already filled in. Only the
+                      password has to be typed.
+                    </p>
+                    <div className="flex flex-wrap gap-x-4 gap-y-1">
+                      <button
+                        type="button"
+                        onClick={() => setPreview((p) => !p)}
+                        className="text-sm text-fg-2 underline-offset-4 hover:underline"
+                      >
+                        {preview ? "Hide the message" : "See the message"}
+                      </button>
+                      {/* Opening it himself is the only way to know the handover
+                          works before a school finds out that it doesn't. */}
+                      <a
+                        href={schoolLoginUrl(login.email)}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-sm text-fg-2 underline-offset-4 hover:underline"
+                      >
+                        Try the link
+                      </a>
+                    </div>
                     {preview && (
                       <pre className="overflow-x-auto whitespace-pre-wrap rounded-[12px] border border-line bg-surface px-4 py-3 text-sm">
                         {share}

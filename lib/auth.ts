@@ -1,6 +1,7 @@
 import { cache } from "react";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { roleHome } from "@/lib/access-gates";
 import type { StructuredAddress } from "@/lib/address";
 
 /**
@@ -24,6 +25,30 @@ export const getCurrentUser = cache(async () => {
   if (!claims?.sub) return null;
   return { id: claims.sub, email: typeof claims.email === "string" ? claims.email : "" };
 });
+
+/**
+ * Send an already-signed-in visitor to their own app, and return quietly if
+ * there is nobody signed in.
+ *
+ * Every way-in calls this first. The proxy would correct a wrong guess on the
+ * next hop, but that is a second round trip for a coach, a founder or a school
+ * to reach their own home — so the destination is resolved here from the role.
+ *
+ * Deliberately its own select rather than `getProfileRow`: this runs on public
+ * pages, where the wide profile read is a cost nothing else on the page pays.
+ */
+export async function redirectSignedInHome(): Promise<void> {
+  const user = await getCurrentUser();
+  if (!user) return;
+
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("profiles")
+    .select("role")
+    .eq("id", user.id)
+    .maybeSingle();
+  redirect(roleHome(data?.role));
+}
 
 /**
  * Keep in step with `Profile` below — this is the shape the select produces.

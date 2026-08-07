@@ -1,33 +1,40 @@
 import type { Metadata } from "next";
-import Link from "next/link";
 import { Suspense } from "react";
 import { redirect } from "next/navigation";
-import { StageShell } from "@/components/shells/StageShell";
+import { AuthLayout, AuthAlternative } from "@/components/auth/AuthLayout";
 import { AuthForm } from "@/components/auth/AuthForm";
 import { getCurrentUser } from "@/lib/auth";
 
 export const metadata: Metadata = { title: "Sign up" };
 
+/**
+ * Signing up is only ever a family, so unlike `/login` this page keeps its own
+ * "you are already signed in" redirect: whoever is here has no account yet, and
+ * the /app hop is the right answer for the one case where they do.
+ *
+ * There is no school route out of here. A school does not sign itself up — the
+ * founder mints its login and sends it — so offering the choice would be
+ * offering a door with nothing behind it. The school link lives on `/login`,
+ * which is where a school that has been sent a link actually lands.
+ */
 export default async function SignupPage() {
   if (await getCurrentUser()) redirect("/app");
 
   return (
-    <StageShell>
-      <div className="mx-auto flex min-h-[70dvh] max-w-md flex-col justify-center px-6 pb-20 pt-32">
-        <h1 className="font-display mb-2 text-4xl">Take your place at the table</h1>
-        <p className="mb-2 text-fg-2">
-          New here? Sign up and request access — we personally approve every new family.
-        </p>
-        <p className="mb-8 text-fg-2">
-          Already a member?{" "}
-          <Link href="/login" className="text-ember underline-offset-4 hover:underline">
-            Log in
-          </Link>
-        </p>
-        <Suspense>
-          <AuthForm mode="signup" />
-        </Suspense>
-      </div>
-    </StageShell>
+    <AuthLayout
+      title="Take your place at the table"
+      lead="Sign up and request access — we personally approve every new family."
+      alternatives={
+        <AuthAlternative
+          question="Already a member?"
+          href="/login"
+          label="Log in"
+        />
+      }
+    >
+      <Suspense>
+        <AuthForm mode="signup" />
+      </Suspense>
+    </AuthLayout>
   );
 }
