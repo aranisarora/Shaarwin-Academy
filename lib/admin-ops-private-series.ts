@@ -20,6 +20,12 @@ import type { Database } from "@/lib/database.types";
 import type { OpResult } from "@/lib/admin-ops-types";
 import { CancellationNotice } from "@/lib/admin-ops-removal-notice";
 import { chunked } from "@/lib/admin-ops-chunk";
+import {
+  academyWallToUtc,
+  formatSessionDate,
+  shiftWallDate,
+  utcToAcademyWall,
+} from "@/lib/academy-time";
 
 const WEEKDAY_LABEL = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
@@ -32,6 +38,222 @@ export function seriesLabel(weekday: number, startTime: string): string {
   const suffix = h >= 12 ? "pm" : "am";
   const h12 = h % 12 === 0 ? 12 : h % 12;
   return `${day} ${h12}:${m} ${suffix}`;
+}
+
+/** What the founder can change about a standing slot. Undefined means "leave it". */
+export type PrivateSeriesPatch = {
+  /** ISO weekday, 1 = Monday. */
+  weekday?: number;
+  /** "HH:MM" academy wall clock. */
+  startTime?: string;
+  /** null hands the slot back to automatic assignment. */
+  preferredCoach?: string | null;
+};
+
+/**
+ * Move a family's standing weekly slot — and take the weeks already on the
+ * calendar with it.
+ *
+ * The template alone is not the slot. `generate_private_sessions` materialises
+ * `active` series into real sessions weeks ahead, and its regeneration guard
+ * skips any week that already carries a booking. So updating only the row here
+ * would leave every week already generated sitting at the OLD time, with new
+ * weeks appearing at the new one — the family's Tuesday would be Tuesday until
+ * some date in the future and Thursday after it, and nothing on any screen
+ * would explain why. Whatever is already out there has to move too.
+ *
+ * ONE message per person, not one per week. Moving eight generated weeks
+ * through `moveSessionCore` would be eight "your session moved" notifications
+ * for a single decision — the founder changed one thing, so the family hears
+ * one thing.
+ *
+ * Length and location are deliberately not here. Both change what the family is
+ * charged or where a coach is sent, and both are set through the booking wizard
+ * that geocodes an address — a slot that needs those changed is a slot to end
+ * and re-book, and the panel says so rather than offering a Save that would
+ * quietly do less than it looked like.
+ */
+export async function updatePrivateSeriesCore(
+  supabase: SupabaseClient<Database>,
+  founderId: string,
+  seriesId: string,
+  patch: PrivateSeriesPatch
+): Promise<
+  OpResult & {
+    /** Generated weeks carried across to the new slot. */
+    movedSessions?: number;
+    /** Weeks whose new time clashed for the coach, so they lost him and go
+     *  back through automatic assignment. */
+    coachCleared?: number;
+  }
+> {
+  const { data: series } = await supabase
+    .from("private_booking_series")
+    .select("id,active,weekday,start_time,duration_minutes,preferred_coach,client_id")
+    .eq("id", seriesId)
+    .maybeSingle();
+  if (!series) return { ok: false, error: "That weekly slot is no longer there." };
+  if (!series.active)
+    return { ok: false, error: "That slot has ended. Restore it before changing it." };
+
+  const oldWeekday = series.weekday;
+  const oldTime = String(series.start_time).slice(0, 5);
+  const newWeekday = patch.weekday ?? oldWeekday;
+  const newTime = patch.startTime ?? oldTime;
+  const coachChanged = patch.preferredCoach !== undefined;
+  const newCoach = coachChanged ? patch.preferredCoach : series.preferred_coach;
+  const slotMoved = newWeekday !== oldWeekday || newTime !== oldTime;
+
+  if (!slotMoved && !coachChanged) return { ok: true, movedSessions: 0, coachCleared: 0 };
+
+  const { error: updateErr } = await supabase
+    .from("private_booking_series")
+    .update({
+      weekday: newWeekday,
+      start_time: `${newTime}:00`,
+      ...(coachChanged ? { preferred_coach: newCoach } : {}),
+    })
+    .eq("id", seriesId);
+  if (updateErr) return { ok: false, error: "Couldn't change that weekly slot." };
+
+  // The weeks already on the calendar. Reached through the booking, because
+  // that is the only link a session has back to the series it came from.
+  const nowIso = new Date().toISOString();
+  const { data: bookingRows } = await supabase
+    .from("bookings")
+    .select("client_id,session_id,class_sessions!inner(id,starts_at,coach_id,status)")
+    .eq("private_series_id", seriesId)
+    .in("status", ["confirmed", "waitlisted"])
+    .eq("class_sessions.status", "scheduled")
+    .gt("class_sessions.starts_at", nowIso);
+
+  const sessions = new Map<string, { startsAt: string; coachId: string | null }>();
+  const clientIds = new Set<string>();
+  for (const b of bookingRows ?? []) {
+    const s = b.class_sessions as unknown as {
+      id: string;
+      starts_at: string;
+      coach_id: string | null;
+    } | null;
+    if (!s) continue;
+    sessions.set(s.id, { startsAt: s.starts_at, coachId: s.coach_id });
+    if (b.client_id) clientIds.add(b.client_id);
+  }
+
+  // Every coach who had a week of this slot hears about it, plus whoever is
+  // taking it from now on — the one losing it and the one gaining it are two
+  // different people the moment the coach changes.
+  const affectedCoaches = new Set<string>();
+  for (const s of sessions.values()) if (s.coachId) affectedCoaches.add(s.coachId);
+
+  let movedSessions = 0;
+  let coachCleared = 0;
+  const dayShift = newWeekday - oldWeekday;
+
+  for (const [sessionId, s] of sessions) {
+    const wall = utcToAcademyWall(new Date(s.startsAt));
+    // Shift within the week the session already sits in, so a slot that moves
+    // Tuesday → Thursday keeps its run of weeks rather than collapsing them all
+    // onto the next single date.
+    let newDate = shiftWallDate(wall.date, dayShift);
+    let newStart = academyWallToUtc(newDate, newTime);
+    // Moving earlier in the week can land a session in the past. Push that one
+    // week on rather than failing the whole change or silently dropping it.
+    if (newStart <= new Date()) {
+      newDate = shiftWallDate(newDate, 7);
+      newStart = academyWallToUtc(newDate, newTime);
+    }
+    const newEnd = new Date(newStart.getTime() + series.duration_minutes * 60000);
+
+    const nextCoach = coachChanged ? newCoach : s.coachId;
+    const base = {
+      starts_at: newStart.toISOString(),
+      ends_at: newEnd.toISOString(),
+      ...(coachChanged ? { coach_id: nextCoach } : {}),
+    };
+
+    const { error } = await supabase.from("class_sessions").update(base).eq("id", sessionId);
+    if (error) {
+      // `coach_no_overlap` refused it — the coach is already teaching then.
+      // Same fallback moveSessionCore uses: the week still moves, it just
+      // arrives with nobody on it and goes back through assignment.
+      const { error: retryErr } = await supabase
+        .from("class_sessions")
+        .update({ ...base, coach_id: null })
+        .eq("id", sessionId);
+      if (retryErr) continue;
+      coachCleared += 1;
+    }
+    movedSessions += 1;
+    if (nextCoach) affectedCoaches.add(nextCoach);
+  }
+
+  if (coachCleared > 0) await supabase.rpc("assign_unassigned_sessions");
+
+  // ── One message each ───────────────────────────────────────────────────────
+  const label = seriesLabel(newWeekday, newTime);
+  const wasLabel = seriesLabel(oldWeekday, oldTime);
+  const nextIso = [...sessions.keys()].length
+    ? formatSessionDate(
+        academyWallToUtc(
+          shiftWallDate(
+            utcToAcademyWall(
+              new Date(
+                [...sessions.values()].map((s) => s.startsAt).sort()[0] ?? nowIso
+              )
+            ).date,
+            dayShift
+          ),
+          newTime
+        )
+      )
+    : null;
+
+  if (slotMoved) {
+    for (const clientId of clientIds) {
+      await supabase.from("notifications").insert({
+        user_id: clientId,
+        type: "session_moved",
+        title: "Weekly session moved",
+        body: `Your weekly private session has moved from ${wasLabel} to ${label}${
+          nextIso ? `, starting ${nextIso}` : ""
+        }.`,
+        data: {
+          series_id: seriesId,
+          old_slot: wasLabel,
+          new_slot: label,
+          url: "/app/schedule",
+        },
+      });
+    }
+  }
+
+  for (const coachId of affectedCoaches) {
+    await supabase.from("notifications").insert({
+      user_id: coachId,
+      type: "session_moved",
+      title: slotMoved ? "Weekly private slot moved" : "Weekly private slot reassigned",
+      body: slotMoved
+        ? `A weekly private has moved from ${wasLabel} to ${label}. Check your calendar.`
+        : `A weekly private on ${label} has changed coach. Check your calendar.`,
+      data: { series_id: seriesId, old_slot: wasLabel, new_slot: label, url: "/coach" },
+    });
+  }
+
+  await supabase.from("audit_log").insert({
+    actor_id: founderId,
+    action: "private_series.update",
+    entity: "private_booking_series",
+    entity_id: seriesId,
+    meta: {
+      old: { weekday: oldWeekday, start_time: oldTime, preferred_coach: series.preferred_coach },
+      new: { weekday: newWeekday, start_time: newTime, preferred_coach: newCoach },
+      moved_sessions: movedSessions,
+      coach_cleared: coachCleared,
+    },
+  });
+
+  return { ok: true, movedSessions, coachCleared };
 }
 
 /**

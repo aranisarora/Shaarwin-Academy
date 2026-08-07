@@ -37,6 +37,8 @@ import {
   setSessionCapacityCore,
   topUpSessionsCore,
   updateGroupClassCore,
+  updatePrivateSeriesCore,
+  type PrivateSeriesPatch,
   type ClassUpdate,
   type NewOneOffClass,
   type PrivateSessionInput,
@@ -62,6 +64,9 @@ import {
 //                                      each across every slot in the selection; the
 //                                      minutes go back in full, including a week
 //                                      inside the 24-hour window
+//   updatePrivateSeries .............. notifies the family *iff* the slot moves, and every
+//                                      coach who had a week of it or is taking it now —
+//                                      ONE message each however many weeks move
 //   planPrivateSeriesRemoval ......... notifies nobody (read-only preview)
 //   reassignClassCoach ............... notifies the coach(es)
 //   deleteGroupClass ................. notifies nobody when the class holds no live booking;
@@ -266,6 +271,25 @@ export async function endPrivateSeries(
     ended: result.ended,
     cancelled: result.cancelled,
     minutesReturned: result.minutesReturned,
+  };
+}
+
+/** Move a family's standing weekly slot, or change who takes it. Carries the
+ *  weeks already on the calendar across with it — see updatePrivateSeriesCore
+ *  for why changing only the template would split the family's weeks in two. */
+export async function updatePrivateSeries(
+  seriesId: string,
+  patch: PrivateSeriesPatch
+): Promise<Result & { movedSessions?: number; coachCleared?: number }> {
+  const { supabase, founder } = await requireFounder();
+  if (!founder) return { ok: false, error: "Founder only." };
+  const result = await updatePrivateSeriesCore(supabase, founder.id, seriesId, patch);
+  if (!result.ok) return result;
+  refresh();
+  return {
+    ok: true,
+    movedSessions: result.movedSessions,
+    coachCleared: result.coachCleared,
   };
 }
 
