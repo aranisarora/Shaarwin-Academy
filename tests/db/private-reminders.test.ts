@@ -36,7 +36,6 @@ async function bookPrivate(recurWeeks?: number) {
     lat: 12.9698,
     lng: 77.75,
     coachId: coach.id,
-    overridePlanLimits: true,
     ...(recurWeeks ? { recurWeeks } : {}),
   } as Parameters<typeof createPrivateSessionCore>[2]);
   expect(result.ok).toBe(true);

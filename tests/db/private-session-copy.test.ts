@@ -43,7 +43,6 @@ async function bookPrivate(opts: { recurWeeks?: number } = {}) {
     lat: 12.9698,
     lng: 77.75,
     coachId: coach.id,
-    overridePlanLimits: true,
     ...(opts.recurWeeks ? { recurWeeks: opts.recurWeeks } : {}),
   } as Parameters<typeof createPrivateSessionCore>[2]);
 

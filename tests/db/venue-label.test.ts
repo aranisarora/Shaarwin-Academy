@@ -194,7 +194,6 @@ describe("location_label — venue plus the unit inside it", () => {
       venueId,
       unitLabel: "Clubhouse",
       coachId: coach.id,
-      overridePlanLimits: true,
     } as Parameters<typeof createPrivateSessionCore>[2]);
     expect(result.ok).toBe(true);
 

@@ -13,7 +13,7 @@
 import { useState, useTransition } from "react";
 import { formatWallDay } from "@/lib/academy-time";
 import { Sheet } from "@/components/ui/Sheet";
-import { Checkbox, Radio } from "@/components/ui/Checkbox";
+import { Radio } from "@/components/ui/Checkbox";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";
@@ -159,7 +159,6 @@ export function AdminAddSheet({
      *  needs no further directions — but it's the only way to say "the villas'
      *  clubhouse" rather than a clubhouse the coach may not be let into. */
     unit: "",
-    overrideLimits: false,
     // On the Weekly classes tab a private class repeats by default; the
     // Schedule tab only ever books one-offs.
     recurring: variant === "create",
@@ -167,7 +166,6 @@ export function AdminAddSheet({
   });
   const [privWeekdays, setPrivWeekdays] = useState<string[]>(["MO"]);
   const [privDayTimes, setPrivDayTimes] = useState<Record<string, string>>({ MO: "17:00" });
-  const [showAdvanced, setShowAdvanced] = useState(false);
 
   function togglePrivDay(code: string) {
     setPrivWeekdays((prev) =>
@@ -244,13 +242,11 @@ export function AdminAddSheet({
         coachId: "",
         venueId: venues[0]?.id ?? "",
         unit: "",
-        overrideLimits: false,
         recurring: variant === "create",
         recurWeeks: 4,
       });
       setPrivWeekdays(["MO"]);
       setPrivDayTimes({ MO: "17:00" });
-      setShowAdvanced(false);
     }
   }
 
@@ -334,7 +330,6 @@ export function AdminAddSheet({
           venueId: venue.id,
           unitLabel: priv.unit.trim() || undefined,
           coachId: priv.coachId || undefined,
-          overridePlanLimits: priv.overrideLimits,
         };
 
         if (isOpen) {
@@ -815,36 +810,6 @@ export function AdminAddSheet({
               </span>
               .
             </p>
-
-            {!isOpen && (
-              <div>
-                <button
-                  type="button"
-                  onClick={() => setShowAdvanced((s) => !s)}
-                  className="text-sm text-fg-2 underline-offset-4 hover:underline"
-                >
-                  {showAdvanced ? "▼" : "▶"} Advanced
-                </button>
-                {showAdvanced && (
-                  <div className="mt-3 rounded-[12px] border border-line bg-surface-2 p-4">
-                    <label className="flex cursor-pointer items-start gap-3">
-                      <Checkbox
-                        checked={priv.overrideLimits}
-                        onChange={(e) => setPriv({ ...priv, overrideLimits: e.target.checked })}
-                        className="mt-0.5"
-                      />
-                      <span className="text-sm">
-                        <span className="font-medium">Override plan restrictions</span>
-                        <span className="mt-0.5 block text-fg-2">
-                          Lets you book beyond this client&apos;s weekly session limit or maximum
-                          session length.
-                        </span>
-                      </span>
-                    </label>
-                  </div>
-                )}
-              </div>
-            )}
 
             {!isOpen && (
               <p className="text-sm text-fg-2">
