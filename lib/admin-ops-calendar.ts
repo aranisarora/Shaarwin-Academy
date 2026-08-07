@@ -253,7 +253,8 @@ function addWeeksToWallDate(date: string, weeks: number): string {
  * the client can cancel all future weeks from their schedule, and the nightly
  * generate_private_sessions keeps rolling the horizon while their plan is live.
  * The initial `recurWeeks` weeks are booked here; the whole run rolls back if
- * any week fails.
+ * any week fails. With no client (an open slot) the same `recurWeeks` holds
+ * that many weeks of empty sessions — no series, since one needs a client.
  */
 export async function createPrivateSessionCore(
   supabase: SupabaseClient<Database>,
@@ -312,8 +313,9 @@ export async function createPrivateSessionCore(
   // >1 week means a standing weekly slot, not a fixed block: we create a real
   // private_booking_series (same model as the client-side create_private_series)
   // so it shows as "Weekly", the client can cancel all future weeks, and the
-  // nightly generate_private_sessions keeps rolling the horizon. Open slots have
-  // no client to key a series to, so they're always a single held session.
+  // nightly generate_private_sessions keeps rolling the horizon. An open slot
+  // still books its N weeks — private_booking_series is keyed to a client and a
+  // player, so what it can't have is the rolling template, not the occurrences.
   const recurring = weeks > 1 && !isOpen;
   // ISO weekday (Mon=1..Sun=7) of the first occurrence, in the IST wall date.
   const isoWeekday = (((new Date(`${input.date}T00:00:00Z`).getUTCDay() + 6) % 7) + 1);
@@ -522,8 +524,12 @@ export async function createPrivateSessionCore(
   }
   if (input.coachId) {
     // One message for the whole booking, not one per occurrence — a recurring
-    // private over N weeks used to queue N messages to the same coach.
+    // private over N weeks used to queue N messages to the same coach. Count
+    // sessions rather than reading `recurring`: an open slot booked over N
+    // weeks is N sessions without being a series, and the coach still has to
+    // turn up to all of them.
     const first = createdSessions[0];
+    const many = createdSessions.length > 1;
     // A notification body is frozen at INSERT, so this has to resolve here
     // rather than lean on a read-time fix. Read through the database — not a
     // TypeScript twin — so it is byte-identical to what the notify worker and
@@ -537,8 +543,8 @@ export async function createPrivateSessionCore(
     await supabase.from("notifications").insert({
       user_id: input.coachId,
       type: "new_private_session",
-      title: recurring ? "New weekly private session" : "New private session",
-      body: recurring
+      title: many ? "New weekly private session" : "New private session",
+      body: many
         ? `${createdSessions.length} sessions from ${whenIST(first.start)} — ${where}`
         : `${whenIST(first.start)} — ${where}`,
       data: {
@@ -560,7 +566,9 @@ export async function createPrivateSessionCore(
     meta: {
       client_id: clientId ?? null,
       minutes: duration,
-      weeks: recurring ? weeks : 1,
+      // The span booked, series or not — an open slot held over N weeks is
+      // still N weeks, and logging 1 there hid whole runs from the audit trail.
+      weeks,
       sessions: createdSessions.length,
       private_series_id: seriesId,
     },

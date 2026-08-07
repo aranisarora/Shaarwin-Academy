@@ -333,16 +333,38 @@ export function AdminAddSheet({
         };
 
         if (isOpen) {
-          // Open slot: a single held session with no client, no minutes debit.
-          const r = await createPrivateSession({
-            ...locationDetails,
-            time: priv.time,
-            date: priv.date,
-            recurWeeks: 1,
-          });
-          if (r.ok) {
-            setSuccess("Open private slot added — assign a client to it any time.");
-          } else setMessage(r.error ?? "Couldn't add the slot.");
+          // Open slots take the same days/repeat as a client booking — the one
+          // difference is downstream: with no client there's no series to key a
+          // standing slot to, so a repeat holds exactly N weeks of empty
+          // sessions. No booking and no minutes debit until one is assigned.
+          if (priv.recurring) {
+            for (const day of privWeekdays) {
+              const r = await createPrivateSession({
+                ...locationDetails,
+                time: privDayTimes[day] ?? priv.time,
+                date: firstOccurrenceOnOrAfter(priv.startFrom, day),
+                recurWeeks: priv.recurWeeks,
+              });
+              if (!r.ok) {
+                setMessage(r.error ?? "Couldn't add the slot.");
+                return;
+              }
+            }
+            const dayNames = privWeekdays.map((d) => WEEKDAY_NAME[d] ?? d).join(", ");
+            setSuccess(
+              `${totalPrivSessions} open private slots held (${dayNames}) — assign a client to any of them later.`
+            );
+          } else {
+            const r = await createPrivateSession({
+              ...locationDetails,
+              time: priv.time,
+              date: priv.date,
+              recurWeeks: 1,
+            });
+            if (r.ok) {
+              setSuccess("Open private slot added — assign a client to it any time.");
+            } else setMessage(r.error ?? "Couldn't add the slot.");
+          }
         } else if (priv.recurring) {
           // Recurring: one series per selected weekday at that day's own time,
           // starting from the first occurrence of that weekday on or after
@@ -405,11 +427,7 @@ export function AdminAddSheet({
         ? !!form.venueId && dates.length > 0
         : !!form.venueId && weekdays.length > 0
       : !!priv.clientId && !!priv.time && !!priv.venueId &&
-        (isOpen
-          ? !!priv.date
-          : priv.recurring
-            ? privWeekdays.length > 0 && !!priv.startFrom
-            : !!priv.date);
+        (priv.recurring ? privWeekdays.length > 0 && !!priv.startFrom : !!priv.date);
 
   const totalPrivSessions = privWeekdays.length * priv.recurWeeks;
   const submitLabel =
@@ -424,7 +442,9 @@ export function AdminAddSheet({
             ? "Publish school class"
             : "Publish class"
       : isOpen
-        ? "Add open slot"
+        ? priv.recurring
+          ? `Hold ${totalPrivSessions} open slots`
+          : "Add open slot"
         : priv.recurring
           ? privWeekdays.length > 1
             ? `Book ${totalPrivSessions} sessions`
@@ -608,11 +628,9 @@ export function AdminAddSheet({
             <Select
               label="Client"
               value={priv.clientId}
-              onChange={(e) => {
-                const v = e.target.value;
-                // Open slots are single held sessions — never recurring.
-                setPriv({ ...priv, clientId: v, playerId: "", recurring: v === "open" ? false : priv.recurring });
-              }}
+              onChange={(e) =>
+                setPriv({ ...priv, clientId: e.target.value, playerId: "" })
+              }
             >
               <option value="">— pick a client —</option>
               <option value="open">No client — open slot (assign later)</option>
@@ -645,6 +663,9 @@ export function AdminAddSheet({
               <p className="text-sm text-fg-2">
                 Holds an empty private slot — pick a coach, venue and time now, then assign
                 a client from the session later. No minutes are charged until you do.
+                {priv.recurring
+                  ? " Repeating holds exactly that many weeks: with no client there's no standing slot to keep rolling."
+                  : ""}
               </p>
             )}
 
@@ -674,8 +695,10 @@ export function AdminAddSheet({
             </Select>
 
             {/* One-off sessions from the Schedule tab never repeat — the
-                repeating kind lives in the Weekly classes tab. */}
-            {!isOpen && variant === "create" && (
+                repeating kind lives in the Weekly classes tab. Open slots
+                repeat the same way; they just hold N weeks of empty sessions
+                rather than a standing series (which needs a client to key to). */}
+            {variant === "create" && (
             <fieldset className="space-y-2">
               <legend className="label">Repeat</legend>
               <label className="flex min-h-11 cursor-pointer items-center gap-3 rounded-[12px] border border-line bg-surface-2 px-4 py-3">
@@ -732,7 +755,9 @@ export function AdminAddSheet({
                 <div>
                   <p className="label mb-2">Days</p>
                   <p className="mb-2 text-sm text-fg-2">
-                    Pick one or more — a recurring series is created for each day, at its own time.
+                    {isOpen
+                      ? "Pick one or more — a slot is held for each day, at its own time."
+                      : "Pick one or more — a recurring series is created for each day, at its own time."}
                   </p>
                   <div className="mb-3 flex flex-wrap gap-2">
                     {WEEKDAYS.map(([code, name]) => (
