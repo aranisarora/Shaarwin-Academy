@@ -22,10 +22,11 @@ import { ToastSlot, useAutoClearMessage } from "@/components/ui/Toast";
 import { ActionResult } from "./ActionResult";
 import { AdminSessionSheet } from "./AdminSessionSheet";
 import { AdminAddSheet } from "./AdminAddSheet";
+import { CardActionMenu } from "./CardActionMenu";
 import { DayHeading } from "./DayHeading";
 import { SessionCard } from "./ClassCard";
 import { groupSessionsByDay } from "@/lib/group-by-day";
-import { wallDate } from "@/lib/academy-time";
+import { formatClock, wallDate } from "@/lib/academy-time";
 import {
   type ClientOption,
   type Coach,
@@ -98,8 +99,24 @@ export function AdminCalendar({
   const [selected, setSelected] = useState<SessionRow | null>(
     () => sessions.find((s) => s.id === openSessionId) ?? null
   );
+  // Which panel the sheet opens on — "cancel" lands on the scope question
+  // rather than the editor, for the Cancel row in the hold menu.
+  const [openAt, setOpenAt] = useState<"edit" | "cancel">("edit");
+  // The session a hold is offering actions for, and the one a Duplicate is
+  // seeding the add sheet from.
+  const [held, setHeld] = useState<SessionRow | null>(null);
+  const [duplicating, setDuplicating] = useState<SessionRow | null>(null);
   const [adding, setAdding] = useState(false);
   const [message, setMessage] = useAutoClearMessage();
+
+  // Days collapse, the same way venues do on the Timetable and with the same
+  // default: open. The two views of this one tab used to disagree — a day had
+  // no chevron at all and could never be closed, a venue had one and arrived
+  // closed — so the same gesture on the same-looking box did different things
+  // depending on which half of the switch you were on.
+  const [openDays, setOpenDays] = useState<Record<string, boolean>>({});
+  const toggleDay = (key: string, isOpen: boolean) =>
+    setOpenDays((prev) => ({ ...prev, [key]: !isOpen }));
 
   // Filters — coach, venue, class type. Three is what fits on a 390px phone.
   // Day went because the list is already grouped by day and every day is on
@@ -164,8 +181,9 @@ export function AdminCalendar({
   const coachNameOf = (s: SessionRow) =>
     s.coachId ? (coachNameById.get(s.coachId) ?? null) : null;
 
-  const openSession = (session: SessionRow) => {
+  const openSession = (session: SessionRow, at: "edit" | "cancel" = "edit") => {
     setMessage(null);
+    setOpenAt(at);
     setSelected(session);
   };
 
@@ -184,14 +202,19 @@ export function AdminCalendar({
       ],
     },
     {
+      // "Location", not "venue" — the same word the Timetable uses, because it
+      // is the same question over the same column (class_sessions reads
+      // location_label). Half of what it lists are families' own homes, which
+      // are locations and are not venues; calling it venue here and location
+      // there made one axis look like two.
       key: "venue",
-      aria: "Filter by venue",
-      label: "All venues",
+      aria: "Filter by location",
+      label: "All locations",
       value: venueFilter,
       defaultValue: "all",
       onChange: setVenueFilter,
       options: [
-        { value: "all", label: "All venues" },
+        { value: "all", label: "All locations" },
         ...venueOptions.map((v) => ({ value: v, label: v })),
       ],
     },
@@ -253,16 +276,20 @@ export function AdminCalendar({
         </div>
       )}
 
-      {/* ── Phone: day-first, every day open. ── */}
+      {/* ── Phone: day-first, every day open on arrival. ── */}
       <div className="space-y-2 lg:hidden">
         {dayGroups.map((day) => {
           const dayLive = day.rows.filter((s) => s.status !== "cancelled");
           const dayOff = day.rows.filter((s) => s.status === "cancelled");
+          const open = openDays[day.key] ?? true;
           return (
             // The scroll target the week strip aims at. scroll-mt clears the
             // sticky toggle + strip, which would otherwise sit on the heading.
             <div key={day.key} id={`day-${day.key}`} className="scroll-mt-40">
               <GroupCard
+                collapsible
+                open={open}
+                onToggle={() => toggleDay(day.key, open)}
                 title={<DayHeading label={day.label} isToday={day.isToday} />}
                 meta={`${dayLive.length} class${dayLive.length === 1 ? "" : "es"}`}
               >
@@ -273,6 +300,10 @@ export function AdminCalendar({
                       session={s}
                       coachName={coachNameOf(s)}
                       onClick={() => openSession(s)}
+                      onLongPress={() => {
+                        setMessage(null);
+                        setHeld(s);
+                      }}
                     />
                   ))}
                   {dayLive.length === 0 && dayOff.length > 0 && (
@@ -358,6 +389,67 @@ export function AdminCalendar({
         </ToastSlot>
       )}
 
+      <CardActionMenu
+        open={!!held}
+        title={
+          held
+            ? `${held.venueName ?? "Location TBC"} · ${formatClock(held.starts_at)}`
+            : ""
+        }
+        onClose={() => setHeld(null)}
+        actions={
+          held
+            ? [
+                {
+                  label: "Open",
+                  hint: "Coach, time, capacity, who's booked",
+                  onSelect: () => openSession(held),
+                },
+                {
+                  label: "Duplicate",
+                  hint: "Same location, coach and length — pick a new date",
+                  onSelect: () => setDuplicating(held),
+                },
+                {
+                  label: "Cancel…",
+                  // Named with the ellipsis because it opens the question, not
+                  // the deed: this one date, or every week from now on.
+                  hint: "Asks whether you mean this one or every week",
+                  onSelect: () => openSession(held, "cancel"),
+                  destructive: true,
+                },
+              ]
+            : []
+        }
+      />
+
+      {duplicating && (
+        <AdminAddSheet
+          defaultRepeat="once"
+          seed={{
+            mode: duplicating.isPrivate
+              ? "private"
+              : duplicating.isSchool
+                ? "school"
+                : "weekly",
+            venueId: duplicating.classVenueId,
+            coachId: duplicating.coachId,
+            capacity: duplicating.capacity,
+            durationMinutes: duplicating.classDuration,
+          }}
+          onClose={() => setDuplicating(null)}
+          onDone={(m) => {
+            setMessage(m);
+            setDuplicating(null);
+            onRefresh?.();
+          }}
+          coaches={coaches}
+          venues={venues}
+          clients={clients}
+          invites={invites}
+        />
+      )}
+
       {selected && (
         <AdminSessionSheet
           key={selected.id}
@@ -365,8 +457,10 @@ export function AdminCalendar({
           coaches={coaches}
           venues={venues}
           clients={clients}
+          openAt={openAt}
           onClose={() => {
             setSelected(null);
+            setOpenAt("edit");
             onRefresh?.();
           }}
         />

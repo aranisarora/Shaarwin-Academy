@@ -14,16 +14,21 @@ import {
 
 // Desktop rail groups the sections by frequency of use (daily loop → people →
 // setup) so it reads like the founder's mental model, not a flat list of tables.
-// The mobile bottom bar fits 5: Schedule · Players · Coaches · Alerts · More.
+// The mobile bottom bar holds four: Schedule · Players · Alerts · More.
 //
-// Three of those five used to be one screen each for the same thing. Today led
-// with a list of today's classes that was, to the row, the Schedule's first day
-// — the same data through the same card — and Weekly was the repeating classes
-// behind that same schedule. Today is gone (its one unique asset, the
-// needs-you list, moved to Alerts) and Weekly is now a view inside Schedule.
-// That freed two slots, which is how Coaches finally gets out of More: he
-// approves time off and arranges covers constantly, and it was buried purely
-// because Weekly was holding a slot.
+// It used to hold five, three of which were one screen each for the same thing.
+// Today led with a list of today's classes that was, to the row, the Schedule's
+// first day — the same data through the same card — and Weekly was the
+// repeating classes behind that same schedule. Today is gone (its one unique
+// asset, the needs-you list, moved to Alerts) and Weekly is now a view inside
+// Schedule.
+//
+// Four, not five. The freed slots went back into whitespace rather than being
+// spent because they were there — five 20%-wide targets is a crowded row on a
+// 390px phone, and Coaches is a screen he opens when a coach asks him for
+// something, not one he passes through. It reads better from More, where the
+// thing that actually needs him (a time-off request) reaches him as an Alert
+// anyway.
 //
 // Alerts is /admin/notifications: the only surface that renders eleven of the
 // thirteen ops_* feed types, and now also the queue of things waiting on him.
@@ -41,15 +46,10 @@ const tabs = [
   { href: "/admin/settings", label: "Settings", icon: <GearIcon />, group: "Setup" },
 ];
 
-// Schedule · Players · Coaches · Alerts · More. Matched by href rather than by
-// index: the bar used to read tabs[0..3], so adding a single entry to the rail
-// above would otherwise have pushed Players silently out of it.
-const inBar = [
-  "/admin/schedule",
-  "/admin/players",
-  "/admin/coaches",
-  "/admin/notifications",
-];
+// Schedule · Players · Alerts · More. Matched by href rather than by index: the
+// bar used to read tabs[0..3], so adding a single entry to the rail above would
+// otherwise have pushed Players silently out of it.
+const inBar = ["/admin/schedule", "/admin/players", "/admin/notifications"];
 // More owns every tab that isn't in the bar, so those screens light it instead
 // of leaving the whole row grey. Derived from `tabs` rather than listed again,
 // so promoting a section into the bar takes it out of More by construction.

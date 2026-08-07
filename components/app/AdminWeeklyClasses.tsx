@@ -10,7 +10,9 @@
 // moving can reach this list, so the standing pattern stays readable however
 // messy the actual week gets.
 
+import { useRouter } from "next/navigation";
 import { useMemo, useState, useTransition } from "react";
+import { wallDate } from "@/lib/academy-time";
 import { Button } from "@/components/ui/Button";
 import { FilterBar, type FilterDef } from "@/components/ui/FilterBar";
 import { Fab } from "@/components/ui/Fab";
@@ -68,6 +70,7 @@ export function AdminWeeklyClasses({
   /** Flip the tab to This week. The one-off classes genuinely live over there. */
   onShowThisWeek?: () => void;
 }) {
+  const router = useRouter();
   const [editingClass, setEditingClass] = useState<ClassRow | null>(
     () => classes.find((c) => c.id === openClassId) ?? null
   );
@@ -77,6 +80,7 @@ export function AdminWeeklyClasses({
   // The class a hold is currently offering actions for, and the class a
   // Duplicate is seeding the add sheet from.
   const [held, setHeld] = useState<ClassRow | null>(null);
+  const [heldSeries, setHeldSeries] = useState<PrivateSeriesRow | null>(null);
   const [duplicating, setDuplicating] = useState<ClassRow | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -152,11 +156,24 @@ export function AdminWeeklyClasses({
   // quietly only the active 38, so a timetable clear-out left the ended ones
   // behind. The cards already grey themselves out and say "Ended" or "Paused",
   // so nothing is lost by showing them, and Active is one tap away.
+  // Coach, location and type are the SAME three questions This week asks, in the
+  // same order and the same words. They used to be different sets — this view
+  // had location/day/status, that one had coach/venue/type — so the one axis
+  // both actually shared was called "location" here and "venue" there, and two
+  // perfectly good questions ("what does Ravi teach every week?", "show me just
+  // the privates") could not be asked here at all.
+  //
+  // Status is the one extra, and it earns it: paused and ended are states only a
+  // repeating class can be in. Day is gone, for exactly the reason This week
+  // never had it — every card already sits under a day heading. Four chips is
+  // also the ceiling: this row held five once and only 3.3 were ever painted, so
+  // the founder never discovered the last one.
+  const [coachFilter, setCoachFilter] = useState("all");
   const [venueFilter, setVenueFilter] = useState("all");
-  const [dayFilter, setDayFilter] = useState("all");
+  const [typeFilter, setTypeFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
 
-  // Location + day options are drawn from both classes and private series so a
+  // Location options are drawn from both classes and private series so a
   // location that only hosts a private slot still appears in the filter.
   const venueOptions = useMemo(
     () =>
@@ -168,28 +185,39 @@ export function AdminWeeklyClasses({
       ].sort((a, b) => a.localeCompare(b)),
     [classes, privateSeries]
   );
-  const dayOptions = useMemo(
+
+  // Matched by name, not id: a class carries its next session's coach name and a
+  // private series carries its preferred coach's name, and neither carries an id
+  // the other also has. The name is the only key both rows share.
+  const coachOptions = useMemo(
     () =>
       [
         ...new Set([
-          ...classes.map((c) => c.weekday),
-          ...privateSeries.map((p) => p.weekday),
+          ...classes.map((c) => c.coachName),
+          ...privateSeries.map((p) => p.coachName),
         ]),
-      ].sort((a, b) => WEEKDAY_ORDER.indexOf(a) - WEEKDAY_ORDER.indexOf(b)),
+      ]
+        .filter((n): n is string => !!n)
+        .sort((a, b) => a.localeCompare(b)),
     [classes, privateSeries]
   );
 
   const filteredClasses = useMemo(
     () =>
       classes.filter((c) => {
+        if (coachFilter === "none" && c.coachName) return false;
+        if (coachFilter !== "all" && coachFilter !== "none" && c.coachName !== coachFilter)
+          return false;
         if (venueFilter !== "all" && (c.venueName ?? "") !== venueFilter) return false;
-        if (dayFilter !== "all" && c.weekday !== dayFilter) return false;
+        if (typeFilter === "group" && c.isSchool) return false;
+        if (typeFilter === "school" && !c.isSchool) return false;
+        if (typeFilter === "private") return false;
         if (statusFilter === "active" && !c.active) return false;
         if (statusFilter === "paused" && (c.active || c.endsOn)) return false;
         if (statusFilter === "ended" && (c.active || !c.endsOn)) return false;
         return true;
       }),
-    [classes, venueFilter, dayFilter, statusFilter]
+    [classes, coachFilter, venueFilter, typeFilter, statusFilter]
   );
 
   // Private series are always active (the page only queries active ones), so
@@ -197,12 +225,15 @@ export function AdminWeeklyClasses({
   const filteredPrivates = useMemo(
     () =>
       privateSeries.filter((p) => {
+        if (coachFilter === "none" && p.coachName) return false;
+        if (coachFilter !== "all" && coachFilter !== "none" && p.coachName !== coachFilter)
+          return false;
         if (venueFilter !== "all" && p.venueName !== venueFilter) return false;
-        if (dayFilter !== "all" && p.weekday !== dayFilter) return false;
+        if (typeFilter === "group" || typeFilter === "school") return false;
         if (statusFilter === "paused" || statusFilter === "ended") return false;
         return true;
       }),
-    [privateSeries, venueFilter, dayFilter, statusFilter]
+    [privateSeries, coachFilter, venueFilter, typeFilter, statusFilter]
   );
 
   // "Select all" means everything the filters are currently showing — so
@@ -312,11 +343,35 @@ export function AdminWeeklyClasses({
   // group that reads as "nothing on that day". Position now only supplies the
   // default for a venue he has never touched, re-evaluated on every filter
   // change rather than frozen at mount.
+  //
+  // Everything starts OPEN, which is the same promise This week makes about its
+  // days. It used to open only the first venue, so the two views of one tab
+  // disagreed about whether arriving somewhere means seeing what is there:
+  // flipping to the Timetable showed one venue and five grey bars, and finding
+  // out what was on at the other five cost a tap each. Collapsing is still
+  // there for tidying a long list — it is just no longer the arrival state.
   const [openMap, setOpenMap] = useState<Record<string, boolean>>({});
   const toggleVenue = (key: string, isOpen: boolean) =>
     setOpenMap((prev) => ({ ...prev, [key]: !isOpen }));
 
+  // Same three as This week, same order, same words — then the one extra that
+  // only makes sense here. Every inactive chip reads "All …"; this row used to
+  // say "Any day" and "Any status" beside "All locations", which is two
+  // grammars for one idea.
   const filterDefs: FilterDef[] = [
+    {
+      key: "coach",
+      aria: "Filter by coach",
+      label: "All coaches",
+      value: coachFilter,
+      defaultValue: "all",
+      onChange: setCoachFilter,
+      options: [
+        { value: "all", label: "All coaches" },
+        { value: "none", label: "No coach yet" },
+        ...coachOptions.map((n) => ({ value: n, label: n })),
+      ],
+    },
     {
       key: "venue",
       aria: "Filter by location",
@@ -326,25 +381,27 @@ export function AdminWeeklyClasses({
       onChange: setVenueFilter,
       options: [
         { value: "all", label: "All locations" },
-        ...venueOptions.map((v) => ({ value: v, label: v || "No venue" })),
+        ...venueOptions.map((v) => ({ value: v, label: v || "No location" })),
       ],
     },
     {
-      key: "day",
-      aria: "Filter by day",
-      label: "Any day",
-      value: dayFilter,
+      key: "type",
+      aria: "Filter by class type",
+      label: "All types",
+      value: typeFilter,
       defaultValue: "all",
-      onChange: setDayFilter,
+      onChange: setTypeFilter,
       options: [
-        { value: "all", label: "Any day" },
-        ...dayOptions.map((d) => ({ value: d, label: WEEKDAY_NAME[d] ?? d })),
+        { value: "all", label: "All class types" },
+        { value: "group", label: "Group" },
+        { value: "private", label: "Private" },
+        { value: "school", label: "School" },
       ],
     },
     {
       key: "status",
       aria: "Filter by status",
-      label: "Any status",
+      label: "All statuses",
       value: statusFilter,
       defaultValue: "all",
       onChange: setStatusFilter,
@@ -413,12 +470,12 @@ export function AdminWeeklyClasses({
 
       {classes.length + privateSeries.length > 0 && <FilterBar filters={filterDefs} />}
 
-      {venueGroups.map((group, i) => {
+      {venueGroups.map((group) => {
         const key = group.venue || "no-venue";
-        // First venue open by default, others collapsed; a tap flips it.
-        // Untouched venues follow the default (first one open); once he taps a
-        // venue, his choice sticks wherever it lands in the list.
-        const open = openMap[key] ?? i === 0;
+        // Open unless he has closed it. Position no longer decides anything —
+        // it used to, and filtering down to a day only one venue ran on could
+        // render the venue he had just opened as closed.
+        const open = openMap[key] ?? true;
         const groupIds = group.days.flatMap((d) => d.rows.map((c) => c.id));
         const groupSeriesIds = group.days.flatMap((d) => d.privates.map((p) => p.id));
         const groupAllSelected =
@@ -507,21 +564,23 @@ export function AdminWeeklyClasses({
                       series={p}
                       selecting={selecting}
                       selected={selectedSeries.has(p.id)}
+                      // Tap opens a panel about this slot, and hold opens the
+                      // same one — exactly as a class beside it does. It used to
+                      // navigate silently to a session on the other view when it
+                      // had one, and drop you into a selection when it didn't,
+                      // so the same tap on two cards in one grid did two
+                      // different things depending on data you cannot see.
                       onClick={() => {
                         if (selecting) {
                           toggleSeries(p.id);
                           return;
                         }
-                        // Only reached for a slot with no next session to
-                        // deep-link to — the case that used to be a dead card.
                         setMessage(null);
-                        setSelecting(true);
-                        setSelectedSeries(new Set([p.id]));
+                        setHeldSeries(p);
                       }}
                       onLongPress={() => {
                         setMessage(null);
-                        setSelecting(true);
-                        setSelectedSeries(new Set([p.id]));
+                        setHeldSeries(p);
                       }}
                     />
                   ))}
@@ -775,6 +834,58 @@ export function AdminWeeklyClasses({
                     setSelecting(true);
                     setSelected(new Set([held.id]));
                   },
+                },
+              ]
+            : []
+        }
+      />
+
+      {/* A family's standing slot. There is no editor for one — nothing in the
+          app can move a private series to another day, only end it and book a
+          new one — so this lists what genuinely exists rather than opening a
+          form that would have to lie about what Save does. */}
+      <CardActionMenu
+        open={!!heldSeries}
+        title={
+          heldSeries
+            ? `${heldSeries.playerName} · ${WEEKDAY_NAME[heldSeries.weekday] ?? heldSeries.weekday} ${time12h(heldSeries.time)}`
+            : ""
+        }
+        onClose={() => setHeldSeries(null)}
+        actions={
+          heldSeries
+            ? [
+                ...(heldSeries.nextSessionId && heldSeries.nextSessionStart
+                  ? [
+                      {
+                        label: "Open this week's session",
+                        hint: "Change the coach or the time for one week",
+                        onSelect: () => {
+                          const s = heldSeries;
+                          router.push(
+                            `/admin/schedule?date=${wallDate(s.nextSessionStart!)}&session=${s.nextSessionId}`
+                          );
+                        },
+                      },
+                    ]
+                  : []),
+                {
+                  label: "Select",
+                  hint: "Pick several to end together",
+                  onSelect: () => {
+                    setSelecting(true);
+                    setSelectedSeries(new Set([heldSeries.id]));
+                  },
+                },
+                {
+                  label: "End this slot…",
+                  hint: "Shows what the family gets back before anything happens",
+                  onSelect: () => {
+                    setSelectedSeries(new Set([heldSeries.id]));
+                    setSelected(new Set());
+                    setConfirming(true);
+                  },
+                  destructive: true,
                 },
               ]
             : []

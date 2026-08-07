@@ -45,12 +45,7 @@ import { time12h } from "./ClassFields";
 import { ClassTypeLine, KIND_RAIL, classKind } from "./class-type";
 import { useLongPress } from "./use-long-press";
 import { sessionDeviation } from "@/lib/session-deviation";
-import {
-  formatClock,
-  formatSessionDate,
-  sessionTimeStatus,
-  wallDate,
-} from "@/lib/academy-time";
+import { formatClock, formatSessionDate, sessionTimeStatus } from "@/lib/academy-time";
 import {
   WEEKDAY_NAME,
   type ClassRow,
@@ -192,6 +187,7 @@ export function SessionCard({
   showDay = false,
   coachName,
   onClick,
+  onLongPress,
   href,
 }: {
   session: SessionRow;
@@ -200,6 +196,10 @@ export function SessionCard({
    * the card. Omitted in the desktop coach-lane view, where it's redundant. */
   coachName?: string | null;
   onClick?: () => void;
+  /** Press and hold for what you can do to it — the same gesture, on the same
+   * card, as on the Timetable. It only worked over there, so the two halves of
+   * one tab answered a hold differently: a menu on one, nothing on the other. */
+  onLongPress?: () => void;
   href?: string;
 }) {
   const status = sessionTimeStatus(session.starts_at, session.ends_at);
@@ -261,8 +261,39 @@ export function SessionCard({
     );
   }
   return (
-    <button type="button" onClick={onClick} className={`${cardBase} ${cardInteractive} ${tone}`}>
+    <SessionButton onClick={onClick} onLongPress={onLongPress} tone={tone}>
       {inner}
+    </SessionButton>
+  );
+}
+
+/** The card as a button, with the hold wired up. Split out because useLongPress
+ *  is a hook and the card above returns early for the link form. */
+function SessionButton({
+  onClick,
+  onLongPress,
+  tone,
+  children,
+}: {
+  onClick?: () => void;
+  onLongPress?: () => void;
+  tone: string;
+  children: React.ReactNode;
+}) {
+  const { handlers, consumeClick } = useLongPress(onLongPress ?? null);
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        // A hold that ends on the card would otherwise also fire the tap, so
+        // the menu would open and the sheet behind it at the same time.
+        if (consumeClick()) return;
+        onClick?.();
+      }}
+      {...handlers}
+      className={`${cardBase} ${cardInteractive} ${tone}`}
+    >
+      {children}
     </button>
   );
 }
@@ -357,8 +388,11 @@ export function PrivateSeriesCard({
   selected = false,
 }: {
   series: PrivateSeriesRow;
-  /** Outside selection this is the fallback for a slot with no next session to
-   * deep-link to; the parent wires it to "start picking, with this one ticked". */
+  /** Always the same thing: open the panel for this slot. It used to depend on
+   *  whether the slot happened to have a session generated ahead of it — with
+   *  one, a tap navigated to the other view; without one, it dropped you into a
+   *  selection. Two behaviours for one gesture, chosen by data on the card that
+   *  nothing on the card showed. */
   onClick: () => void;
   onLongPress?: () => void;
   selecting?: boolean;
@@ -398,27 +432,6 @@ export function PrivateSeriesCard({
       </button>
     );
   }
-  // Outside selection the deep link is still the primary move — it is how the
-  // founder gets to the family's whole picture. The hold is what makes the card
-  // pickable without having to find the Select button first.
-  if (series.nextSessionId && series.nextSessionStart) {
-    return (
-      <Link
-        href={`/admin/schedule?date=${wallDate(series.nextSessionStart)}&session=${series.nextSessionId}`}
-        onClick={(e) => {
-          // A hold that ends on a link would otherwise navigate away and throw
-          // the selection it just started straight back out again.
-          if (consumeClick()) e.preventDefault();
-        }}
-        {...handlers}
-        className={`block ${cardBase} ${cardInteractive} ${tone}`}
-      >
-        {inner}
-      </Link>
-    );
-  }
-  // No next session — a slot whose weeks stopped generating. This was the dead
-  // end: a card with nothing to link to and no other affordance anywhere.
   return (
     <button
       type="button"
