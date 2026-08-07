@@ -10,6 +10,7 @@ import {
   grantCompCore,
 } from "@/lib/admin-ops";
 import { formatSessionDate } from "@/lib/academy-time";
+import { normalizePhoneInput } from "@/lib/whatsapp/phone";
 import { bulkTool } from "./bulk";
 import { fail, ok, type WaTool } from "./types";
 import { founderAdminTools } from "./founder-admin";
@@ -284,7 +285,7 @@ const createClass: WaTool = {
 const listClients: WaTool = {
   name: "list_clients",
   description:
-    "Search or list client accounts with membership status and private-minutes balance (client_id values included). Pass search to filter by name or email.",
+    "Search or list client accounts with membership status and private-minutes balance (client_id values included). Pass search to filter by name, email, or phone number — a number works in any format the founder types it ('+91 77086 88495', '07708688495', '7708688495' all find the same client), so pass it through as-is.",
   input_schema: {
     type: "object",
     properties: { search: { type: "string" } },
@@ -298,11 +299,29 @@ const listClients: WaTool = {
       .order("full_name")
       .limit(25);
     if (input.search) {
-      const s = String(input.search).replaceAll("%", "");
-      query = query.or(`full_name.ilike.%${s}%,email.ilike.%${s}%`);
+      // A comma or bracket closes the or() list early, so PostgREST would run a
+      // narrower query than the founder asked for — same reason % is stripped.
+      const s = String(input.search).replace(/[%,()]/g, "");
+      const filters = [`full_name.ilike.%${s}%`, `email.ilike.%${s}%`];
+      // Founders paste a number the way WhatsApp shows it ("+91 77086 88495"),
+      // never the E.164 the column stores, so "which client is this" answered
+      // "no client with that number" for a client who was right there.
+      const e164 = normalizePhoneInput(s);
+      if (e164) filters.push(`phone.eq.${e164}`);
+      // A number without its country code ("07708688495") normalizes to null —
+      // fall back to the trailing digits, which still pin down one client.
+      const digits = s.replace(/\D/g, "");
+      if (digits.length >= 7) filters.push(`phone.like.%${digits.slice(-10)}`);
+      query = query.or(filters.join(","));
     }
-    const { data: clients } = await query;
-    if (!clients?.length) return ok({ clients: [] });
+    // A dropped error here is the bug this tool was fixed for, one level up:
+    // a rejected query returns no rows, and "no rows" was being read out as
+    // "there is no such client". The or() list is now four clauses long and
+    // carries a "+" and a raw pattern, so it has more ways to be rejected than
+    // it did — say the search failed rather than that the person doesn't exist.
+    const { data: clients, error } = await query;
+    if (error) return fail("Couldn't run that search — try a name, or the number in full.");
+    if (!clients?.length) return ok({ clients: [], searched: String(input.search ?? "") });
 
     const ids = clients.map((c) => c.id);
     const [{ data: subs }, { data: ledger }] = await Promise.all([
@@ -396,7 +415,11 @@ const listPlans: WaTool = {
       (data ?? []).map((p) => ({
         plan_id: p.id,
         name: p.name,
-        price_pence: p.price_pence,
+        // Rupees, under a name that says so. The column holds paise, and a
+        // plan billed at 159900 was read out as "₹159,900" — so `find` now
+        // converts on the way out and this tool has to agree with it, or the
+        // same plan carries two prices inside one conversation.
+        price_inr: Math.round(p.price_pence / 100),
         group_sessions_per_week: p.group_sessions_per_week,
         private_minutes_per_cycle: p.private_minutes_per_cycle,
         active: p.active,

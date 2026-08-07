@@ -25,15 +25,26 @@
 //     simply absent below, and the entities that are present are restricted to
 //     the roles that have a reason to ask.
 //
-// Deliberately NOT exposed: student_notes, skill_assessments, skill_ratings,
-// skills, settings, school_admins, push_subscriptions, webhook_events,
-// client_invites, coach_invites, wa_links, wa_messages, wa_inbound_seen, and
-// BOTH views (`coach_client_view` is declared without security_invoker, so it
-// reads through the view owner and bypasses the profiles policies entirely —
-// see the security note in the PR).
+// NOT EXPOSED, for two reasons that must not be confused
+// ------------------------------------------------------
+//   (a) A judgement call, and revisitable. `student_notes`,
+//       `skill_assessments`, `skill_ratings`, `skills` and `settings` are
+//       readable well past the screens that rely on them (the role gate above);
+//       `school_admins`, `push_subscriptions`, `webhook_events`,
+//       `client_invites` and `coach_invites` are plumbing nobody asks a
+//       question about. Both views too — `coach_client_view` is declared
+//       without security_invoker, so it reads through the view owner and
+//       bypasses the profiles policies entirely (see the security note in the
+//       PR).
+//
+//   (b) Not readable at all, so there is nothing to decide. `wa_messages` and
+//       `wa_inbound_seen` have RLS enabled and no policy whatsoever: they are
+//       service-role only, and the chat transcript stays out of the chat's own
+//       reach on purpose. Registering either would advertise an entity that can
+//       only ever answer nothing — the failure mode this tool exists to end.
 
 import type { Database } from "@/lib/database.types";
-import type { Operator } from "./query-core";
+import { fromRupees, istEnd, istStart, phoneNumber, type Operator } from "./query-core";
 
 export type Role = "client" | "coach" | "founder";
 
@@ -59,7 +70,24 @@ export type FilterDef = {
   values?: readonly string[];
   /** Defaults to the full operator set; narrow it where only equality is sane. */
   ops?: readonly Operator[];
-};
+  /**
+   * Text that is searched rather than matched: `op` defaults to ilike. Every
+   * field described below as "matched loosely" still defaulted to eq, so the
+   * loose match only happened when the model remembered to ask for it — and a
+   * name typed with the wrong capitalisation or a stray space found nothing.
+   */
+  loose?: boolean;
+} & Normalizable;
+
+/**
+ * The value canonicalizer, paired with the sentence the model is shown when it
+ * rejects a value. A union rather than two optional fields so one can never ship
+ * without the other: a filter that cannot read its value has to say what it
+ * wanted, or it is only a quieter way of answering nothing.
+ */
+type Normalizable =
+  | { normalize?: undefined; expects?: undefined }
+  | { normalize: (value: unknown, op: Operator) => unknown | null; expects: string };
 
 export type EntityDef = {
   table: TableName;
@@ -82,6 +110,37 @@ const STAFF: readonly Role[] = ["coach", "founder"];
 const FOUNDER: readonly Role[] = ["founder"];
 
 const SKILL_LEVELS = ["beginner", "intermediate", "advanced", "elite", "any"] as const;
+
+// Canonicalizers, spread onto the filters that need one. A bound is a pair: the
+// lower one takes the first instant of an academy day, the upper one the last,
+// so a month asked for at both ends covers the whole month rather than one
+// midnight of it.
+const IST_FORMS = "a date (2026-06-14), a month (2026-06), or a full ISO instant";
+
+/**
+ * Which edge of the named day to take follows the OPERATOR, not the field.
+ *
+ * "before the 15th" (lt) means before the 15th BEGINS; "up to the 15th" (lte)
+ * means up to the instant it ends. Binding the edge to the field name made lt
+ * behave exactly like lte and hand back a whole extra day, silently, for every
+ * date range in the registry. `eq` has no answer here — a stored timestamp is
+ * never exactly midnight, so equality against a day is a query that cannot
+ * match — so it is refused rather than answered with zero rows.
+ */
+function istBound(value: unknown, op: Operator): unknown {
+  if (op === "lte" || op === "gt") return istEnd(value);
+  if (op === "gte" || op === "lt") return istStart(value);
+  return null;
+}
+
+const DATE_OPS = ["gte", "lte", "gt", "lt"] as const;
+const FROM_IST = { normalize: istBound, expects: IST_FORMS } as const;
+const TO_IST = { normalize: istBound, expects: IST_FORMS } as const;
+const PHONE = {
+  normalize: phoneNumber,
+  expects: "a phone number — a 10-digit Indian mobile, or any number with its country code",
+} as const;
+const RUPEES = { normalize: fromRupees, expects: "an amount in rupees, e.g. 1599" } as const;
 
 export const ENTITIES: Record<string, EntityDef> = {
   // ── Scheduling ───────────────────────────────────────────────────────────
@@ -113,9 +172,24 @@ export const ENTITIES: Record<string, EntityDef> = {
         description: "scheduled | completed | cancelled",
         values: ["scheduled", "completed", "cancelled"],
       },
-      from: { path: "starts_at", description: "ISO timestamp — sessions starting at or after", ops: ["gte", "gt"] },
-      to: { path: "starts_at", description: "ISO timestamp — sessions starting at or before", ops: ["lte", "lt"] },
-      starts_at: { path: "starts_at", description: "Session start time" },
+      from: {
+        path: "starts_at",
+        description: "Sessions starting at or after",
+        ops: ["gte", "gt"],
+        ...FROM_IST,
+      },
+      to: {
+        path: "starts_at",
+        description: "Sessions starting at or before",
+        ops: ["lte", "lt"],
+        ...TO_IST,
+      },
+      starts_at: {
+        path: "starts_at",
+        description: "Session start time",
+        ops: DATE_OPS,
+        ...FROM_IST,
+      },
       confirmed: {
         path: "coach_confirmed_at",
         description: "Use with is_null / not_null to find sessions the coach has or hasn't confirmed",
@@ -130,11 +204,13 @@ export const ENTITIES: Record<string, EntityDef> = {
         path: "classes.title",
         requires: "classes!inner(title)",
         description: "Class title, e.g. 'Beginner'",
+        loose: true,
       },
       venue: {
         path: "classes.venues.name",
         requires: "classes!inner(title,venues!inner(id,name))",
-        description: "Venue name, e.g. 'La Plazza' — matches loosely with ilike",
+        description: "Venue name, e.g. 'La Plazza' — matches loosely",
+        loose: true,
       },
       venue_id: {
         path: "classes.venue_id",
@@ -190,7 +266,7 @@ export const ENTITIES: Record<string, EntityDef> = {
     defaultIncludes: ["venue"],
     filters: {
       id: { path: "id", description: "Class id", ops: ["eq", "in", "not_in"] },
-      title: { path: "title", description: "Class title" },
+      title: { path: "title", description: "Class title", loose: true },
       type: { path: "class_type", description: "group | private", values: ["group", "private"] },
       level: { path: "skill_level", description: "Skill level", values: SKILL_LEVELS },
       active: { path: "active", description: "true for live classes" },
@@ -200,6 +276,7 @@ export const ENTITIES: Record<string, EntityDef> = {
         path: "venues.name",
         requires: "venues!inner(id,name)",
         description: "Venue name, matched loosely",
+        loose: true,
       },
       capacity: { path: "capacity", description: "Seats per session" },
     },
@@ -245,14 +322,16 @@ export const ENTITIES: Record<string, EntityDef> = {
       from: {
         path: "class_sessions.starts_at",
         requires: "class_sessions!inner(id,starts_at)",
-        description: "ISO timestamp — bookings for sessions at or after",
+        description: "Bookings for sessions at or after",
         ops: ["gte", "gt"],
+        ...FROM_IST,
       },
       to: {
         path: "class_sessions.starts_at",
         requires: "class_sessions!inner(id,starts_at)",
-        description: "ISO timestamp — bookings for sessions at or before",
+        description: "Bookings for sessions at or before",
         ops: ["lte", "lt"],
+        ...TO_IST,
       },
       coach_id: {
         path: "class_sessions.coach_id",
@@ -263,8 +342,14 @@ export const ENTITIES: Record<string, EntityDef> = {
         path: "class_sessions.classes.title",
         requires: "class_sessions!inner(id,classes!inner(title))",
         description: "Class title of the booked session",
+        loose: true,
       },
-      booked_at: { path: "booked_at", description: "When the booking was made" },
+      booked_at: {
+        path: "booked_at",
+        description: "When the booking was made",
+        ops: DATE_OPS,
+        ...FROM_IST,
+      },
     },
     order: { path: "booked_at", ascending: false },
     groupable: [
@@ -275,6 +360,119 @@ export const ENTITIES: Record<string, EntityDef> = {
       "players.full_name",
       "class_sessions.coach_id",
       "class_sessions.classes.title",
+    ],
+  },
+
+  // Both series tables are here because of 2 August: asked three times to clear
+  // the calendar, the bot cancelled occurrences, watched the generator refill
+  // them, and finally told the founder that the CLIENT would have to stop it.
+  // It could see sessions and bookings and had no word for the thing producing
+  // them. Naming a series is the first half of ending one.
+  group_series: {
+    table: "booking_series",
+    description:
+      "A standing enrolment in a class slot — one row per player per weekday and time. This is what keeps re-booking them: cancelling the sessions it produced does not stop it, only deactivating the series does.",
+    roles: ALL,
+    columns: "id,client_id,player_id,class_id,weekday,start_time,active,created_at,cancelled_at",
+    includes: {
+      class: "classes(id,title,class_type,skill_level,venue_id,venues(id,name))",
+      player: "players(id,full_name)",
+      client: "profiles(id,full_name)",
+    },
+    defaultIncludes: ["class", "player"],
+    filters: {
+      id: { path: "id", description: "Series id", ops: ["eq", "in", "not_in"] },
+      client_id: { path: "client_id", description: "Series on this account" },
+      player_id: { path: "player_id", description: "Series for this player" },
+      class_id: { path: "class_id", description: "Series feeding this class" },
+      active: { path: "active", description: "true for series still generating bookings" },
+      weekday: {
+        path: "weekday",
+        description: "1=Monday … 7=Sunday — NOT the 0-based weekday coach_availability uses",
+      },
+      start_time: { path: "start_time", description: "HH:MM:SS, IST" },
+      title: {
+        path: "classes.title",
+        requires: "classes!inner(title)",
+        description: "Class title of the series",
+        loose: true,
+      },
+      venue: {
+        path: "classes.venues.name",
+        requires: "classes!inner(title,venues!inner(id,name))",
+        description: "Venue name, matched loosely",
+        loose: true,
+      },
+      created_at: {
+        path: "created_at",
+        description: "When the series was set up",
+        ops: DATE_OPS,
+        ...FROM_IST,
+      },
+    },
+    order: { path: "weekday", ascending: true },
+    groupable: [
+      "active",
+      "weekday",
+      "class_id",
+      "client_id",
+      "player_id",
+      "classes.title",
+      "players.full_name",
+    ],
+  },
+
+  private_series: {
+    table: "private_booking_series",
+    description:
+      "A standing weekly private (one-to-one) slot. While it is active the nightly generator keeps creating sessions for it and debiting the client's private minutes.",
+    // No coach policy exists on this table — own-row for the client, is_founder()
+    // for the founder, nothing else. A coach registered here would get an empty
+    // list rather than an answer, which is the one thing worse than a refusal.
+    roles: ["client", "founder"],
+    // The address block — address, postcode, lat, lng, address_details,
+    // access_notes, and the venue_label / unit_label pair a client types when
+    // there is no venue_id — is withheld. A private slot is taught at the
+    // child's home, and this row is where the schema says which one.
+    columns:
+      "id,client_id,player_id,preferred_coach,weekday,start_time,duration_minutes,has_table,venue_id,active,created_at,cancelled_at",
+    includes: {
+      player: "players(id,full_name)",
+      client: "profiles(id,full_name)",
+      coach: "coaches(id,active,profiles(id,full_name))",
+      venue: "venues(id,name,unit)",
+    },
+    defaultIncludes: ["player", "coach"],
+    filters: {
+      id: { path: "id", description: "Series id", ops: ["eq", "in", "not_in"] },
+      client_id: { path: "client_id", description: "Series on this account" },
+      player_id: { path: "player_id", description: "Series for this player" },
+      coach_id: { path: "preferred_coach", description: "Series that ask for this coach" },
+      active: { path: "active", description: "true for series still generating sessions" },
+      weekday: {
+        path: "weekday",
+        description: "1=Monday … 7=Sunday — NOT the 0-based weekday coach_availability uses",
+      },
+      start_time: { path: "start_time", description: "HH:MM:SS, IST" },
+      venue_id: { path: "venue_id", description: "Venue id, when the slot is at a venue" },
+      created_at: {
+        path: "created_at",
+        description: "When the series was set up",
+        ops: DATE_OPS,
+        ...FROM_IST,
+      },
+    },
+    order: { path: "weekday", ascending: true },
+    groupable: [
+      "active",
+      "weekday",
+      "client_id",
+      "player_id",
+      "preferred_coach",
+      // Same reason class_sessions carries it: grouping by the id gives a
+      // founder a list of uuids and a client a list of uuids they can't resolve.
+      "coach_name",
+      "venue_id",
     ],
   },
 
@@ -293,7 +491,7 @@ export const ENTITIES: Record<string, EntityDef> = {
     filters: {
       id: { path: "id", description: "Player id", ops: ["eq", "in", "not_in"] },
       client_id: { path: "client_id", description: "Players on this account" },
-      full_name: { path: "full_name", description: "Player name, matched loosely" },
+      full_name: { path: "full_name", description: "Player name, matched loosely", loose: true },
       level: { path: "skill_level", description: "Skill level", values: SKILL_LEVELS },
       grade: { path: "grade", description: "School grade" },
       school_venue_id: { path: "school_venue_id", description: "School venue id" },
@@ -323,9 +521,9 @@ export const ENTITIES: Record<string, EntityDef> = {
         description: "client | coach | founder | school",
         values: ["client", "coach", "founder", "school"],
       },
-      full_name: { path: "full_name", description: "Name, matched loosely" },
-      email: { path: "email", description: "Email, matched loosely" },
-      phone: { path: "phone", description: "E.164 phone" },
+      full_name: { path: "full_name", description: "Name, matched loosely", loose: true },
+      email: { path: "email", description: "Email, matched loosely", loose: true },
+      phone: { path: "phone", description: "Phone number, however it was written", ...PHONE },
       approval_status: {
         path: "approval_status",
         description: "pending | approved | denied",
@@ -336,7 +534,12 @@ export const ENTITIES: Record<string, EntityDef> = {
         description: "Use with is_null for live accounts, not_null for deleted",
         ops: ["is_null", "not_null"],
       },
-      created_at: { path: "created_at", description: "Signup time" },
+      created_at: {
+        path: "created_at",
+        description: "Signup time",
+        ops: DATE_OPS,
+        ...FROM_IST,
+      },
       wa_muted: { path: "wa_muted", description: "true if they opted out of WhatsApp" },
     },
     order: { path: "full_name", ascending: true },
@@ -367,6 +570,7 @@ export const ENTITIES: Record<string, EntityDef> = {
         path: "profiles.full_name",
         requires: "profiles!inner(id,full_name)",
         description: "Coach name, matched loosely",
+        loose: true,
       },
     },
     order: { path: "created_at", ascending: true },
@@ -388,10 +592,10 @@ export const ENTITIES: Record<string, EntityDef> = {
     defaultIncludes: [],
     filters: {
       id: { path: "id", description: "Venue id", ops: ["eq", "in", "not_in"] },
-      name: { path: "name", description: "Venue name, matched loosely" },
+      name: { path: "name", description: "Venue name, matched loosely", loose: true },
       active: { path: "active", description: "true for venues in use" },
       is_school: { path: "is_school", description: "true for school sites" },
-      postcode: { path: "postcode", description: "Postcode" },
+      postcode: { path: "postcode", description: "Postcode", loose: true },
     },
     order: { path: "name", ascending: true },
     groupable: ["active", "is_school"],
@@ -433,8 +637,8 @@ export const ENTITIES: Record<string, EntityDef> = {
         description: "pending | approved | rejected",
         values: ["pending", "approved", "rejected"],
       },
-      from: { path: "starts_at", description: "ISO timestamp — at or after", ops: ["gte", "gt"] },
-      to: { path: "ends_at", description: "ISO timestamp — at or before", ops: ["lte", "lt"] },
+      from: { path: "starts_at", description: "At or after", ops: ["gte", "gt"], ...FROM_IST },
+      to: { path: "ends_at", description: "At or before", ops: ["lte", "lt"], ...TO_IST },
     },
     order: { path: "starts_at", ascending: true },
     groupable: ["status", "coach_id"],
@@ -465,13 +669,15 @@ export const ENTITIES: Record<string, EntityDef> = {
       cancel_at_period_end: { path: "cancel_at_period_end", description: "true if set to lapse" },
       renews_before: {
         path: "current_period_end",
-        description: "ISO timestamp — period ends at or before (expiring soon)",
+        description: "Period ends at or before (expiring soon)",
         ops: ["lte", "lt"],
+        ...TO_IST,
       },
       renews_after: {
         path: "current_period_end",
-        description: "ISO timestamp — period ends at or after",
+        description: "Period ends at or after",
         ops: ["gte", "gt"],
+        ...FROM_IST,
       },
     },
     order: { path: "current_period_end", ascending: true },
@@ -488,9 +694,12 @@ export const ENTITIES: Record<string, EntityDef> = {
     defaultIncludes: [],
     filters: {
       id: { path: "id", description: "Plan id", ops: ["eq", "in", "not_in"] },
-      name: { path: "name", description: "Plan name" },
+      name: { path: "name", description: "Plan name", loose: true },
       active: { path: "active", description: "true for plans on sale" },
-      price_pence: { path: "price_pence", description: "Price in the smallest currency unit" },
+      // Named for the unit the caller speaks. Asking for plans under 5000 with
+      // the column's own name meant plans under ₹50, and every plan is dearer
+      // than that, so "we have nothing that cheap" was the answer.
+      price_inr: { path: "price_pence", description: "Monthly price in rupees", ...RUPEES },
     },
     order: { path: "price_pence", ascending: true },
     groupable: ["active", "billing_interval_months"],
@@ -515,8 +724,8 @@ export const ENTITIES: Record<string, EntityDef> = {
         description: "grant | booking | cancellation_refund | refund_adjustment | expiry | manual",
         values: ["grant", "booking", "cancellation_refund", "refund_adjustment", "expiry", "manual"],
       },
-      from: { path: "created_at", description: "ISO timestamp — at or after", ops: ["gte", "gt"] },
-      to: { path: "created_at", description: "ISO timestamp — at or before", ops: ["lte", "lt"] },
+      from: { path: "created_at", description: "At or after", ops: ["gte", "gt"], ...FROM_IST },
+      to: { path: "created_at", description: "At or before", ops: ["lte", "lt"], ...TO_IST },
     },
     order: { path: "created_at", ascending: false },
     groupable: ["reason", "client_id"],
@@ -537,8 +746,9 @@ export const ENTITIES: Record<string, EntityDef> = {
       id: { path: "id", description: "Order id", ops: ["eq", "in", "not_in"] },
       client_id: { path: "client_id", description: "Orders for this account" },
       status: { path: "status", description: "Order status" },
-      from: { path: "created_at", description: "ISO timestamp — at or after", ops: ["gte", "gt"] },
-      to: { path: "created_at", description: "ISO timestamp — at or before", ops: ["lte", "lt"] },
+      amount_inr: { path: "amount_pence", description: "Amount in rupees", ...RUPEES },
+      from: { path: "created_at", description: "At or after", ops: ["gte", "gt"], ...FROM_IST },
+      to: { path: "created_at", description: "At or before", ops: ["lte", "lt"], ...TO_IST },
       paid: {
         path: "paid_at",
         description: "Use with not_null for paid orders, is_null for unpaid",
@@ -563,8 +773,9 @@ export const ENTITIES: Record<string, EntityDef> = {
       id: { path: "id", description: "Invoice id", ops: ["eq", "in", "not_in"] },
       client_id: { path: "client_id", description: "Invoices for this account" },
       status: { path: "status", description: "Invoice status" },
-      from: { path: "created_at", description: "ISO timestamp — at or after", ops: ["gte", "gt"] },
-      to: { path: "created_at", description: "ISO timestamp — at or before", ops: ["lte", "lt"] },
+      amount_inr: { path: "amount_pence", description: "Amount in rupees", ...RUPEES },
+      from: { path: "created_at", description: "At or after", ops: ["gte", "gt"], ...FROM_IST },
+      to: { path: "created_at", description: "At or before", ops: ["lte", "lt"], ...TO_IST },
       paid: {
         path: "paid_at",
         description: "Use with not_null for paid, is_null for outstanding",
@@ -573,6 +784,261 @@ export const ENTITIES: Record<string, EntityDef> = {
     },
     order: { path: "created_at", ascending: false },
     groupable: ["status", "client_id"],
+  },
+
+  // ── Operations ───────────────────────────────────────────────────────────
+  audit_log: {
+    table: "audit_log",
+    description:
+      "Append-only record of what was done to a row and by whom — coach assignments and reassignments, cover claims, calendar wipes. This is where 'who changed this class, and when' is answered.",
+    roles: FOUNDER,
+    columns: "id,actor_id,action,entity,entity_id,meta,created_at",
+    // actor_id alone answers the "when" and leaves the "who" as a uuid, which is
+    // the half of the question actually being asked.
+    includes: { actor: "profiles(id,full_name,role)" },
+    defaultIncludes: ["actor"],
+    filters: {
+      id: { path: "id", description: "Entry id", ops: ["eq", "in", "not_in"] },
+      actor_id: {
+        path: "actor_id",
+        description: "Entries by this person; a null actor means the system did it",
+      },
+      action: {
+        path: "action",
+        description:
+          "What happened, e.g. session.assign, session.reassign, session.cover_claimed, calendar.wipe",
+        loose: true,
+      },
+      entity: {
+        path: "entity",
+        description: "Table the entry is about, e.g. class_sessions",
+        loose: true,
+      },
+      entity_id: {
+        path: "entity_id",
+        description: "The row the entry is about — put a session id here to get its history",
+      },
+      from: { path: "created_at", description: "At or after", ops: ["gte", "gt"], ...FROM_IST },
+      to: { path: "created_at", description: "At or before", ops: ["lte", "lt"], ...TO_IST },
+    },
+    order: { path: "created_at", ascending: false },
+    groupable: ["action", "entity", "actor_id", "profiles.full_name"],
+  },
+
+  wa_links: {
+    table: "wa_links",
+    description:
+      "Which phone numbers are linked to an account for WhatsApp. Someone with no row here cannot be reached by this bot at all.",
+    // Founder-only, matching the SELECT policy 0069 adds — until that migration
+    // the table had no policy at all and this entity reads empty for everyone.
+    // Nothing here is new to the founder: "founder all profiles" already hands
+    // over every number in the academy. The one fact added is whether a link
+    // exists, which is the question that got refused.
+    roles: FOUNDER,
+    columns: "phone,user_id,linked_at",
+    includes: { user: "profiles(id,full_name,role)" },
+    defaultIncludes: ["user"],
+    filters: {
+      phone: { path: "phone", description: "The linked number, however it was written", ...PHONE },
+      user_id: { path: "user_id", description: "The account it is linked to" },
+      role: {
+        path: "profiles.role",
+        requires: "profiles!inner(id,role)",
+        description: "client | coach | founder | school — this is 'which coaches are on WhatsApp'",
+        values: ["client", "coach", "founder", "school"],
+      },
+      full_name: {
+        path: "profiles.full_name",
+        requires: "profiles!inner(id,full_name)",
+        description: "Name on the account, matched loosely",
+        loose: true,
+      },
+      from: {
+        path: "linked_at",
+        description: "Linked at or after",
+        ops: ["gte", "gt"],
+        ...FROM_IST,
+      },
+      to: { path: "linked_at", description: "Linked at or before", ops: ["lte", "lt"], ...TO_IST },
+    },
+    order: { path: "linked_at", ascending: false },
+    groupable: ["profiles.role", "user_id"],
+  },
+
+  // ── Delivery ─────────────────────────────────────────────────────────────
+  notifications: {
+    table: "notifications",
+    description:
+      "Every message the academy has sent, and what became of it: queued, sent, which channel carried it, and why it failed. This is how you answer 'did they actually get it'.",
+    roles: FOUNDER,
+    // `data` withheld: the delivery payload is routing internals (ids, deep
+    // links) and says nothing a founder asked about.
+    columns:
+      "id,user_id,type,title,body,channel,channel_attempted,status,scheduled_for,sent_at,read_at,error,created_at",
+    includes: { recipient: "profiles(id,full_name,role)" },
+    defaultIncludes: ["recipient"],
+    filters: {
+      id: { path: "id", description: "Notification id", ops: ["eq", "in", "not_in"] },
+      user_id: { path: "user_id", description: "Messages to this person" },
+      type: { path: "type", description: "e.g. announcement, reminder_upcoming, session_cancelled" },
+      status: {
+        path: "status",
+        description: "pending (still queued) | sent | failed",
+        values: ["pending", "sent", "failed"],
+      },
+      channel_attempted: {
+        path: "channel_attempted",
+        description: "Which channel actually carried it — push, whatsapp, email",
+      },
+      failed: {
+        path: "error",
+        description: "Use with not_null for messages that hit a problem",
+        ops: ["is_null", "not_null"],
+      },
+      full_name: {
+        path: "profiles.full_name",
+        requires: "profiles!inner(id,full_name)",
+        description: "Recipient name, matched loosely",
+        loose: true,
+      },
+      from: { path: "created_at", description: "At or after", ops: ["gte", "gt"], ...FROM_IST },
+      to: { path: "created_at", description: "At or before", ops: ["lte", "lt"], ...TO_IST },
+      sent_from: { path: "sent_at", description: "Sent at or after", ops: ["gte", "gt"], ...FROM_IST },
+    },
+    order: { path: "created_at", ascending: false },
+    groupable: ["status", "type", "channel_attempted", "user_id", "profiles.full_name"],
+  },
+
+  // ── Catalogue and credits ────────────────────────────────────────────────
+  products: {
+    table: "products",
+    description: "One-off purchases — drop-in classes, intro promos, private-minute top-ups.",
+    // RLS is `active = true OR is_founder()`, so a client browsing sees only
+    // what is on sale, which is what a client should see.
+    roles: ALL,
+    columns:
+      "id,name,description,kind,price_pence,member_price_pence,grants_minutes,duration_minutes,active,created_at",
+    includes: {},
+    defaultIncludes: [],
+    filters: {
+      id: { path: "id", description: "Product slug", ops: ["eq", "in", "not_in"] },
+      name: { path: "name", description: "Product name, matched loosely", loose: true },
+      kind: { path: "kind", description: "What sort of product it is" },
+      active: { path: "active", description: "true for products on sale" },
+      price_inr: { path: "price_pence", description: "Price in rupees", ...RUPEES },
+    },
+    order: { path: "price_pence", ascending: true },
+    groupable: ["kind", "active"],
+  },
+
+  credit_notes: {
+    table: "class_credits",
+    description:
+      "Make-up credits for group classes — granted, and spent or still owing. `consumed_at` is null while a credit is still owed.",
+    roles: ["client", "founder"],
+    // `note` withheld — founder free text on a client's account, same reason
+    // private_credit_ledger withholds its own.
+    columns:
+      "id,client_id,player_id,type,source,order_id,booking_id,consumed_at,created_at",
+    includes: { client: "profiles(id,full_name)", player: "players(id,full_name)" },
+    defaultIncludes: ["player"],
+    filters: {
+      id: { path: "id", description: "Credit id", ops: ["eq", "in", "not_in"] },
+      client_id: { path: "client_id", description: "Credits on this account" },
+      player_id: { path: "player_id", description: "Credits for this player" },
+      type: { path: "type", description: "What kind of credit it is" },
+      source: { path: "source", description: "How it came about" },
+      unused: {
+        path: "consumed_at",
+        description: "Use with is_null for credits still owed, not_null for spent ones",
+        ops: ["is_null", "not_null"],
+      },
+      from: { path: "created_at", description: "At or after", ops: ["gte", "gt"], ...FROM_IST },
+      to: { path: "created_at", description: "At or before", ops: ["lte", "lt"], ...TO_IST },
+    },
+    order: { path: "created_at", ascending: false },
+    groupable: ["type", "source", "client_id", "player_id"],
+  },
+
+  // ── Scheduling engine ────────────────────────────────────────────────────
+  assignments: {
+    table: "coach_assignments",
+    description:
+      "What the scheduling engine decided and why: the coach it picked for a session, the score it gave them, and whether the choice is locked against being moved.",
+    // RLS is `coach_id = auth.uid() OR is_founder()`, so a coach sees only
+    // their own — which is the honest answer to 'why was I given this'.
+    roles: STAFF,
+    columns: "id,session_id,coach_id,assigned_by,score,locked,status,created_at",
+    includes: {
+      session: "class_sessions(id,starts_at,status,classes(title,venues(name)))",
+      coach: "profiles!coach_assignments_coach_id_fkey(id,full_name)",
+    },
+    defaultIncludes: ["session"],
+    filters: {
+      id: { path: "id", description: "Assignment id", ops: ["eq", "in", "not_in"] },
+      session_id: { path: "session_id", description: "Assignments for this session" },
+      coach_id: { path: "coach_id", description: "Assignments to this coach" },
+      status: { path: "status", description: "Whether the assignment still stands" },
+      locked: { path: "locked", description: "true if pinned against the engine moving it" },
+      score: { path: "score", description: "The engine's score for the pick" },
+      from: { path: "created_at", description: "At or after", ops: ["gte", "gt"], ...FROM_IST },
+      to: { path: "created_at", description: "At or before", ops: ["lte", "lt"], ...TO_IST },
+    },
+    order: { path: "created_at", ascending: false },
+    groupable: ["status", "locked", "coach_id"],
+  },
+
+  // ── Places, continued ────────────────────────────────────────────────────
+  private_locations: {
+    table: "private_class_details",
+    description:
+      "Where a private class actually happens — usually the client's home, with access notes and whether they have a table.",
+    // The address IS the point: a coach has to drive there, and the coach app
+    // already shows it. RLS scopes it properly — `client_id = auth.uid() OR
+    // is_founder() OR coach_teaches_class(class_id)` — so this is one of the
+    // rows where the policy, not the allow-list, is the right gate.
+    roles: ALL,
+    // `address_details` withheld: it is the same address as structured
+    // components (building, flat, landmark…), so it doubles every row's size
+    // to say what the flat columns already say.
+    columns:
+      "class_id,client_id,player_id,address,postcode,lat,lng,has_table,access_notes,venue_label,unit_label",
+    includes: {
+      class: "classes(id,title,class_type,active)",
+      client: "profiles(id,full_name)",
+      player: "players(id,full_name)",
+    },
+    defaultIncludes: ["class"],
+    filters: {
+      class_id: { path: "class_id", description: "The class held here", ops: ["eq", "in", "not_in"] },
+      client_id: { path: "client_id", description: "Locations for this account" },
+      player_id: { path: "player_id", description: "Locations for this player" },
+      postcode: { path: "postcode", description: "Postcode, matched loosely", loose: true },
+      address: { path: "address", description: "Address, matched loosely", loose: true },
+      has_table: { path: "has_table", description: "true if the client has their own table" },
+    },
+    order: { path: "postcode", ascending: true },
+    groupable: ["postcode", "has_table", "client_id"],
+  },
+
+  // ── Demand ───────────────────────────────────────────────────────────────
+  area_interest: {
+    table: "area_interest",
+    description:
+      "People who asked to be told when the academy reaches their area. Answers 'where is the demand we aren't serving'.",
+    roles: FOUNDER,
+    columns: "id,email,postcode,lat,lng,created_at",
+    includes: {},
+    defaultIncludes: [],
+    filters: {
+      id: { path: "id", description: "Entry id", ops: ["eq", "in", "not_in"] },
+      email: { path: "email", description: "Email, matched loosely", loose: true },
+      postcode: { path: "postcode", description: "Postcode, matched loosely", loose: true },
+      from: { path: "created_at", description: "At or after", ops: ["gte", "gt"], ...FROM_IST },
+      to: { path: "created_at", description: "At or before", ops: ["lte", "lt"], ...TO_IST },
+    },
+    order: { path: "created_at", ascending: false },
+    groupable: ["postcode"],
   },
 };
 

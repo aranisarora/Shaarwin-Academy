@@ -1,5 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { applyFilter, groupRows, parseAggregates, pluck, type FilterTarget } from "./query-core";
+import {
+  applyFilter,
+  fromRupees,
+  groupRows,
+  istEnd,
+  istStart,
+  minorField,
+  parseAggregates,
+  phoneNumber,
+  pluck,
+  rupeeField,
+  toRupees,
+  type FilterTarget,
+} from "./query-core";
 
 /** Records the calls a filter makes instead of talking to PostgREST. */
 function recorder() {
@@ -56,6 +69,92 @@ describe("applyFilter", () => {
     applyFilter(target, { col: "coach_id", op: "is_null" });
     applyFilter(target, { col: "coach_id", op: "not_null" });
     expect(calls).toEqual(['is("coach_id",null)', 'not("coach_id","is",null)']);
+  });
+});
+
+describe("phoneNumber", () => {
+  it("collapses every spelling of one number onto the stored E.164", () => {
+    const spellings = [
+      "+91 77086 88495",
+      "+91-77086-88495",
+      "+91(77086)88495",
+      "07708688495",
+      "7708688495",
+      "+917708688495",
+      "00917708688495",
+    ];
+    for (const spelling of spellings) {
+      expect(phoneNumber(spelling), spelling).toBe("+917708688495");
+    }
+  });
+
+  it("rejects what it can't place rather than inventing an E.164", () => {
+    // A read that guesses looks in the wrong place and reports "no such client".
+    expect(phoneNumber("88495")).toBeNull();
+    expect(phoneNumber("0812345678")).toBeNull();
+    expect(phoneNumber("ring the office")).toBeNull();
+    expect(phoneNumber(null)).toBeNull();
+  });
+});
+
+describe("money", () => {
+  it("reads rupees however they were said", () => {
+    expect(fromRupees(5000)).toBe(500000);
+    expect(fromRupees("₹1,599")).toBe(159900);
+    expect(fromRupees("Rs 1599")).toBe(159900);
+    expect(fromRupees("1599.50")).toBe(159950);
+  });
+
+  it("refuses a value that isn't an amount", () => {
+    expect(fromRupees("cheap")).toBeNull();
+    expect(fromRupees("")).toBeNull();
+  });
+
+  it("renames a minor-unit column both ways and leaves others alone", () => {
+    expect(rupeeField("amount_pence")).toBe("amount_inr");
+    expect(minorField("amount_inr")).toBe("amount_pence");
+    expect(rupeeField("delta_minutes")).toBe("delta_minutes");
+    expect(minorField("delta_minutes")).toBe("delta_minutes");
+  });
+
+  it("converts a row tree in place, replacing the raw field rather than adding to it", () => {
+    // Both fields present is an invitation to quote the wrong one.
+    const rows = [
+      { id: "s1", plans: [{ name: "Group", price_pence: 159900 }], amount_pence: null },
+    ];
+    toRupees(rows);
+    expect(rows).toEqual([{ id: "s1", plans: [{ name: "Group", price_inr: 1599 }], amount_inr: null }]);
+  });
+});
+
+describe("istStart / istEnd", () => {
+  it("anchors a bare day to the academy's midnight, not UTC's", () => {
+    expect(istStart("2026-06-14")).toBe("2026-06-13T18:30:00.000Z");
+    expect(istEnd("2026-06-14")).toBe("2026-06-14T18:29:59.999Z");
+  });
+
+  it("covers a whole month from either edge", () => {
+    expect(istStart("2026-06")).toBe("2026-05-31T18:30:00.000Z");
+    expect(istEnd("2026-06")).toBe("2026-06-30T18:29:59.999Z");
+    // December has to roll the year over, not ask for month 13.
+    expect(istEnd("2026-12")).toBe("2026-12-31T18:29:59.999Z");
+  });
+
+  it("reads a bare wall time as IST too", () => {
+    expect(istStart("2026-06-14T18:30")).toBe("2026-06-14T13:00:00.000Z");
+    expect(istStart("2026-06-14 18:30:30")).toBe("2026-06-14T13:00:30.000Z");
+  });
+
+  it("passes an explicit instant through untouched", () => {
+    // Re-anchoring one that already carries an offset shifts the window twice.
+    expect(istStart("2026-08-10T00:00:00Z")).toBe("2026-08-10T00:00:00Z");
+    expect(istEnd("2026-08-10T04:30:00+05:30")).toBe("2026-08-10T04:30:00+05:30");
+  });
+
+  it("rejects anything it cannot place", () => {
+    expect(istStart("next Tuesday")).toBeNull();
+    expect(istStart("June")).toBeNull();
+    expect(istStart("")).toBeNull();
   });
 });
 

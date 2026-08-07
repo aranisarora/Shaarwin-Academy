@@ -20,16 +20,25 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/database.types";
 import {
   applyFilter,
+  asArray,
   groupRows,
   mergeSelect,
+  minorField,
   parseAggregates,
   pluck,
+  toRupees,
   OPERATORS,
   type Filter,
   type FilterTarget,
   type Operator,
 } from "./query-core";
-import { ENTITIES, describeEntities, type EntityDef, type Role } from "./find-registry";
+import {
+  ENTITIES,
+  describeEntities,
+  type EntityDef,
+  type Role,
+  type TableName,
+} from "./find-registry";
 import { fail, ok, type ToolContext, type WaTool } from "./types";
 
 /** Rows fetched in one call. Tools run inside the webhook's after() budget. */
@@ -44,7 +53,14 @@ const MAX_LIMIT = 200;
  */
 const GROUP_SCAN_LIMIT = 1000;
 
-type ParsedFilter = Filter & { name: string };
+/**
+ * `asked` is what the caller actually typed, kept alongside the normalized
+ * `value` the query runs on. A miss has to be reported back in the caller's
+ * own units: echoing the normalized one told the founder "nothing under
+ * ₹500,000" when he had asked for ₹5,000 — the same 100x wrong number the
+ * conversion exists to prevent, moved onto the miss path.
+ */
+type ParsedFilter = Filter & { name: string; asked: unknown };
 
 function parseFilters(
   def: EntityDef,
@@ -71,7 +87,11 @@ function parseFilters(
       };
     }
 
-    const op = String(item.op ?? "eq").trim() as Operator;
+    // Loose text defaults to ilike. The registry describes these fields as
+    // "matched loosely" but the default was eq, so a name typed with a stray
+    // space or the wrong capitalisation matched nothing unless the model
+    // remembered to ask for the loose op itself.
+    const op = (String(item.op ?? "").trim() || (def_.loose ? "ilike" : "eq")) as Operator;
     if (!(OPERATORS as readonly string[]).includes(op)) {
       return { error: `Unknown op "${op}". Available: ${OPERATORS.join(", ")}.` };
     }
@@ -84,10 +104,32 @@ function parseFilters(
       return { error: `Field "${name}" with op "${op}" needs a value.` };
     }
 
+    // in / not_in carry a list, and the model sometimes spells that list as one
+    // comma-separated string — split it here, the way applyFilter would, so
+    // everything below inspects the values rather than the sentence.
+    // A field that normalizes gets first refusal on the whole string: "1,599"
+    // is one price, not the two numbers a blind split makes of it.
+    const list = op === "in" || op === "not_in";
+    const whole =
+      list &&
+      def_.normalize &&
+      typeof item.value === "string" &&
+      def_.normalize(item.value, op) != null;
+    const supplied = !needsValue ? [] : list ? (whole ? [item.value] : asArray(item.value)) : [item.value];
+
+    // The one unusable value that used to sail through, because `item.value ==
+    // null` doesn't catch it: `in` with an empty list matches nothing and reads
+    // as a real miss, and `not_in` with an empty list excludes nothing and
+    // returns EVERY row as though the filter applied. These ids feed the bulk
+    // tools, so that second one turns "cancel the ones I didn't list" into
+    // cancelling the lot.
+    if (list && supplied.length === 0) {
+      return { error: `Field "${name}" with op "${op}" needs at least one value.` };
+    }
+
     // An out-of-vocabulary enum matches nothing, which is indistinguishable
     // from "there are none" — say so instead of answering zero.
     if (def_.values && needsValue) {
-      const supplied = Array.isArray(item.value) ? item.value : [item.value];
       const bad = supplied.map(String).filter((v) => !def_.values!.includes(v));
       if (bad.length) {
         return {
@@ -96,7 +138,29 @@ function parseFilters(
       }
     }
 
-    filters.push({ name, col: def_.path, op, value: item.value });
+    // Writes canonicalize and reads didn't: a phone, a price or a date given the
+    // way a person gives it was compared verbatim against the canonical value
+    // the column holds. A pattern is exempt — "the number ending 8495" is a
+    // legitimate way to hunt, and there is nothing to canonicalize in a wildcard.
+    let values = supplied;
+    if (def_.normalize && needsValue && op !== "like" && op !== "ilike") {
+      const normalize = def_.normalize;
+      values = supplied.map((v) => normalize(v, op));
+      const bad = supplied.filter((_, i) => values[i] == null);
+      if (bad.length) {
+        // Same reasoning as the enum above: querying the raw value instead would
+        // look in a place the column never holds and answer zero, confidently.
+        return { error: `Can't read "${bad.join(", ")}" as ${name} — expected ${def_.expects}.` };
+      }
+    }
+
+    filters.push({
+      name,
+      col: def_.path,
+      op,
+      value: list ? values : values[0],
+      asked: list ? supplied : supplied[0],
+    });
   }
   return { filters };
 }
@@ -151,11 +215,19 @@ function buildSelect(
  * founder can read profiles directly, so this only runs when it's needed and
  * only when the rows actually came back nameless.
  */
+/** Tables whose rows name a coach, and the column that does it. */
+const COACH_COLUMN: Partial<Record<TableName, string>> = {
+  class_sessions: "coach_id",
+  coach_availability: "coach_id",
+  private_booking_series: "preferred_coach",
+};
+
 async function fillCoachNames(
   supabase: SupabaseClient<Database>,
-  rows: Record<string, unknown>[]
+  rows: Record<string, unknown>[],
+  coachCol: string
 ): Promise<void> {
-  const withCoach = rows.filter((r) => r.coach_id);
+  const withCoach = rows.filter((r) => r[coachCol]);
   if (withCoach.length === 0) return;
 
   // `coach_name` is set on EVERY row that has a coach, from the embed when it
@@ -176,7 +248,7 @@ async function fillCoachNames(
 
   for (const row of withCoach) {
     const fromEmbed = embedded.get(row);
-    row.coach_name = fromEmbed ?? names?.get(String(row.coach_id)) ?? null;
+    row.coach_name = fromEmbed ?? names?.get(String(row[coachCol])) ?? null;
   }
 }
 
@@ -210,14 +282,18 @@ async function runFind(
       `Can't group by "${badGroup.join(", ")}". Available: ${def.groupable.join(", ")}.`
     );
   }
-  const aggregates = parseAggregates(input.aggregate);
+  const baseColumns = def.columns.split(",");
+  // Money leaves in rupees under an _inr name, so the model asks for
+  // sum:amount_inr as readily as sum:amount_pence — both name one stored column.
+  const aggregates = parseAggregates(input.aggregate).map((a) =>
+    a.col && baseColumns.includes(minorField(a.col)) ? { ...a, col: minorField(a.col) } : a
+  );
   const grouping = groupBy.length > 0;
   if (aggregates.length && !grouping) {
     return fail("`aggregate` needs `group_by` — or use count_only for a plain total.");
   }
   // An aggregate over a column we never selected silently returns null for
   // every group, which reads as "zero" rather than "I didn't fetch that".
-  const baseColumns = def.columns.split(",");
   const badAgg = aggregates
     .map((a) => a.col)
     .filter((c) => c !== undefined)
@@ -259,15 +335,33 @@ async function runFind(
   const { data, error, count } = await query;
   if (error) return fail(`That query didn't work: ${error.message}`);
 
-  if (countOnly) return ok({ entity: entityName, count: count ?? 0 });
+  // Nothing came back means nothing matched THIS lookup — it is not evidence
+  // that the thing does not exist, which is the step a phone in the wrong format
+  // skipped on its way to "I couldn't find a client with that number" and an
+  // invented reason for it. Echoing the values actually queried, after
+  // normalization, is what lets the answer show its working instead.
+  const nothingMatched = filters.length
+    ? { no_match_for: filters.map((f) => ({ field: f.name, op: f.op, value: f.asked })) }
+    : {};
 
-  const rows = (data ?? []) as unknown as Record<string, unknown>[];
-  if (def.table === "class_sessions" || def.table === "coach_availability") {
-    await fillCoachNames(supabase, rows);
+  if (countOnly) {
+    return ok({ entity: entityName, count: count ?? 0, ...(count ? {} : nothingMatched) });
   }
 
+  const rows = (data ?? []) as unknown as Record<string, unknown>[];
+  // Which column carries the coach differs per table, and a private series
+  // spells it `preferred_coach` — gating on the table name alone left that
+  // entity handing a client `profiles: null` and the assistant announcing a
+  // private slot with nobody taking it.
+  const coachCol = COACH_COLUMN[def.table];
+  if (coachCol) await fillCoachNames(supabase, rows, coachCol);
   if (grouping) {
+    // Fold in paise and convert the one number that comes out. Rounding every
+    // row to whole rupees and then adding them up drifts by as much as half a
+    // rupee a row, so this total and client_payments' — which sums paise and
+    // rounds once — would name different figures for the same invoices.
     const groups = groupRows(rows, groupBy, aggregates);
+    toRupees(groups);
     return ok({
       entity: entityName,
       grouped_by: groupBy,
@@ -275,14 +369,19 @@ async function runFind(
       rows_scanned: rows.length,
       // Say it rather than quietly answering from a slice.
       truncated: rows.length >= GROUP_SCAN_LIMIT,
+      ...(rows.length ? {} : nothingMatched),
     });
   }
 
+  // Minor units must not leave this tool: 159900 under a name the model reads
+  // as pence became "₹159,900".
+  toRupees(rows);
   return ok({
     entity: entityName,
     count: rows.length,
     rows,
     truncated: rows.length >= rowLimit,
+    ...(rows.length ? {} : nothingMatched),
   });
 }
 
@@ -299,13 +398,18 @@ export function findTool(role: Role): WaTool {
 
 HOW TO CALL IT
 - entity: what to look at (below).
-- where: array of {field, op, value}. op is one of ${OPERATORS.join(", ")} and defaults to eq. is_null / not_null take no value. ilike matches loosely — {field:"venue", op:"ilike", value:"plaza"} finds "La Plazza".
+- where: array of {field, op, value}. op is one of ${OPERATORS.join(", ")}; it defaults to eq, except on name/title/venue-style text where it defaults to a loose match, so {field:"venue", value:"plaza"} finds "La Plazza". is_null / not_null take no value.
 - include: extra related data by name; sensible defaults apply if you omit it.
 - limit: rows back (default ${DEFAULT_LIMIT}, max ${MAX_LIMIT}). order_desc: true to reverse the natural order.
 - count_only: true returns just a number — use it for "how many", never fetch rows to count them.
 - group_by + aggregate: for "most/least/per-X" questions. aggregate takes entries like "count", "sum:delta_minutes". Groups come back biggest first.
 
-Timestamps are ISO 8601; the academy runs on IST. Ids in the result are what the action tools take. If a field name is rejected, the error lists the valid ones — read it and retry rather than guessing.
+VALUES
+- Dates: give a bare day ("2026-06-14") or month ("2026-06") and it is read on the academy's IST clock, both edges included. Don't convert to UTC yourself — that shifts the window by 5½ hours. A full ISO instant with an offset is used exactly as given.
+- Money is rupees in and out: filter in rupees, and the _inr fields you get back are already rupees. Never scale them.
+- Phone numbers can be given however the person said them.
+
+Ids in the result are what the action tools take. If a value is rejected, the error says what was expected — read it and retry rather than guessing. \`no_match_for\` in a result means the query ran and matched nothing for exactly those values: report that, and say what you searched for. It is never evidence that the thing doesn't exist.
 
 ENTITIES YOU CAN QUERY
 ${describeEntities(role)}`,
