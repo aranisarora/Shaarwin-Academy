@@ -122,7 +122,6 @@ export function AdminSessionSheet({
   const isOpenPrivate = session.isPrivate && !session.privateClientId;
   const [assignClientId, setAssignClientId] = useState("");
   const [assignPlayerId, setAssignPlayerId] = useState("");
-  const [assignOverride, setAssignOverride] = useState(false);
   const assignClient = clients.find((c) => c.id === assignClientId) ?? null;
 
   // School class: register a walk-in pupil (name + grade).
@@ -157,8 +156,7 @@ export function AdminSessionSheet({
       const r = await assignPrivateSessionClient(
         session.id,
         assignClientId,
-        assignPlayerId || undefined,
-        assignOverride
+        assignPlayerId || undefined
       );
       if (r.ok) {
         okMsg("Client assigned — the session is on their schedule and their minutes were debited.");
@@ -486,19 +484,6 @@ export function AdminSessionSheet({
                   ))}
                 </Select>
               )}
-              <label className="flex cursor-pointer items-start gap-3 text-sm">
-                <Checkbox
-                  checked={assignOverride}
-                  onChange={(e) => setAssignOverride(e.target.checked)}
-                  className="mt-0.5"
-                />
-                <span>
-                  <span className="font-medium">Ignore plan limits</span>
-                  <span className="mt-0.5 block text-fg-2">
-                    Book beyond this client&apos;s weekly session limit or session length.
-                  </span>
-                </span>
-              </label>
               <Button onClick={assign} disabled={pending || !assignClientId} className="w-full">
                 {pending ? <Spinner /> : "Assign client"}
               </Button>

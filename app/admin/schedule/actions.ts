@@ -376,8 +376,7 @@ export async function createPrivateSession(input: PrivateSessionInput): Promise<
 export async function assignPrivateSessionClient(
   sessionId: string,
   clientId: string,
-  playerId?: string,
-  overridePlanLimits = false
+  playerId?: string
 ): Promise<Result> {
   const { supabase, founder } = await requireFounder();
   if (!founder) return { ok: false, error: "Founder only." };
@@ -386,8 +385,7 @@ export async function assignPrivateSessionClient(
     founder.id,
     sessionId,
     clientId,
-    playerId,
-    overridePlanLimits
+    playerId
   );
   if (!result.ok) return result;
   refresh();

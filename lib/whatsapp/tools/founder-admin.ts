@@ -345,10 +345,6 @@ const createPrivate: WaTool = {
         type: "number",
         description: "1–12. Stands up a weekly private slot starting on date (same weekday/time), booked N weeks ahead as a managed series the nightly generator keeps rolling. Default 1 (single one-off session). Mirrors admin recurring toggle.",
       },
-      override_plan_limits: {
-        type: "boolean",
-        description: "Skip plan duration/frequency checks (use to comp a session or handle special cases). Default false.",
-      },
       venue_id: { type: "string", description: "A saved venue (from list_venues) — used instead of address" },
       address: { type: "string", description: "Free-text address to geocode — omit if venue_id is given" },
       unit: { type: "string", description: "Where inside the venue — \"Clubhouse\", \"Villa 659\", \"Tower 1, flat 171\". Matters when a complex has several: the villas' clubhouse and the apartments' clubhouse are different places." },
@@ -410,7 +406,6 @@ const createPrivate: WaTool = {
       time: String(input.time),
       durationMinutes,
       recurWeeks,
-      overridePlanLimits: input.override_plan_limits ? Boolean(input.override_plan_limits) : false,
       address,
       lat,
       lng,
