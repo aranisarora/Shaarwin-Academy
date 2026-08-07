@@ -91,6 +91,52 @@ export type PrivateSeriesRow = {
   nextSessionStart: string | null; // ISO — for the ?date= deep-link
 };
 
+/**
+ * One row of a player-first picker. The founder thinks in players — the child
+ * who turns up — and only needs the client (the account that pays) to tell two
+ * Rohans apart, so the player leads and the family name follows in brackets.
+ * Picking a client and then picking their player was two decisions for one
+ * thought, and the second one only ever appeared for families with more than
+ * one child, so the same job looked different from one booking to the next.
+ *
+ * `value` carries both ids because the actions underneath still take both:
+ * "clientId" on its own for a family whose player profile doesn't exist yet,
+ * "clientId|playerId" otherwise. Uuids contain no "|", so the split is safe.
+ */
+export type PlayerChoice = { value: string; label: string };
+
+/** Every player across every client, as "Player (Family)" rows sorted by the
+ * name the founder is scanning for. A client with no player yet still gets a
+ * row: dropping them would quietly make a family unbookable from a picker that
+ * used to list them. */
+export function playerChoices(clients: ClientOption[]): PlayerChoice[] {
+  const rows: PlayerChoice[] = [];
+  for (const c of clients) {
+    const clientName = c.name || "Unnamed client";
+    if (c.players.length === 0) {
+      rows.push({ value: c.id, label: `${clientName} — no player yet` });
+      continue;
+    }
+    for (const p of c.players) {
+      rows.push({ value: `${c.id}|${p.id}`, label: `${p.name} (${clientName})` });
+    }
+  }
+  return rows.sort((a, b) => a.label.localeCompare(b.label));
+}
+
+/** Split a picker value back into the ids the server actions take. Values that
+ * aren't a player row at all ("open", "invite:…") come back as the client half
+ * with no player, which is exactly how the callers already read them. */
+export function splitPlayerChoice(value: string): { clientId: string; playerId: string } {
+  const [clientId, playerId = ""] = value.split("|");
+  return { clientId, playerId };
+}
+
+/** The picker value for a client/player pair already held in state. */
+export function playerChoiceValue(clientId: string, playerId: string): string {
+  return playerId ? `${clientId}|${playerId}` : clientId;
+}
+
 export type Coach = { id: string; name: string };
 export type Venue = {
   id: string;
