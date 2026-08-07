@@ -566,9 +566,20 @@ export function AdminWeeklyClasses({
           it was the only other thing the ⋯ held. A quiet line in the flow of the
           page is more findable than an unlabelled glyph, and it says up front
           that he almost certainly doesn't need it. */}
+      {/* This used to assert "Sessions top up automatically each night." Only
+          two cron jobs exist — private-series-nightly (0024) and
+          session-status-hourly (0065). The line that would schedule
+          generate_class_sessions was written as a COMMENT in migration 0006
+          and never run, so on the migration history nothing tops these up at
+          all and the sentence was telling the founder not to worry about the
+          one thing keeping his timetable from running out. Claiming no
+          schedule would be its own guess — the live database has drifted ahead
+          of these files — so it now says what the button does, which is true
+          either way. */}
       {classes.length > 0 && (
         <p className="px-1 text-sm text-fg-2">
-          Sessions top up automatically each night.{" "}
+          Runs out to 8 weeks ahead. Topping up only ever adds the weeks that are
+          missing, so it is always safe to tap.{" "}
           <button
             type="button"
             disabled={pending}

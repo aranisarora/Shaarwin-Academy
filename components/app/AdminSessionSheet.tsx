@@ -309,6 +309,7 @@ export function AdminSessionSheet({
     if (!session) return;
     startTransition(async () => {
       if (chosen === "session") {
+        let coachCleared = false;
         if (slotChanged) {
           const r = await moveSession(session.id, date, form.time);
           if (!r.ok) {
@@ -316,6 +317,7 @@ export function AdminSessionSheet({
             setStep("edit");
             return;
           }
+          coachCleared = !!r.coachCleared;
         }
         if (spotsChanged) {
           const r = await setSessionCapacity(session.id, form.capacity);
@@ -326,11 +328,15 @@ export function AdminSessionSheet({
           }
         }
         // A capacity-only change notifies nobody; a slot move tells everyone
-        // booked. Word the ✓ for whichever actually happened.
+        // booked. Word the ✓ for whichever actually happened — including the
+        // case where the new time clashed for the coach and the move went
+        // through without them.
         okMsg(
-          slotChanged
-            ? "Saved — just this session changed. Everyone booked has been told."
-            : "Saved — just this session changed."
+          coachCleared
+            ? "Session moved and everyone booked has been told. The coach couldn't take the new time, so it's off their calendar — the Schedule shows it needs someone."
+            : slotChanged
+              ? "Saved — just this session changed. Everyone booked has been told."
+              : "Saved — just this session changed."
         );
       } else {
         // Only fields the founder deliberately edited feed the class update —
@@ -348,7 +354,11 @@ export function AdminSessionSheet({
           time: timeChanged ? form.time : session.classTime,
         });
         if (r.ok)
-          okMsg("Saved for every week — upcoming sessions moved and everyone booked was told.");
+          okMsg(
+            r.stuck
+              ? `Saved for every week — upcoming sessions moved and everyone booked was told. ${r.stuck} ${r.stuck === 1 ? "week" : "weeks"} couldn't move and ${r.stuck === 1 ? "is" : "are"} still on the old slot; open ${r.stuck === 1 ? "it" : "them"} on the Schedule to move ${r.stuck === 1 ? "it" : "them"} by hand.`
+              : "Saved for every week — upcoming sessions moved and everyone booked was told."
+          );
         else errMsg(r.error ?? "Couldn't save the class.");
       }
       setStep("edit");
@@ -922,7 +932,12 @@ export function AdminSessionSheet({
                   // Private sessions are one-offs — nothing to scope.
                   startTransition(async () => {
                     const r = await moveSession(session.id, date, form.time);
-                    if (r.ok) okMsg("Session moved — everyone booked has been told.");
+                    if (r.ok)
+                      okMsg(
+                        r.coachCleared
+                          ? "Session moved and the client has been told. The coach couldn't take the new time, so it's off their calendar — the Schedule shows it needs someone."
+                          : "Session moved — everyone booked has been told."
+                      );
                     else errMsg(r.error ?? "Move failed.");
                   });
                 } else {

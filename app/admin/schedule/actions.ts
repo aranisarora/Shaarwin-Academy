@@ -117,13 +117,15 @@ export async function moveSession(
   sessionId: string,
   date: string,
   time: string
-): Promise<Result> {
+): Promise<Result & { coachCleared?: boolean }> {
   const { supabase, founder } = await requireFounder();
   if (!founder) return { ok: false, error: "Founder only." };
   const result = await moveSessionCore(supabase, founder.id, sessionId, date, time);
   if (!result.ok) return result;
   refresh();
-  return { ok: true };
+  // Passed through so the ✓ can say the coach came off — the move succeeds
+  // either way, but "moved" alone hides a session that now needs someone.
+  return { ok: true, coachCleared: result.coachCleared };
 }
 
 export async function setSessionCapacity(
@@ -140,13 +142,17 @@ export async function setSessionCapacity(
 
 // ── The whole class ("every week") ───────────────────────────────────────────
 
-export async function updateGroupClass(input: ClassUpdate): Promise<Result> {
+export async function updateGroupClass(
+  input: ClassUpdate
+): Promise<Result & { moved?: number; stuck?: number }> {
   const { supabase, founder } = await requireFounder();
   if (!founder) return { ok: false, error: "Founder only." };
   const result = await updateGroupClassCore(supabase, founder.id, input);
   if (!result.ok) return result;
   refresh();
-  return { ok: true };
+  // `stuck` is weeks that refused to move even without their coach. They stay
+  // on the old slot, so a bare "Saved" would be a false report.
+  return { ok: true, moved: result.moved, stuck: result.stuck };
 }
 
 export async function endGroupClass(classId: string): Promise<Result> {

@@ -81,7 +81,7 @@ export async function moveSessionCore(
   sessionId: string,
   date: string, // YYYY-MM-DD academy wall clock
   time: string // HH:MM
-): Promise<OpResult> {
+): Promise<OpResult & { coachCleared?: boolean }> {
   const { data: session } = await supabase
     .from("class_sessions")
     .select("id,coach_id,starts_at,classes!inner(title,duration_minutes)")
@@ -165,7 +165,9 @@ export async function moveSessionCore(
     entity_id: sessionId,
     meta: { new_start: newStart.toISOString(), coach_cleared: coachCleared },
   });
-  return { ok: true };
+  // The coach is told his session went off his calendar, and the audit log
+  // records it — the founder, who did it, was the one person never informed.
+  return { ok: true, coachCleared };
 }
 
 /** One-off capacity change for a single session (null = back to class default). */

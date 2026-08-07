@@ -37,7 +37,7 @@ export async function updateGroupClassCore(
   supabase: SupabaseClient<Database>,
   founderId: string,
   input: ClassUpdate
-): Promise<OpResult> {
+): Promise<OpResult & { moved?: number; stuck?: number }> {
   const { data: cls } = await supabase
     .from("classes")
     .select("id,title,duration_minutes,venue_id,recurrence_rule")
@@ -112,6 +112,10 @@ export async function updateGroupClassCore(
   const movedSessionIds: string[] = [];
   const affectedCoaches = new Set<string>();
   let needsEngine = false;
+  // Weeks that would not move even after taking the coach off them. There is
+  // no third thing to try, so they stay where they were — and the founder has
+  // to be told, because everything else about this operation reports success.
+  let stuck = 0;
 
   for (const s of sessions ?? []) {
     const start = new Date(s.starts_at);
@@ -145,7 +149,10 @@ export async function updateGroupClassCore(
           coach_id: null,
         })
         .eq("id", s.id);
-      if (retryErr) continue;
+      if (retryErr) {
+        stuck += 1;
+        continue;
+      }
       if (s.coach_id) affectedCoaches.add(s.coach_id);
       needsEngine = true;
     }
@@ -194,9 +201,9 @@ export async function updateGroupClassCore(
     action: "class.update",
     entity: "classes",
     entity_id: input.classId,
-    meta: { moved_sessions: movedSessionIds.length },
+    meta: { moved_sessions: movedSessionIds.length, stuck },
   });
-  return { ok: true };
+  return { ok: true, moved: movedSessionIds.length, stuck };
 }
 
 /** Stop a class: cancels every upcoming session, tells everyone, keeps history. */
