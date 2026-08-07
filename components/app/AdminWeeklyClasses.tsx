@@ -24,6 +24,7 @@ import { WEEKDAY_ORDER } from "@/lib/group-by-day";
 import { AdminClassSheet } from "./AdminClassSheet";
 import { AdminAddSheet } from "./AdminAddSheet";
 import { CardActionMenu } from "./CardActionMenu";
+import { PrivateSeriesSheet } from "./PrivateSeriesSheet";
 import { time12h } from "./ClassFields";
 import { AdminBulkRemoveSheet } from "./AdminBulkRemoveSheet";
 import { AdminWipeCalendarSheet } from "./AdminWipeCalendarSheet";
@@ -81,6 +82,7 @@ export function AdminWeeklyClasses({
   // Duplicate is seeding the add sheet from.
   const [held, setHeld] = useState<ClassRow | null>(null);
   const [heldSeries, setHeldSeries] = useState<PrivateSeriesRow | null>(null);
+  const [editingSeries, setEditingSeries] = useState<PrivateSeriesRow | null>(null);
   const [duplicating, setDuplicating] = useState<ClassRow | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -564,19 +566,19 @@ export function AdminWeeklyClasses({
                       series={p}
                       selecting={selecting}
                       selected={selectedSeries.has(p.id)}
-                      // Tap opens a panel about this slot, and hold opens the
-                      // same one — exactly as a class beside it does. It used to
-                      // navigate silently to a session on the other view when it
-                      // had one, and drop you into a selection when it didn't,
-                      // so the same tap on two cards in one grid did two
-                      // different things depending on data you cannot see.
+                      // Tap edits, hold offers the menu — exactly as a class
+                      // beside it does. Tapping used to navigate silently to a
+                      // session on the other view when the slot had one, and
+                      // drop you into a selection when it didn't, so the same
+                      // tap on two cards in one grid did two different things
+                      // depending on data neither card showed.
                       onClick={() => {
                         if (selecting) {
                           toggleSeries(p.id);
                           return;
                         }
                         setMessage(null);
-                        setHeldSeries(p);
+                        setEditingSeries(p);
                       }}
                       onLongPress={() => {
                         setMessage(null);
@@ -840,10 +842,8 @@ export function AdminWeeklyClasses({
         }
       />
 
-      {/* A family's standing slot. There is no editor for one — nothing in the
-          app can move a private series to another day, only end it and book a
-          new one — so this lists what genuinely exists rather than opening a
-          form that would have to lie about what Save does. */}
+      {/* A family's standing slot gets the same menu as the class beside it —
+          the same four kinds of thing, in the same order. */}
       <CardActionMenu
         open={!!heldSeries}
         title={
@@ -855,11 +855,16 @@ export function AdminWeeklyClasses({
         actions={
           heldSeries
             ? [
+                {
+                  label: "Edit",
+                  hint: "Moves every booked week with it",
+                  onSelect: () => setEditingSeries(heldSeries),
+                },
                 ...(heldSeries.nextSessionId && heldSeries.nextSessionStart
                   ? [
                       {
                         label: "Open this week's session",
-                        hint: "Change the coach or the time for one week",
+                        hint: "Change one week only, without moving the slot",
                         onSelect: () => {
                           const s = heldSeries;
                           router.push(
@@ -891,6 +896,20 @@ export function AdminWeeklyClasses({
             : []
         }
       />
+
+      {editingSeries && (
+        <PrivateSeriesSheet
+          key={editingSeries.id}
+          series={editingSeries}
+          coaches={coaches}
+          onClose={() => setEditingSeries(null)}
+          onDone={(m) => {
+            setMessage(m);
+            setEditingSeries(null);
+            onRefresh?.();
+          }}
+        />
+      )}
 
       {duplicating && (
         <AdminAddSheet
