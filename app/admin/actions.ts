@@ -19,7 +19,9 @@ type Result = { ok: boolean; error?: string };
 
 // ── Classes ──────────────────────────────────────────────────────────────────
 
-export async function createGroupClass(input: NewClass): Promise<Result> {
+export async function createGroupClass(
+  input: NewClass
+): Promise<Result & { weeks?: number; coachless?: number }> {
   const { supabase, founder } = await requireFounder();
   if (!founder) return { ok: false, error: "Founder only." };
 
@@ -29,7 +31,9 @@ export async function createGroupClass(input: NewClass): Promise<Result> {
   revalidatePath("/admin/schedule");
   revalidatePath("/admin/weekly");
   revalidateTag("classes", "max");
-  return { ok: true };
+  // The counts travel back so the ✓ can say what actually happened. A class
+  // where three weeks came out coachless used to read as a clean success.
+  return { ok: true, weeks: result.weeks, coachless: result.coachless };
 }
 
 export async function setClassActive(classId: string, active: boolean): Promise<Result> {

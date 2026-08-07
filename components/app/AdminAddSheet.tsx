@@ -290,8 +290,17 @@ export function AdminAddSheet({
               : `One-time ${isSchool ? "school class" : "class"} added to the schedule.`
           );
         } else {
+          // Publishing several weekdays is several classes, one call each. A
+          // failure part-way used to `return` with only that day's error, so
+          // the days already published went unmentioned and the founder had no
+          // way to know whether to try the whole thing again. Now every day is
+          // attempted and the outcome is reported as a whole.
+          const done: string[] = [];
+          const failed: { day: string; error: string }[] = [];
+          let coachless = 0;
           for (const day of weekdays) {
             const time = dayTimes[day] ?? lastTime;
+            const dayName = WEEKDAY_NAME[day] ?? day;
             const r = await createGroupClass({
               ...form,
               weekday: day,
@@ -299,18 +308,42 @@ export function AdminAddSheet({
               title: generateClassTitle(day, time, venueName),
               isSchool,
             });
-            if (!r.ok) {
-              setMessage(r.error ?? "Couldn't create the class.");
-              return;
+            if (r.ok) {
+              done.push(dayName);
+              coachless += r.coachless ?? 0;
+            } else {
+              failed.push({ day: dayName, error: r.error ?? "Couldn't create the class." });
             }
           }
-          const dayNames = weekdays.map((d) => WEEKDAY_NAME[d] ?? d).join(", ");
+
           const noun = isSchool ? "school class" : "class";
-          setSuccess(
-            weekdays.length > 1
-              ? `${weekdays.length} ${noun}es published — ${dayNames}.`
-              : `${isSchool ? "School class" : "Class"} published — the next 8 weeks of sessions are on the schedule.`
-          );
+          // Weeks the chosen coach was already busy on still exist — they just
+          // went out for the engine to fill. Saying so is the difference between
+          // a class the founder can trust and one he finds holes in later.
+          const coachLine =
+            coachless > 0
+              ? ` ${coachless} ${coachless === 1 ? "week" : "weeks"} clashed with that coach's diary and went out for a coach to be picked automatically — the Schedule shows any that still need one.`
+              : "";
+
+          if (failed.length === 0) {
+            setSuccess(
+              (done.length > 1
+                ? `${done.length} ${noun}es published — ${done.join(", ")}.`
+                : `${isSchool ? "School class" : "Class"} published — the next 8 weeks of sessions are on the schedule.`) +
+                coachLine
+            );
+          } else if (done.length === 0) {
+            setMessage(failed[0].error);
+          } else {
+            // Part published. Name both halves: what exists now, and what to
+            // try again — leaving either out is how the same class gets made
+            // twice.
+            setSuccess(
+              `${done.join(", ")} published${coachLine ? "." + coachLine : "."} ${failed
+                .map((f) => f.day)
+                .join(", ")} didn't go through — ${failed[0].error}`
+            );
+          }
         }
       } else {
         const venue = venues.find((v) => v.id === priv.venueId);
