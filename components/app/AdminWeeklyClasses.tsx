@@ -29,6 +29,7 @@ import { time12h } from "./ClassFields";
 import { AdminBulkRemoveSheet } from "./AdminBulkRemoveSheet";
 import { AdminWipeCalendarSheet } from "./AdminWipeCalendarSheet";
 import { PrivateSeriesCard, WeeklyClassCard } from "./ClassCard";
+import type { OpenMap, ScheduleFilters } from "./AdminScheduleTabs";
 import {
   WEEKDAY_NAME,
   type ClassRow,
@@ -47,6 +48,8 @@ export function AdminWeeklyClasses({
   venues,
   clients,
   invites,
+  filters,
+  venueCards,
   openClassId = null,
   onRefresh,
   onShowThisWeek,
@@ -61,6 +64,10 @@ export function AdminWeeklyClasses({
   venues: Venue[];
   clients: ClientOption[];
   invites: InviteOption[];
+  /** Coach / location / type, shared with This week. */
+  filters: ScheduleFilters;
+  /** Which venue cards are open, held above so it survives the view switch. */
+  venueCards: OpenMap;
   // Deep-link from a session sheet ("edit the weekly class") — open this class
   // straight away so the two views feel like one thing.
   openClassId?: string | null;
@@ -170,9 +177,10 @@ export function AdminWeeklyClasses({
   // never had it — every card already sits under a day heading. Four chips is
   // also the ceiling: this row held five once and only 3.3 were ever painted, so
   // the founder never discovered the last one.
-  const [coachFilter, setCoachFilter] = useState("all");
-  const [venueFilter, setVenueFilter] = useState("all");
-  const [typeFilter, setTypeFilter] = useState("all");
+  // Coach, location and type come from above — they are the same three
+  // questions This week asks, and flipping the switch used to discard them.
+  // Status stays local because only a repeating class can be paused or ended.
+  const { coach: coachFilter, venue: venueFilter, type: typeFilter } = filters;
   const [statusFilter, setStatusFilter] = useState("all");
 
   // Location options are drawn from both classes and private series so a
@@ -183,32 +191,38 @@ export function AdminWeeklyClasses({
         ...new Set([
           ...classes.map((c) => c.venueName ?? ""),
           ...privateSeries.map((p) => p.venueName),
+          // Whatever is filtered on stays listed even if nothing here matches
+          // it — the filters are shared with This week now, so a location
+          // chosen over there must still name itself over here.
+          ...(venueFilter !== "all" ? [venueFilter] : []),
         ]),
       ].sort((a, b) => a.localeCompare(b)),
-    [classes, privateSeries]
+    [classes, privateSeries, venueFilter]
   );
 
   // Matched by name, not id: a class carries its next session's coach name and a
   // private series carries its preferred coach's name, and neither carries an id
   // the other also has. The name is the only key both rows share.
-  const coachOptions = useMemo(
-    () =>
-      [
-        ...new Set([
-          ...classes.map((c) => c.coachName),
-          ...privateSeries.map((p) => p.coachName),
-        ]),
-      ]
-        .filter((n): n is string => !!n)
-        .sort((a, b) => a.localeCompare(b)),
-    [classes, privateSeries]
-  );
+  // The filter now carries a coach ID, exactly as This week's does — one chip
+  // drives both views, so both must speak the same value. A class row only
+  // carries its coach's NAME (the timetable query resolves it and never brings
+  // the id along), so the name is mapped back here rather than the filter being
+  // allowed to mean two different things on two halves of one switch.
+  const coachIdByName = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const c of coaches) m.set(c.name, c.id);
+    return m;
+  }, [coaches]);
 
   const filteredClasses = useMemo(
     () =>
       classes.filter((c) => {
         if (coachFilter === "none" && c.coachName) return false;
-        if (coachFilter !== "all" && coachFilter !== "none" && c.coachName !== coachFilter)
+        if (
+          coachFilter !== "all" &&
+          coachFilter !== "none" &&
+          (c.coachName ? coachIdByName.get(c.coachName) : null) !== coachFilter
+        )
           return false;
         if (venueFilter !== "all" && (c.venueName ?? "") !== venueFilter) return false;
         if (typeFilter === "group" && c.isSchool) return false;
@@ -219,7 +233,7 @@ export function AdminWeeklyClasses({
         if (statusFilter === "ended" && (c.active || !c.endsOn)) return false;
         return true;
       }),
-    [classes, coachFilter, venueFilter, typeFilter, statusFilter]
+    [classes, coachIdByName, coachFilter, venueFilter, typeFilter, statusFilter]
   );
 
   // Private series are always active (the page only queries active ones), so
@@ -228,14 +242,18 @@ export function AdminWeeklyClasses({
     () =>
       privateSeries.filter((p) => {
         if (coachFilter === "none" && p.coachName) return false;
-        if (coachFilter !== "all" && coachFilter !== "none" && p.coachName !== coachFilter)
+        if (
+          coachFilter !== "all" &&
+          coachFilter !== "none" &&
+          (p.coachName ? coachIdByName.get(p.coachName) : null) !== coachFilter
+        )
           return false;
         if (venueFilter !== "all" && p.venueName !== venueFilter) return false;
         if (typeFilter === "group" || typeFilter === "school") return false;
         if (statusFilter === "paused" || statusFilter === "ended") return false;
         return true;
       }),
-    [privateSeries, coachFilter, venueFilter, typeFilter, statusFilter]
+    [privateSeries, coachIdByName, coachFilter, venueFilter, typeFilter, statusFilter]
   );
 
   // "Select all" means everything the filters are currently showing — so
@@ -352,9 +370,10 @@ export function AdminWeeklyClasses({
   // flipping to the Timetable showed one venue and five grey bars, and finding
   // out what was on at the other five cost a tap each. Collapsing is still
   // there for tidying a long list — it is just no longer the arrival state.
-  const [openMap, setOpenMap] = useState<Record<string, boolean>>({});
-  const toggleVenue = (key: string, isOpen: boolean) =>
-    setOpenMap((prev) => ({ ...prev, [key]: !isOpen }));
+  // Held above, alongside This week's day cards, so the switch stops throwing
+  // away which cards the founder had opened.
+  const openMap = venueCards.map;
+  const toggleVenue = venueCards.toggle;
 
   // Same three as This week, same order, same words — then the one extra that
   // only makes sense here. Every inactive chip reads "All …"; this row used to
@@ -367,11 +386,11 @@ export function AdminWeeklyClasses({
       label: "All coaches",
       value: coachFilter,
       defaultValue: "all",
-      onChange: setCoachFilter,
+      onChange: filters.setCoach,
       options: [
         { value: "all", label: "All coaches" },
         { value: "none", label: "No coach yet" },
-        ...coachOptions.map((n) => ({ value: n, label: n })),
+        ...coaches.map((c) => ({ value: c.id, label: c.name })),
       ],
     },
     {
@@ -380,7 +399,7 @@ export function AdminWeeklyClasses({
       label: "All locations",
       value: venueFilter,
       defaultValue: "all",
-      onChange: setVenueFilter,
+      onChange: filters.setVenue,
       options: [
         { value: "all", label: "All locations" },
         ...venueOptions.map((v) => ({ value: v, label: v || "No location" })),
@@ -392,7 +411,7 @@ export function AdminWeeklyClasses({
       label: "All types",
       value: typeFilter,
       defaultValue: "all",
-      onChange: setTypeFilter,
+      onChange: filters.setType,
       options: [
         { value: "all", label: "All class types" },
         { value: "group", label: "Group" },
@@ -458,13 +477,17 @@ export function AdminWeeklyClasses({
               won. So the phone showed "Create a class" AND the ＋ FAB below it,
               two controls doing one thing. Hiding a plain wrapper holds. */}
           <span className="hidden lg:inline-flex">
+            {/* "Add a class", the same three words This week uses and the same
+                three the sheet is now titled with. It said "Create a class"
+                here, "Add a class" there and "New class" on the sheet all three
+                opened — one door with three names. */}
             <Button
               onClick={() => {
                 setCreating(true);
                 setMessage(null);
               }}
             >
-              Create a class
+              Add a class
             </Button>
           </span>
         </div>
@@ -492,7 +515,10 @@ export function AdminWeeklyClasses({
           onToggle={() => toggleVenue(key, open)}
           title={
             <>
-              <span className="font-semibold">{group.venue || "No venue"}</span>
+              {/* "No location" — the same words the filter beside it uses.
+                  The header said "No venue" and the filter said "No location"
+                  for the same bucket, inside one view. */}
+              <span className="font-semibold">{group.venue || "No location"}</span>
               {/* A client's own home, not a venue we run. The same plum dot the
                   cards inside it use — the uppercase pill said it twice. */}
               {group.privateOnly && (
@@ -516,7 +542,7 @@ export function AdminWeeklyClasses({
             selecting && groupIds.length + groupSeriesIds.length > 0 ? (
               <button
                 type="button"
-                aria-label={`${groupAllSelected ? "Clear" : "Select"} everything at ${group.venue || "No venue"}`}
+                aria-label={`${groupAllSelected ? "Clear" : "Select"} everything at ${group.venue || "No location"}`}
                 onClick={() => toggleVenueSelection(groupIds, groupSeriesIds, groupAllSelected)}
                 className="shrink-0 px-4 py-3 text-sm text-ember underline-offset-4 hover:underline"
               >
@@ -598,7 +624,7 @@ export function AdminWeeklyClasses({
           <p className="font-medium text-fg">Add each class you run — day, time, place.</p>
           <p className="mt-1">
             We&apos;ll build the weekly schedule and handle bookings, reminders and
-            reschedules from there. Tap &ldquo;Create a class&rdquo; to start.
+            reschedules from there. Tap &ldquo;Add a class&rdquo; to start.
           </p>
         </div>
       )}
@@ -660,11 +686,11 @@ export function AdminWeeklyClasses({
         </p>
       )}
 
-      {/* Phone: Create a class as a floating button above the tab bar. It gives
+      {/* Phone: Add a class as a floating button above the tab bar. It gives
           up the spot to the selection bar while selecting. */}
       {!selecting && (
         <Fab
-          label="Create a class"
+          label="Add a class"
           onClick={() => {
             setCreating(true);
             setMessage(null);
@@ -820,13 +846,16 @@ export function AdminWeeklyClasses({
           held
             ? [
                 {
-                  label: "Edit",
+                  // "Open", the same word This week uses for the same gesture on
+                  // the same-looking card. The hint is where the two differ, and
+                  // it is the difference that matters.
+                  label: "Open",
                   hint: "Changes every week from now on",
                   onSelect: () => setEditingClass(held),
                 },
                 {
                   label: "Duplicate",
-                  hint: "Same venue, coach, length and spots — pick a new day",
+                  hint: "Same location, coach, length and spots — pick a new day",
                   onSelect: () => setDuplicating(held),
                 },
                 {
@@ -835,6 +864,10 @@ export function AdminWeeklyClasses({
                   onSelect: () => {
                     setSelecting(true);
                     setSelected(new Set([held.id]));
+                    // Clear the OTHER kind. Each menu used to set only its own
+                    // set, so starting a class selection could carry a family's
+                    // standing slot in with it from an earlier, abandoned one.
+                    setSelectedSeries(new Set());
                   },
                 },
               ]
@@ -843,7 +876,11 @@ export function AdminWeeklyClasses({
       />
 
       {/* A family's standing slot gets the same menu as the class beside it —
-          the same four kinds of thing, in the same order. */}
+          the same things, in the same order, with the same words.
+          Ending the slot is NOT here any more. It was the only destructive item
+          in either menu, on the card whose neighbour had none, reached by a
+          450ms hold that nothing on the card advertised. It lives in the slot's
+          own editor now, under More, exactly where a class keeps its endings. */}
       <CardActionMenu
         open={!!heldSeries}
         title={
@@ -856,7 +893,7 @@ export function AdminWeeklyClasses({
           heldSeries
             ? [
                 {
-                  label: "Edit",
+                  label: "Open",
                   hint: "Moves every booked week with it",
                   onSelect: () => setEditingSeries(heldSeries),
                 },
@@ -880,17 +917,8 @@ export function AdminWeeklyClasses({
                   onSelect: () => {
                     setSelecting(true);
                     setSelectedSeries(new Set([heldSeries.id]));
-                  },
-                },
-                {
-                  label: "End this slot…",
-                  hint: "Shows what the family gets back before anything happens",
-                  onSelect: () => {
-                    setSelectedSeries(new Set([heldSeries.id]));
                     setSelected(new Set());
-                    setConfirming(true);
                   },
-                  destructive: true,
                 },
               ]
             : []
@@ -907,6 +935,15 @@ export function AdminWeeklyClasses({
             setMessage(m);
             setEditingSeries(null);
             onRefresh?.();
+          }}
+          // The confirm sheet lives here because it is the same one the bulk
+          // path uses — it names what the family gets back before anything
+          // happens, and there is no reason to have two of those.
+          onEnd={() => {
+            setSelected(new Set());
+            setSelectedSeries(new Set([editingSeries.id]));
+            setEditingSeries(null);
+            setConfirming(true);
           }}
         />
       )}
@@ -955,7 +992,18 @@ export function AdminWeeklyClasses({
         <AdminBulkRemoveSheet
           classIds={selectedIds}
           seriesIds={selectedSeriesIds}
-          onClose={() => setConfirming(false)}
+          // Backing out of a confirm that was opened OUTSIDE selection mode has
+          // to drop what it was holding. It didn't: the ticks survived, the
+          // selection bar stayed hidden because `selecting` was false, and the
+          // next selection he started silently carried that family's slot into
+          // it — with the only evidence being a count string.
+          onClose={() => {
+            setConfirming(false);
+            if (!selecting) {
+              setSelected(new Set());
+              setSelectedSeries(new Set());
+            }
+          }}
           onDone={(m) => {
             setMessage(m);
             exitSelect();

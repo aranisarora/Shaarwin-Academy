@@ -142,7 +142,12 @@ function stateTone({
   // Out of play beats "no coach": a finished session does not need one, and
   // shouting red at the founder about a class that is over is noise he has to
   // learn to ignore — which then costs him the reds that are real.
-  if (dim) return "border-line bg-surface-2 opacity-55";
+  //
+  // 75, not 55. Opacity multiplies every text colour on the card, and the grey
+  // second line — --slate on --paper, 6.9:1 at full strength — came out around
+  // 3.4:1, under AA, on every completed, ended and paused card. 75 keeps the
+  // card visibly out of play and keeps its words legible.
+  if (dim) return "border-line bg-surface-2 opacity-75";
   if (alert) return "border-err bg-surface-2";
   return "border-line bg-surface-2";
 }

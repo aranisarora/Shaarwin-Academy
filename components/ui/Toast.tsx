@@ -34,9 +34,15 @@ export function ToastSlot({
  *  green tick instead, and red is reserved for "you must act now". */
 export function Toast({ children }: { children: React.ReactNode }) {
   return (
-    <ToastSlot className="rounded-[12px] border border-line bg-surface-2 px-4 py-3 text-sm text-fg-2 shadow-[var(--shadow-sheet)]">
+    // role=status + aria-live=polite: this is the only report the founder gets
+    // that a thing happened, and it used to be announced to nobody.
+    <div
+      role="status"
+      aria-live="polite"
+      className={`${TOAST_ANCHOR} rounded-[12px] border border-line bg-surface-2 px-4 py-3 text-sm text-fg-2 shadow-[var(--shadow-sheet)]`}
+    >
       {children}
-    </ToastSlot>
+    </div>
   );
 }
 

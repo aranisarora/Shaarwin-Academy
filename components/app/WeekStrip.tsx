@@ -16,7 +16,7 @@
 // was called off, and that is a different fact from a day we never ran.
 
 import { useRef } from "react";
-import { formatWallMonthRange, shiftWallDate } from "@/lib/academy-time";
+import { formatWallDay, formatWallMonthRange, shiftWallDate } from "@/lib/academy-time";
 
 export type DayDensity = {
   /** Academy wall date, "YYYY-MM-DD". */
@@ -78,12 +78,15 @@ export function WeekStrip({
       }}
     >
       <div className="flex items-center gap-1 px-2 pt-1.5">
+        {/* 44px, not 28. These are the primary way to move through the
+            schedule on a phone and they were the two smallest targets on the
+            screen. */}
         <button
           type="button"
           onClick={() => onShift(-7)}
           disabled={pending}
           aria-label="Earlier week"
-          className="pressable flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px] text-fg-2 hover:text-ember disabled:opacity-50"
+          className="pressable flex h-11 w-11 shrink-0 items-center justify-center rounded-[6px] text-fg-2 hover:text-ember disabled:opacity-50"
         >
           ‹
         </button>
@@ -96,7 +99,7 @@ export function WeekStrip({
           onClick={() => onShift(7)}
           disabled={pending}
           aria-label="Later week"
-          className="pressable flex h-7 w-7 shrink-0 items-center justify-center rounded-[6px] text-fg-2 hover:text-ember disabled:opacity-50"
+          className="pressable flex h-11 w-11 shrink-0 items-center justify-center rounded-[6px] text-fg-2 hover:text-ember disabled:opacity-50"
         >
           ›
         </button>
@@ -106,14 +109,20 @@ export function WeekStrip({
             type="button"
             onClick={onToday}
             disabled={pending}
-            className="pressable shrink-0 rounded-[6px] px-1.5 text-xs font-medium text-ember hover:underline disabled:opacity-50"
+            className="pressable flex min-h-11 shrink-0 items-center rounded-[6px] px-2 text-sm font-medium text-ember hover:underline disabled:opacity-50"
           >
             Today
           </button>
         )}
       </div>
 
-      <div className="grid grid-cols-7 gap-0.5 px-1 pb-1.5">
+      {/* Phone only. Tapping a day scrolls the day-grouped list to it — and
+          that list is `lg:hidden`, so on desktop every one of these seven
+          buttons was a no-op that still lit up under the cursor and still drew
+          a ring on the day it hadn't moved to. Desktop lays the whole week out
+          in coach lanes anyway, so a seven-cell summary of a week already fully
+          on screen was the redundant half of a broken control. */}
+      <div className="grid grid-cols-7 gap-0.5 px-1 pb-1.5 lg:hidden">
         {dates.map((date, i) => {
           const d = byDate.get(date);
           const live = d?.live ?? 0;
@@ -125,7 +134,9 @@ export function WeekStrip({
               key={date}
               type="button"
               onClick={() => onPick(date)}
-              aria-label={`${date} — ${live} class${live === 1 ? "" : "es"}${
+              // Spoken as a day, not as a digit string. It used to read out
+              // "two thousand and twenty six dash zero eight dash zero eight".
+              aria-label={`${formatWallDay(date)} — ${live} class${live === 1 ? "" : "es"}${
                 cancelled ? `, ${cancelled} cancelled` : ""
               }`}
               aria-current={isToday ? "date" : undefined}

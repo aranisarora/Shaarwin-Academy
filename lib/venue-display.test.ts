@@ -11,6 +11,7 @@ import { describe, it, expect } from "vitest";
 import {
   composeLocationLabel,
   venueDisplayName,
+  venueKeyOf,
   venueNeedsUnit,
 } from "@/lib/venue-display";
 
@@ -90,5 +91,41 @@ describe("venueNeedsUnit", () => {
 
   it("leaves a genuinely unique venue alone", () => {
     expect(venueNeedsUnit({ name: "Greenage", unit: null }, others)).toBe(false);
+  });
+});
+
+// The Location filter is shared by both views of the Schedule tab, and the two
+// views spell a place differently: This week reads `location_label(classes)`,
+// which appends ", <unit>" for a private at a family's home, while the Timetable
+// stores only `venue_display(venues)`. One chip cannot drive both unless the
+// doorway comes off first.
+describe("venueKeyOf", () => {
+  it("drops the unit a private session's label carries", () => {
+    expect(venueKeyOf("Adarsh Palm Retreat Villas, Villa 659")).toBe(
+      "Adarsh Palm Retreat Villas"
+    );
+  });
+
+  it("leaves a group class's label alone — it never has a unit", () => {
+    expect(venueKeyOf("Adarsh Palm Retreat Villas")).toBe("Adarsh Palm Retreat Villas");
+  });
+
+  it("agrees with venueDisplayName, which is what the Timetable filters on", () => {
+    const venue = { name: "Adarsh Palm Retreat", unit: "Villas" };
+    expect(venueKeyOf(composeLocationLabel(venueDisplayName(venue), "Villa 659"))).toBe(
+      venueDisplayName(venue)
+    );
+  });
+
+  it("keeps a comma that isn't a unit separator", () => {
+    // composeLocationLabel only ever joins with ", ", so a bare comma inside a
+    // venue's own name must survive.
+    expect(venueKeyOf("Greenage,Phase 2")).toBe("Greenage,Phase 2");
+  });
+
+  it("is empty for nothing at all", () => {
+    expect(venueKeyOf(null)).toBe("");
+    expect(venueKeyOf(undefined)).toBe("");
+    expect(venueKeyOf("   ")).toBe("");
   });
 });

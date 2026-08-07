@@ -1,12 +1,38 @@
 "use client";
 
-// Class editor for the weekly-classes list on the admin calendar. Everything
-// here applies to every week of the class (the calendar's session sheet is
-// where one-week-only changes happen).
+// The editor for one repeating group class. Everything here applies to every
+// week of it; one-week-only changes happen on that session in This week.
+//
+// This sheet used to be the most crowded surface in the app: seventeen controls
+// and EIGHT separate outcomes on one scroll, including two identical full-width
+// ember buttons a hundred pixels apart that did different things. The one beside
+// it — PrivateSeriesSheet, editing the same kind of object for one family — had
+// one Save, a dirty check, and a sentence naming the consequence before you
+// committed to it. The better design was already in the repo; this is that
+// design applied to the object with the bigger blast radius.
+//
+// Three rules it now follows, all borrowed from next door:
+//
+//   ONE SAVE. Day, time, location, length, spots and coach are one form and one
+//   button. There were two, and the second one destroyed the first one's work:
+//   "Set coach for every week" called onDone(), the parent unmounted the sheet,
+//   and every unsaved field change went with it — silently, with no dirty check
+//   anywhere and a Save button that stayed armed on a pristine form.
+//
+//   SAY IT BEFORE, NOT AFTER. A ✓ that arrives after the WhatsApps have gone out
+//   is a receipt, not a decision. The line above Save names the day, the time
+//   and who gets told, and it only appears once something has actually changed.
+//
+//   DANGER LIVES IN ONE PLACE. Pausing, ending and deleting were three controls
+//   at three visual weights scattered between unrelated panels — one of them a
+//   GREEN full-width link, in the colour this codebase reserves for "confirmed /
+//   done", that paused booking on a live class in a single unconfirmed tap.
+//   They are collected under More, closed, in the order they escalate.
 
 import Link from "next/link";
 import { useEffect, useState, useTransition } from "react";
 import { Sheet } from "@/components/ui/Sheet";
+import { ActionSection } from "@/components/ui/ActionSection";
 import { Checkbox } from "@/components/ui/Checkbox";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -25,17 +51,14 @@ import {
 } from "@/app/admin/schedule/actions";
 import { viewAsCoach } from "@/app/coach/preview-actions";
 import { AddressDisplay } from "@/components/app/AddressDisplay";
+import { ActionResult } from "./ActionResult";
 import { fromDetails } from "@/lib/address";
+import { venueDisplayName } from "@/lib/venue-display";
 import { ClassDetailFields, generateClassTitle, time12h, type ClassFormState } from "./ClassFields";
+import { DayChips } from "./DayChips";
 import { TimeSelect12h } from "./TimeSelect12h";
 import { formatSessionDate, wallDate } from "@/lib/academy-time";
-import {
-  WEEKDAY_NAME,
-  WEEKDAYS,
-  type ClassRow,
-  type Coach,
-  type Venue,
-} from "./admin-calendar-types";
+import { WEEKDAY_NAME, type ClassRow, type Coach, type Venue } from "./admin-calendar-types";
 
 /** Any of these calls can simply not arrive — a phone on a sports-hall wifi
  * drops one often enough that "I tapped it and nothing happened" was a real
@@ -58,13 +81,14 @@ export function AdminClassSheet({
 }) {
   // Mounted fresh per class (parent keys on cls.id), so initializers read the
   // class directly — no prop-sync effects.
+  const initialVenueId = cls.venueId ?? venues[0]?.id ?? "";
   const [form, setForm] = useState<ClassFormState>({
     title: generateClassTitle(cls.weekday, cls.time, cls.venueName ?? undefined),
     description: cls.description,
     skillLevel: cls.level,
     capacity: cls.capacity,
     durationMinutes: cls.duration,
-    venueId: cls.venueId ?? venues[0]?.id ?? "",
+    venueId: initialVenueId,
     weekday: cls.weekday,
     time: cls.time,
     coachId: "",
@@ -74,30 +98,48 @@ export function AdminClassSheet({
     const venueName = venues.find((v) => v.id === next.venueId)?.name;
     setForm({ ...next, title: generateClassTitle(next.weekday, next.time, venueName) });
   }
-  const [coachTarget, setCoachTarget] = useState("");
+
+  // Seeded with the coach who is actually on it, so the control shows the
+  // current answer rather than asking him to remember it. Blank means "nobody
+  // yet" — and leaving it blank changes nothing, because there is no server
+  // path that takes a class back to automatic.
+  const initialCoachId = cls.nextCoachId ?? "";
+  const [coachTarget, setCoachTarget] = useState(initialCoachId);
   const [lock, setLock] = useState(true);
   const [message, setMessage] = useState<string | null>(null);
   // When the ranking rules reject a coach, we surface an in-sheet override
   // prompt (not window.confirm) holding the reason; confirming forces it.
   const [coachOverride, setCoachOverride] = useState<string | null>(null);
+  // What the class half of a part-completed save already did, so the override
+  // prompt can report the whole outcome rather than only the coach's half.
+  const [savedSoFar, setSavedSoFar] = useState<string[]>([]);
   // Set when the server refuses a delete because the class still holds
   // bookings — holds its explanation until the founder confirms or backs out.
   const [deleteForce, setDeleteForce] = useState<string | null>(null);
   // Anything that goes wrong on the delete path shows *here*, beside the delete
-  // controls. It used to land in the single message line at the very foot of a
-  // sheet you have to scroll to reach, under buttons that were still armed — so
-  // tapping Delete on a class the server refused looked exactly like tapping a
-  // button that did nothing at all.
+  // controls, rather than in a single line at the foot of a scrolling sheet.
   const [deleteError, setDeleteError] = useState<string | null>(null);
-  // The "Delete completely" text-link arms in place rather than via a native
-  // confirm — keeps its subtle affordance while dropping window.confirm.
   const [pending, startTransition] = useTransition();
 
   const ended = !cls.active && !!cls.endsOn;
 
-  // The founder thinks "who's in that class" — so the weekly panel shows the
-  // regulars booked on the next upcoming session (read-only; attendance is a
-  // per-session job that happens in the Schedule tab).
+  // ── What has actually changed ──────────────────────────────────────────────
+  const slotMoved = form.weekday !== cls.weekday || form.time !== cls.time;
+  const classDirty =
+    slotMoved ||
+    form.venueId !== initialVenueId ||
+    form.durationMinutes !== cls.duration ||
+    form.capacity !== cls.capacity;
+  const coachDirty = !!coachTarget && coachTarget !== initialCoachId;
+  const dirty = classDirty || coachDirty;
+
+  const coachName = coaches.find((c) => c.id === coachTarget)?.name;
+  const dayName = WEEKDAY_NAME[form.weekday] ?? form.weekday;
+  const wasDayName = WEEKDAY_NAME[cls.weekday] ?? cls.weekday;
+
+  // The founder thinks "who's in that class" — so the panel shows the regulars
+  // booked on the next upcoming session (read-only; attendance is a per-session
+  // job that happens in This week).
   const [roster, setRoster] = useState<RosterEntry[] | null>(() =>
     cls.nextSessionId ? null : []
   );
@@ -113,7 +155,7 @@ export function AdminClassSheet({
   }, [cls.nextSessionId]);
 
   // Structured address for the venue this class runs at — same header the
-  // Schedule session sheet shows, so the two panels read the same.
+  // session sheet shows, so the two panels read the same.
   const venue = venues.find((v) => v.id === cls.venueId) ?? null;
   const address = venue
     ? fromDetails(venue.address_details, {
@@ -124,47 +166,93 @@ export function AdminClassSheet({
       })
     : null;
 
-  // Shared success handling for both the first attempt and the override — the
-  // r.skipped branch words the ✓ for coaches a clash kept off some weeks.
-  function coachDone(r: { changed?: number; skipped?: number }) {
-    onDone(
-      r.skipped
-        ? `Coach set on ${r.changed} upcoming sessions — ${r.skipped} couldn't take them (clashes) and kept their coach.`
-        : "Coach set for every upcoming week — everyone affected has been told."
-    );
+  /** The coach half of a save, worded for the weeks a clash kept them off. */
+  const coachNote = (r: { changed?: number; skipped?: number }) =>
+    r.skipped
+      ? `${coachName} is on ${r.changed} upcoming ${dayName}s — ${r.skipped} couldn't take them (clashes) and kept their coach.`
+      : `${coachName} is on every upcoming ${dayName} — everyone affected has been told.`;
+
+  /** Run the coach change. Returns the note on success, null once it has
+   *  reported its own failure, and the rejection when the rules say no. */
+  async function runCoach(
+    force: boolean
+  ): Promise<{ note: string } | { rejected: string } | null> {
+    try {
+      const r = await reassignClassCoach(cls.id, coachTarget, lock, force);
+      if (!force && !r.ok && r.code === "filter_failed")
+        return { rejected: r.error ?? "That coach doesn't fit the rules." };
+      if (r.ok) return { note: coachNote(r) };
+      setMessage(r.error ?? "Couldn't set the coach.");
+      return null;
+    } catch {
+      setMessage(UNREACHABLE);
+      return null;
+    }
   }
 
-  function applyCoach() {
-    if (!coachTarget) return;
+  /** One Save for the whole sheet. Class fields first, then the coach — so a
+   *  coach the rules reject leaves the field changes already applied and says
+   *  so, rather than rolling back work the founder can see on screen. */
+  function save() {
+    setMessage(null);
     setCoachOverride(null);
     startTransition(async () => {
-      try {
-        const r = await reassignClassCoach(cls.id, coachTarget, lock);
-        if (!r.ok && r.code === "filter_failed") {
-          // The rules say no — but the founder can override. A hard time clash
-          // is still blocked by the database either way. Ask in-sheet, not native.
-          setCoachOverride(r.error ?? "That coach doesn't fit the rules.");
+      const notes: string[] = [];
+
+      if (classDirty) {
+        try {
+          const r = await updateGroupClass({
+            classId: cls.id,
+            title: form.title,
+            description: form.description,
+            skillLevel: form.skillLevel,
+            capacity: form.capacity,
+            durationMinutes: form.durationMinutes,
+            venueId: form.venueId,
+            weekday: form.weekday,
+            time: form.time,
+          });
+          if (!r.ok) {
+            setMessage(r.error ?? "Couldn't save the class.");
+            return;
+          }
+          notes.push(
+            r.stuck
+              ? `Saved — upcoming sessions moved with it and everyone booked was told. ${r.stuck} ${r.stuck === 1 ? "week" : "weeks"} couldn't move and ${r.stuck === 1 ? "is" : "are"} still on the old slot; open ${r.stuck === 1 ? "it" : "them"} in This week to move ${r.stuck === 1 ? "it" : "them"} by hand.`
+              : "Saved — upcoming sessions moved with it and everyone booked was told."
+          );
+        } catch {
+          setMessage(UNREACHABLE);
           return;
         }
-        if (r.ok) coachDone(r);
-        else setMessage(r.error ?? "Failed.");
-      } catch {
-        setMessage(UNREACHABLE);
       }
+
+      if (coachDirty) {
+        const outcome = await runCoach(false);
+        if (!outcome) {
+          // The coach failed and said why. Anything already saved must still be
+          // reported, or the founder reads a bare error over work that landed.
+          if (notes.length) setSavedSoFar(notes);
+          return;
+        }
+        if ("rejected" in outcome) {
+          setSavedSoFar(notes);
+          setCoachOverride(outcome.rejected);
+          return;
+        }
+        notes.push(outcome.note);
+      }
+
+      onDone(notes.join(" "));
     });
   }
 
   function applyCoachOverride() {
-    if (!coachTarget) return;
     startTransition(async () => {
-      try {
-        const r = await reassignClassCoach(cls.id, coachTarget, lock, true);
-        setCoachOverride(null);
-        if (r.ok) coachDone(r);
-        else setMessage(r.error ?? "Failed.");
-      } catch {
-        setMessage(UNREACHABLE);
-      }
+      const outcome = await runCoach(true);
+      setCoachOverride(null);
+      if (!outcome || "rejected" in outcome) return;
+      onDone([...savedSoFar, outcome.note].join(" "));
     });
   }
 
@@ -173,17 +261,14 @@ export function AdminClassSheet({
    * different places and both of them need all three parts within a thumb's
    * reach of each other.
    *
-   * On a running class it stays at the foot of the sheet as a subtle underlined
-   * link: deleting one outright is a mistakes-only action and should be hard to
-   * hit while you were reaching for "End class".
+   * On a running class it sits last inside More, as a subtle underlined link:
+   * deleting one outright is a mistakes-only action and should be hard to hit
+   * while you were reaching for "End class".
    *
    * On an ENDED class it moves up beside "Restore class" and becomes a real
    * destructive button. The card badge promises "Ended — restore or delete", and
    * a promise answered by a grey link at the bottom of a scrolling sheet is not
-   * one the founder can see. There is nothing left to end and nothing left to
-   * cancel, so delete is simply the other half of what he came here to do. The
-   * two-tap arming stays either way — it is what keeps it off an accidental
-   * thumb, not the greyness. */
+   * one the founder can see. */
   const deleteControls = (
     <div className="space-y-2">
       {deleteForce ? (
@@ -203,7 +288,7 @@ export function AdminClassSheet({
             </Button>
             <Button
               variant="destructive"
-              disabled={pending}
+              loading={pending}
               onClick={() =>
                 startTransition(async () => {
                   setDeleteError(null);
@@ -223,7 +308,7 @@ export function AdminClassSheet({
                 })
               }
             >
-              {pending ? <Spinner /> : "Delete anyway"}
+              Delete anyway
             </Button>
           </div>
         </div>
@@ -270,33 +355,53 @@ export function AdminClassSheet({
     </div>
   );
 
+  const viewAsCoachButton = cls.nextCoachId && (
+    <button
+      type="button"
+      onClick={() =>
+        startTransition(async () => {
+          try {
+            const ok = await viewAsCoach(cls.nextCoachId as string);
+            if (ok) window.location.assign("/coach");
+            else setMessage("Preview unavailable — only founders can view as coach.");
+          } catch {
+            setMessage(UNREACHABLE);
+          }
+        })
+      }
+      disabled={pending}
+      className="pressable flex min-h-11 w-full items-center text-sm text-ember hover:underline disabled:opacity-50"
+    >
+      View this coach&apos;s app →
+    </button>
+  );
+
   return (
-    <Sheet open onClose={onClose} title="Edit class">
+    <Sheet
+      open
+      onClose={onClose}
+      dirty={dirty}
+      title={venue ? venueDisplayName(venue) : (cls.venueName ?? "No location")}
+    >
       <div className="space-y-4">
-        {/* ── Class header: where, when, how full — matches the session sheet ── */}
+        {/* ── What this is: the same header shape the session sheet uses ── */}
         <div>
-          <p className="font-semibold">{cls.venueName ?? "No venue"}</p>
-          <p className="mt-0.5 text-fg-2">
-            Every {WEEKDAY_NAME[cls.weekday] ?? cls.weekday}, {time12h(cls.time)} ·{" "}
+          <p className="tnum text-fg-2">
+            Every {wasDayName}, {time12h(cls.time)} · {cls.duration} min ·{" "}
             {cls.bookedCount} of {cls.capacity} booked
           </p>
-          {address && (
-            <AddressDisplay address={address} audience="staff" className="mt-2" />
-          )}
+          {address && <AddressDisplay address={address} audience="staff" className="mt-2" />}
           <div className="mt-2 flex flex-wrap gap-2">
             {cls.isSchool && <Badge tone="ember">School class</Badge>}
             {!cls.active && (
               <Badge tone="neutral">{cls.endsOn ? "Ended" : "Booking paused"}</Badge>
             )}
           </div>
-          {/* Everything in this sheet changes the class for EVERY week, which
-              is not obvious from a sheet titled "Edit class" — and the founder
-              who wanted to move one Tuesday had nowhere to learn otherwise
-              except a paragraph buried in a menu. Said here, next to the link
-              that does the one-week job. */}
+          {/* Said once. It used to be said twice, in two wordings, forty lines
+              apart — and the useful half is the link, not the sentence. */}
           {cls.nextSessionId && cls.nextSessionStart && (
             <p className="mt-3 text-sm text-fg-2">
-              Changes here apply every week. For one week only,{" "}
+              Everything here changes every week. For one week only,{" "}
               <Link
                 href={`/admin/schedule?date=${wallDate(cls.nextSessionStart)}&session=${cls.nextSessionId}`}
                 className="text-ember hover:underline"
@@ -305,26 +410,6 @@ export function AdminClassSheet({
               </Link>
               .
             </p>
-          )}
-          {cls.nextCoachId && (
-            <button
-              type="button"
-              onClick={() =>
-                startTransition(async () => {
-                  try {
-                    const ok = await viewAsCoach(cls.nextCoachId as string);
-                    if (ok) window.location.assign("/coach");
-                    else setMessage("Preview unavailable — only founders can view as coach.");
-                  } catch {
-                    setMessage(UNREACHABLE);
-                  }
-                })
-              }
-              disabled={pending}
-              className="mt-2 block text-sm text-ember hover:underline disabled:opacity-50"
-            >
-              View this coach&apos;s app →
-            </button>
           )}
         </div>
 
@@ -337,7 +422,7 @@ export function AdminClassSheet({
             </div>
           ) : roster.length === 0 ? (
             <p className="text-sm text-fg-2">
-              Nobody booked on the next session yet. Mark attendance from the Schedule tab.
+              Nobody booked on the next session yet. Mark attendance in This week.
             </p>
           ) : (
             <ul className="space-y-1.5">
@@ -359,7 +444,7 @@ export function AdminClassSheet({
             </p>
             <Button
               className="w-full"
-              disabled={pending}
+              loading={pending}
               onClick={() =>
                 startTransition(async () => {
                   try {
@@ -373,7 +458,7 @@ export function AdminClassSheet({
                 })
               }
             >
-              {pending ? <Spinner /> : "Restore class"}
+              Restore class
             </Button>
             {/* Stacked rather than side by side: armed, the confirm box holds a
                 whole sentence, and half a phone's width turns that into a column
@@ -382,164 +467,150 @@ export function AdminClassSheet({
           </div>
         )}
 
-        <ClassDetailFields form={form} onChange={updateForm} venues={venues} />
-        <div className="grid grid-cols-2 gap-3">
-          <Select
-            label="Day"
-            value={form.weekday}
-            onChange={(e) => updateForm({ ...form, weekday: e.target.value })}
-          >
-            {WEEKDAYS.map(([code, name]) => (
-              <option key={code} value={code}>{name}</option>
-            ))}
-          </Select>
-          <TimeSelect12h
-            label="Time"
-            value={form.time}
-            onChange={(time) => updateForm({ ...form, time })}
+        {/* ── The one form ────────────────────────────────────────────────── */}
+        <div>
+          <p className="label mb-2">Day</p>
+          <DayChips
+            selected={[form.weekday]}
+            onSelect={(code) => updateForm({ ...form, weekday: code })}
           />
         </div>
 
-        <p className="text-sm text-fg-2">
-          Changes here apply to every week of this class. Moving the day, time, length or
-          venue moves every upcoming session — everyone booked gets a message automatically.
-        </p>
+        <TimeSelect12h
+          label="Time"
+          value={form.time}
+          onChange={(time) => updateForm({ ...form, time })}
+        />
 
-        <Button
-          className="w-full"
-          disabled={pending || !form.venueId}
-          onClick={() =>
-            startTransition(async () => {
-              try {
-                const r = await updateGroupClass({
-                  classId: cls.id,
-                  title: form.title,
-                  description: form.description,
-                  skillLevel: form.skillLevel,
-                  capacity: form.capacity,
-                  durationMinutes: form.durationMinutes,
-                  venueId: form.venueId,
-                  weekday: form.weekday,
-                  time: form.time,
-                });
-                if (r.ok)
-                  onDone(
-                    r.stuck
-                      ? `Saved — upcoming sessions moved with it and everyone booked was told. ${r.stuck} ${r.stuck === 1 ? "week" : "weeks"} couldn't move and ${r.stuck === 1 ? "is" : "are"} still on the old slot; open ${r.stuck === 1 ? "it" : "them"} on the Schedule to move ${r.stuck === 1 ? "it" : "them"} by hand.`
-                      : "Saved — upcoming sessions moved with it and everyone booked was told."
-                  );
-                else setMessage(r.error ?? "Couldn't save the class.");
-              } catch {
-                setMessage(UNREACHABLE);
-              }
-            })
-          }
+        <ClassDetailFields form={form} onChange={updateForm} venues={venues} />
+
+        <Select
+          label="Coach"
+          value={coachTarget}
+          onChange={(e) => setCoachTarget(e.target.value)}
         >
-          {pending ? <Spinner /> : "Save changes"}
-        </Button>
+          <option value="">No coach yet</option>
+          {coaches.map((c) => (
+            <option key={c.id} value={c.id}>
+              {c.name}
+            </option>
+          ))}
+        </Select>
+        {/* Only meaningful while a coach is actually being changed, so it only
+            exists then — one fewer control on the sheet he opened to read. */}
+        {coachDirty && (
+          <label className="flex min-h-11 items-center gap-3 text-sm">
+            <Checkbox size="md" checked={lock} onChange={(e) => setLock(e.target.checked)} />
+            Keep {coachName} on it — don&apos;t swap them automatically
+          </label>
+        )}
 
-        {!ended && (
-          <div className="space-y-3 rounded-[12px] border border-line p-4">
-            <p className="label">Coach — every week</p>
-            <Select
-              label="Coach"
-              hint="Puts this coach on every upcoming session of the class."
-              value={coachTarget}
-              onChange={(e) => setCoachTarget(e.target.value)}
-            >
-              <option value="">— pick a coach —</option>
-              {coaches.map((c) => (
-                <option key={c.id} value={c.id}>{c.name}</option>
-              ))}
-            </Select>
-            <label className="flex items-center gap-3 text-sm">
-              <Checkbox size="md" checked={lock} onChange={(e) => setLock(e.target.checked)} />
-              Keep this coach — don&apos;t swap them automatically
-            </label>
-            {coachOverride ? (
-              <div className="space-y-2 rounded-[8px] border border-err p-3">
-                <p className="text-sm text-fg-2">{coachOverride} Assign them anyway?</p>
-                <div className="grid grid-cols-2 gap-2">
-                  <Button
-                    variant="ghost"
-                    disabled={pending}
-                    onClick={() => setCoachOverride(null)}
-                  >
-                    Keep
-                  </Button>
-                  <Button disabled={pending} onClick={applyCoachOverride}>
-                    {pending ? <Spinner /> : "Assign anyway"}
-                  </Button>
-                </div>
-              </div>
-            ) : (
+        {/* Before the button, not after it. */}
+        {dirty && (
+          <ActionResult>
+            {[
+              slotMoved
+                ? `Every ${wasDayName} moves to ${dayName} ${time12h(form.time)}.`
+                : classDirty
+                  ? "Every upcoming week updates."
+                  : null,
+              classDirty ? "Everyone booked is told." : null,
+              coachDirty ? `${coachName} goes on every upcoming ${dayName}.` : null,
+            ]
+              .filter(Boolean)
+              .join(" ")}
+          </ActionResult>
+        )}
+
+        {coachOverride ? (
+          <div className="space-y-2 rounded-[8px] border border-err p-3">
+            <p className="text-sm text-fg-2">{coachOverride} Assign them anyway?</p>
+            <div className="grid grid-cols-2 gap-2">
               <Button
-                onClick={applyCoach}
-                disabled={pending || !coachTarget}
-                className="w-full"
+                variant="ghost"
+                disabled={pending}
+                onClick={() => {
+                  setCoachOverride(null);
+                  // Whatever the class half already did still happened; let him
+                  // out with the sheet reporting it rather than silently.
+                  if (savedSoFar.length) onDone(savedSoFar.join(" "));
+                }}
               >
-                {pending ? <Spinner /> : "Set coach for every week"}
+                Keep
               </Button>
-            )}
+              <Button loading={pending} onClick={applyCoachOverride}>
+                Assign anyway
+              </Button>
+            </div>
           </div>
+        ) : (
+          <Button className="w-full" loading={pending} disabled={!dirty} onClick={save}>
+            Save changes
+          </Button>
         )}
 
-        {!ended && (
-          <button
-            disabled={pending}
-            onClick={() =>
-              startTransition(async () => {
-                try {
-                  const r = await setClassActive(cls.id, !cls.active);
-                  if (r.ok)
-                    onDone(
-                      cls.active
-                        ? "Booking paused. The class stays on this list, greyed out and marked Paused, until you reopen it."
-                        : "Class reopened for booking."
-                    );
-                  else setMessage(r.error ?? "Failed.");
-                } catch {
-                  setMessage(UNREACHABLE);
-                }
-              })
-            }
-            className={`w-full text-center text-sm underline-offset-4 hover:underline ${
-              cls.active ? "text-ok" : "text-err"
-            }`}
-          >
-            {cls.active ? "Open for booking — pause it" : "Paused — reopen for booking"}
-          </button>
-        )}
-
-        {cls.active && (
-          <ConfirmAction
-            label="End class"
-            confirmLabel="End the class"
-            prompt="End this class? All upcoming sessions are cancelled and everyone booked gets a message. Past sessions stay in the history — and you can restore the class later from this list."
-            pending={pending}
-            onConfirm={() =>
-              startTransition(async () => {
-                try {
-                  const r = await endGroupClass(cls.id);
-                  if (r.ok)
-                    onDone(
-                      "Class ended — everyone affected has been told. It stays on this list marked Ended, so you can restore it or delete it from there."
-                    );
-                  else setMessage(r.error ?? "Failed.");
-                } catch {
-                  setMessage(UNREACHABLE);
-                }
-              })
-            }
-          />
-        )}
-        {/* A class that holds bookings isn't deleted on the first ask. The
-            server names the cost with `needs_force` — for a running class that
-            cost includes cancelling the sessions people are on and telling
-            them — and confirming there goes through with it. On an ended class
-            these same controls sit up beside "Restore class" instead. */}
-        {!ended && deleteControls}
         {message && <p className="text-sm text-err">{message}</p>}
+
+        {/* ── More: everything rare, and everything with a cost ──
+            Closed by default and ordered by how far it reaches. */}
+        {!ended && (
+          <ActionSection label="More">
+            {viewAsCoachButton}
+            <ConfirmAction
+              variant="ghost"
+              label={cls.active ? "Pause booking" : "Reopen for booking"}
+              confirmLabel={cls.active ? "Pause booking" : "Reopen it"}
+              prompt={
+                cls.active
+                  ? "Pause booking on this class? It stays on the timetable, greyed out and marked Paused, and nobody new can book until you reopen it. Sessions still run."
+                  : "Reopen this class for booking?"
+              }
+              pending={pending}
+              onConfirm={() =>
+                startTransition(async () => {
+                  try {
+                    const r = await setClassActive(cls.id, !cls.active);
+                    if (r.ok)
+                      onDone(
+                        cls.active
+                          ? "Booking paused. The class stays on the timetable, greyed out and marked Paused, until you reopen it."
+                          : "Class reopened for booking."
+                      );
+                    else setMessage(r.error ?? "Failed.");
+                  } catch {
+                    setMessage(UNREACHABLE);
+                  }
+                })
+              }
+            />
+            {cls.active && (
+              <ConfirmAction
+                label="End class"
+                confirmLabel="End the class"
+                prompt="End this class? All upcoming sessions are cancelled and everyone booked gets a message. Past sessions stay in the history — and you can restore the class later from this list."
+                pending={pending}
+                onConfirm={() =>
+                  startTransition(async () => {
+                    try {
+                      const r = await endGroupClass(cls.id);
+                      if (r.ok)
+                        onDone(
+                          "Class ended — everyone affected has been told. It stays on the timetable marked Ended, so you can restore it or delete it from there."
+                        );
+                      else setMessage(r.error ?? "Failed.");
+                    } catch {
+                      setMessage(UNREACHABLE);
+                    }
+                  })
+                }
+              />
+            )}
+            {/* A class that holds bookings isn't deleted on the first ask. The
+                server names the cost with `needs_force` and confirming there
+                goes through with it. */}
+            {deleteControls}
+          </ActionSection>
+        )}
       </div>
     </Sheet>
   );

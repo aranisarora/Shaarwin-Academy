@@ -1,7 +1,7 @@
 "use client";
 
 // A family's standing weekly slot — the private half of what the Timetable
-// shows, and until now the half you could look at and not touch.
+// shows, and until recently the half you could look at and not touch.
 //
 // Tapping one used to navigate somewhere else or drop you into a selection,
 // because there was nothing to open: no update path for private_booking_series
@@ -14,22 +14,23 @@
 // is sent, and both are set through the booking wizard that geocodes an
 // address. A Save here that quietly skipped them would be worse than a Save
 // that never claimed them, so the sheet says which door those go through.
+//
+// Ending the slot now lives here, under More, rather than only behind a 450ms
+// press-and-hold on a card that gave no hint the gesture existed. That was the
+// highest-stakes action in the tab sitting behind its least discoverable
+// gesture — and the group class beside it has its endings in exactly this spot.
 
 import { useState, useTransition } from "react";
+import { ActionSection } from "@/components/ui/ActionSection";
 import { Button } from "@/components/ui/Button";
 import { Select } from "@/components/ui/Select";
 import { Sheet } from "@/components/ui/Sheet";
-import { Spinner } from "@/components/ui/Spinner";
 import { updatePrivateSeries } from "@/app/admin/schedule/actions";
 import { ActionResult } from "./ActionResult";
+import { DayChips } from "./DayChips";
 import { TimeSelect12h } from "./TimeSelect12h";
 import { time12h } from "./ClassFields";
-import {
-  WEEKDAYS,
-  WEEKDAY_NAME,
-  type Coach,
-  type PrivateSeriesRow,
-} from "./admin-calendar-types";
+import { WEEKDAY_NAME, type Coach, type PrivateSeriesRow } from "./admin-calendar-types";
 
 /** MO..SU → the ISO number the series column stores (1 = Monday). */
 const ISO_OF: Record<string, number> = {
@@ -41,11 +42,15 @@ export function PrivateSeriesSheet({
   coaches,
   onClose,
   onDone,
+  onEnd,
 }: {
   series: PrivateSeriesRow;
   coaches: Coach[];
   onClose: () => void;
   onDone: (message: string) => void;
+  /** Hand back to the parent, which owns the confirm sheet that shows the
+   *  family exactly what they get back before anything happens. */
+  onEnd?: () => void;
 }) {
   const [weekday, setWeekday] = useState(series.weekday);
   const [time, setTime] = useState(series.time);
@@ -96,6 +101,7 @@ export function PrivateSeriesSheet({
     <Sheet
       open
       onClose={onClose}
+      dirty={dirty}
       title={`${series.playerName}${series.clientName ? ` · ${series.clientName}` : ""}`}
     >
       <div className="space-y-5">
@@ -106,23 +112,7 @@ export function PrivateSeriesSheet({
 
         <div>
           <p className="label mb-2">Day</p>
-          <div className="flex flex-wrap gap-2">
-            {WEEKDAYS.map(([code, name]) => (
-              <button
-                key={code}
-                type="button"
-                onClick={() => setWeekday(code)}
-                aria-pressed={weekday === code}
-                className={`pressable min-h-11 rounded-full border px-4 text-sm font-medium transition-colors ${
-                  weekday === code
-                    ? "border-ember bg-ember text-ivory"
-                    : "border-line hover:border-ember"
-                }`}
-              >
-                {name.slice(0, 3)}
-              </button>
-            ))}
-          </div>
+          <DayChips selected={[weekday]} onSelect={setWeekday} />
         </div>
 
         <TimeSelect12h label="Time" value={time} onChange={setTime} />
@@ -151,8 +141,8 @@ export function PrivateSeriesSheet({
           </ActionResult>
         )}
 
-        <Button onClick={save} disabled={pending || !dirty} className="w-full">
-          {pending ? <Spinner /> : "Save"}
+        <Button onClick={save} loading={pending} disabled={!dirty} className="w-full">
+          Save
         </Button>
 
         {message && <p className="text-sm text-err">{message}</p>}
@@ -161,6 +151,18 @@ export function PrivateSeriesSheet({
           To change the length or where it happens, end this slot and book a new one —
           both change what the family is charged or where the coach is sent.
         </p>
+
+        {onEnd && (
+          <ActionSection label="More">
+            <Button variant="destructive" className="w-full" onClick={onEnd}>
+              End this slot…
+            </Button>
+            <p className="text-sm text-fg-2">
+              You see exactly what {series.clientName || "the family"} gets back before
+              anything happens.
+            </p>
+          </ActionSection>
+        )}
       </div>
     </Sheet>
   );

@@ -41,11 +41,14 @@ export function FilterBar({
 
   return (
     <>
-      {/* ── Mobile: one scrollable chip row ──
-          overscroll-x-contain matters more than it looks: without it, swiping
-          past the last chip hands the gesture to the browser's back-swipe and
-          throws you off the schedule mid-task. */}
-      <div className="-mx-5 flex gap-2 overflow-x-auto overscroll-x-contain px-5 pb-1 lg:hidden [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+      {/* ── Mobile: the chips, wrapped ──
+          They used to sit in a horizontally-scrolling row with the scrollbar
+          suppressed and no edge fade. Four chips need about 522px and a 390px
+          phone shows ~350 of it, so the Timetable's fourth filter — Status —
+          was entirely off the screen with nothing whatsoever indicating it
+          existed. Wrapping costs one line and makes every filter visible,
+          which is the only reason a filter row is there. */}
+      <div className="flex flex-wrap gap-2 pb-1 lg:hidden">
         {filters.map((f) => {
           const fallback = f.defaultValue ?? f.options[0]?.value;
           const active = f.value !== fallback;
