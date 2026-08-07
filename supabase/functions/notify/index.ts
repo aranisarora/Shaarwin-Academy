@@ -22,6 +22,7 @@ import * as webpush from "jsr:@negrel/webpush@0.5";
 // see digest.test.ts. (The PREF_GROUP_FOR_TYPE duplication further down is a
 // different case: that one is shared with lib/, across the Deno/Next boundary.)
 import { summariseDay, type DayReportRow } from "./digest.ts";
+import { notArrivedBody } from "./escalation.ts";
 
 const supabase = createClient(
   Deno.env.get("SUPABASE_URL")!,
@@ -756,9 +757,12 @@ async function sweepArrivalCheck() {
  * to act:
  *  (a) T-10 and the coach is still fully silent (no confirm AND no arrival);
  *  (b) start+10 and the coach hasn't marked arrival — copy distinguishes
- *      "confirmed then went silent" (more urgent) from "never answered at all".
- * The T-30 nudge (sweepCoachConfirmNudge) targets the coach, not the founder;
- * running late is pushed by coach_mark_arrival itself. Fires once per session.
+ *      "told us they were running late" (least urgent) from "confirmed then
+ *      went silent" from "never answered at all".
+ * The T-30 nudge (sweepCoachConfirmNudge) targets the coach, not the founder.
+ * The immediate "running late" ping is pushed by coach_mark_arrival itself —
+ * (b) is the follow-up for when that lateness turns into an absence, so it must
+ * never contradict the ping the founder already has. Fires once per session.
  */
 async function sweepFounderEscalations() {
   const now = Date.now();
@@ -785,12 +789,22 @@ async function sweepFounderEscalations() {
 
   // Bounded to the last hour so we never backfill old sessions. 10-minute
   // grace: coaches typically tap "arrived" right around start time — only
-  // escalate when the class is 10+ minutes in with still no arrival mark. Copy
-  // branches on whether the coach ever confirmed: a confirmed-then-silent coach
-  // is more urgent (they promised) than one who never answered.
+  // escalate when the class is 10+ minutes in with still no arrival mark.
+  //
+  // Three copies, because the founder's next action differs and the wrong words
+  // cost them a phone call. Read most-informed first:
+  //   late      — they told us, at a known time. Nothing to chase, just watch.
+  //   confirmed — they promised at T-60 and went quiet. Call them.
+  //   silent    — never answered anything. Assume no-show.
+  //
+  // The `late` branch is the one this list was missing. coach_mark_arrival's
+  // late path used to write nothing to the session, so a coach who tapped
+  // "Running late" landed in `silent` and the founder was told they "never
+  // responded at all today" — minutes after the founder's own phone had
+  // buzzed with "Coach X is running a few minutes late". (Migration 0071.)
   const { data: notArrived } = await supabase
     .from("class_sessions")
-    .select("id,starts_at,coach_id,coach_confirmed_at,classes!inner(title)")
+    .select("id,starts_at,coach_id,coach_confirmed_at,coach_late_at,classes!inner(title)")
     .eq("status", "scheduled")
     .not("coach_id", "is", null)
     .is("coach_arrived_at", null)
@@ -798,16 +812,20 @@ async function sweepFounderEscalations() {
     .gt("starts_at", new Date(now - 70 * 60000).toISOString())
     .limit(50);
   for (const s of await withValidCoaches(notArrived ?? [])) {
+    const lateAt = s.coach_late_at as string | null;
     const confirmed = !!s.coach_confirmed_at;
     await escalateToFounders(
       "ops_coach_not_arrived",
       "Coach not marked arrived",
       s,
-      confirmed
-        ? (name, title, when) =>
-            `${name} confirmed they were coming to ${title} (${when}) but hasn't marked arrival 10+ minutes in — call them now.`
-        : (name, title, when) =>
-            `${title} (${when}) is 10+ minutes in and ${name} never responded at all today — likely a no-show, act now.`
+      (name, title, when) =>
+        notArrivedBody({
+          coachName: name,
+          classTitle: title,
+          when,
+          confirmed,
+          lateAtClock: lateAt ? fmtClock(lateAt) : null,
+        })
     );
   }
 }

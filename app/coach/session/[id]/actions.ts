@@ -173,8 +173,13 @@ export async function markRunningLate(sessionId: string): Promise<Result> {
   const { error } = await supabase.rpc("coach_mark_arrival", {
     p_session: sessionId,
     p_late: true,
+    p_source: "tap",
   });
   if (error) return { ok: false, error: "Couldn't send. Try again." };
+  // Reporting lateness now stamps coach_late_at and coach_confirmed_at
+  // (migration 0071), so this screen has something to re-render — it didn't
+  // before, which is why it was the one arrival action that never revalidated.
+  revalidatePath(`/coach/session/${sessionId}`);
   return { ok: true };
 }
 

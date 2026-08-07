@@ -149,7 +149,7 @@ const coverOffers: WaTool = {
 const confirmSession: WaTool = {
   name: "confirm_session",
   description:
-    "Confirm the coach IS taking an upcoming session ('yes, I'm coming') — session_id from my_coach_sessions. Tells the founder. Use when the coach says they'll take / confirm a session (e.g. replying 'confirm' to a reminder). If they CAN'T make it, use cant_make_session instead.",
+    "Confirm the coach IS taking an upcoming session ('yes, I'm coming') — session_id from my_coach_sessions. Records the confirmation; it does not message anyone. Use when the coach says they'll take / confirm a session (e.g. replying 'confirm' to a reminder). If they CAN'T make it, use cant_make_session instead.",
   input_schema: {
     type: "object",
     properties: { session_id: { type: "string" } },
@@ -168,7 +168,15 @@ const confirmSession: WaTool = {
       }
       return fail("Couldn't confirm that session.");
     }
-    return ok({ confirmed: true, note: "The founder has been told you're taking it." });
+    // coach_confirm_session stamps coach_confirmed_at and returns — its own
+    // comment says founders are "intentionally NOT notified", because a routine
+    // confirmation needs no action from them. Saying otherwise here put a
+    // fabricated delivery in front of the model on every confirmation.
+    // What confirming actually buys the coach is silence, so say that.
+    return ok({
+      confirmed: true,
+      note: "Recorded. No one is messaged — this just stops the reminders and the founder alert for this session.",
+    });
   },
 };
 
@@ -198,11 +206,20 @@ const markArrival: WaTool = {
       }
       return fail("Couldn't send that.");
     }
+    // What the RPC actually does, not what would be nice to say. It QUEUES
+    // notification rows; a separate worker delivers them later over whichever
+    // channel each person allows. And the founder is pinged ONLY on lateness —
+    // coach_mark_arrival's founder insert sits inside `if p_late`, because a
+    // routine on-time arrival needs nothing from them.
+    //
+    // The model is told (agent.ts) never to upgrade "queued" to "notified", and
+    // never to claim more than the tool returned. It can only honour that if
+    // the tool stops handing it the overclaim ready-made.
     return ok({
-      sent: true,
+      marked: input.running_late ? "running_late" : "arrived",
       note: input.running_late
-        ? "Parents and the founder know you're running late."
-        : "Parents and the founder know you've arrived.",
+        ? "Queued to the parents booked on this session, and to the founder."
+        : "Queued to the parents booked on this session. The founder isn't pinged for an on-time arrival.",
     });
   },
 };
