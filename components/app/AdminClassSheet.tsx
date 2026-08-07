@@ -27,6 +27,7 @@ import { viewAsCoach } from "@/app/coach/preview-actions";
 import { AddressDisplay } from "@/components/app/AddressDisplay";
 import { fromDetails } from "@/lib/address";
 import { ClassDetailFields, generateClassTitle, time12h, type ClassFormState } from "./ClassFields";
+import { ClassTypeLine, classKind } from "./class-type";
 import { TimeSelect12h } from "./TimeSelect12h";
 import { formatSessionDate, wallDate } from "@/lib/academy-time";
 import {
@@ -283,12 +284,17 @@ export function AdminClassSheet({
           {address && (
             <AddressDisplay address={address} audience="staff" className="mt-2" />
           )}
-          <div className="mt-2 flex flex-wrap gap-2">
-            {cls.isSchool && <Badge tone="ember">School class</Badge>}
-            {!cls.active && (
+          {/* Same glyph + words as the card he tapped to get here. It was an
+              ember "School class" badge and nothing at all for an ordinary
+              group class — so the sheet contradicted the list on a school, and
+              went silent on everything else. Kind is stated here every time,
+              for all three kinds, in the app's one vocabulary. */}
+          <ClassTypeLine kind={classKind(cls)} className="mt-2" />
+          {!cls.active && (
+            <div className="mt-2 flex flex-wrap gap-2">
               <Badge tone="neutral">{cls.endsOn ? "Ended" : "Booking paused"}</Badge>
-            )}
-          </div>
+            </div>
+          )}
           {cls.nextSessionId && cls.nextSessionStart && (
             <Link
               href={`/admin/schedule?date=${wallDate(cls.nextSessionStart)}&session=${cls.nextSessionId}`}

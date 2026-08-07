@@ -18,6 +18,7 @@ import { AdminAddSheet } from "./AdminAddSheet";
 import { AdminBulkRemoveSheet } from "./AdminBulkRemoveSheet";
 import { AdminWipeCalendarSheet } from "./AdminWipeCalendarSheet";
 import { PrivateSeriesCard, WeeklyClassCard } from "./ClassCard";
+import { KindIcon } from "./class-type";
 import {
   WEEKDAY_NAME,
   WEEKDAYS,
@@ -435,14 +436,15 @@ export function AdminWeeklyClasses({
                 ›
               </span>
               <span className="font-semibold">{group.venue || "No venue"}</span>
-              {/* A client's own home, not a venue we run. The same plum dot the
-                  cards inside it use — the uppercase pill said it twice. */}
+              {/* A client's own home, not a venue we run. The same plum glyph
+                  the cards inside it carry — it was a hand-rolled plum dot, and
+                  the moment the cards moved from a dot to a shape this header
+                  was the one place still speaking the old language. It comes
+                  from class-type.tsx now, so it cannot fall behind again. */}
               {group.privateOnly && (
-                <span
-                  aria-label="Private location"
-                  title="Private location"
-                  className="h-1.5 w-1.5 shrink-0 rounded-full bg-priv"
-                />
+                <span aria-label="Private location" title="Private location">
+                  <KindIcon kind="private" className="text-priv" />
+                </span>
               )}
             </span>
             <span className="shrink-0 text-sm text-fg-2">

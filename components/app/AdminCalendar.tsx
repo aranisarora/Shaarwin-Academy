@@ -13,6 +13,7 @@ import { ActionResult } from "./ActionResult";
 import { AdminSessionSheet } from "./AdminSessionSheet";
 import { AdminAddSheet } from "./AdminAddSheet";
 import { SessionCard } from "./ClassCard";
+import { KIND_WORD } from "./class-type";
 import { formatDay, sessionTimeStatus, wallDate } from "@/lib/academy-time";
 import {
   type ClientOption,
@@ -182,11 +183,16 @@ export function AdminCalendar({
       value: typeFilter,
       defaultValue: "all",
       onChange: setTypeFilter,
+      // The app's one set of names for the three kinds — the chips used to say
+      // "Group / Private / School" while the cards below them said "Group class
+      // / Private / School class" and the Add sheet said a third thing again.
+      // Filtering to a word you cannot then find on a card is a small betrayal
+      // that costs a scroll every time.
       options: [
         { value: "all", label: "All class types" },
-        { value: "group", label: "Group" },
-        { value: "private", label: "Private" },
-        { value: "school", label: "School" },
+        { value: "group", label: KIND_WORD.group },
+        { value: "private", label: KIND_WORD.private },
+        { value: "school", label: KIND_WORD.school },
       ],
     },
   ];

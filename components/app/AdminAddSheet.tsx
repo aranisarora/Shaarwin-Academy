@@ -42,21 +42,35 @@ import {
   type Venue,
 } from "./admin-calendar-types";
 import { composeLocationLabel, venueDisplayName } from "@/lib/venue-display";
+import { KindIcon, KIND_TINT, KIND_WORD, type ClassKind } from "./class-type";
 
 type Mode = "weekly" | "school" | "private";
 type Variant = "create" | "oneoff";
 
+// The names come from class-type.tsx so this picker cannot drift away from the
+// cards it creates. The one-off private is deliberately "Private session": a
+// single evening at a family's house is not a class, and calling it one is how
+// the founder ends up looking for a weekly slot that was never made.
 const MODE_SETS: Record<Variant, { value: Mode; label: string }[]> = {
   create: [
-    { value: "weekly", label: "Group class" },
-    { value: "school", label: "School class" },
-    { value: "private", label: "Private class" },
+    { value: "weekly", label: KIND_WORD.group },
+    { value: "school", label: KIND_WORD.school },
+    { value: "private", label: KIND_WORD.private },
   ],
   oneoff: [
-    { value: "weekly", label: "Group class" },
-    { value: "school", label: "School class" },
+    { value: "weekly", label: KIND_WORD.group },
+    { value: "school", label: KIND_WORD.school },
     { value: "private", label: "Private session" },
   ],
+};
+
+/** This picker is where the founder meets the three kinds for the first time,
+ *  so it shows the same glyph the card will carry once the class exists. Learn
+ *  it once, here, and recognise it for ever after on the Schedule. */
+const MODE_KIND: Record<Mode, ClassKind> = {
+  weekly: "group",
+  school: "school",
+  private: "private",
 };
 
 // School blocks run far longer than a normal group class.
@@ -466,13 +480,20 @@ export function AdminAddSheet({
               type="button"
               onClick={() => resetMode(m.value)}
               aria-pressed={mode === m.value}
-              className={`min-h-11 rounded-[8px] border px-2 text-sm font-semibold ${
+              className={`flex min-h-11 flex-col items-center justify-center gap-0.5 rounded-[8px] border px-2 py-1.5 text-sm font-semibold ${
                 mode === m.value
                   ? "border-ember bg-ember text-ivory"
                   : "border-line hover:border-ember"
               }`}
             >
-              {m.label}
+              {/* Selected, the glyph rides the ember fill in ivory (currentColor
+                  does the work); unselected it wears its own kind colour, which
+                  is the colour it will have on every card afterwards. */}
+              <KindIcon
+                kind={MODE_KIND[m.value]}
+                className={mode === m.value ? "" : KIND_TINT[MODE_KIND[m.value]]}
+              />
+              <span className="leading-tight">{m.label}</span>
             </button>
           ))}
         </div>

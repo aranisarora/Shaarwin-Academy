@@ -14,13 +14,16 @@
  *
  * WHAT KIND OF CLASS is a separate axis from status, so it gets its own quiet
  * palette rather than borrowing ember. Each class type owns a left rail on the
- * card plus a matching dot beside its name — same colour, same two places,
+ * card plus a matching glyph beside its name — same colour, same two places,
  * every screen. Group classes are the norm and get no colour at all, so a
  * timetable of ordinary classes stays calm and the exceptions stand out.
  *   • --priv  (plum) = a private class, one family
  *   • --school (teal) = a school's own class
- * These are rails and 6px dots only — never fills, never text, never badges,
- * so they can't be mistaken for a status. See components/app/class-type.tsx.
+ * These are rails and 14px glyphs only — never fills, never badges, so they
+ * can't be mistaken for a status. Kind is never carried by colour alone: the
+ * glyph's shape and the word beside it both say it too, so the screen still
+ * works in grey and for eyes that can't split plum from teal. See
+ * components/app/class-type.tsx.
  */
 :root {
   --ink: #0b0c0f;
@@ -361,6 +364,55 @@ body {
   .above-tabbar {
     bottom: 1.5rem;
   }
+}
+
+/* ── The class card, in layers ─────────────────────────────────────────────
+ *
+ * A card carries two facts that have nothing to do with each other, and they
+ * must not be able to overwrite one another: WHAT KIND of class it is (plum /
+ * teal, identity, permanent) and WHAT STATE it is in (live, picked, waiting on
+ * a coach, out of play).
+ *
+ * They used to be two border-colour utilities on one element, so whichever
+ * Tailwind happened to emit last won the left edge. `border-l-priv` is written
+ * after `border-ember`, so an in-progress or picked private drew three ember
+ * sides and one plum one, and an ordinary group class drew three ember sides
+ * and one grey one — a ring with a bite taken out of it, on exactly the two
+ * states the founder is looking hardest at. And `hover:border-ember` is
+ * written after both, so pointing at a private turned its rail ember and
+ * pointing at a class with no coach turned its red border ember: the two
+ * colours whose entire job is to mean something else.
+ *
+ * Each layer now owns a property nothing else writes, and they compose:
+ *
+ *   --kind-rail   identity  — an inset rail        (class-type.tsx)
+ *   --state-ring  live/picked — an outset halo     (ClassCard.tsx)
+ *   --card-bg     picked, and hover                (both, plus the rules below)
+ *   border-color  the state's alone                (ClassCard.tsx)
+ *
+ * Nothing here depends on the order the classes are written in, which is the
+ * whole point: the next person to add a state cannot silently eat the rail.
+ */
+.class-card {
+  background-color: var(--card-bg, var(--surface-2));
+  box-shadow: var(--kind-rail, 0 0 #0000), var(--state-ring, 0 0 #0000);
+}
+
+/* Hover is an affordance, not a status, so it moves the surface and never a
+ * colour that means something. Only cards that actually open on tap get it. */
+.card-hover:hover {
+  --card-bg: color-mix(in srgb, var(--text) 5%, var(--surface-2));
+}
+
+/* Picked, while the founder is selecting rows to clear. A wash, not just a
+ * ring: "live right now" and "I have picked this" were both a bare ember ring,
+ * so a class could be both and look like neither, and the tick was the only
+ * thing telling them apart on a phone. Filling the card is what every photo
+ * picker on that phone already does. Listed again under :hover so the pointer
+ * doesn't wash the selection back out from under him. */
+.card-picked,
+.card-picked.card-hover:hover {
+  --card-bg: color-mix(in srgb, var(--ember) 12%, var(--surface-2));
 }
 
 /* Deep-link landing ring — a "needs your attention" row on Today scrolls the

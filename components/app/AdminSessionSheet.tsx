@@ -32,6 +32,7 @@ import { viewAsCoach } from "@/app/coach/preview-actions";
 import { AddressDisplay } from "@/components/app/AddressDisplay";
 import { ActionResult } from "@/components/app/ActionResult";
 import { ClassDetailFields, generateClassTitle, type ClassFormState } from "./ClassFields";
+import { ClassTypeLine, classKind } from "./class-type";
 import { TimeSelect12h } from "./TimeSelect12h";
 import {
   formatClock,
@@ -379,9 +380,22 @@ export function AdminSessionSheet({
             {session.address && (
               <AddressDisplay address={session.address} audience="staff" className="mt-2" />
             )}
+            {/* What kind of class, in the same glyph + words the card he just
+                tapped used. It was two ember badges — the exact pair the cards
+                dropped — so the app answered "what is this?" quietly on the
+                list and then shouted a different answer, in the colour that
+                means "live right now", the moment he opened it. A sheet is
+                where he confirms what he tapped; it has to look like it. */}
+            <ClassTypeLine
+              kind={classKind(session)}
+              className="mt-2"
+              detail={[
+                session.isPrivate
+                  ? (session.privatePlayerName ?? session.playerName ?? "no client yet")
+                  : null,
+              ]}
+            />
             <div className="mt-2 flex flex-wrap gap-2">
-              {session.isPrivate && <Badge tone="ember">Private</Badge>}
-              {session.isSchool && <Badge tone="ember">School class</Badge>}
               {!session.classActive && !session.isPrivate && (
                 <Badge tone="neutral">Booking paused</Badge>
               )}
