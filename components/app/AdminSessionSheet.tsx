@@ -65,10 +65,24 @@ export function AdminSessionSheet({
   clients: ClientOption[];
   onClose: () => void;
 }) {
+  // generateClassTitle's signature is (weekday, time, venueName). Every call in
+  // this file used to pass (skillLevel, weekday, time), so each argument landed
+  // one slot to the left and every guard failed quietly: WEEKDAY_NAME["any"]
+  // fell back to "any", time12h("TU") returned "TU" because Number("TU") is
+  // NaN, and the time became the venue. Saving an edit renamed the class to
+  // "any TU · 17:00" — in the client's booking list, in the WhatsApp that went
+  // out, and in the next confirm prompt he read. Resolve the venue from the
+  // form's own venueId, exactly as AdminClassSheet does.
+  const venueNameOf = (venueId: string) => venues.find((v) => v.id === venueId)?.name;
+
   // Mounted fresh per session (parent keys on session.id), so initializers
   // read the session directly — no prop-sync effects.
   const [form, setForm] = useState<ClassFormState>({
-    title: generateClassTitle(session.classLevel, session.classWeekday, wallTime(session.starts_at)),
+    title: generateClassTitle(
+      session.classWeekday,
+      wallTime(session.starts_at),
+      venueNameOf(session.classVenueId ?? "")
+    ),
     description: session.classDescription,
     skillLevel: session.classLevel,
     capacity: session.capacity,
@@ -80,7 +94,10 @@ export function AdminSessionSheet({
   });
 
   function updateForm(next: ClassFormState) {
-    setForm({ ...next, title: generateClassTitle(next.skillLevel, next.weekday, next.time) });
+    setForm({
+      ...next,
+      title: generateClassTitle(next.weekday, next.time, venueNameOf(next.venueId)),
+    });
   }
   const [date, setDate] = useState(wallDate(session.starts_at));
   const [step, setStep] = useState<"edit" | "scope">("edit");
@@ -619,7 +636,7 @@ export function AdminSessionSheet({
                   const newDate = e.target.value;
                   setDate(newDate);
                   const newWeekday = weekdayOfDate(newDate);
-                  setForm(f => ({ ...f, weekday: newWeekday, title: generateClassTitle(f.skillLevel, newWeekday, f.time) }));
+                  setForm(f => ({ ...f, weekday: newWeekday, title: generateClassTitle(newWeekday, f.time, venueNameOf(f.venueId)) }));
                 }}
               />
               <TimeSelect12h

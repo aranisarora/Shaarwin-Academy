@@ -4,6 +4,7 @@ export default defineConfig({
   testDir: "e2e",
   // The flow harness lives in e2e/flows and runs from playwright.flows.config.ts
   // against LOCAL Supabase — keep it out of the viewport audit entirely.
+  // What's left here is public.spec.ts: no login, so this runs unattended.
   testIgnore: "flows/**",
   use: { baseURL: "http://localhost:3000" },
   projects: [

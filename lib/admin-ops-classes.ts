@@ -53,10 +53,20 @@ export async function updateGroupClassCore(
       capacity: input.capacity,
       duration_minutes: input.durationMinutes,
       venue_id: input.venueId,
-      recurrence_rule: `FREQ=WEEKLY;BYDAY=${input.weekday}`,
+      // Only rewrite the rule for a class that HAS one. A one-off class carries
+      // recurrence_rule = null, and its edit form defaults weekday to "MO"
+      // (there is no rule to read a day out of) — so this line used to turn
+      // "fix the venue on Friday's one-time class" into "repeat every Monday
+      // for ever", move the session to Monday, and WhatsApp everyone booked.
+      ...(cls.recurrence_rule
+        ? { recurrence_rule: `FREQ=WEEKLY;BYDAY=${input.weekday}` }
+        : {}),
     })
     .eq("id", input.classId);
   if (clsErr) return { ok: false, error: "Couldn't save the class." };
+
+  // A one-off has no weekday to change, so only its time can move it.
+  const recurring = !!cls.recurrence_rule;
 
   const venueChanged = cls.venue_id !== input.venueId;
 
@@ -104,10 +114,15 @@ export async function updateGroupClassCore(
     const start = new Date(s.starts_at);
     const wall = utcToAcademyWall(start);
     const durationChanged = input.durationMinutes !== cls.duration_minutes;
-    const slotChanged = wall.isoWeekday !== newWd || wall.time !== input.time;
+    const slotChanged = recurring
+      ? wall.isoWeekday !== newWd || wall.time !== input.time
+      : wall.time !== input.time;
     if (!slotChanged && !durationChanged) continue;
 
-    const shifted = new Date(start.getTime() + (newWd - wall.isoWeekday) * 86400000);
+    // A one-off keeps its own date; only a repeating class slides to a new day.
+    const shifted = recurring
+      ? new Date(start.getTime() + (newWd - wall.isoWeekday) * 86400000)
+      : start;
     const newDate = utcToAcademyWall(shifted).date;
     const newStart = academyWallToUtc(newDate, input.time);
     if (newStart <= new Date()) continue;

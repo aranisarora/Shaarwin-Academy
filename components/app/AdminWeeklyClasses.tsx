@@ -268,17 +268,19 @@ export function AdminWeeklyClasses({
   }, [filteredClasses, filteredPrivates, curatedNames]);
 
   // On the phone the page opens one screen tall: only the first venue is
-  // expanded, the rest collapse to a header + count. `toggled` holds the venues
-  // the founder has flipped from their default (first-open, others-closed), so a
-  // tap always does the obvious thing. Desktop ignores this via CSS (lg:block).
-  const [toggled, setToggled] = useState<Set<string>>(new Set());
-  const toggleVenue = (key: string) =>
-    setToggled((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
+  // expanded, the rest collapse to a header + count. Desktop ignores this via
+  // CSS (lg:block).
+  //
+  // This stores what is OPEN, not what has been "flipped from the default".
+  // The old flag was read as `i === 0 ? !flipped : flipped`, so its meaning
+  // inverted with the venue's position: filter down to a day only one venue
+  // runs on and the venue he had just opened rendered closed, showing an empty
+  // group that reads as "nothing on that day". Position now only supplies the
+  // default for a venue he has never touched, re-evaluated on every filter
+  // change rather than frozen at mount.
+  const [openMap, setOpenMap] = useState<Record<string, boolean>>({});
+  const toggleVenue = (key: string, isOpen: boolean) =>
+    setOpenMap((prev) => ({ ...prev, [key]: !isOpen }));
 
   const filterDefs: FilterDef[] = [
     {
@@ -355,15 +357,21 @@ export function AdminWeeklyClasses({
               Select
             </Button>
           )}
-          <Button
-            className="hidden lg:inline-flex"
-            onClick={() => {
-              setCreating(true);
-              setMessage(null);
-            }}
-          >
-            Create a class
-          </Button>
+          {/* `hidden` alone cannot hide a Button: its base class list already
+              carries `inline-flex`, and two display utilities of equal
+              specificity leave source order to decide — which `inline-flex`
+              won. So the phone showed "Create a class" AND the ＋ FAB below it,
+              two controls doing one thing. Hiding a plain wrapper holds. */}
+          <span className="hidden lg:inline-flex">
+            <Button
+              onClick={() => {
+                setCreating(true);
+                setMessage(null);
+              }}
+            >
+              Create a class
+            </Button>
+          </span>
         </div>
       )}
 
@@ -372,7 +380,9 @@ export function AdminWeeklyClasses({
       {venueGroups.map((group, i) => {
         const key = group.venue || "no-venue";
         // First venue open by default, others collapsed; a tap flips it.
-        const open = i === 0 ? !toggled.has(key) : toggled.has(key);
+        // Untouched venues follow the default (first one open); once he taps a
+        // venue, his choice sticks wherever it lands in the list.
+        const open = openMap[key] ?? i === 0;
         const groupIds = group.days.flatMap((d) => d.rows.map((c) => c.id));
         const groupAllSelected =
           groupIds.length > 0 && groupIds.every((id) => selected.has(id));
@@ -385,7 +395,7 @@ export function AdminWeeklyClasses({
           <button
             type="button"
             aria-expanded={open}
-            onClick={() => toggleVenue(key)}
+            onClick={() => toggleVenue(key, open)}
             className="flex min-w-0 flex-1 items-baseline justify-between gap-3 px-4 py-3 text-left hover:bg-surface"
           >
             <span className="flex items-baseline gap-2">
@@ -396,10 +406,14 @@ export function AdminWeeklyClasses({
                 ›
               </span>
               <span className="font-semibold">{group.venue || "No venue"}</span>
+              {/* A client's own home, not a venue we run. The same plum dot the
+                  cards inside it use — the uppercase pill said it twice. */}
               {group.privateOnly && (
-                <span className="rounded-full border border-line px-2 py-0.5 text-[0.65rem] font-medium uppercase tracking-wide text-fg-2">
-                  private
-                </span>
+                <span
+                  aria-label="Private location"
+                  title="Private location"
+                  className="h-1.5 w-1.5 shrink-0 rounded-full bg-priv"
+                />
               )}
             </span>
             <span className="shrink-0 text-sm text-fg-2">

@@ -6,14 +6,21 @@
  *   • --err  (red)   = "you must act now". Unassigned sessions, payment
  *                      overdue, destructive confirms. Nothing else, ever —
  *                      an all-clear screen shows no red.
- *   • --ember        = brand + emphasis: live-now ring, private-class stripe,
- *                      primary buttons, active tab. Never means "error".
+ *   • --ember        = brand + emphasis: live-now ring, primary buttons,
+ *                      active tab. Never means "error", and never means
+ *                      "this class is of type X".
  *   • --ok  (green)  = confirmed / done (✓ Saved, Arrived, active plan).
  *   • neutral (line/fg-2) = information, no action implied.
- * Ember carries two visual meanings on a card (live ring + private stripe) but
- * they never collide as *badges*: if a live badge and a private badge would
- * both want ember, the live one keeps it and private falls back to neutral
- * (the left-stripe already carries "private"). See ClassCard.tsx.
+ *
+ * WHAT KIND OF CLASS is a separate axis from status, so it gets its own quiet
+ * palette rather than borrowing ember. Each class type owns a left rail on the
+ * card plus a matching dot beside its name — same colour, same two places,
+ * every screen. Group classes are the norm and get no colour at all, so a
+ * timetable of ordinary classes stays calm and the exceptions stand out.
+ *   • --priv  (plum) = a private class, one family
+ *   • --school (teal) = a school's own class
+ * These are rails and 6px dots only — never fills, never text, never badges,
+ * so they can't be mistaken for a status. See components/app/class-type.tsx.
  */
 :root {
   --ink: #0b0c0f;
@@ -28,6 +35,8 @@
   --line-l: #e2ddd1;
   --ok: #3f9b63;
   --err: #d64545;
+  --priv: #7a5195;
+  --school: #2b7a8c;
 
   /* mood-relative aliases, defaulted to Studio (light) */
   --surface: var(--ivory);
@@ -48,6 +57,9 @@
   --text: var(--ivory);
   --text-2: var(--smoke);
   --line: var(--line-d);
+  /* Lifted for the dark mood — the studio values go muddy on ink. */
+  --priv: #b18ad4;
+  --school: #58bcd1;
   background: var(--surface);
   color: var(--text);
 }
@@ -75,6 +87,8 @@
   --color-line-l: var(--line-l);
   --color-ok: var(--ok);
   --color-err: var(--err);
+  --color-priv: var(--priv);
+  --color-school: var(--school);
   --color-surface: var(--surface);
   --color-surface-2: var(--surface-2);
   --color-fg: var(--text);

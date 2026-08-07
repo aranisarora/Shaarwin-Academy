@@ -93,10 +93,14 @@ type Mode = "add" | "edit" | "pending" | null;
 export function CoachManager({
   coaches,
   pending,
+  away: awayById = {},
 }: {
   coaches: CoachRow[];
   pending: PendingCoachRow[];
+  /** coachId → "Away until 15 Aug", for leave already approved. */
+  away?: Record<string, string>;
 }) {
+  const away = new Map(Object.entries(awayById));
   const [mode, setMode] = useState<Mode>(null);
   const [form, setForm] = useState<Form>(EMPTY_FORM);
   // Address typeahead state lives here so it resets correctly each time a
@@ -304,40 +308,43 @@ export function CoachManager({
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <p className="label">Coaches</p>
+      {/* The page is already titled "Coaches"; a second "COACHES" label under it
+          told him nothing, so the row is just the one action. */}
+      <div className="flex items-center justify-end">
         <Button onClick={openAdd}>Add a coach</Button>
       </div>
       {message && <p className="text-sm text-fg-2">{message}</p>}
 
+      {/* One tap target per coach — the whole row, with a chevron, exactly as the
+          Players list does it. Every coach used to carry a green "WORKING" pill
+          (pill-shaped, so it looked tappable, and it said the same thing three
+          times over) and an orange "View as <name>" link that was the loudest
+          control on the page for a feature he needs about once a quarter. The
+          badge now fires only on the exception, and "View as" moved into the
+          coach's own sheet next to the other rare actions. */}
       <ul className="divide-y divide-line rounded-[12px] border border-line bg-surface-2">
         {coaches.map((c) => (
-          <li key={c.id} className="px-4 py-3">
-            <div className="flex items-center justify-between gap-3">
-              <button onClick={() => openEdit(c)} className="text-left hover:text-ember">
-                <p className="font-medium">{c.name}</p>
-                <p className="text-sm text-fg-2">{c.email}</p>
-              </button>
-              <div className="flex flex-col items-end gap-1.5">
-                <Badge tone={c.active ? "ok" : "err"}>{c.active ? "working" : "paused"}</Badge>
-                <button
-                  onClick={() =>
-                    startTransition(async () => {
-                      const ok = await viewAsCoach(c.id);
-                      // Hard navigation: the preview cookie is set httpOnly by the
-                      // server action, so a soft router.push would re-render /coach
-                      // from the client cache without it. A full load re-reads it.
-                      if (ok) window.location.assign("/coach");
-                      else setMessage("Preview unavailable — only founders can view as coach.");
-                    })
-                  }
-                  disabled={isPending}
-                  className="text-sm text-ember hover:underline disabled:opacity-50"
-                >
-                  View as {c.name}
-                </button>
+          <li key={c.id}>
+            <button
+              onClick={() => openEdit(c)}
+              className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left hover:bg-surface"
+            >
+              <div className="min-w-0">
+                <p className="flex items-center gap-2 font-medium">
+                  <span className="truncate">{c.name}</span>
+                  {!c.active && (
+                    <Badge className="shrink-0">Paused</Badge>
+                  )}
+                  {away.get(c.id) && (
+                    <Badge className="shrink-0">{away.get(c.id)}</Badge>
+                  )}
+                </p>
+                <p className="truncate text-sm text-fg-2">{c.email}</p>
               </div>
-            </div>
+              <span aria-hidden className="shrink-0 text-fg-2">
+                ›
+              </span>
+            </button>
           </li>
         ))}
         {coaches.length === 0 && (
@@ -524,6 +531,28 @@ export function CoachManager({
           {/* ── Lifecycle actions ── */}
           <section className="space-y-3 border-t border-line pt-5">
             <p className="label">Manage</p>
+            {/* Was an orange link on every row of the list, where it was the
+                loudest control on the page for something he needs about once a
+                quarter — and it silently swaps him into the coach app for four
+                hours. Here it sits with the other rare actions and says so. */}
+            <Button
+              variant="ghost"
+              className="w-full"
+              disabled={isPending || uploadingPhoto}
+              onClick={() => {
+                if (!editId) return;
+                startTransition(async () => {
+                  const ok = await viewAsCoach(editId);
+                  // Hard navigation: the preview cookie is set httpOnly by the
+                  // server action, so a soft router.push would re-render /coach
+                  // from the client cache without it. A full load re-reads it.
+                  if (ok) window.location.assign("/coach");
+                  else setSheetMessage("Preview unavailable — only founders can view as coach.");
+                });
+              }}
+            >
+              See the app as {form.name || "this coach"}
+            </Button>
             <ConfirmAction
               variant="ghost"
               label={editActive ? "Pause coach" : "Unpause coach"}

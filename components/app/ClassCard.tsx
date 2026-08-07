@@ -23,15 +23,26 @@
 //   conflating the two is why an ended class (pickable) and a private (not)
 //   were indistinguishable on a phone, where there is no hover to ask.
 //
+//   IDENTITY IS COLOURED BY KIND, NOT BY EMBER. The left stripe used to be
+//   ember for a private and nothing at all for a school, which left school
+//   classes leaning on a shouted <Badge>School</Badge> and made ember mean
+//   "private" on the same screen it means "live now", "primary button" and
+//   "the tab you are on". A colour asked to mean four things means none of
+//   them. Kind now owns its own quiet pair — plum for a private, teal for a
+//   school, nothing for an ordinary group class — in exactly two places on
+//   every card: the stripe, and a 6px dot beside the words. See class-type.tsx.
+//
 // Border language, documented once:
 //   • red border        = needs you to act (no coach yet)
-//   • ember left-stripe = a private class
+//   • plum left-stripe  = a private class      ┐ identity, additive,
+//   • teal left-stripe  = a school's class     ┘ never a status
 //   • ember ring        = live right now, or picked (the badge/tick says which)
 //   • dimmed            = out of play
 
 import Link from "next/link";
 import { Badge } from "@/components/ui/Badge";
 import { time12h } from "./ClassFields";
+import { ClassTypeLine, KIND_RAIL, classKind } from "./class-type";
 import { useLongPress } from "./use-long-press";
 import {
   formatClock,
@@ -65,11 +76,6 @@ function slotLine(weekday: string, time: string, duration: number): string {
   return `${dayShort} · ${time12h(time)} – ${endTime12h(time, duration)}`;
 }
 
-/** "Private · Asha Rao" / "Group class" / "School class" — the card's type line. */
-function sessionTypeLine(s: SessionRow): string {
-  if (s.isPrivate) return `Private · ${s.playerName ?? "no client yet"}`;
-  return s.isSchool ? "School class" : "Group class";
-}
 
 /** Status badges for a session — same order, tones and casing everywhere. */
 function SessionBadges({ session }: { session: SessionRow }) {
@@ -94,13 +100,13 @@ function SessionBadges({ session }: { session: SessionRow }) {
  * only thing left to do with one. Ended classes now sit on the list by default
  * and the sheet will delete one outright, so the badge names both. */
 function ClassBadges({ cls }: { cls: ClassRow }) {
-  if (!cls.isSchool && cls.active) return null;
+  // "School" is not a state, so it is no longer a badge here — the teal stripe
+  // and the dot on the type line say it, in the same two places every other
+  // kind of class says what it is. This row is now only ever about state.
+  if (cls.active) return null;
   return (
     <span className="mt-1.5 inline-flex flex-wrap gap-1.5">
-      {cls.isSchool && <Badge>School</Badge>}
-      {!cls.active && (
-        <Badge tone="err">{cls.endsOn ? "Ended — restore or delete" : "Paused"}</Badge>
-      )}
+      <Badge tone="err">{cls.endsOn ? "Ended — restore or delete" : "Paused"}</Badge>
     </span>
   );
 }
@@ -136,7 +142,10 @@ function stateTone({
   return "border-line bg-surface-2";
 }
 
-const PRIVATE_STRIPE = "border-l-[3px] border-l-ember";
+// Kept as a name so the "identity is additive" rule still reads at each call
+// site; the colour itself now depends on what kind of class it is.
+const kindStripe = (c: { isPrivate?: boolean; isSchool?: boolean }) =>
+  KIND_RAIL[classKind(c)];
 
 /** The tick every selectable card shows while the founder is picking. Drawn
  * rather than a real <input> so it can live inside the button without nesting
@@ -188,7 +197,7 @@ export function SessionCard({
     dim: status === "completed",
     alert: !session.coachId,
     ring: status === "in_progress",
-  })} ${session.isPrivate ? PRIVATE_STRIPE : ""}`;
+  })} ${kindStripe(session)}`;
   const inner = (
     <>
       <p className="font-semibold">{session.venueName ?? "Location TBC"}</p>
@@ -201,17 +210,19 @@ export function SessionCard({
           so it would only repeat itself — but "no coach yet" is not, because
           the red border is the loudest thing on the page and Today used to
           show it with nothing beside it to explain what was wrong. */}
-      <p className="text-xs text-fg-2">
-        {sessionTypeLine(session)}
-        {!session.coachId ? (
-          <>
-            {" "}
-            · <span className="text-err">No coach yet</span>
-          </>
-        ) : coachName !== undefined && coachName ? (
-          <> · {coachName}</>
-        ) : null}
-      </p>
+      <ClassTypeLine
+        kind={classKind(session)}
+        detail={[
+          session.isPrivate
+            ? (session.privatePlayerName ?? session.playerName ?? "no client yet")
+            : null,
+          !session.coachId ? (
+            <span className="text-err">No coach yet</span>
+          ) : coachName !== undefined && coachName ? (
+            coachName
+          ) : null,
+        ]}
+      />
       <SessionBadges session={session} />
     </>
   );
@@ -256,11 +267,11 @@ export function WeeklyClassCard({
   selected?: boolean;
 }) {
   const { handlers, consumeClick } = useLongPress(selecting ? null : onLongPress);
-  const tone = stateTone({
+  const tone = `${stateTone({
     dim: !cls.active,
     alert: !!cls.active && !cls.coachName,
     ring: selecting && selected,
-  });
+  })} ${kindStripe(cls)}`;
   return (
     <button
       type="button"
@@ -281,10 +292,10 @@ export function WeeklyClassCard({
         <span className="block text-fg-2">
           {cls.coachName ?? <span className="text-err">No coach yet</span>}
         </span>
-        <span className="block text-xs text-fg-2">
-          {cls.isSchool ? "School class" : "Group class"} · {cls.bookedCount} of {cls.capacity}{" "}
-          booked
-        </span>
+        <ClassTypeLine
+          kind={classKind(cls)}
+          detail={[`${cls.bookedCount} of ${cls.capacity} booked`]}
+        />
         <ClassBadges cls={cls} />
       </span>
     </button>
@@ -319,16 +330,16 @@ export function PrivateSeriesCard({
         {slotLine(series.weekday, series.time, series.duration)}
       </p>
       <p className="text-fg-2">{series.coachName ?? "No coach yet"}</p>
-      <p className="text-xs text-fg-2">
-        Private · {series.playerName}
-        {series.clientName ? ` · ${series.clientName}` : ""}
-      </p>
-      <span className="mt-1.5 inline-flex flex-wrap gap-1.5">
-        <Badge tone="ember">Private</Badge>
-      </span>
+      {/* The plum stripe and the dot already say "private" — an ember Private
+          badge on top said it a third time, in the one colour that also means
+          "live right now" two cards further down the same grid. */}
+      <ClassTypeLine
+        kind="private"
+        detail={[series.playerName, series.clientName || null]}
+      />
     </>
   );
-  const tone = `${stateTone({})} ${PRIVATE_STRIPE}`;
+  const tone = `${stateTone({})} ${KIND_RAIL.private}`;
 
   if (selecting) {
     return (

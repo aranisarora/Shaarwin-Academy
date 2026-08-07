@@ -18,7 +18,13 @@ export type SessionRow = {
   isPrivate: boolean;
   isSchool: boolean; // group class held at a school — coaches/admins add players
   venueName: string | null;
+  // The CLIENT — the account that pays, i.e. the parent. Badly named for
+  // history's sake: the calendar's client filter and the "cancel all private
+  // sessions for …" prompt both read it as the client, which is what it is.
   playerName: string | null;
+  // The PLAYER — the child who actually turns up. This is the name the founder
+  // is looking for on a card, so it is what the cards show.
+  privatePlayerName: string | null;
   // For private sessions: the assigned client, or null for an "open" slot held
   // without a client yet. Drives the "unassigned" label and the assign action.
   privateClientId: string | null;

@@ -35,6 +35,8 @@ async function Today() {
     pastDue,
     timeOff,
     issues,
+    coaches,
+    signups,
   ] = await Promise.all([
     // Reuse the Schedule's exact session shape (venue resolution, private-client
     // names, badges) — the empty nextByClass is fine, Today shows real times.
@@ -54,14 +56,16 @@ async function Today() {
       .eq("status", "scheduled")
       .gte("starts_at", now.toISOString())
       .lt("starts_at", weekAhead.toISOString()),
+    // Every coachless session ahead, not just the first ten — they are grouped
+    // by class below, and a count is only honest if it counted everything.
     supabase
       .from("class_sessions")
-      .select("id,starts_at,classes(title)")
+      .select("id,starts_at,class_id,classes(title,class_type,is_school)")
       .is("coach_id", null)
       .eq("status", "scheduled")
       .gte("starts_at", now.toISOString())
       .order("starts_at")
-      .limit(10),
+      .limit(300),
     supabase
       .from("subscriptions")
       .select("id,client_id,profiles!subscriptions_client_id_fkey(full_name)")
@@ -74,10 +78,27 @@ async function Today() {
       .limit(10),
     supabase
       .from("notifications")
-      .select("id,title,body,created_at,data")
+      .select("id,type,title,body,created_at,data")
       .in("type", ["session_issue", "private_request_parked"])
       .is("read_at", null)
       .order("created_at", { ascending: false })
+      .limit(50),
+    supabase.from("coaches").select("id,profiles!inner(full_name)"),
+    // Someone waiting to be let in. This is by the app's own reckoning the most
+    // action-demanding thing that exists (lib/notification-prefs.ts marks it
+    // unmutable, "someone is waiting on you to act") and Today used to show the
+    // all-clear card straight through it — the only alert was a WhatsApp.
+    // Read from profiles rather than the notification, because opening
+    // /app/notifications marks a notification read and would silently clear the
+    // alert while the person is still stuck. Predicate mirrors ClientManager's.
+    supabase
+      .from("profiles")
+      .select("id,full_name")
+      .eq("role", "client")
+      .eq("approval_status", "pending")
+      .not("phone", "is", null)
+      .is("deleted_at", null)
+      .order("created_at")
       .limit(10),
   ]);
 
@@ -86,12 +107,133 @@ async function Today() {
     (s) => utcToAcademyWall(new Date(s.starts_at)).date === today
   );
 
+  const coachName = new Map(
+    (coaches.data ?? []).map((c) => [
+      c.id,
+      (c.profiles as unknown as { full_name: string }).full_name,
+    ])
+  );
+
   const revenue = (invoices.data ?? []).reduce((s, r) => s + r.amount_pence, 0);
+
+  // ── One problem, one row ───────────────────────────────────────────────────
+  // A weekly class with no coach generates a coachless session every week, and
+  // listing each one turned a single gap ("Lakefront Juniors has nobody") into
+  // ten identical red alarms the founder had to scroll past. Group them by
+  // class: one row, the soonest date, and how many follow.
+  type Gap = {
+    classId: string;
+    title: string;
+    kind: { isPrivate: boolean; isSchool: boolean };
+    firstId: string;
+    firstStart: string;
+    count: number;
+  };
+  const gaps = new Map<string, Gap>();
+  for (const s of unassigned.data ?? []) {
+    const cls = s.classes as unknown as {
+      title: string;
+      class_type: string;
+      is_school: boolean;
+    } | null;
+    const existing = gaps.get(s.class_id);
+    if (existing) {
+      existing.count += 1;
+      continue;
+    }
+    gaps.set(s.class_id, {
+      classId: s.class_id,
+      title: cls?.title ?? "Class",
+      kind: { isPrivate: cls?.class_type === "private", isSchool: !!cls?.is_school },
+      firstId: s.id,
+      firstStart: s.starts_at,
+      count: 1,
+    });
+  }
+  const coachGaps = [...gaps.values()].sort((a, b) =>
+    a.firstStart.localeCompare(b.firstStart)
+  );
+
+  // ── Notifications that actually say something ──────────────────────────────
+  // These rows are written by a Postgres function and a coach action, and their
+  // frozen body ("A private request has no available coach — resolve manually")
+  // names nobody and no time, while their stored url points at /admin/calendar,
+  // which only redirects to the Schedule — losing the session. Both are fixed
+  // here at read time, which also repairs every row already in the table.
+  const noteRows = (issues.data ?? []).map((n) => ({
+    id: n.id,
+    type: n.type as string,
+    sessionId: ((n.data as { session_id?: string })?.session_id ?? null) as string | null,
+  }));
+  // The same unresolved problem re-notifies, so collapse to one row per session
+  // — and drop anything the coach-gap rows above already cover. A parked private
+  // request IS a session with no coach, so without this the founder gets told
+  // twice about one gap and has to work out that they are the same thing.
+  const gapSessionIds = new Set((unassigned.data ?? []).map((s) => s.id));
+  const seenNote = new Set<string>();
+  const notes = noteRows.filter((n) => {
+    if (n.sessionId && gapSessionIds.has(n.sessionId)) return false;
+    const key = `${n.type}:${n.sessionId ?? n.id}`;
+    if (seenNote.has(key)) return false;
+    seenNote.add(key);
+    return true;
+  });
+
+  const noteSessionIds = notes.map((n) => n.sessionId).filter((v): v is string => !!v);
+  const { data: noteSessions } = noteSessionIds.length
+    ? await supabase
+        .from("class_sessions")
+        .select(
+          "id,starts_at,ends_at,status,classes(title,class_type,is_school,location_label,private_class_details(players(full_name)))"
+        )
+        .in("id", noteSessionIds)
+    : { data: [] };
+
+  const noteDetail = new Map(
+    (noteSessions ?? []).map((s) => {
+      const cls = s.classes as unknown as {
+        title: string;
+        class_type: string;
+        is_school: boolean;
+        location_label: string | null;
+        private_class_details: { players: { full_name: string } | null } | null;
+      } | null;
+      const who =
+        cls?.class_type === "private"
+          ? (cls.private_class_details?.players?.full_name ?? "a private client")
+          : (cls?.title ?? "a class");
+      return [
+        s.id,
+        {
+          who,
+          when: formatSessionDate(s.starts_at),
+          where: cls?.location_label ?? null,
+          date: utcToAcademyWall(new Date(s.starts_at)).date,
+          endsAt: s.ends_at,
+          status: s.status as string,
+        },
+      ];
+    })
+  );
+
+  // Nothing in the admin app ever stamps `read_at` on these rows, so without a
+  // rule they pile up for ever: he phones the coach, and next morning "A coach
+  // reported a problem" is still there. Rather than add a dismiss button he'd
+  // have to remember to press, derive it — a problem about a session that has
+  // finished or been cancelled is not a problem any more.
+  const liveNotes = notes.filter((n) => {
+    if (!n.sessionId) return false; // nothing to show and nowhere to go
+    const d = noteDetail.get(n.sessionId);
+    if (!d) return false; // session deleted — the row is stale by definition
+    return d.status === "scheduled" && new Date(d.endsAt) > now;
+  });
+
   const exceptions =
-    (unassigned.data?.length ?? 0) +
+    coachGaps.length +
     (pastDue.data?.length ?? 0) +
     (timeOff.data?.length ?? 0) +
-    (issues.data?.length ?? 0);
+    liveNotes.length +
+    (signups.data?.length ?? 0);
 
   return (
     <>
@@ -106,10 +248,13 @@ async function Today() {
           </Card>
         ) : (
           <div className="grid gap-2 sm:grid-cols-2">
+            {/* Who is coaching it is the first thing he wants at 7am, so the
+                coach goes on the card here exactly as it does on the Schedule. */}
             {todaySessions.map((s) => (
               <SessionCard
                 key={s.id}
                 session={s}
+                coachName={s.coachId ? (coachName.get(s.coachId) ?? null) : null}
                 href={`/admin/schedule?session=${s.id}&date=${utcToAcademyWall(new Date(s.starts_at)).date}`}
               />
             ))}
@@ -131,19 +276,17 @@ async function Today() {
           </Card>
         ) : (
           <div className="space-y-3">
-            {(unassigned.data ?? []).map((s) => (
+            {coachGaps.map((g) => (
               <Link
-                key={s.id}
-                href={`/admin/schedule?session=${s.id}&date=${utcToAcademyWall(new Date(s.starts_at)).date}`}
-                className="flex items-center justify-between rounded-[12px] border border-err bg-surface-2 px-4 py-3 hover:bg-surface"
+                key={g.classId}
+                href={`/admin/schedule?session=${g.firstId}&date=${utcToAcademyWall(new Date(g.firstStart)).date}`}
+                className="flex items-center justify-between gap-3 rounded-[12px] border border-err bg-surface-2 px-4 py-3 hover:bg-surface"
               >
-                <div>
-                  <p className="font-medium">
-                    ⚠ Unassigned —{" "}
-                    {(s.classes as unknown as { title: string } | null)?.title}
-                  </p>
+                <div className="min-w-0">
+                  <p className="font-medium">No coach — {g.title}</p>
                   <p className="tnum text-sm text-fg-2">
-                    {formatSessionDate(s.starts_at)}
+                    {formatSessionDate(g.firstStart)}
+                    {g.count > 1 && ` · and ${g.count - 1} more`}
                   </p>
                 </div>
                 <Badge tone="err">Assign</Badge>
@@ -181,19 +324,56 @@ async function Today() {
                 <Badge tone="err">Payment overdue</Badge>
               </Link>
             ))}
-            {(issues.data ?? []).map((n) => (
+            {/* One row however many are waiting — the list is on Players, and
+                a queue of five people isn't five separate problems. */}
+            {(signups.data?.length ?? 0) > 0 && (
               <Link
-                key={n.id}
-                href={(n.data as { url?: string })?.url ?? "/admin/schedule"}
-                className="flex items-center justify-between rounded-[12px] border border-line bg-surface-2 px-4 py-3 hover:bg-surface"
+                href="/admin/players?view=clients"
+                className="flex items-center justify-between gap-3 rounded-[12px] border border-line bg-surface-2 px-4 py-3 hover:bg-surface"
               >
-                <div>
-                  <p className="font-medium">{n.title}</p>
-                  <p className="text-sm text-fg-2">{n.body}</p>
+                <div className="min-w-0">
+                  <p className="font-medium">
+                    {signups.data!.length === 1
+                      ? `${signups.data![0].full_name} wants to join`
+                      : `${signups.data!.length} people want to join`}
+                  </p>
+                  <p className="text-sm text-fg-2">Waiting for you to let them in.</p>
                 </div>
-                <Badge>Open</Badge>
+                <Badge>Review</Badge>
               </Link>
-            ))}
+            )}
+            {liveNotes.map((n) => {
+              const d = n.sessionId ? noteDetail.get(n.sessionId) : null;
+              const parked = n.type === "private_request_parked";
+              return (
+                <Link
+                  key={n.id}
+                  href={
+                    d && n.sessionId
+                      ? `/admin/schedule?session=${n.sessionId}&date=${d.date}`
+                      : "/admin/schedule"
+                  }
+                  className="flex items-center justify-between gap-3 rounded-[12px] border border-line bg-surface-2 px-4 py-3 hover:bg-surface"
+                >
+                  <div className="min-w-0">
+                    <p className="font-medium">
+                      {parked ? "Private class needs a coach" : "A coach reported a problem"}
+                      {d ? ` — ${d.who}` : ""}
+                    </p>
+                    <p className="tnum text-sm text-fg-2">
+                      {d
+                        ? `${d.when}${d.where ? ` · ${d.where}` : ""}`
+                        : parked
+                          ? "Nobody was free. Pick a coach on the Schedule."
+                          : "Open the session to follow up."}
+                    </p>
+                  </div>
+                  <Badge tone={parked ? "err" : "neutral"}>
+                    {parked ? "Assign" : "Open"}
+                  </Badge>
+                </Link>
+              );
+            })}
           </div>
         )}
       </section>

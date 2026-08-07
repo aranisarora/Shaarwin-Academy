@@ -13,6 +13,11 @@ export type TabItem = {
   group?: string;
   /** Nested shortcuts rendered indented under this tab in the desktop rail only. */
   railChildren?: React.ReactNode;
+  /** Extra routes that light this tab — how "More" claims the pages that live
+   * under it. Without it every screen reached through More (Coaches, Schools,
+   * Venues, Skills, Billing, Settings) left the whole bar grey, so on six of
+   * the eleven admin screens nothing told the founder where he was. */
+  match?: string[];
 };
 
 /** Fixed bottom tab bar — max 5 items, 44px+ targets, safe-area inset. */
@@ -25,12 +30,15 @@ export function BottomTabBar({ items }: { items: TabItem[] }) {
     >
       <div className="grid auto-cols-fr grid-flow-col">
         {items.slice(0, 5).map((item) => {
+          // `=== p || startsWith(p + "/")` rather than a bare startsWith, so a
+          // future /admin/schoolsomething can't light the /admin/schools tab.
           const active =
             pathname === item.href ||
             (item.href !== "/app" &&
               item.href !== "/coach" &&
               item.href !== "/admin" &&
-              pathname.startsWith(item.href));
+              pathname.startsWith(item.href)) ||
+            (item.match?.some((p) => pathname === p || pathname.startsWith(`${p}/`)) ?? false);
           return (
             <Link
               key={item.href}

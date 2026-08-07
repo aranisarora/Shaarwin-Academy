@@ -57,7 +57,7 @@ async function Schedule({ searchParams }: { searchParams: SearchParams }) {
     supabase
       .from("class_sessions")
       .select(
-        "id,starts_at,ends_at,coach_id,coach_arrived_at,coach_arrival_source,coach_arrival_distance_m,capacity_override,classes!inner(id,title,description,skill_level,capacity,duration_minutes,recurrence_rule,active,venue_id,class_type,is_school,location_label,venues(name,address,postcode,lat,lng,address_details),private_class_details(client_id,address,postcode,lat,lng,access_notes,address_details))"
+        "id,starts_at,ends_at,coach_id,coach_arrived_at,coach_arrival_source,coach_arrival_distance_m,capacity_override,classes!inner(id,title,description,skill_level,capacity,duration_minutes,recurrence_rule,active,venue_id,class_type,is_school,location_label,venues(name,address,postcode,lat,lng,address_details),private_class_details(client_id,address,postcode,lat,lng,access_notes,address_details,players(full_name)))"
       )
       .in("status", ["scheduled", "completed"])
       .gte("starts_at", from.toISOString())
@@ -170,6 +170,8 @@ async function Schedule({ searchParams }: { searchParams: SearchParams }) {
       isSchool: cls.is_school,
       venueName: cls.location_label ?? null,
       playerName: priv?.client_id ? (clientNameMap.get(priv.client_id) ?? null) : null,
+      privatePlayerName:
+        (priv?.players as unknown as { full_name: string } | null)?.full_name ?? null,
       privateClientId: priv?.client_id ?? null,
       address,
       classId: cls.id,

@@ -163,7 +163,10 @@ export async function decideTimeOff(
   const result = await decideTimeOffCore(supabase, user.id, timeOffId, approve);
   if (!result.ok) return result;
 
-  revalidatePath("/admin/coaches");
+  // Deliberately NOT revalidating /admin/coaches: the card replaces itself with
+  // the outcome sentence, and re-rendering the page here unmounts that row
+  // before he can read what happened to the coach's classes. The next
+  // navigation picks up the new state anyway.
   revalidateTag("coaches", "max");
   revalidatePath("/admin");
   return { ok: true };

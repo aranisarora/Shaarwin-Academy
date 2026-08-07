@@ -4,7 +4,7 @@ Two independent things live under `e2e/` — don't confuse them:
 
 | | What it proves | Runs against | Command |
 |---|---|---|---|
-| **Viewport audit** (`e2e/*.spec.ts`) | Pages don't scroll sideways at phone widths; screenshots for a human fold/tap review | `localhost:3000` (your normal dev server, usually **prod** Supabase) + hand-captured auth | `npm run e2e` |
+| **Viewport audit** (`e2e/public.spec.ts`) | The public marketing pages don't scroll sideways at phone widths | `localhost:3000` (your normal dev server) — no login needed | `npm run e2e` |
 | **E2E flow harness** (`tests/db/`, `e2e/flows/`) | The app's DB logic and critical screens actually work — notifications queued to the right person at the right time | **Local** Supabase in Docker, seeded fresh; auth minted automatically | `npm run test:db`, `npm run e2e:flows` |
 
 The flow harness never touches the live database (every entry point hard-fails against a non-local Supabase host). Full design: `docs/testing-harness-plan.md`.
@@ -60,28 +60,20 @@ npm run e2e
 The dev server is started for you (`webServer` in `playwright.config.ts`) and an
 already-running `localhost:3000` is reused.
 
-## Public vs. authenticated
+## Public only
 
-`public.spec.ts` needs no login. The role specs (`client`, `coach`, `admin`)
-audit surfaces behind auth.
+`public.spec.ts` needs no login, so `npm run e2e` runs unattended on a fresh
+clone.
 
-**The app has no password login** — sign-in is email-OTP + OAuth only, so
-Playwright can't script it. Instead each role spec loads a storage state you
-capture by hand, and **skips cleanly** when the state file is missing (so a
-fresh clone or CI never fails on missing auth).
+There used to be `admin`, `client` and `coach` viewport specs beside it. They
+pointed at **prod** Supabase and loaded a storage state captured by hand with
+`playwright codegen`, skipping themselves whenever that file was missing —
+which, being gitignored, it was on every fresh clone and in CI. They were
+removed rather than kept as three files that quietly never ran.
 
-## Capturing auth state (once per role)
-
-```bash
-npx playwright codegen --save-storage=e2e/.auth/client.json http://localhost:3000/login
-```
-
-Complete the email OTP by hand in the window that opens, land on the app, then
-close the window — the session is written to `e2e/.auth/client.json`. Repeat
-with `coach.json` and `admin.json`, signing in as each role.
-
-Re-capture when a role spec starts failing on auth — Supabase refresh tokens
-rotate, so a stored state eventually goes stale.
+To audit a screen behind a login, add a spec under `e2e/flows/`: the flow
+harness signs in for you against local Supabase (`e2e/lib/auth.ts`), so there
+is nothing to capture by hand and nothing to keep fresh.
 
 The `.auth/` directory and `test-results/` are gitignored — nothing here is
 committed.

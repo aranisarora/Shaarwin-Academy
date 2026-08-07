@@ -27,16 +27,18 @@ export function TimeOffDecision({
     );
   }
 
+  // Stacked, not side-by-side: at 390px the name and dates were squeezed into
+  // ~150px beside two buttons, so the dates he is deciding on wrapped to shreds.
   return (
-    <div className="flex items-center justify-between gap-3 rounded-[12px] border border-line bg-surface-2 px-4 py-3">
+    <div className="rounded-[12px] border border-line bg-surface-2 px-4 py-3">
       <div>
-        <p className="font-medium">{coachName}</p>
+        <p className="font-medium">{coachName} wants time off</p>
         <p className="tnum text-sm text-fg-2">
           {range}
           {reason ? ` · ${reason}` : ""}
         </p>
       </div>
-      <div className="flex gap-2">
+      <div className="mt-3 flex gap-2">
         <Button
           variant="ghost"
           disabled={pending}
@@ -54,7 +56,11 @@ export function TimeOffDecision({
           onClick={() =>
             startTransition(async () => {
               const r = await decideTimeOff(id, true);
-              if (r.ok) setDone("approved — overlapping sessions sent to the engine");
+              // Plain English: "sent to the engine" meant nothing to him, and
+              // the sentence has to say what happens to the classes he just
+              // took a coach off.
+              if (r.ok)
+                setDone("approved — we're finding cover. Anything left over shows on Today.");
             })
           }
         >

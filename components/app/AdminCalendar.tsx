@@ -71,32 +71,19 @@ export function AdminCalendar({
   const [adding, setAdding] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
-  // Filters — coach, day, venue, client and class type. Options come from the
-  // sessions actually on screen this week, so no filter is ever a dead end.
+  // Filters — coach, venue, class type. Three is what fits on a 390px phone:
+  // the row held five, of which only 3.3 were ever painted, the scrollbar is
+  // hidden and there was no fade, so the founder never discovered "All types" —
+  // the one chip that answers his "I can't tell a private from a school class".
+  // Day went because the list is already grouped by day and every day is on
+  // screen; client went because that question belongs on the Players tab.
   const [coachFilter, setCoachFilter] = useState("all");
-  const [dayFilter, setDayFilter] = useState("all");
   const [venueFilter, setVenueFilter] = useState("all");
-  const [clientFilter, setClientFilter] = useState("all");
   const [typeFilter, setTypeFilter] = useState("all");
 
-  const dayOptions = useMemo(() => {
-    const seen = new Map<string, string>();
-    for (const s of sessions) {
-      const key = wallDate(s.starts_at);
-      if (!seen.has(key)) seen.set(key, formatDay(s.starts_at));
-    }
-    return [...seen.entries()];
-  }, [sessions]);
   const venueOptions = useMemo(
     () =>
       [...new Set(sessions.map((s) => s.venueName).filter((v): v is string => !!v))].sort(
-        (a, b) => a.localeCompare(b)
-      ),
-    [sessions]
-  );
-  const clientOptions = useMemo(
-    () =>
-      [...new Set(sessions.map((s) => s.playerName).filter((v): v is string => !!v))].sort(
         (a, b) => a.localeCompare(b)
       ),
     [sessions]
@@ -108,15 +95,13 @@ export function AdminCalendar({
         if (coachFilter === "none" && s.coachId) return false;
         if (coachFilter !== "all" && coachFilter !== "none" && s.coachId !== coachFilter)
           return false;
-        if (dayFilter !== "all" && wallDate(s.starts_at) !== dayFilter) return false;
         if (venueFilter !== "all" && s.venueName !== venueFilter) return false;
-        if (clientFilter !== "all" && s.playerName !== clientFilter) return false;
         if (typeFilter === "group" && (s.isPrivate || s.isSchool)) return false;
         if (typeFilter === "private" && !s.isPrivate) return false;
         if (typeFilter === "school" && !s.isSchool) return false;
         return true;
       }),
-    [sessions, coachFilter, dayFilter, venueFilter, clientFilter, typeFilter]
+    [sessions, coachFilter, venueFilter, typeFilter]
   );
 
   const lanes = useMemo(() => {
@@ -130,11 +115,7 @@ export function AdminCalendar({
 
   const today = wallDate(new Date().toISOString());
   const filtersActive =
-    coachFilter !== "all" ||
-    dayFilter !== "all" ||
-    venueFilter !== "all" ||
-    clientFilter !== "all" ||
-    typeFilter !== "all";
+    coachFilter !== "all" || venueFilter !== "all" || typeFilter !== "all";
   const emptyCoaches = filtersActive
     ? []
     : lanes.byCoach.filter(({ rows }) => rows.length === 0).map(({ coach }) => coach);
@@ -183,18 +164,6 @@ export function AdminCalendar({
       ],
     },
     {
-      key: "day",
-      aria: "Filter by day",
-      label: "Any day",
-      value: dayFilter,
-      defaultValue: "all",
-      onChange: setDayFilter,
-      options: [
-        { value: "all", label: "Any day" },
-        ...dayOptions.map(([key, label]) => ({ value: key, label })),
-      ],
-    },
-    {
       key: "venue",
       aria: "Filter by venue",
       label: "All venues",
@@ -204,18 +173,6 @@ export function AdminCalendar({
       options: [
         { value: "all", label: "All venues" },
         ...venueOptions.map((v) => ({ value: v, label: v })),
-      ],
-    },
-    {
-      key: "client",
-      aria: "Filter by client",
-      label: "All clients",
-      value: clientFilter,
-      defaultValue: "all",
-      onChange: setClientFilter,
-      options: [
-        { value: "all", label: "All clients" },
-        ...clientOptions.map((c) => ({ value: c, label: c })),
       ],
     },
     {
@@ -234,8 +191,8 @@ export function AdminCalendar({
     },
   ];
 
-  // Day-first grouping for the phone: chronological days, Today open, the rest
-  // collapsed to a header + count. Coach moves onto each card (line 3).
+  // Day-first grouping for the phone: chronological days, all of them open.
+  // Coach moves onto each card (line 3).
   const dayGroups = useMemo(() => groupByDay(filtered, today), [filtered, today]);
 
   return (
@@ -260,9 +217,13 @@ export function AdminCalendar({
         </p>
       )}
 
-      {/* The red "No coach yet" bucket pins to the very top in both layouts. */}
+      {/* Desktop only. The desktop view is one lane per coach, so a session with
+          no coach has no lane and would vanish without this bucket. The phone is
+          grouped by day, where every coachless session is already sitting in its
+          own day with a red border and "No coach yet" on the card — so on the
+          phone this box listed all of them a second time. */}
       {lanes.unassigned.length > 0 && (
-        <div className="rounded-[12px] border border-err p-4">
+        <div className="hidden rounded-[12px] border border-err p-4 lg:block">
           <p className="label mb-3 !text-err">No coach yet — tap to fix</p>
           <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
             {lanes.unassigned.map((s) => (
@@ -272,15 +233,19 @@ export function AdminCalendar({
         </div>
       )}
 
-      {/* ── Phone: day-first. Today expanded, other days collapsed. ── */}
+      {/* ── Phone: day-first, every day open. ──
+          These were <details> with only today expanded, so the tab whose job is
+          "show me my week" opened on one class and six grey bars, and answering
+          "what's on tomorrow?" cost a tap. Today is also the one day the Today
+          tab already covers. They are plain headings now: no toggle to catch a
+          stray thumb, and no collapse state to lose on every week change. */}
       <div className="space-y-2 lg:hidden">
         {dayGroups.map((day) => (
-          <details
+          <div
             key={day.key}
-            open={day.isToday}
-            className="overflow-hidden rounded-[12px] border border-line bg-surface-2 [&_summary]:list-none"
+            className="overflow-hidden rounded-[12px] border border-line bg-surface-2"
           >
-            <summary className="flex cursor-pointer items-center justify-between gap-3 px-4 py-3">
+            <div className="flex items-center justify-between gap-3 px-4 py-3">
               <span className={`font-semibold ${day.isToday ? "text-ember" : "text-fg"}`}>
                 {day.label}
                 {day.isToday ? " · Today" : ""}
@@ -288,7 +253,7 @@ export function AdminCalendar({
               <span className="tnum shrink-0 text-sm text-fg-2">
                 {day.rows.length} class{day.rows.length === 1 ? "" : "es"}
               </span>
-            </summary>
+            </div>
             <div className="grid gap-2 border-t border-line p-3">
               {day.rows.map((s) => (
                 <SessionCard
@@ -299,7 +264,7 @@ export function AdminCalendar({
                 />
               ))}
             </div>
-          </details>
+          </div>
         ))}
       </div>
 

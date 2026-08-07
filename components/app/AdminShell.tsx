@@ -39,11 +39,19 @@ const tabs = [
   { href: "/admin/settings", label: "Settings", icon: <GearIcon />, group: "Setup" },
 ];
 
-const mobileMore = { href: "/admin/more", label: "More", icon: <DotsIcon /> };
 // Today · Schedule · Weekly · Players · More. Matched by href rather than by
 // index: the bar used to read tabs[0..3], so adding a single entry to the rail
 // above would otherwise have pushed Players silently out of it.
 const inBar = ["/admin", "/admin/schedule", "/admin/weekly", "/admin/players"];
+// More owns every tab that isn't in the bar, so those screens light it instead
+// of leaving the whole row grey. Derived from `tabs` rather than listed again,
+// so promoting a section into the bar takes it out of More by construction.
+const mobileMore = {
+  href: "/admin/more",
+  label: "More",
+  icon: <DotsIcon />,
+  match: tabs.filter((t) => !inBar.includes(t.href)).map((t) => t.href),
+};
 // "Weekly classes" wraps to two lines at 11px on every phone width. Nothing is
 // cut off — but two lines grow the bar past its 56px floor, and because each
 // tab centres itself in the stretched row, Weekly's icon ends up sitting eight
