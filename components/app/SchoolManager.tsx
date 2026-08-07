@@ -3,24 +3,34 @@
 // Founder view of school access: one row per campus he has marked as a school
 // in the Venues tab, each carrying the login that campus signs in with.
 //
-// There is no "create login" here any more, because there was never a decision
-// to make: a campus marked as a school gets a login, so tapping the row hands
-// one over and mints it first if this is the first time (see
-// `openSchoolLoginCore`). The row's job is to share, not to provision.
+// There is no "create login" here, because there was never a decision to make: a
+// campus marked as a school gets a login, so tapping the row hands one over and
+// mints it first if this is the first time (see `openSchoolLoginCore`). The
+// row's job is to share, not to provision.
 //
-// And the password is no longer shown once and lost. It is kept encrypted in
-// the vault and read back on every open, unchanged — because several people at
-// one school use it, and re-issuing it to answer "what was it again?" would
-// lock out every one of them. Rotation still exists; it is a separate control
-// with a confirm on it, which is the right shape for something that takes
-// access away from people who are mid-term.
+// The sheet is three things to copy and two things to do. It used to explain
+// itself at length — what the minted address was for, what the message said, why
+// the link had to be opened in a private window — and none of that survived
+// contact with the person using it, who already knows all of it and is looking
+// for a password. So the prose is gone and the sheet is the credential.
 //
-// Every action in this file runs from inside the sheet, and the sheet is a
-// portal over a full-screen backdrop — so a failure written anywhere else on
-// the page is a failure the founder cannot read. Errors land next to whichever
-// control refused.
+// Two shapes here are load-bearing rather than cosmetic:
+//
+//   • Copy is per field. The founder is usually answering "what was it again?"
+//     in a thread that already has the rest, so copying the whole message to get
+//     one line out of it was the common case done the long way.
+//   • "View as school" replaced "try the link in a private window". That hint
+//     existed because he is signed in as the founder and `/login/school` sends
+//     anyone with a session to their own home — so testing the handover meant
+//     leaving the app. It is the same problem "view as coach" already solved, so
+//     it now has the same answer, down to the banner (see lib/school-preview.ts).
+//
+// Every action runs from inside the sheet, and the sheet is a portal over a
+// full-screen backdrop — so a failure written anywhere else on the page is a
+// failure the founder cannot read. Errors land next to whichever control
+// refused.
 
-import { useState, useTransition } from "react";
+import { useRef, useState, useTransition } from "react";
 import { Button, ButtonLink } from "@/components/ui/Button";
 import { Sheet } from "@/components/ui/Sheet";
 import { Spinner } from "@/components/ui/Spinner";
@@ -29,11 +39,8 @@ import { EmptyState } from "@/components/ui/EmptyState";
 import { isSyntheticEmail } from "@/lib/synthetic-email";
 import { handoverText, instantLoginUrl } from "@/lib/school-handover";
 import { academyToday, formatDateFull, utcToAcademyWall } from "@/lib/academy-time";
-import {
-  openSchoolLogin,
-  removeSchoolAccount,
-  resetSchoolPassword,
-} from "@/app/admin/schools/actions";
+import { viewAsSchool } from "@/app/school/preview-actions";
+import { openSchoolLogin, resetSchoolPassword } from "@/app/admin/schools/actions";
 
 type School = {
   venueId: string;
@@ -52,6 +59,9 @@ type Login = {
   saved: boolean;
   lastSignInAt: string | null;
 };
+
+/** Which field the "Copied" flash is currently sitting on. */
+type Field = "link" | "email" | "password";
 
 const label = (s: School) => (s.unit ? `${s.name} · ${s.unit}` : s.name);
 
@@ -99,17 +109,43 @@ function facts(s: School): string {
   return parts.join(" · ");
 }
 
+/** The copy affordance on a credential row. Text rather than a button so three
+ *  of them stacked read as one panel and not as a keypad, but still 44px tall —
+ *  this is the control he actually came for.
+ *
+ *  `what` names the field in the accessible name: sighted users get the pairing
+ *  from the label beside it, and without this a screen reader announces three
+ *  buttons all called "Copy". */
+function CopyButton({
+  what,
+  done,
+  onCopy,
+}: {
+  what: string;
+  done: boolean;
+  onCopy: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onCopy}
+      aria-label={done ? `${what} copied` : `Copy ${what}`}
+      className="min-h-11 shrink-0 px-1 text-sm text-fg-2 underline-offset-4 hover:underline"
+    >
+      {done ? "Copied" : "Copy"}
+    </button>
+  );
+}
+
 export function SchoolManager({ schools }: { schools: School[] }) {
-  // Held by id, not by value: opening or removing a login re-renders the list,
-  // and a captured row would keep showing the state it had before the action.
+  // Held by id, not by value: opening a login re-renders the list, and a
+  // captured row would keep showing the state it had before the action.
   const [openId, setOpenId] = useState<string | null>(null);
   const selected = schools.find((s) => s.venueId === openId) ?? null;
 
   const [login, setLogin] = useState<Login | null>(null);
   const [revealed, setRevealed] = useState(false);
-  const [preview, setPreview] = useState(false);
-  const [copied, setCopied] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
+  const [copied, setCopied] = useState<Field | null>(null);
   const [pending, startTransition] = useTransition();
 
   // How many times he has rotated this school's password without leaving the
@@ -123,11 +159,11 @@ export function SchoolManager({ schools }: { schools: School[] }) {
   const [rotations, setRotations] = useState(0);
 
   const [sheetError, setSheetError] = useState<{
-    at: "open" | "reset" | "remove";
+    at: "open" | "reset" | "preview";
     text: string;
   } | null>(null);
 
-  const errorAt = (at: "reset" | "remove") =>
+  const errorAt = (at: "reset" | "preview") =>
     sheetError?.at === at ? <p className="text-sm text-err">{sheetError.text}</p> : null;
 
   function load(venueId: string) {
@@ -146,9 +182,7 @@ export function SchoolManager({ schools }: { schools: School[] }) {
     setOpenId(school.venueId);
     setLogin(null);
     setRevealed(false);
-    setPreview(false);
-    setCopied(false);
-    setMessage(null);
+    setCopied(null);
     setSheetError(null);
     load(school.venueId);
   }
@@ -166,31 +200,37 @@ export function SchoolManager({ schools }: { schools: School[] }) {
       // Straight to plaintext: the only reason to be here is to send the new
       // one, and everyone on the old one is already locked out.
       setRevealed(true);
-      setPreview(false);
-      setCopied(false);
+      setCopied(null);
       // Re-arm the guard by handing the confirm a new identity.
       setRotations((n) => n + 1);
     });
   }
 
-  function remove() {
+  function preview() {
     if (!login) return;
     setSheetError(null);
     startTransition(async () => {
-      const r = await removeSchoolAccount(login.userId);
-      if (r.ok) {
-        setMessage("Login removed.");
-        setOpenId(null);
-      } else {
-        setSheetError({ at: "remove", text: r.error ?? "Couldn't remove it." });
-      }
+      const ok = await viewAsSchool(login.userId);
+      // Hard navigation: the preview cookie is set httpOnly by the server
+      // action, so a soft router.push would re-render /school from the client
+      // cache without it. A full load re-reads it.
+      if (ok) window.location.assign("/school");
+      else
+        setSheetError({
+          at: "preview",
+          text: "Preview unavailable — only founders can view as a school.",
+        });
     });
   }
 
-  async function copy(text: string) {
+  // One timer for all three fields, so copying the password while "Copied" is
+  // still showing on the email moves the flash rather than racing it back off.
+  const flash = useRef<ReturnType<typeof setTimeout> | null>(null);
+  async function copy(field: Field, text: string) {
     await navigator.clipboard.writeText(text);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    setCopied(field);
+    if (flash.current) clearTimeout(flash.current);
+    flash.current = setTimeout(() => setCopied(null), 2000);
   }
 
   if (schools.length === 0) {
@@ -208,16 +248,14 @@ export function SchoolManager({ schools }: { schools: School[] }) {
       ? handoverText(label(selected), login.email, login.password)
       : null;
 
-  // Held next to `share` so the link he can test is the same one the message
-  // carries — built by the same function, from the same two values.
+  // The link he copies is the one the message carries — built by the same
+  // function, from the same two values, so the two can never drift apart.
   const instantUrl = login?.password
     ? instantLoginUrl(login.email, login.password)
     : null;
 
   return (
     <div className="space-y-4">
-      {message && <p className="text-sm text-fg-2">{message}</p>}
-
       <ul className="divide-y divide-line rounded-[12px] border border-line bg-surface-2">
         {schools.map((s) => (
           <li key={s.venueId}>
@@ -257,8 +295,6 @@ export function SchoolManager({ schools }: { schools: School[] }) {
       >
         {selected && (
           <div className="flex flex-col gap-4">
-            <p className="tnum text-sm text-fg-2">{facts(selected)}</p>
-
             {!login && pending && (
               <div className="flex justify-center py-10">
                 <Spinner />
@@ -289,125 +325,108 @@ export function SchoolManager({ schools }: { schools: School[] }) {
                 </p>
 
                 <div className="space-y-4 rounded-[12px] border border-line p-4">
+                  {instantUrl && (
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="label">Sign-in link</p>
+                        <CopyButton
+                          what="sign-in link"
+                          done={copied === "link"}
+                          onCopy={() => copy("link", instantUrl)}
+                        />
+                      </div>
+                      {/* Truncated on purpose: it is an opaque blob with a live
+                          credential in it, there to be copied and not read. */}
+                      <p className="truncate text-sm text-fg-2">{instantUrl}</p>
+                    </div>
+                  )}
+
                   <div className="space-y-1">
-                    <p className="label">Email</p>
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="label">Email</p>
+                      <CopyButton
+                        what="email"
+                        done={copied === "email"}
+                        onCopy={() => copy("email", login.email)}
+                      />
+                    </div>
                     <p className="break-all text-sm">{login.email}</p>
                   </div>
 
                   <div className="space-y-1">
-                    <p className="label">Password</p>
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="label">Password</p>
+                      {login.password && (
+                        <div className="flex shrink-0 items-center gap-3">
+                          <button
+                            type="button"
+                            onClick={() => setRevealed((r) => !r)}
+                            className="min-h-11 px-1 text-sm text-fg-2 underline-offset-4 hover:underline"
+                          >
+                            {revealed ? "Hide" : "Show"}
+                          </button>
+                          <CopyButton
+                            what="password"
+                            done={copied === "password"}
+                            onCopy={() => copy("password", login.password!)}
+                          />
+                        </div>
+                      )}
+                    </div>
                     {login.password ? (
-                      <div className="flex items-center justify-between gap-3">
-                        <p className="break-all text-sm">
-                          {revealed ? login.password : "••••••••••••"}
-                        </p>
-                        <button
-                          type="button"
-                          onClick={() => setRevealed((r) => !r)}
-                          className="min-h-11 shrink-0 px-1 text-sm text-fg-2 underline-offset-4 hover:underline"
-                        >
-                          {revealed ? "Hide" : "Show"}
-                        </button>
-                      </div>
+                      <p className="break-all text-sm">
+                        {revealed ? login.password : "••••••••••••"}
+                      </p>
                     ) : (
                       <p className="text-sm text-fg-2">
-                        We have no password saved for this login. Whatever the
-                        school is using still works — but to send it again you
-                        have to reset it below.
+                        None saved. Reset it below to get one you can send.
                       </p>
                     )}
                   </div>
 
-                  {isSyntheticEmail(login.email) && (
-                    <p className="text-sm text-fg-2">
-                      That address isn&apos;t a real inbox and nothing is ever
-                      sent to it. The password is the whole login, which is what
-                      lets several people at the school share one.
-                    </p>
-                  )}
-
                   {login.password && !login.saved && (
                     <p className="text-sm text-err">
-                      We couldn&apos;t save this password, so it won&apos;t be
-                      here next time. Send it now, or reset it and try again.
+                      We couldn&apos;t save this password — send it now, or reset
+                      it and try again.
                     </p>
                   )}
                 </div>
 
                 {share && (
-                  <div className="space-y-2">
-                    <p className="label">Send to the school</p>
-                    <div className="flex flex-wrap gap-2">
-                      <ButtonLink
-                        href={`https://wa.me/?text=${encodeURIComponent(share)}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="min-w-fit flex-1 basis-40"
-                      >
-                        Send on WhatsApp
-                      </ButtonLink>
-                      <Button
-                        variant="ghost"
-                        className="min-w-fit flex-1 basis-32"
-                        onClick={() => copy(share)}
-                      >
-                        {copied ? "Copied" : "Copy"}
-                      </Button>
-                    </div>
-                    <p className="text-sm text-fg-2">
-                      The message leads with a link that signs the school in on
-                      tap, with nothing to type. The email and password are in
-                      it too, for anyone the link fails for — and it warns them
-                      not to forward it, because it lets in whoever opens it.
-                    </p>
-                    <div className="flex flex-wrap gap-x-4 gap-y-1">
-                      <button
-                        type="button"
-                        onClick={() => setPreview((p) => !p)}
-                        className="text-sm text-fg-2 underline-offset-4 hover:underline"
-                      >
-                        {preview ? "Hide the message" : "See the message"}
-                      </button>
-                      {/* Opening it himself is the only way to know the handover
-                          works before a school finds out that it doesn't. It
-                          has to be a private window: he is signed in as the
-                          founder, and `/login/school` sends anyone with a
-                          session to their own home before the link is read. */}
-                      <a
-                        href={instantUrl ?? "#"}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-sm text-fg-2 underline-offset-4 hover:underline"
-                      >
-                        Try the link (in a private window)
-                      </a>
-                    </div>
-                    {preview && (
-                      <pre className="overflow-x-auto whitespace-pre-wrap rounded-[12px] border border-line bg-surface px-4 py-3 text-sm">
-                        {share}
-                      </pre>
-                    )}
-                  </div>
+                  <ButtonLink
+                    href={`https://wa.me/?text=${encodeURIComponent(share)}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="w-full"
+                  >
+                    Send on WhatsApp
+                  </ButtonLink>
                 )}
+
+                {errorAt("preview")}
+                <Button
+                  variant="ghost"
+                  className="w-full"
+                  disabled={pending}
+                  onClick={preview}
+                >
+                  View as school
+                </Button>
 
                 <div className="space-y-3 border-t border-line pt-4">
                   {errorAt("reset")}
+                  {/* The only way to take access off a school, and so the only
+                      destructive control here. "Remove the login" used to sit
+                      under it doing a rounder version of the same job — and
+                      undoing itself, since the next tap on the row mints a new
+                      login anyway. */}
                   <ConfirmAction
                     key={rotations}
                     label="Reset the password"
                     confirmLabel="Reset it"
-                    prompt="Everyone at the school stops being able to sign in with the old password, including anyone mid-term. You'll get a new one to send. This is also how you take access off someone who has left."
+                    prompt="Everyone at the school stops being able to sign in with the old password, and every link you've sent stops working. You'll get a new password to send."
                     variant="ghost"
                     onConfirm={reset}
-                    pending={pending}
-                  />
-                  {errorAt("remove")}
-                  <ConfirmAction
-                    label="Remove the login"
-                    confirmLabel="Remove it"
-                    prompt="The school loses access immediately. Its pupils and their history are untouched."
-                    variant="subtle"
-                    onConfirm={remove}
                     pending={pending}
                   />
                 </div>

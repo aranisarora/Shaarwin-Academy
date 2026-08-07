@@ -17,14 +17,10 @@ async function Schools() {
 export default function AdminSchoolsPage() {
   return (
     <AdminShell title="Schools">
-      <div className="mx-auto max-w-3xl space-y-6">
-        <p className="text-sm text-fg-2">
-          Every campus you&apos;ve marked as a school in the Venues tab. Each one
-          has a login that sees its own pupils — progress, attendance and coach
-          notes — and can change nothing. Tap a school to read its password back
-          and send it on. Everyone there shares the same login, so the last line
-          of each row tells you whether anyone has used it yet.
-        </p>
+      {/* No preamble. It explained what a school login is, what it can see and
+          what the third line of each row means — to the one person who already
+          knows, on the screen he opens to fetch a password. The rows say it. */}
+      <div className="mx-auto max-w-3xl">
         <Suspense fallback={<PageSkeleton />}>
           <Schools />
         </Suspense>

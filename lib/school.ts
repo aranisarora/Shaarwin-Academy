@@ -1,6 +1,7 @@
 import { cache } from "react";
 import type { createClient } from "@/lib/supabase/server";
 import { getMasteryMap } from "@/lib/mastery";
+import { getSchoolPreview } from "@/lib/school-preview";
 
 type Supabase = Awaited<ReturnType<typeof createClient>>;
 
@@ -19,18 +20,26 @@ export type Pupil = {
 /**
  * The campuses this school account may see.
  *
- * No `.eq("user_id", …)` filter: the "school reads own link" policy already
- * scopes `school_admins` to the caller's own rows, and a redundant filter here
- * would quietly become the real guard if that policy were ever relaxed. Read as
- * written, this returns nothing at all for a non-school role.
+ * No `.eq("user_id", …)` filter for a real school: the "school reads own link"
+ * policy already scopes `school_admins` to the caller's own rows, and a
+ * redundant filter here would quietly become the real guard if that policy were
+ * ever relaxed. Read as written, this returns nothing at all for a non-school
+ * role.
  *
- * Wrapped in React `cache` so the roster, the page title and the More screen
- * share one round trip within a request.
+ * The one exception is a founder previewing a school, and it is exactly why the
+ * filter has to exist at all in that branch: "founder all school admins" lets
+ * him read *every* row, so without narrowing to the previewed account he would
+ * see every campus in the academy stitched into one roster — the opposite of
+ * what "view as school" is for.
+ *
+ * Wrapped in React `cache` so the roster, the page title, the preview banner and
+ * the More screen share one round trip within a request.
  */
 export const getCampuses = cache(async (supabase: Supabase): Promise<Campus[]> => {
-  const { data } = await supabase
-    .from("school_admins")
-    .select("venue_id,venues(name,unit)");
+  const preview = await getSchoolPreview();
+
+  const query = supabase.from("school_admins").select("venue_id,venues(name,unit)");
+  const { data } = preview ? await query.eq("user_id", preview.userId) : await query;
 
   return (data ?? [])
     .map((row) => ({
