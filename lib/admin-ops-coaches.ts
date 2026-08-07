@@ -299,7 +299,9 @@ const CLIENT_FOOTPRINT = [
  *     falling back to a demote would quietly reinstate the bug this fixes.
  *   • Delete an account that carries client-side records. That is a family's
  *     enrolment and billing history, it cascades, and it does not come back —
- *     so the founder is told what is there and decides.
+ *     so the founder is told what is there and decides. If that check cannot
+ *     be run at all it fails closed, because an errored count is null and
+ *     would otherwise read as "nothing there".
  *
  * Caveat, unchanged: class_sessions.coach_id → coaches is ON DELETE SET NULL,
  * so past completed sessions lose the record of who taught them.
@@ -326,10 +328,19 @@ export async function deleteCoachCore(
 
   const carries: string[] = [];
   for (const [table, column, label] of CLIENT_FOOTPRINT) {
-    const { count } = await supabase
+    const { count, error } = await supabase
       .from(table)
       .select("*", { count: "exact", head: true })
       .eq(column, coachId);
+    // Fail closed. A count that errors comes back null, which is falsy, so
+    // reading it as "nothing there" would let the one check standing between a
+    // founder's click and a family's billing history wave the delete through.
+    if (error) {
+      return {
+        ok: false,
+        error: "Couldn't check what this account holds, so nothing was removed. Try again.",
+      };
+    }
     if (count) carries.push(`${count} ${label}`);
   }
   if (carries.length > 0) {
