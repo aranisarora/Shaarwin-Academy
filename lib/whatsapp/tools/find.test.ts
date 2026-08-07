@@ -100,24 +100,59 @@ describe("find — access", () => {
   });
 });
 
+/**
+ * Columns that must never reach a chat transcript. Several are readable by the
+ * person asking — a parent CAN select coach_note on their own booking — so RLS
+ * is not what withholds them; this allow-list is.
+ */
+const WITHHELD = [
+  "coach_notes",
+  "coach_arrival_source",
+  "coach_arrival_distance_m",
+  "coach_note",
+  "base_address",
+  "base_lat",
+  "base_lng",
+  "stripe_customer_id",
+  "razorpay_customer_id",
+  "stripe_subscription_id",
+  "razorpay_subscription_id",
+  "stripe_invoice_id",
+  "razorpay_order_id",
+  "razorpay_payment_id",
+  "password_secret_id",
+  "access_notes",
+  "disputed",
+];
+
 describe("find — the column allow-list", () => {
-  it("never selects a withheld column", async () => {
-    const withheld: Record<string, string[]> = {
-      sessions: ["coach_notes", "coach_arrival_distance_m"],
-      bookings: ["coach_note"],
-      players: ["notes"],
-      coaches: ["base_address", "base_lat", "base_lng"],
-      venues: ["notes"],
-      clients: ["stripe_customer_id", "razorpay_customer_id", "disputed"],
-    };
-    for (const [entity, columns] of Object.entries(withheld)) {
-      const { calls } = await run("founder", { entity });
-      // `clients` is founder-only; the rest resolve for the founder too.
-      if (!calls.length) continue;
-      for (const column of columns) {
-        expect(calls[0].select, `${entity}.${column} leaked`).not.toContain(column);
+  it("never selects a withheld column, for any entity, include or filter", async () => {
+    for (const [entity, def] of Object.entries(ENTITIES)) {
+      for (const role of def.roles) {
+        // The worst case: ask for EVERY include and use EVERY filter, so each
+        // one's `requires` fragment is merged into the select too.
+        const { calls } = await run(role, {
+          entity,
+          include: Object.keys(def.includes),
+          where: Object.entries(def.filters).map(([field, f]) => ({
+            field,
+            op: f.ops?.[0] ?? "eq",
+            value: f.values?.[0] ?? "x",
+          })),
+        });
+        expect(calls.length, `${entity} as ${role} was rejected`).toBeGreaterThan(0);
+        const select = calls[0].select;
+        for (const column of WITHHELD) {
+          expect(select, `${entity} (${role}) leaked ${column}`).not.toContain(column);
+        }
       }
     }
+  });
+
+  it("ignores an include the registry does not define", async () => {
+    const { calls } = await run("founder", { entity: "sessions", include: ["notes", "*"] });
+    expect(calls[0].select).not.toContain("*");
+    expect(calls[0].select).not.toContain("notes");
   });
 
   it("selects only real tables — no views", () => {
