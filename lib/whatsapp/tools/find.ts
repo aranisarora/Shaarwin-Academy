@@ -152,10 +152,13 @@ async function fillCoachNames(
   }
 }
 
-async function runFind(input: Record<string, unknown>, ctx: ToolContext): Promise<string> {
+async function runFind(
+  role: Role,
+  input: Record<string, unknown>,
+  ctx: ToolContext
+): Promise<string> {
   const supabase = ctx.supabase;
   if (!supabase) return fail("You need to be signed in for that.");
-  const role = (ctx.profile?.role ?? "client") as Role;
 
   const entityName = String(input.entity ?? "").trim();
   const def = ENTITIES[entityName];
@@ -238,7 +241,12 @@ async function runFind(input: Record<string, unknown>, ctx: ToolContext): Promis
   });
 }
 
-/** The tool differs per role only in which entities its description advertises. */
+/**
+ * The tool differs per role in which entities it advertises AND which it will
+ * serve. The role is closed over from toolsForRole rather than re-read from
+ * ctx.profile inside run(), so the list the model was shown and the list the
+ * query is checked against cannot drift apart.
+ */
 export function findTool(role: Role): WaTool {
   return {
     name: "find",
@@ -294,6 +302,6 @@ ${describeEntities(role)}`,
       },
       required: ["entity"],
     },
-    run: runFind,
+    run: (input, ctx) => runFind(role, input, ctx),
   };
 }
