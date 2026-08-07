@@ -60,7 +60,9 @@ function parseFilters(
     }
     const item = entry as Record<string, unknown>;
     const name = String(item.field ?? item.col ?? "").trim();
-    const def_ = def.filters[name];
+    // hasOwn, not truthiness: `filters["constructor"]` finds Object.prototype's
+    // and sails through the allow-list with an undefined column path.
+    const def_ = Object.hasOwn(def.filters, name) ? def.filters[name] : undefined;
     if (!def_) {
       // Loud, not silent. A dropped filter returns every row as though it had
       // applied, which reads to the founder as a confident wrong answer.
@@ -99,17 +101,35 @@ function parseFilters(
   return { filters };
 }
 
-function buildSelect(def: EntityDef, filters: readonly ParsedFilter[], rawIncludes: unknown): string {
+function buildSelect(
+  def: EntityDef,
+  filters: readonly ParsedFilter[],
+  rawIncludes: unknown,
+  grouping: boolean
+): { select: string } | { error: string } {
   const requested = Array.isArray(rawIncludes)
     ? rawIncludes.map(String)
     : rawIncludes == null
       ? [...def.defaultIncludes]
       : [String(rawIncludes)];
 
+  const available = Object.keys(def.includes);
+  const unknown = requested.filter((name) => !Object.hasOwn(def.includes, name));
+  if (unknown.length) {
+    // Silently ignoring it would ALSO have dropped the defaults, so a typo
+    // returned a barer row than either the caller or the defaults asked for.
+    return {
+      error: `Unknown include "${unknown.join(", ")}". Available for ${def.table}: ${available.join(", ") || "none"}.`,
+    };
+  }
+
   const fragments = [def.columns];
-  for (const name of requested) {
-    const fragment = def.includes[name];
-    if (fragment) fragments.push(fragment);
+  // Grouping folds over whatever the rows contain, so a group path that isn't
+  // in the select reads as one big null bucket — a confident wrong answer.
+  // Fetching every embed is the cheap way to guarantee the paths exist.
+  const names = grouping ? available : requested;
+  for (const name of names) {
+    fragments.push(def.includes[name]);
   }
   // A filter on an embedded column only prunes parent rows through an !inner
   // join, so each used filter contributes its own spelling of the embed. The
@@ -118,7 +138,7 @@ function buildSelect(def: EntityDef, filters: readonly ParsedFilter[], rawInclud
     const requires = def.filters[filter.name]?.requires;
     if (requires) fragments.push(requires);
   }
-  return mergeSelect(...fragments);
+  return { select: mergeSelect(...fragments) };
 }
 
 /**
@@ -135,20 +155,28 @@ async function fillCoachNames(
   supabase: SupabaseClient<Database>,
   rows: Record<string, unknown>[]
 ): Promise<void> {
-  const missing = rows.some(
-    (r) => r.coach_id && !pluck(r, "coaches.profiles.full_name")
-  );
-  if (!missing) return;
+  const withCoach = rows.filter((r) => r.coach_id);
+  if (withCoach.length === 0) return;
 
-  const { data } = await supabase.rpc("public_coach_roster");
-  if (!data) return;
-  const names = new Map(
-    (data as { id: string; full_name: string | null }[]).map((c) => [c.id, c.full_name])
-  );
-  for (const row of rows) {
-    if (!row.coach_id) continue;
-    if (pluck(row, "coaches.profiles.full_name")) continue;
-    row.coach_name = names.get(String(row.coach_id)) ?? null;
+  // `coach_name` is set on EVERY row that has a coach, from the embed when it
+  // resolved and from the roster when it didn't. One place to read the name
+  // from means "group by coach" behaves the same for the founder (who can read
+  // profiles) as for a coach (who can't) — otherwise that grouping is all-null
+  // for exactly one of them, which is the kind of difference nobody notices.
+  const embedded = new Map<Record<string, unknown>, unknown>();
+  for (const row of withCoach) embedded.set(row, pluck(row, "coaches.profiles.full_name"));
+
+  let names: Map<string, string | null> | null = null;
+  if (withCoach.some((row) => !embedded.get(row))) {
+    const { data } = await supabase.rpc("public_coach_roster");
+    names = new Map(
+      ((data ?? []) as { id: string; full_name: string | null }[]).map((c) => [c.id, c.full_name])
+    );
+  }
+
+  for (const row of withCoach) {
+    const fromEmbed = embedded.get(row);
+    row.coach_name = fromEmbed ?? names?.get(String(row.coach_id)) ?? null;
   }
 }
 
@@ -161,7 +189,7 @@ async function runFind(
   if (!supabase) return fail("You need to be signed in for that.");
 
   const entityName = String(input.entity ?? "").trim();
-  const def = ENTITIES[entityName];
+  const def = Object.hasOwn(ENTITIES, entityName) ? ENTITIES[entityName] : undefined;
   if (!def || !def.roles.includes(role)) {
     const available = Object.entries(ENTITIES)
       .filter(([, d]) => d.roles.includes(role))
@@ -184,16 +212,31 @@ async function runFind(
   }
   const aggregates = parseAggregates(input.aggregate);
   const grouping = groupBy.length > 0;
+  if (aggregates.length && !grouping) {
+    return fail("`aggregate` needs `group_by` — or use count_only for a plain total.");
+  }
+  // An aggregate over a column we never selected silently returns null for
+  // every group, which reads as "zero" rather than "I didn't fetch that".
+  const baseColumns = def.columns.split(",");
+  const badAgg = aggregates
+    .map((a) => a.col)
+    .filter((c) => c !== undefined)
+    .filter((c) => !baseColumns.includes(c));
+  if (badAgg.length) {
+    return fail(`Can't aggregate "${badAgg.join(", ")}". Available: ${baseColumns.join(", ")}.`);
+  }
   const countOnly = Boolean(input.count_only) && !grouping;
 
-  const select = buildSelect(def, filters, input.include);
+  const built = buildSelect(def, filters, input.include, grouping);
+  if ("error" in built) return fail(built.error);
+  const { select } = built;
 
-  // count_only never transfers rows — the founder asking "how many clients do I
-  // have" should not pull every profile, and a row-returning query would also
-  // stop at the page limit and under-report forever.
+  // count_only transfers no rows (head:true) but keeps the FULL select: a
+  // filter on an embedded path only exists because that embed is in the select,
+  // so counting "sessions at La Plazza" against a bare "id" is a PGRST108.
   let query = supabase
     .from(def.table)
-    .select(countOnly ? "id" : select, countOnly ? { count: "exact", head: true } : undefined);
+    .select(select, countOnly ? { count: "exact", head: true } : undefined);
 
   for (const filter of filters) {
     query = applyFilter(query as unknown as FilterTarget, filter) as typeof query;
@@ -207,6 +250,8 @@ async function runFind(
     : Math.min(Math.max(Number(input.limit) || DEFAULT_LIMIT, 1), MAX_LIMIT);
 
   if (!countOnly) {
+    // order_desc is absolute, not a toggle: "newest first" means the same thing
+    // whichever entity you ask, and four of them are naturally descending.
     const ascending = input.order_desc == null ? def.order.ascending : !input.order_desc;
     query = query.order(def.order.path, { ascending }).limit(rowLimit);
   }

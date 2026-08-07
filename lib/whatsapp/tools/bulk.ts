@@ -39,7 +39,16 @@ export function idList(input: unknown): string[] {
       : String(input)
           .split(",")
           .map((s) => s.trim());
-  return [...new Set(raw.map((v) => String(v).trim()).filter(Boolean))];
+  return [
+    ...new Set(
+      raw
+        // Drop holes BEFORE stringifying: String(null) is "null", which would
+        // otherwise become an id we cheerfully try to cancel.
+        .filter((v) => v != null && typeof v !== "object")
+        .map((v) => String(v).trim())
+        .filter(Boolean)
+    ),
+  ];
 }
 
 /**
@@ -92,6 +101,20 @@ export async function bulkTool(
 
   const summary = await runBulk(ids, op);
   const failures = summary.outcomes.filter((o) => !o.ok);
+
+  // Nothing worked → this is a failure, not a success with a footnote. Returning
+  // ok:true here let the assistant read the envelope and report "cancelled" for
+  // a run in which every single id was rejected.
+  if (summary.succeeded === 0) {
+    const reasons = [...new Set(failures.map((f) => f.error ?? "Failed."))];
+    return fail(
+      ids.length === 1
+        ? reasons[0]
+        : `None of the ${ids.length} ${opts.noun}s worked. ${reasons.join(" ")}`,
+      { failures: failures.map((f) => ({ id: f.id, error: f.error })) }
+    );
+  }
+
   return ok({
     requested: summary.requested,
     succeeded: summary.succeeded,
@@ -100,6 +123,6 @@ export async function bulkTool(
     // echoing 50 UUIDs back at the model wastes the context it needs to write a
     // sentence about them.
     failures: failures.map((f) => ({ id: f.id, error: f.error })),
-    partial: summary.failed > 0 && summary.succeeded > 0,
+    partial: summary.failed > 0,
   });
 }

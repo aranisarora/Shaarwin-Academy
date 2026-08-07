@@ -169,6 +169,10 @@ export const ENTITIES: Record<string, EntityDef> = {
       "classes.skill_level",
       "classes.venues.name",
       "coaches.profiles.full_name",
+      // The roster fallback writes coach_name onto the row when profiles is
+      // unreadable, so grouping "sessions per coach" works for a coach too —
+      // without it that grouping is all-null for everyone but the founder.
+      "coach_name",
     ],
   },
 
@@ -373,7 +377,11 @@ export const ENTITIES: Record<string, EntityDef> = {
   venues: {
     table: "venues",
     description: "Where sessions happen.",
-    roles: ALL,
+    // Staff only. RLS lets anyone read active venues, but get_academy_info
+    // treats `is_school = false` as a PRIVACY rule — never read a school campus
+    // out to someone outside it. A client browsing the venue table would walk
+    // straight past that; the venue they actually need rides on their session.
+    roles: STAFF,
     // notes withheld — free text, and the table is readable by anon.
     columns: "id,name,unit,address,postcode,lat,lng,active,is_school,created_at",
     includes: { classes: "classes(id,title,active,class_type)" },
@@ -493,7 +501,10 @@ export const ENTITIES: Record<string, EntityDef> = {
     description:
       "Every movement of private-coaching minutes. Sum delta_minutes for a client to get their balance.",
     roles: ["client", "founder"],
-    columns: "id,client_id,subscription_id,booking_id,delta_minutes,reason,note,created_at",
+    // `note` withheld: it is founder free text on the client's account
+    // ("comp grant", "goodwill after the Diwali mess"), written for internal
+    // eyes and readable by the client under their own-row policy.
+    columns: "id,client_id,subscription_id,booking_id,delta_minutes,reason,created_at",
     includes: { client: "profiles(id,full_name)" },
     defaultIncludes: [],
     filters: {
@@ -584,7 +595,12 @@ export function describeEntities(role: Role): string {
     .filter(([, def]) => def.roles.includes(role))
     .map(([name, def]) => {
       const filters = Object.keys(def.filters).join(", ");
-      return `${name}: ${def.description} Filters: ${filters}.`;
+      // Include names have to be listed: an unknown one is a hard error (it
+      // would otherwise drop the defaults too), and several read like filter
+      // names without being them — `venue` filters sessions, but the include
+      // that carries the venue is called `class`.
+      const includes = Object.keys(def.includes).join(", ");
+      return `${name}: ${def.description} Filters: ${filters}.${includes ? ` Includes: ${includes}.` : ""}`;
     })
     .join("\n");
 }

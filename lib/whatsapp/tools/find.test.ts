@@ -149,10 +149,13 @@ describe("find — the column allow-list", () => {
     }
   });
 
-  it("ignores an include the registry does not define", async () => {
-    const { calls } = await run("founder", { entity: "sessions", include: ["notes", "*"] });
-    expect(calls[0].select).not.toContain("*");
-    expect(calls[0].select).not.toContain("notes");
+  it("rejects an include the registry does not define", async () => {
+    // Ignoring it would also have discarded the defaults, so a typo returned a
+    // barer row than either the caller or the defaults asked for.
+    const { out, calls } = await run("founder", { entity: "sessions", include: ["notes", "*"] });
+    expect(out.ok).toBe(false);
+    expect(out.error).toContain("Unknown include");
+    expect(calls).toHaveLength(0);
   });
 
   it("selects only real tables — no views", () => {
@@ -248,6 +251,45 @@ describe("find — counting and grouping", () => {
     const { out, calls } = await run("founder", { entity: "clients", count_only: true }, [], 412);
     expect(calls[0].head).toBe(true);
     expect(out.result).toEqual({ entity: "clients", count: 412 });
+  });
+
+  it("count_only keeps the embed its own filter needs", async () => {
+    // Counting against a bare "id" while filtering on classes.venues.name is a
+    // PGRST108 — "'classes' is not an embedded resource in this request" — so
+    // every "how many X at Y" question would fail, which is exactly what the
+    // tool description steers the model toward.
+    const { calls } = await run("founder", {
+      entity: "sessions",
+      where: [{ field: "venue", op: "ilike", value: "plaza" }],
+      count_only: true,
+    });
+    expect(calls[0].head).toBe(true);
+    expect(calls[0].select).toContain("classes!inner(");
+    expect(calls[0].select).toContain("venues!inner(");
+  });
+
+  it("refuses an aggregate with no group_by, and an unknown aggregate column", async () => {
+    const noGroup = await run("founder", { entity: "credits", aggregate: ["sum:delta_minutes"] });
+    expect(noGroup.out.ok).toBe(false);
+    expect(noGroup.out.error).toContain("group_by");
+
+    const badCol = await run("founder", {
+      entity: "credits",
+      group_by: ["reason"],
+      aggregate: ["sum:not_a_column"],
+    });
+    expect(badCol.out.ok).toBe(false);
+    expect(badCol.out.error).toContain("Can't aggregate");
+  });
+
+  it("brings every embed along when grouping, so a group path is never a null bucket", async () => {
+    const { calls } = await run("founder", {
+      entity: "sessions",
+      group_by: ["classes.title"],
+      include: ["coach"],
+    });
+    // The caller narrowed the include; grouping must still select the class.
+    expect(calls[0].select).toContain("classes(");
   });
 
   it("groups and aggregates, biggest group first", async () => {

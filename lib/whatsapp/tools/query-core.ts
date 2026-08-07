@@ -98,9 +98,17 @@ export function applyFilter<T extends FilterTarget>(query: T, filter: Filter): T
     case "in":
       return query.in(col, asArray(value)) as T;
     case "not_in":
-      // PostgREST spells NOT IN as not.in with a parenthesised list. Values are
-      // sent through the same builder, so quoting stays supabase-js's problem.
-      return query.not(col, "in", `(${asArray(value).join(",")})`) as T;
+      // PostgREST spells NOT IN as not.in with a parenthesised list, and unlike
+      // .in() the value is a raw string we assemble ourselves — so the quoting
+      // supabase-js would have done is ours to do. Without it a venue called
+      // "Smith, John's" splits into two bogus terms.
+      return query.not(
+        col,
+        "in",
+        `(${asArray(value)
+          .map((v) => `"${String(v).replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`)
+          .join(",")})`
+      ) as T;
     case "is_null":
       return query.is(col, null) as T;
     case "not_null":

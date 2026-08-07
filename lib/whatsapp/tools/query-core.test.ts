@@ -36,10 +36,19 @@ describe("applyFilter", () => {
     expect(calls).toEqual(['in("status",["scheduled","cancelled"])']);
   });
 
-  it("spells not_in the way PostgREST wants it", () => {
+  it("spells not_in the way PostgREST wants it, with the quoting .in() would have done", () => {
     const { target, calls } = recorder();
     applyFilter(target, { col: "id", op: "not_in", value: ["a", "b"] });
-    expect(calls).toEqual(['not("id","in","(a,b)")']);
+    expect(calls).toEqual(['not("id","in","(\\"a\\",\\"b\\")")']);
+  });
+
+  it("survives a value containing the list separator", () => {
+    // Unquoted, "Smith, John" becomes two bogus terms and the filter quietly
+    // matches the wrong rows.
+    const { target, calls } = recorder();
+    applyFilter(target, { col: "name", op: "not_in", value: ['Smith, John', 'a"b'] });
+    expect(calls[0]).toContain('\\"Smith, John\\"');
+    expect(calls[0]).toContain('a\\\\\\"b');
   });
 
   it("handles null checks without a value", () => {

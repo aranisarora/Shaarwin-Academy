@@ -93,4 +93,24 @@ describe("bulkTool", () => {
     expect(out.result.partial).toBe(false);
     expect(out.result.failures).toEqual([]);
   });
+
+  it("is a failure, not a partial success, when every id failed", async () => {
+    // ok:true here let the assistant read the envelope and report "cancelled"
+    // for a run in which nothing was cancelled.
+    const many = JSON.parse(
+      await bulkTool(["a", "b"], async () => ({ ok: false, error: "locked" }), { noun: "session" })
+    );
+    expect(many.ok).toBe(false);
+    expect(many.error).toContain("None of the 2");
+    expect(many.detail.failures).toHaveLength(2);
+
+    const one = JSON.parse(
+      await bulkTool(["a"], async () => ({ ok: false, error: "under the 24h window" }), {
+        noun: "booking",
+      })
+    );
+    expect(one.ok).toBe(false);
+    // A single id keeps its own reason rather than a batch preamble.
+    expect(one.error).toBe("under the 24h window");
+  });
 });

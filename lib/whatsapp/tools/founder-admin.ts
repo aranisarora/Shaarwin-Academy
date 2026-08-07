@@ -262,6 +262,13 @@ const moveSession: WaTool = {
     if (shift !== null && !Number.isFinite(shift)) {
       return fail("shift_minutes must be a number.");
     }
+    // Both would be ambiguous, and shift 0 used to win over a real date/time —
+    // silently re-writing each session to the time it already had and firing a
+    // "session moved" notification at every booked parent for no change.
+    if (shift !== null && absolute) {
+      return fail("Give date and time, or shift_minutes — not both.");
+    }
+    if (shift === 0) return fail("A shift of 0 minutes wouldn't move anything.");
 
     return bulkTool(
       input.session_ids ?? input.session_id,
