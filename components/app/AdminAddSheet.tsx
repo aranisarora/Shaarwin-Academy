@@ -64,6 +64,7 @@ import {
   type Venue,
 } from "./admin-calendar-types";
 import { venueDisplayName } from "@/lib/venue-display";
+import { KindIcon, KIND_TINT, KIND_WORD, type ClassKind } from "./class-type";
 
 type Mode = "weekly" | "school" | "private";
 /** Does it happen once, or every week? The one question the tabs used to
@@ -74,11 +75,25 @@ export type RepeatChoice = "once" | "weekly";
 // to be "Private class" when repeating and "Private session" when not, which is
 // two names for one thing on a screen whose whole job is telling three things
 // apart.
+//
+// The words come from class-type.tsx so this picker cannot drift away from the
+// cards it creates: the chips, the cards and this sheet used to say "Group",
+// "Group class" and a third thing again, and filtering to a word you then
+// cannot find on a card costs a scroll every time.
 const MODES: { value: Mode; label: string }[] = [
-  { value: "weekly", label: "Group" },
-  { value: "school", label: "School" },
-  { value: "private", label: "Private" },
+  { value: "weekly", label: KIND_WORD.group },
+  { value: "school", label: KIND_WORD.school },
+  { value: "private", label: KIND_WORD.private },
 ];
+
+/** This picker is where the founder meets the three kinds for the first time,
+ *  so it shows the same glyph the card will carry once the class exists. Learn
+ *  it once, here, and recognise it for ever after on the Schedule. */
+const MODE_KIND: Record<Mode, ClassKind> = {
+  weekly: "group",
+  school: "school",
+  private: "private",
+};
 
 // The dates a one-time class is nearly always for. Two named days and then
 // whatever the week is calling the day after — beyond that he wants a calendar,
@@ -841,13 +856,22 @@ export function AdminAddSheet({
                 role="radio"
                 aria-checked={mode === m.value}
                 onClick={() => resetMode(m.value)}
-                className={`pressable min-h-11 rounded-[8px] border px-2 text-sm font-semibold ${
+                className={`pressable flex min-h-11 flex-col items-center justify-center gap-0.5 rounded-[8px] border px-2 py-1.5 text-sm font-semibold ${
                   mode === m.value
                     ? "border-ember bg-ember text-ivory"
                     : "border-line hover:border-ember"
                 }`}
               >
-                {m.label}
+                {/* This picker is where the founder meets the three kinds, so it
+                    shows the glyph the card will carry once the class exists.
+                    Selected, the glyph rides the ember fill in ivory
+                    (currentColor does the work); unselected it wears its own
+                    kind colour — the colour it will have on every card after. */}
+                <KindIcon
+                  kind={MODE_KIND[m.value]}
+                  className={mode === m.value ? "" : KIND_TINT[MODE_KIND[m.value]]}
+                />
+                <span className="leading-tight">{m.label}</span>
               </button>
             ))}
           </div>

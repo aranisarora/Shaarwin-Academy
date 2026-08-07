@@ -56,6 +56,7 @@ import { fromDetails } from "@/lib/address";
 import { venueDisplayName } from "@/lib/venue-display";
 import { ClassDetailFields, generateClassTitle, time12h, type ClassFormState } from "./ClassFields";
 import { DayChips } from "./DayChips";
+import { ClassTypeLine, classKind } from "./class-type";
 import { TimeSelect12h } from "./TimeSelect12h";
 import { formatSessionDate, wallDate } from "@/lib/academy-time";
 import { WEEKDAY_NAME, type ClassRow, type Coach, type Venue } from "./admin-calendar-types";
@@ -390,13 +391,20 @@ export function AdminClassSheet({
             Every {wasDayName}, {time12h(cls.time)} · {cls.duration} min ·{" "}
             {cls.bookedCount} of {cls.capacity} booked
           </p>
-          {address && <AddressDisplay address={address} audience="staff" className="mt-2" />}
-          <div className="mt-2 flex flex-wrap gap-2">
-            {cls.isSchool && <Badge tone="ember">School class</Badge>}
-            {!cls.active && (
+          {address && (
+            <AddressDisplay address={address} audience="staff" className="mt-2" />
+          )}
+          {/* Same glyph + words as the card he tapped to get here. It was an
+              ember "School class" badge and nothing at all for an ordinary
+              group class — so the sheet contradicted the list on a school, and
+              went silent on everything else. Kind is stated here every time,
+              for all three kinds, in the app's one vocabulary. */}
+          <ClassTypeLine kind={classKind(cls)} className="mt-2" />
+          {!cls.active && (
+            <div className="mt-2 flex flex-wrap gap-2">
               <Badge tone="neutral">{cls.endsOn ? "Ended" : "Booking paused"}</Badge>
-            )}
-          </div>
+            </div>
+          )}
           {/* Said once. It used to be said twice, in two wordings, forty lines
               apart — and the useful half is the link, not the sentence. */}
           {cls.nextSessionId && cls.nextSessionStart && (

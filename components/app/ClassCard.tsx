@@ -6,38 +6,36 @@
 //
 //   Line 1 (bold): the anchoring fact  — venue (schedule) / day + time (weekly)
 //   Line 2:        the coach
-//   Line 3:        what kind of class  — "Private · Rohan" / "Group class" / …
+//   Line 3:        what kind of class  — glyph + "Private class · Rohan" / …
 //   Badge row:     state               — In progress / Completed / Ended / …
 //
-// Two rules keep the three screens legible as one thing:
+// Three rules keep the screens legible as one thing:
 //
-//   IDENTITY IS ADDITIVE, STATE IS A LADDER. The ember left-stripe means "this
-//   is a private" and nothing else, so it is applied on top of whatever state
-//   the card is in. It used to be a rung in the same ladder as completed and
-//   in-progress, which meant a private lost its stripe the moment it finished
-//   or lost its coach — the card stopped saying what it was exactly when the
-//   founder was scanning for it.
+//   IDENTITY IS ADDITIVE, STATE IS A LADDER. What kind of class this is holds
+//   whatever state the card is in. It used to be a rung in the same ladder as
+//   completed and in-progress, which meant a private lost its mark the moment
+//   it finished or lost its coach — the card stopped saying what it was exactly
+//   when the founder was scanning for it.
 //
 //   DIMMING MEANS ONE THING: out of play. Finished, ended, paused. It does not
 //   mean "you can't pick this" — that is what a missing tick box says, and
 //   conflating the two is why an ended class (pickable) and a private (not)
 //   were indistinguishable on a phone, where there is no hover to ask.
 //
-//   IDENTITY IS COLOURED BY KIND, NOT BY EMBER. The left stripe used to be
-//   ember for a private and nothing at all for a school, which left school
-//   classes leaning on a shouted <Badge>School</Badge> and made ember mean
-//   "private" on the same screen it means "live now", "primary button" and
-//   "the tab you are on". A colour asked to mean four things means none of
-//   them. Kind now owns its own quiet pair — plum for a private, teal for a
-//   school, nothing for an ordinary group class — in exactly two places on
-//   every card: the stripe, and a 6px dot beside the words. See class-type.tsx.
+//   IDENTITY AND STATE NEVER SHARE A CSS PROPERTY. They are separate ideas, so
+//   they get separate properties and compose in any order: kind writes an inset
+//   rail, state writes the border, the halo and the wash. When both wanted
+//   `border-color` the last utility Tailwind emitted won, and a live private
+//   came out as three ember sides and one plum edge. See `.class-card` in
+//   globals.css for the mechanics, class-type.tsx for the kind signals.
 //
 // Border language, documented once:
-//   • red border        = needs you to act (no coach yet)
-//   • plum left-stripe  = a private class      ┐ identity, additive,
-//   • teal left-stripe  = a school's class     ┘ never a status
-//   • ember ring        = live right now, or picked (the badge/tick says which)
-//   • dimmed            = out of play
+//   • red border          = needs you to act (no coach yet)
+//   • plum/teal left rail = a private / a school's class ┐ identity, additive,
+//   • the glyph on line 3 = the same fact, in a shape    ┘ never a status
+//   • ember halo          = live right now
+//   • ember wash + tick   = you have picked this one
+//   • dimmed              = out of play
 
 import Link from "next/link";
 import { Badge } from "@/components/ui/Badge";
@@ -99,14 +97,14 @@ function SessionBadges({ session }: { session: SessionRow }) {
   );
 }
 
-/** Status badges for a weekly class — School / Paused / Ended.
+/** Status badges for a weekly class — Paused / Ended.
  *
  * The ended badge used to read "tap to restore", from when restoring was the
  * only thing left to do with one. Ended classes now sit on the list by default
  * and the sheet will delete one outright, so the badge names both. */
 function ClassBadges({ cls }: { cls: ClassRow }) {
-  // "School" is not a state, so it is no longer a badge here — the teal stripe
-  // and the dot on the type line say it, in the same two places every other
+  // "School" is not a state, so it is no longer a badge here — the teal rail
+  // and the glyph on the type line say it, in the same two places every other
   // kind of class says what it is. This row is now only ever about state.
   if (cls.active) return null;
   return (
@@ -120,25 +118,53 @@ function ClassBadges({ cls }: { cls: ClassRow }) {
 // is one of these cards, they are the app's main way of getting anywhere, and
 // without a pressed state a tap on a phone looks like nothing happened until
 // the sheet finishes opening.
-const cardBase = "pressable w-full rounded-[8px] border px-3 py-2 text-left text-sm";
+//
+// `class-card` is what composes the kind rail with the state halo and the
+// background — the card's own background comes from there, so nothing here
+// sets `bg-*`. See globals.css.
+const cardBase = "class-card pressable w-full rounded-[8px] border px-3 py-2 text-left text-sm";
 // Only cards that actually do something on tap promise it. This used to be
 // baked into cardBase, so a finished session and an unpickable card both lit up
 // under the cursor offering to open something they would not open.
-const cardInteractive = "hover:border-ember";
+//
+// It also used to be `hover:border-ember`, which repainted the card's border in
+// the one colour reserved for "live right now" — so on a desktop every card the
+// pointer crossed briefly claimed to be in progress, a private lost its rail,
+// and a class with no coach lost its red. Hover moves the surface instead.
+const cardInteractive = "card-hover";
 
 /** The state ladder, shared so precedence is decided once rather than drifting
- * per surface. `dim` is out-of-play; `alert` is "no coach yet"; `ring` is live
- * or picked. Identity (the private stripe) is applied by the caller on top. */
+ * per surface.
+ *
+ *   picked  — the founder has ticked this one while selecting
+ *   live    — happening right now
+ *   dim     — out of play (finished, ended, paused)
+ *   alert   — no coach yet
+ *
+ * `picked` and `live` used to be one rung called `ring`, both drawing the same
+ * bare ember ring, so a live class the founder had just ticked looked exactly
+ * like a live class he had not — and the tick box was the only thing that said
+ * which. They are two different kinds of fact (one about the world, one about
+ * what he is doing) and now look it: live is a halo, picked is a wash.
+ *
+ * Identity (the kind rail) is applied by the caller on top and cannot collide:
+ * nothing in here writes --kind-rail. */
 function stateTone({
   dim = false,
   alert = false,
-  ring = false,
+  live = false,
+  picked = false,
 }: {
   dim?: boolean;
   alert?: boolean;
-  ring?: boolean;
+  live?: boolean;
+  picked?: boolean;
 }): string {
-  if (ring) return "border-ember bg-surface-2 shadow-[0_0_0_1px_var(--ember)]";
+  // What he is doing right now beats what the card is. A picked card that also
+  // needs a coach loses its red border, but not the red "No coach yet" on the
+  // card itself — the sentence survives, and it was always the clearer signal.
+  if (picked) return "card-picked border-ember [--state-ring:0_0_0_2px_var(--ember)]";
+  if (live) return "border-ember [--state-ring:0_0_0_1px_var(--ember)]";
   // Out of play beats "no coach": a finished session does not need one, and
   // shouting red at the founder about a class that is over is noise he has to
   // learn to ignore — which then costs him the reds that are real.
@@ -147,14 +173,18 @@ function stateTone({
   // second line — --slate on --paper, 6.9:1 at full strength — came out around
   // 3.4:1, under AA, on every completed, ended and paused card. 75 keeps the
   // card visibly out of play and keeps its words legible.
-  if (dim) return "border-line bg-surface-2 opacity-75";
-  if (alert) return "border-err bg-surface-2";
-  return "border-line bg-surface-2";
+  //
+  // The surface itself is no longer named here: `.class-card` paints
+  // `var(--card-bg, var(--surface-2))`, so hover and picked can move the surface
+  // without a Tailwind `bg-*` utility racing them for the same property.
+  if (dim) return "border-line opacity-75";
+  if (alert) return "border-err";
+  return "border-line";
 }
 
 // Kept as a name so the "identity is additive" rule still reads at each call
-// site; the colour itself now depends on what kind of class it is.
-const kindStripe = (c: { isPrivate?: boolean; isSchool?: boolean }) =>
+// site; the colour itself depends on what kind of class it is.
+const kindRail = (c: { isPrivate?: boolean; isSchool?: boolean }) =>
   KIND_RAIL[classKind(c)];
 
 /** The tick every selectable card shows while the founder is picking. Drawn
@@ -217,8 +247,8 @@ export function SessionCard({
   const tone = `${stateTone({
     dim: off || status === "completed",
     alert: !off && !session.coachId,
-    ring: !off && status === "in_progress",
-  })} ${kindStripe(session)}`;
+    live: !off && status === "in_progress",
+  })} ${kindRail(session)}`;
   const inner = (
     <>
       <p className="font-semibold">{session.venueName ?? "Location TBC"}</p>
@@ -333,8 +363,8 @@ export function WeeklyClassCard({
   const tone = `${stateTone({
     dim: !cls.active,
     alert: !!cls.active && !cls.coachName,
-    ring: selecting && selected,
-  })} ${kindStripe(cls)}`;
+    picked: selecting && selected,
+  })} ${kindRail(cls)}`;
   return (
     <button
       type="button"
@@ -411,8 +441,15 @@ export function PrivateSeriesCard({
       <span className="tnum block font-semibold">
         {slotLine(series.weekday, series.time, series.duration)}
       </span>
-      <span className="block text-fg-2">{series.coachName ?? "No coach yet"}</span>
-      {/* The plum stripe and the dot already say "private" — an ember Private
+      {/* Red, exactly as on the class card beside it. A private with nobody to
+          teach it is the same problem as a group class with nobody to teach it,
+          and this card used to state it in the same grey it uses for a coach's
+          name — so the one row in the grid that was actually broken was the one
+          row that looked fine. */}
+      <span className="block text-fg-2">
+        {series.coachName ?? <span className="text-err">No coach yet</span>}
+      </span>
+      {/* The plum rail and the glyph already say "private" — an ember Private
           badge on top said it a third time, in the one colour that also means
           "live right now" two cards further down the same grid. */}
       <ClassTypeLine
@@ -421,7 +458,10 @@ export function PrivateSeriesCard({
       />
     </>
   );
-  const tone = `${stateTone({ ring: selecting && selected })} ${KIND_RAIL.private}`;
+  const tone = `${stateTone({
+    alert: !series.coachName,
+    picked: selecting && selected,
+  })} ${KIND_RAIL.private}`;
 
   if (selecting) {
     return (

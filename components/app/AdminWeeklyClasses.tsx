@@ -30,6 +30,7 @@ import { AdminBulkRemoveSheet } from "./AdminBulkRemoveSheet";
 import { AdminWipeCalendarSheet } from "./AdminWipeCalendarSheet";
 import { PrivateSeriesCard, WeeklyClassCard } from "./ClassCard";
 import type { OpenMap, ScheduleFilters } from "./AdminScheduleTabs";
+import { KindIcon } from "./class-type";
 import {
   WEEKDAY_NAME,
   type ClassRow,
@@ -519,14 +520,15 @@ export function AdminWeeklyClasses({
                   The header said "No venue" and the filter said "No location"
                   for the same bucket, inside one view. */}
               <span className="font-semibold">{group.venue || "No location"}</span>
-              {/* A client's own home, not a venue we run. The same plum dot the
-                  cards inside it use — the uppercase pill said it twice. */}
+              {/* A client's own home, not a venue we run. The same plum glyph
+                  the cards inside it carry — it was a hand-rolled plum dot, and
+                  the moment the cards moved from a dot to a shape this header
+                  was the one place still speaking the old language. It comes
+                  from class-type.tsx now, so it cannot fall behind again. */}
               {group.privateOnly && (
-                <span
-                  aria-label="Private location"
-                  title="Private location"
-                  className="h-1.5 w-1.5 shrink-0 self-center rounded-full bg-priv"
-                />
+                <span aria-label="Private location" title="Private location" className="self-center">
+                  <KindIcon kind="private" className="text-priv" />
+                </span>
               )}
             </>
           }

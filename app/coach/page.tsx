@@ -7,6 +7,7 @@ import { CoachShell } from "@/components/app/CoachShell";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { PageSkeleton } from "@/components/ui/Skeleton";
 import { AutoOpenSession } from "@/components/app/AutoOpenSession";
+import { classKind } from "@/components/app/class-type";
 import { CoachActionSheet, type CoachAction } from "@/components/app/CoachActionSheet";
 import {
   CoachScheduleDays,
@@ -24,10 +25,25 @@ export const metadata: Metadata = { title: "Schedule" };
 // Doubles as the day-grouping key: "Saturday 12 July" is unique per day.
 const dayLabel = formatDayLong;
 
-/** Card's third line: the client's name for a private, else "Group class". */
+/** Card's third line: what kind of session this is, then who it is for.
+ *
+ * A private used to render as nothing but the client's name — no word saying
+ * it was a private at all — and leaned on an ember "Private" badge in the
+ * corner to carry the kind. That badge shared its slot with "Live" and "Done",
+ * so the kind vanished the moment the session started or ended: at exactly
+ * 5pm the coach's next stop stopped saying it was somebody's house.
+ *
+ * A school block had it worse — it said "Group class", the one kind it isn't.
+ * A school block is the only one where the coach takes the register himself.
+ *
+ * These are sessions, not classes, so the private and the school keep the
+ * coach's own nouns rather than the Weekly tab's. The glyph beside them is
+ * the same one the founder sees, which is the part that has to match. */
 function classTypeLine(s: CoachSession): string {
-  if (s.isPrivate) return s.playerName ?? "Private session";
-  return "Group class";
+  if (s.isPrivate) {
+    return s.playerName ? `Private session · ${s.playerName}` : "Private session";
+  }
+  return s.isSchool ? "School class" : "Group class";
 }
 
 type ActionRow = {
@@ -176,10 +192,12 @@ async function Schedule() {
           locationName,
           timeLabel: `${formatClock(s.starts_at)} – ${formatClock(s.ends_at)}`,
           typeLine: classTypeLine(s),
+          // The kind as the shared enum, so the coach's card draws the same
+          // glyph the founder's does rather than inventing a second dialect.
+          kind: classKind(s),
           status: sessionTimeStatus(s.starts_at, s.ends_at, now),
           featured: s.id === featuredId,
           travelGap,
-          isPrivate: s.isPrivate,
           confirmed: s.confirmed,
           capacity: s.capacity,
           lat: s.lat,

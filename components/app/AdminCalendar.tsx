@@ -34,6 +34,7 @@ import { groupSessionsByDay } from "@/lib/group-by-day";
 import { formatClock, wallDate } from "@/lib/academy-time";
 import { venueKeyOf } from "@/lib/venue-display";
 import type { OpenMap, ScheduleFilters } from "./AdminScheduleTabs";
+import { KIND_WORD } from "./class-type";
 import {
   type ClientOption,
   type Coach,
@@ -245,11 +246,16 @@ export function AdminCalendar({
       value: typeFilter,
       defaultValue: "all",
       onChange: filters.setType,
+      // The app's one set of names for the three kinds — the chips used to say
+      // "Group / Private / School" while the cards below them said "Group class
+      // / Private / School class" and the Add sheet said a third thing again.
+      // Filtering to a word you cannot then find on a card is a small betrayal
+      // that costs a scroll every time.
       options: [
         { value: "all", label: "All class types" },
-        { value: "group", label: "Group" },
-        { value: "private", label: "Private" },
-        { value: "school", label: "School" },
+        { value: "group", label: KIND_WORD.group },
+        { value: "private", label: KIND_WORD.private },
+        { value: "school", label: KIND_WORD.school },
       ],
     },
   ];

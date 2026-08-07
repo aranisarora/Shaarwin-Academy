@@ -11,16 +11,17 @@ import { useState } from "react";
 import Link from "next/link";
 import { Badge } from "@/components/ui/Badge";
 import { NavigateButton } from "@/components/app/NavigateButton";
+import { KindIcon, KIND_RAIL, KIND_TINT, type ClassKind } from "@/components/app/class-type";
 
 type ScheduleSession = {
   id: string;
   locationName: string;
   timeLabel: string;
   typeLine: string;
+  kind: ClassKind;
   status: "in_progress" | "upcoming" | "completed";
   featured: boolean;
   travelGap: boolean;
-  isPrivate: boolean;
   confirmed: number;
   capacity: number;
   lat: number | null;
@@ -99,12 +100,18 @@ export function CoachScheduleDays({ days }: { days: ScheduleDay[] }) {
 
             <ol className={`space-y-0 lg:block ${open ? "" : "hidden"}`}>
               {day.sessions.map((s) => {
+                // Same two-layer rule as the admin card: state owns the border
+                // and the halo, kind owns an inset rail that state cannot
+                // overwrite. `hover:border-ember` used to repaint the border in
+                // the colour that means "live right now" on every card the
+                // pointer crossed — and there is no pointer on the phone this
+                // screen is built for, so it bought nothing either.
                 const tone =
                   s.status === "completed"
-                    ? "border-line bg-surface-2 opacity-55"
+                    ? "border-line opacity-55"
                     : s.featured
-                      ? "border-ember bg-surface-2 shadow-[0_0_0_1px_var(--ember)]"
-                      : "border-line bg-surface-2 hover:border-ember";
+                      ? "border-ember [--state-ring:0_0_0_1px_var(--ember)]"
+                      : "border-line";
                 const timeClass = s.featured ? "text-3xl" : "text-2xl";
                 return (
                   <li key={s.id}>
@@ -114,7 +121,7 @@ export function CoachScheduleDays({ days }: { days: ScheduleDay[] }) {
                       </p>
                     )}
                     <div
-                      className={`relative mb-3 rounded-[12px] border px-4 ${s.featured ? "py-4" : "py-3.5"} ${tone}`}
+                      className={`class-card relative mb-3 rounded-[12px] border px-4 ${s.featured ? "py-4" : "py-3.5"} ${tone} ${KIND_RAIL[s.kind]}`}
                     >
                       <div className="flex items-start justify-between gap-3">
                         <Link
@@ -124,18 +131,23 @@ export function CoachScheduleDays({ days }: { days: ScheduleDay[] }) {
                         >
                           <p className="font-semibold">{s.locationName}</p>
                           <p className={`tnum font-display ${timeClass}`}>{s.timeLabel}</p>
-                          <p className="mt-0.5 text-sm text-fg-2">{s.typeLine}</p>
+                          <p className="mt-0.5 flex items-center gap-1.5 text-sm text-fg-2">
+                            <KindIcon kind={s.kind} className={KIND_TINT[s.kind]} />
+                            <span className="min-w-0 truncate">{s.typeLine}</span>
+                          </p>
                         </Link>
                         <div className="flex shrink-0 flex-col items-end gap-1.5">
+                          {/* State only. This slot used to hold "Live", "Done"
+                              AND the kind, so a session could only ever say one
+                              of the two — a private that started stopped being
+                              a private, and a school block never got to say it
+                              was one at all. Kind now lives on the line above,
+                              where it survives every state. */}
                           {s.status === "in_progress" ? (
                             <Badge tone="ember">● Live</Badge>
                           ) : s.status === "completed" ? (
                             <Badge>✓ Done</Badge>
-                          ) : (
-                            <Badge tone={s.isPrivate ? "ember" : "neutral"}>
-                              {s.isPrivate ? "Private" : "Group"}
-                            </Badge>
-                          )}
+                          ) : null}
                           <span className="tnum text-xs text-fg-2">
                             {s.confirmed}/{s.capacity}
                           </span>
