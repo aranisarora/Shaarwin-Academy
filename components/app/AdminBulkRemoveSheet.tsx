@@ -49,7 +49,10 @@ function resultLine(
   kept: number,
   /** Why part of the selection stayed put, when the rest of it went. Without it
    * a failed ending reads as "2 were left alone." and no reason at all. */
-  warning?: string
+  warning?: string,
+  privateSeriesEnded = 0,
+  minutesReturned = 0,
+  unsupported = 0
 ): string {
   const parts: string[] = [];
   if (deleted) parts.push(`${deleted} ${plural(deleted, "class")} deleted`);
@@ -66,37 +69,71 @@ function resultLine(
       `${deletedBooked} booked ${plural(deletedBooked, "class")} cancelled and deleted`
     );
   if (ended) parts.push(`${ended} ended`);
-  if (!parts.length && !warning) return "Nothing changed.";
+  if (privateSeriesEnded)
+    parts.push(
+      `${privateSeriesEnded} weekly private ${plural(privateSeriesEnded, "slot", "slots")} ended`
+    );
+  if (!parts.length && !warning && !unsupported) return "Nothing changed.";
   let line = parts.length ? parts.join(" · ") + "." : "Nothing was removed.";
-  if (ended || deletedBooked) line += " Everyone booked on them has been told.";
+  // Only the buckets that actually message somebody may claim it. `deletedRunning`
+  // is deliberately not one of them — nobody was booked on those by definition,
+  // and its own clause above already says who was told.
+  if (ended || deletedBooked || privateSeriesEnded)
+    line += " Everyone booked on them has been told.";
+  if (minutesReturned)
+    line += ` ${minutesReturned} private ${plural(minutesReturned, "minute", "minutes")} returned.`;
   if (kept) line += ` ${kept} ${plural(kept, "was", "were")} left alone.`;
+  // "We couldn't find it" is a different thing to hear from "we left it alone",
+  // and it used to be reported as neither.
+  if (unsupported)
+    line += ` ${unsupported} couldn't be removed here — ${unsupported === 1 ? "it may" : "they may"} already be gone. Refresh the list.`;
   if (warning) line += ` ${warning}`;
   return line;
 }
 
 export function AdminBulkRemoveSheet({
   classIds,
+  seriesIds = [],
   onClose,
   onDone,
 }: {
   classIds: string[];
+  /** `private_booking_series` ids — a different table from `classes`, with no
+   * foreign key between them, so they travel as their own list the whole way
+   * down rather than being merged into `classIds` and silently dropped. */
+  seriesIds?: string[];
   onClose: () => void;
   /** Reports the outcome line and how many classes are gone, so the list can
    * drop them from the selection and refresh. */
   onDone: (message: string) => void;
 }) {
+  type SeriesPlan = {
+    endable: string[];
+    alreadyEnded: string[];
+    missing: string[];
+    cost: {
+      futureSessions: number;
+      minutesReturned: number;
+      families: number;
+      coaches: number;
+    };
+  };
   type Plan = {
     deletable: string[];
     deletableRunning: string[];
     endable: string[];
     purgeable: string[];
+    purgeableLive: string[];
+    unsupported: string[];
     purgeCost: {
       sessions: number;
       bookings: number;
       unmarked: number;
       runningSessions: number;
       runningUnmarked: number;
+      liveBookings: number;
     };
+    series: SeriesPlan;
   };
   const [plan, setPlan] = useState<Plan | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -106,6 +143,7 @@ export function AdminBulkRemoveSheet({
   const [endBooked, setEndBooked] = useState(false);
   const [purgeEnded, setPurgeEnded] = useState(false);
   const [deleteRunningEmpty, setDeleteRunningEmpty] = useState(false);
+  const [endPrivateSeries, setEndPrivateSeries] = useState(false);
   // What to do with the classes people are booked on, once they're included.
   // "end" keeps the record; "delete" removes it too. Both message everyone.
   const [bookedMode, setBookedMode] = useState<"end" | "delete">("end");
@@ -115,7 +153,7 @@ export function AdminBulkRemoveSheet({
   // dropped connection on a phone is common enough that it needs its own line.
   useEffect(() => {
     let alive = true;
-    planClassRemoval(classIds)
+    planClassRemoval(classIds, seriesIds)
       .then((r) => {
         if (!alive) return;
         if (r.ok)
@@ -124,12 +162,21 @@ export function AdminBulkRemoveSheet({
             deletableRunning: r.deletableRunning ?? [],
             endable: r.endable ?? [],
             purgeable: r.purgeable ?? [],
+            purgeableLive: r.purgeableLive ?? [],
+            unsupported: r.unsupported ?? [],
             purgeCost: r.purgeCost ?? {
               sessions: 0,
               bookings: 0,
               unmarked: 0,
               runningSessions: 0,
               runningUnmarked: 0,
+              liveBookings: 0,
+            },
+            series: r.series ?? {
+              endable: [],
+              alreadyEnded: [],
+              missing: [],
+              cost: { futureSessions: 0, minutesReturned: 0, families: 0, coaches: 0 },
             },
           });
         else setError(r.error ?? "Couldn't check those classes.");
@@ -140,7 +187,7 @@ export function AdminBulkRemoveSheet({
     return () => {
       alive = false;
     };
-  }, [classIds]);
+  }, [classIds, seriesIds]);
 
   function run() {
     const deleteBooked = endBooked && bookedMode === "delete";
@@ -152,6 +199,8 @@ export function AdminBulkRemoveSheet({
           purgeEnded,
           deleteBooked,
           deleteRunningEmpty,
+          privateSeriesIds: seriesIds,
+          endPrivateSeries,
         });
         if (r.ok)
           onDone(
@@ -162,7 +211,10 @@ export function AdminBulkRemoveSheet({
               r.purged ?? 0,
               r.deletedBooked ?? 0,
               r.kept ?? 0,
-              r.warning
+              r.warning,
+              r.privateSeriesEnded ?? 0,
+              r.minutesReturned ?? 0,
+              r.unsupported ?? 0
             )
           );
         else setError(r.error ?? "Couldn't remove those classes.");
@@ -175,14 +227,20 @@ export function AdminBulkRemoveSheet({
   const nDel = plan?.deletable.length ?? 0;
   const nRun = plan?.deletableRunning.length ?? 0;
   const nEnd = plan?.endable.length ?? 0;
-  const nPurge = plan?.purgeable.length ?? 0;
+  // The two purge lists go under one tick — the founder's choice is "delete the
+  // ended ones", and splitting that into two questions would be pedantry. They
+  // are separate lists because only one of them owes somebody a message.
+  const nPurge = (plan?.purgeable.length ?? 0) + (plan?.purgeableLive.length ?? 0);
+  const nSeries = plan?.series.endable.length ?? 0;
+  const nUnsupported = plan?.unsupported.length ?? 0;
   const deletingBooked = endBooked && bookedMode === "delete";
   const willRemove =
     nDel +
     (deleteRunningEmpty ? nRun : 0) +
     (purgeEnded ? nPurge : 0) +
     (deletingBooked ? nEnd : 0);
-  const willEnd = endBooked && !deletingBooked ? nEnd : 0;
+  const willEnd =
+    (endBooked && !deletingBooked ? nEnd : 0) + (endPrivateSeries ? nSeries : 0);
 
   /** "Delete 4 · end 2" — the button says everything that's ticked. */
   const actionLabel = (() => {
@@ -192,8 +250,17 @@ export function AdminBulkRemoveSheet({
     return bits.length ? bits.join(" · ") : "Nothing ticked yet";
   })();
 
+  /** "Remove 12 classes and 3 private slots" — two kinds, counted apart. */
+  const title = (() => {
+    const bits: string[] = [];
+    if (classIds.length) bits.push(`${classIds.length} ${plural(classIds.length, "class")}`);
+    if (seriesIds.length)
+      bits.push(`${seriesIds.length} private ${plural(seriesIds.length, "slot", "slots")}`);
+    return `Remove ${bits.join(" and ")}`;
+  })();
+
   return (
-    <Sheet open onClose={onClose} title={`Remove ${classIds.length} ${plural(classIds.length, "class")}`}>
+    <Sheet open onClose={onClose} title={title}>
       <div className="space-y-4">
         {!plan && !error && (
           <div className="flex justify-center py-6">
@@ -370,9 +437,27 @@ export function AdminBulkRemoveSheet({
                     good
                   </span>
                   <span className="block text-sm text-fg-2">
-                    {nPurge === 1 ? "It has" : "They have"} already been ended, so nobody is
-                    messaged again — but {nPurge === 1 ? "it" : "they"} still hold{" "}
-                    {plan.purgeCost.sessions}{" "}
+                    {/* This used to assert flatly that nobody is messaged again.
+                        That is only true of the ones holding nothing live: an
+                        ended class can still carry a place on an hour that
+                        hasn't happened, and deleting one of those used to take a
+                        child's booking with it in silence. */}
+                    {plan.purgeCost.liveBookings > 0 ? (
+                      <>
+                        {plan.purgeCost.liveBookings}{" "}
+                        {plural(plan.purgeCost.liveBookings, "place", "places")} on{" "}
+                        {plan.purgeCost.liveBookings === 1 ? "an hour" : "hours"} still ahead of
+                        us {plan.purgeCost.liveBookings === 1 ? "is" : "are"} cancelled first and
+                        those families are told; the rest have already been ended, so nobody is
+                        messaged again.{" "}
+                      </>
+                    ) : (
+                      <>
+                        {nPurge === 1 ? "It has" : "They have"} already been ended, so nobody is
+                        messaged again —{" "}
+                      </>
+                    )}
+                    {nPurge === 1 ? "It" : "They"} still hold {plan.purgeCost.sessions}{" "}
                     {plural(plan.purgeCost.sessions, "session", "sessions")} and{" "}
                     {plan.purgeCost.bookings}{" "}
                     {plural(plan.purgeCost.bookings, "booking", "bookings")} of history, which
@@ -382,7 +467,65 @@ export function AdminBulkRemoveSheet({
               </label>
             )}
 
-            {nDel === 0 && nRun === 0 && nEnd === 0 && nPurge === 0 && (
+            {/* Weekly private slots. Opt-in and unticked, like every other
+                bucket with a cost — but the cost here is a paying family's
+                standing arrangement, so the copy names the families and the
+                minutes rather than counting rows. Ending is also the recoverable
+                half: it destroys no history and removes no class. */}
+            {nSeries > 0 && (
+              <label className="flex gap-3 rounded-[12px] border border-err p-4">
+                <Checkbox
+                  size="md"
+                  className="mt-0.5 shrink-0"
+                  checked={endPrivateSeries}
+                  onChange={(e) => setEndPrivateSeries(e.target.checked)}
+                />
+                <span className="space-y-1">
+                  <span className="label block">
+                    Also end {nSeries} weekly private {plural(nSeries, "slot", "slots")}
+                  </span>
+                  <span className="block text-sm text-fg-2">
+                    {nSeries === 1 ? "This is" : "These are"} standing arrangements, not classes
+                    — ending {nSeries === 1 ? "one" : "them"} stops{" "}
+                    {nSeries === 1 ? "it" : "them"} putting new weeks on the calendar.
+                    {plan.series.cost.futureSessions > 0 && (
+                      <>
+                        {" "}
+                        {plan.series.cost.futureSessions}{" "}
+                        {plural(plan.series.cost.futureSessions, "session", "sessions")} already
+                        booked in are cancelled
+                        {plan.series.cost.minutesReturned > 0 && (
+                          <>
+                            , and {plan.series.cost.minutesReturned} minutes go back to{" "}
+                            {plan.series.cost.families}{" "}
+                            {plural(plan.series.cost.families, "family", "families")} in full —
+                            including any week inside the 24-hour window a family cancelling
+                            would forfeit
+                          </>
+                        )}
+                        .
+                      </>
+                    )}{" "}
+                    Everyone affected gets one message. Setting a slot up again is a new
+                    booking, not an undo.
+                  </span>
+                </span>
+              </label>
+            )}
+
+            {/* Picked but unactionable — a class that has gone since the page
+                rendered, or a slot already retired. Said out loud, because a
+                selection that quietly shrinks is how a founder ends up believing
+                something was removed that wasn't. */}
+            {(nUnsupported > 0 || plan.series.missing.length > 0) && (
+              <p className="text-sm text-fg-2">
+                {nUnsupported + plan.series.missing.length} of the things you picked
+                {nUnsupported + plan.series.missing.length === 1 ? " is" : " are"} no longer
+                there. Close this and refresh the list.
+              </p>
+            )}
+
+            {nDel === 0 && nRun === 0 && nEnd === 0 && nPurge === 0 && nSeries === 0 && (
               <p className="text-sm text-fg-2">Nothing selected.</p>
             )}
 
@@ -391,10 +534,11 @@ export function AdminBulkRemoveSheet({
                   disabled button explains nothing — this is the line that used
                   to be missing, when a founder who had selected every class
                   tapped Remove and met a greyed-out control with no reason. */}
-              {willRemove === 0 && willEnd === 0 && (nRun > 0 || nEnd > 0 || nPurge > 0) && (
-                <p className="text-sm text-fg-2">
-                  Every class you picked is either still running or holds bookings or history,
-                  so nothing will go until you tick one of the boxes above.
+              {willRemove === 0 && willEnd === 0 && (
+                <p id="bulk-remove-why" className="text-sm text-fg-2">
+                  {nRun > 0 || nEnd > 0 || nPurge > 0 || nSeries > 0
+                    ? "Everything you picked is either still running, or holds bookings or history, so nothing will go until you tick one of the boxes above."
+                    : "There is nothing here to remove. Close this and refresh the list."}
                 </p>
               )}
               {/* Next to the button that failed, not at the foot of a long
@@ -404,6 +548,9 @@ export function AdminBulkRemoveSheet({
               <Button
                 variant="destructive"
                 className="w-full"
+                aria-describedby={
+                  willRemove === 0 && willEnd === 0 ? "bulk-remove-why" : undefined
+                }
                 disabled={pending || (willRemove === 0 && willEnd === 0)}
                 onClick={run}
               >

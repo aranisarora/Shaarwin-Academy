@@ -2223,6 +2223,7 @@ export type Database = {
       coach_teaches_class: { Args: { p_class: string }; Returns: boolean }
       coach_undo_arrival: { Args: { p_session: string }; Returns: undefined }
       create_private_series: { Args: { payload: Json }; Returns: Json }
+      end_private_series_as_academy: { Args: { p_series: string }; Returns: Json }
       expire_credits: { Args: never; Returns: undefined }
       fmt_inr: { Args: { p_paise: number }; Returns: string }
       fmt_ist: { Args: { ts: string }; Returns: string }
@@ -2342,6 +2343,10 @@ export type Database = {
         }[]
       }
       prune_wa_inbound_seen: { Args: never; Returns: undefined }
+      purge_pending_session_reminders: {
+        Args: { p_class_ids: string[] }
+        Returns: number
+      }
       public_coach_roster: {
         Args: never
         Returns: {
@@ -2417,6 +2422,14 @@ export type Database = {
         Returns: Json
       }
       sweep_session_status: { Args: never; Returns: undefined }
+      wipe_calendar: {
+        Args: {
+          p_confirm?: string
+          p_keep_history?: boolean
+          p_scope?: string
+        }
+        Returns: Json
+      }
     }
     Enums: {
       assignment_status: "active" | "superseded"

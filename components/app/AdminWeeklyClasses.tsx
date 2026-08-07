@@ -16,6 +16,7 @@ import { topUpSessions } from "@/app/admin/schedule/actions";
 import { AdminClassSheet } from "./AdminClassSheet";
 import { AdminAddSheet } from "./AdminAddSheet";
 import { AdminBulkRemoveSheet } from "./AdminBulkRemoveSheet";
+import { AdminWipeCalendarSheet } from "./AdminWipeCalendarSheet";
 import { PrivateSeriesCard, WeeklyClassCard } from "./ClassCard";
 import {
   WEEKDAY_NAME,
@@ -64,34 +65,48 @@ export function AdminWeeklyClasses({
   const [pending, startTransition] = useTransition();
 
   // Selection mode — clearing a timetable is a bulk job, so the founder flips
-  // the whole list into checkboxes rather than opening thirty sheets. Only
-  // group classes are selectable; private series are managed on the Schedule.
+  // the whole list into checkboxes rather than opening thirty sheets.
   const [selecting, setSelecting] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  // A SECOND set, not a merged one. Weekly private slots are rows in
+  // private_booking_series, which has no foreign key to classes at all — one id
+  // handed to the wrong core matches nothing, is silently dropped, and the
+  // founder is told "Nothing changed." Keeping them apart in the UI is what
+  // keeps them apart all the way down to the two plans.
+  const [selectedSeries, setSelectedSeries] = useState<Set<string>>(new Set());
   const [confirming, setConfirming] = useState(false);
+  const [wiping, setWiping] = useState(false);
 
   // Stable array identity — the confirm sheet fetches its preview in an effect
-  // keyed on this, so a fresh `[...selected]` each render would refetch.
+  // keyed on these, so a fresh `[...selected]` each render would refetch.
   const selectedIds = useMemo(() => [...selected], [selected]);
+  const selectedSeriesIds = useMemo(() => [...selectedSeries], [selectedSeries]);
 
   // The selection bar and the toast are pinned to the same spot, so exactly one
   // of them may be on screen at a time — and it has to be this condition, not
   // `selecting`, or a founder who flips into selection mode without picking
   // anything loses a status line to a bar that isn't there.
-  const selectionBarShowing = selecting && selected.size > 0;
+  const selectionCount = selected.size + selectedSeries.size;
+  const selectionBarShowing = selecting && selectionCount > 0;
 
   function exitSelect() {
     setSelecting(false);
     setSelected(new Set());
+    setSelectedSeries(new Set());
     setConfirming(false);
   }
-  const toggleClass = (id: string) =>
-    setSelected((prev) => {
+  const toggleIn = (
+    set: (fn: (prev: Set<string>) => Set<string>) => void,
+    id: string
+  ) =>
+    set((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
       return next;
     });
+  const toggleClass = (id: string) => toggleIn(setSelected, id);
+  const toggleSeries = (id: string) => toggleIn(setSelectedSeries, id);
 
   // Success/status lines show as a bottom toast that clears itself, so they
   // never reserve layout space above the list.
@@ -182,28 +197,39 @@ export function AdminWeeklyClasses({
     [privateSeries, venueFilter, dayFilter, statusFilter]
   );
 
-  // "Select all" means all the classes the filters are currently showing — so
+  // "Select all" means everything the filters are currently showing — so
   // narrowing to one venue or one day makes it a targeted clear, and leaving the
-  // filters wide (status: all) makes it the full reset.
+  // filters wide (status: all) makes it the full reset of this screen. It now
+  // covers the weekly private slots as well: leaving them out made "Select all
+  // 47" a promise the screen did not keep.
   const filteredIds = useMemo(() => filteredClasses.map((c) => c.id), [filteredClasses]);
-  const allSelected = filteredIds.length > 0 && filteredIds.every((id) => selected.has(id));
+  const filteredSeriesIds = useMemo(() => filteredPrivates.map((p) => p.id), [filteredPrivates]);
+  const filteredTotal = filteredIds.length + filteredSeriesIds.length;
+  const allSelected =
+    filteredTotal > 0 &&
+    filteredIds.every((id) => selected.has(id)) &&
+    filteredSeriesIds.every((id) => selectedSeries.has(id));
 
   function selectAllFiltered() {
     setSelecting(true);
     setSelected(allSelected ? new Set() : new Set(filteredIds));
+    setSelectedSeries(allSelected ? new Set() : new Set(filteredSeriesIds));
   }
 
-  /** Select/clear every class under one venue card — clearing a venue is the
-   * common case ("we've lost the Andheri hall"). */
-  function toggleVenueSelection(ids: string[], allOn: boolean) {
-    setSelected((prev) => {
+  /** Select/clear everything under one venue card — clearing a venue is the
+   * common case ("we've lost the Andheri hall"), and a location that hosts only
+   * private slots had no control at all until these were pickable. */
+  function toggleVenueSelection(ids: string[], seriesIds: string[], allOn: boolean) {
+    const apply = (prev: Set<string>, xs: string[]) => {
       const next = new Set(prev);
-      for (const id of ids) {
+      for (const id of xs) {
         if (allOn) next.delete(id);
         else next.add(id);
       }
       return next;
-    });
+    };
+    setSelected((prev) => apply(prev, ids));
+    setSelectedSeries((prev) => apply(prev, seriesIds));
   }
 
   // Curated venue names — a group with no group-classes that isn't a curated
@@ -330,12 +356,12 @@ export function AdminWeeklyClasses({
           mode the same row becomes the select toolbar. */}
       {selecting ? (
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <span className="text-sm text-fg-2">
-            {selected.size} of {filteredIds.length} selected
+          <span className="text-sm text-fg-2" aria-live="polite">
+            {selectionCount} of {filteredTotal} selected
           </span>
           <div className="flex gap-2">
             <Button variant="ghost" onClick={selectAllFiltered}>
-              {allSelected ? "Clear selection" : `Select all ${filteredIds.length}`}
+              {allSelected ? "Clear selection" : `Select all ${filteredTotal}`}
             </Button>
             <Button variant="ghost" onClick={exitSelect}>
               Done
@@ -352,7 +378,7 @@ export function AdminWeeklyClasses({
           >
             ⋯
           </button>
-          {filteredClasses.length > 0 && (
+          {filteredTotal > 0 && (
             <Button variant="ghost" onClick={() => setSelecting(true)}>
               Select
             </Button>
@@ -384,8 +410,11 @@ export function AdminWeeklyClasses({
         // venue, his choice sticks wherever it lands in the list.
         const open = openMap[key] ?? i === 0;
         const groupIds = group.days.flatMap((d) => d.rows.map((c) => c.id));
+        const groupSeriesIds = group.days.flatMap((d) => d.privates.map((p) => p.id));
         const groupAllSelected =
-          groupIds.length > 0 && groupIds.every((id) => selected.has(id));
+          groupIds.length + groupSeriesIds.length > 0 &&
+          groupIds.every((id) => selected.has(id)) &&
+          groupSeriesIds.every((id) => selectedSeries.has(id));
         return (
         <div
           key={key}
@@ -423,10 +452,11 @@ export function AdminWeeklyClasses({
               {group.privateCount > 0 && `${group.privateCount} private`}
             </span>
           </button>
-          {selecting && groupIds.length > 0 && (
+          {selecting && groupIds.length + groupSeriesIds.length > 0 && (
             <button
               type="button"
-              onClick={() => toggleVenueSelection(groupIds, groupAllSelected)}
+              aria-label={`${groupAllSelected ? "Clear" : "Select"} everything at ${group.venue || "No venue"}`}
+              onClick={() => toggleVenueSelection(groupIds, groupSeriesIds, groupAllSelected)}
               className="shrink-0 px-4 py-3 text-sm text-ember underline-offset-4 hover:underline"
             >
               {groupAllSelected ? "None" : "All"}
@@ -468,7 +498,28 @@ export function AdminWeeklyClasses({
                     />
                   ))}
                   {day.privates.map((p) => (
-                    <PrivateSeriesCard key={p.id} series={p} selecting={selecting} />
+                    <PrivateSeriesCard
+                      key={p.id}
+                      series={p}
+                      selecting={selecting}
+                      selected={selectedSeries.has(p.id)}
+                      onClick={() => {
+                        if (selecting) {
+                          toggleSeries(p.id);
+                          return;
+                        }
+                        // Only reached for a slot with no next session to
+                        // deep-link to — the case that used to be a dead card.
+                        setMessage(null);
+                        setSelecting(true);
+                        setSelectedSeries(new Set([p.id]));
+                      }}
+                      onLongPress={() => {
+                        setMessage(null);
+                        setSelecting(true);
+                        setSelectedSeries(new Set([p.id]));
+                      }}
+                    />
                   ))}
                 </div>
               </div>
@@ -526,8 +577,19 @@ export function AdminWeeklyClasses({
           stands down while it's here rather than landing on top of it. */}
       {selectionBarShowing && (
         <div className="fixed inset-x-4 bottom-[calc(env(safe-area-inset-bottom)+4.75rem)] z-40 mx-auto flex max-w-md items-center gap-3 rounded-[12px] border border-line bg-surface-2 px-4 py-3 shadow-[var(--shadow-sheet)] lg:bottom-6">
+          {/* Counted apart, never merged into one number — "15 selected" over a
+              mix of classes and families' standing slots hides which is which,
+              and they are not the same kind of thing to lose. */}
           <span className="text-sm">
-            {selected.size} {selected.size === 1 ? "class" : "classes"} selected
+            {[
+              selected.size > 0 &&
+                `${selected.size} ${selected.size === 1 ? "class" : "classes"}`,
+              selectedSeries.size > 0 &&
+                `${selectedSeries.size} private ${selectedSeries.size === 1 ? "slot" : "slots"}`,
+            ]
+              .filter(Boolean)
+              .join(" · ")}{" "}
+            selected
           </span>
           <Button
             variant="destructive"
@@ -546,14 +608,24 @@ export function AdminWeeklyClasses({
             Each class repeats every week and fills the Schedule tab. Tap one to change it —
             for a one-week-only change, tap that session in the Schedule tab instead.
           </p>
-          {filteredClasses.length > 0 && (
+          {filteredTotal > 0 && (
             <div className="space-y-2 rounded-[12px] border border-line p-4">
               <p className="label">Clear the timetable</p>
               <p className="text-sm text-fg-2">
-                Picks every class the filters are showing ({filteredClasses.length}) so you can
-                start again. You get to see what goes quietly, what is still running, and what
-                has people or history on it before anything happens — and you can unpick any of
+                Picks everything the filters are showing ({filteredTotal}) so you can start
+                again. You get to see what goes quietly, what is still running, and what has
+                people or history on it before anything happens — and you can unpick any of
                 them first.
+                {/* Say what it does NOT reach, rather than leaving him to find
+                    out from a list that still has things on it. */}
+                {oneOffCount > 0 && (
+                  <>
+                    {" "}
+                    The {oneOffCount} one-off{" "}
+                    {oneOffCount === 1 ? "class isn't" : "classes aren't"} on this list — clear
+                    the whole calendar below for {oneOffCount === 1 ? "it" : "those"} too.
+                  </>
+                )}
               </p>
               <Button
                 variant="ghost"
@@ -561,11 +633,12 @@ export function AdminWeeklyClasses({
                 onClick={() => {
                   setSelecting(true);
                   setSelected(new Set(filteredIds));
+                  setSelectedSeries(new Set(filteredSeriesIds));
                   setOverflowOpen(false);
                   setMessage(null);
                 }}
               >
-                Select all {filteredClasses.length} classes
+                Select all {filteredTotal}
               </Button>
             </div>
           )}
@@ -585,6 +658,29 @@ export function AdminWeeklyClasses({
               }}
             >
               {pending ? "Topping up…" : "Top up now"}
+            </Button>
+          </div>
+
+          {/* Set apart in red, below everything else and last in the tab order,
+              because it is the only control here that ignores the filters and
+              the selection entirely. Its own sheet does the actual guarding. */}
+          <div className="space-y-2 rounded-[12px] border border-err p-4">
+            <p className="label">Clear the whole calendar</p>
+            <p className="text-sm text-fg-2">
+              Everything, not just what this list shows — the one-off classes too, and every
+              family&apos;s weekly private slot. You see exactly what it holds, and what each
+              person gets back, before anything happens.
+            </p>
+            <Button
+              variant="ghost"
+              className="w-full"
+              onClick={() => {
+                setOverflowOpen(false);
+                setMessage(null);
+                setWiping(true);
+              }}
+            >
+              Clear the whole calendar…
             </Button>
           </div>
         </div>
@@ -620,9 +716,22 @@ export function AdminWeeklyClasses({
       {confirming && (
         <AdminBulkRemoveSheet
           classIds={selectedIds}
+          seriesIds={selectedSeriesIds}
           onClose={() => setConfirming(false)}
           onDone={(m) => {
             setMessage(m);
+            exitSelect();
+            router.refresh();
+          }}
+        />
+      )}
+
+      {wiping && (
+        <AdminWipeCalendarSheet
+          onClose={() => setWiping(false)}
+          onDone={(m) => {
+            setMessage(m);
+            setWiping(false);
             exitSelect();
             router.refresh();
           }}

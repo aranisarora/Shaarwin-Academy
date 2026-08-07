@@ -308,28 +308,44 @@ export function WeeklyClassCard({
  * 5:00 pm" with no finish time, the coach demoted to line 3, no badges at all —
  * which meant two cards in one grid disagreed about how to say the same fact.
  *
- * It is view-only here: ending a private is a per-client job with a paying
- * family behind it, and it happens on the Schedule where the client's whole
- * picture is. So the card deep-links to its next session and carries a Private
- * badge, rather than a sentence telling the founder where to go.
+ * It used to be view-only, on the reasoning that ending a private is a
+ * per-client job with a paying family behind it and belongs on the Schedule.
+ * Three things were wrong with that. The founder reads this screen as "my
+ * calendar", so a row he cannot pick reads as a row he cannot remove — which is
+ * exactly the report that started this. The Schedule's action is not the same
+ * action either: it is client-wide, sweeping every private that family has, so
+ * there was no way to end ONE slot anywhere. And a slot whose weeks stopped
+ * generating has no next session, so the deep link was not rendered at all and
+ * the card became a dead <div> with no route to anything.
  *
- * While the founder is picking, it is inert — not a link. The ticks are React
- * state on this page, so following a link mid-selection threw the whole
- * selection away, and the tap that did it was him aiming at a card he wanted.
- * Eleven of the eighteen on prod carried a next session and so were live links. */
+ * So it is now a first-class member of the selection, with the same two doors as
+ * the class card beside it: tap, and press-and-hold. What it does NOT get is a
+ * merged id — the parent keeps weekly private slots in their own set, because
+ * these ids belong to a different table. */
 export function PrivateSeriesCard({
   series,
+  onClick,
+  onLongPress,
   selecting = false,
+  selected = false,
 }: {
   series: PrivateSeriesRow;
+  /** Outside selection this is the fallback for a slot with no next session to
+   * deep-link to; the parent wires it to "start picking, with this one ticked". */
+  onClick: () => void;
+  onLongPress?: () => void;
   selecting?: boolean;
+  selected?: boolean;
 }) {
+  const { handlers, consumeClick } = useLongPress(selecting ? null : onLongPress);
+  // Spans, not paragraphs: the card is a <button> while picking, and a <p>
+  // inside a button is invalid content.
   const inner = (
     <>
-      <p className="tnum font-semibold">
+      <span className="tnum block font-semibold">
         {slotLine(series.weekday, series.time, series.duration)}
-      </p>
-      <p className="text-fg-2">{series.coachName ?? "No coach yet"}</p>
+      </span>
+      <span className="block text-fg-2">{series.coachName ?? "No coach yet"}</span>
       {/* The plum stripe and the dot already say "private" — an ember Private
           badge on top said it a third time, in the one colour that also means
           "live right now" two cards further down the same grid. */}
@@ -339,25 +355,54 @@ export function PrivateSeriesCard({
       />
     </>
   );
-  const tone = `${stateTone({})} ${KIND_RAIL.private}`;
+  const tone = `${stateTone({ ring: selecting && selected })} ${KIND_RAIL.private}`;
 
   if (selecting) {
     return (
-      <div className={`${cardBase} ${tone} flex items-start gap-3 opacity-55`}>
-        <Tick available={false} />
-        <div className="min-w-0">{inner}</div>
-      </div>
+      <button
+        type="button"
+        role="checkbox"
+        aria-checked={selected}
+        onClick={onClick}
+        className={`${cardBase} ${cardInteractive} ${tone} flex items-start gap-3`}
+      >
+        <Tick selected={selected} />
+        <span className="block min-w-0">{inner}</span>
+      </button>
     );
   }
+  // Outside selection the deep link is still the primary move — it is how the
+  // founder gets to the family's whole picture. The hold is what makes the card
+  // pickable without having to find the Select button first.
   if (series.nextSessionId && series.nextSessionStart) {
     return (
       <Link
         href={`/admin/schedule?date=${wallDate(series.nextSessionStart)}&session=${series.nextSessionId}`}
+        onClick={(e) => {
+          // A hold that ends on a link would otherwise navigate away and throw
+          // the selection it just started straight back out again.
+          if (consumeClick()) e.preventDefault();
+        }}
+        {...handlers}
         className={`block ${cardBase} ${cardInteractive} ${tone}`}
       >
         {inner}
       </Link>
     );
   }
-  return <div className={`${cardBase} ${tone}`}>{inner}</div>;
+  // No next session — a slot whose weeks stopped generating. This was the dead
+  // end: a card with nothing to link to and no other affordance anywhere.
+  return (
+    <button
+      type="button"
+      onClick={() => {
+        if (consumeClick()) return;
+        onClick();
+      }}
+      {...handlers}
+      className={`${cardBase} ${cardInteractive} ${tone}`}
+    >
+      <span className="block min-w-0">{inner}</span>
+    </button>
+  );
 }

@@ -32,6 +32,7 @@ import {
   bookSession,
   createClient,
   createCoach,
+  createPrivateSeries,
   createWeeklySlot,
   SEED,
 } from "../../e2e/lib/scenario";
@@ -576,10 +577,16 @@ describe("bulk class removal", () => {
     expect(r.kept).toBe(0);
     const { data: left } = await db.from("classes").select("id").in("id", [emptyA, emptyB]);
     expect(left ?? []).toHaveLength(0);
-    // The private class is managed from the Schedule tab, not from here, so it
-    // is left exactly where it was rather than swept up.
+    // A private class is not something this path can act on — one visible weekly
+    // slot stands for many of these generated weeks, so the founder's intent is
+    // expressed against the slot, not against them. It is still left exactly
+    // where it was...
     const { data: priv } = await db.from("classes").select("id").eq("id", privateId);
     expect(priv ?? []).toHaveLength(1);
+    // ...but it is now SAID so. It used to be counted in neither `deleted` nor
+    // `kept`, so a selection could quietly shrink between the tap and the ✓ line
+    // with nothing anywhere to account for the difference.
+    expect(r.unsupported).toBe(1);
   });
 
   it("lets go of a class whose only booking is a place on a session that has passed", async () => {
@@ -781,5 +788,130 @@ describe("bulk class removal", () => {
       .single();
     expect(still?.active).toBe(true);
     await expectNotificationCount(db, { userId: parent.id, type: "session_cancelled" }, 0);
+  });
+
+  // ── An ENDED class can still be holding a live place ──────────────────────
+  // `held` counts places on sessions still AHEAD of us, and ending a class does
+  // not make that impossible: `createOneOffSessionCore` will add a session to an
+  // ended class, and a school register can be marked against one. Both delete
+  // paths used to skip the ending when a class had already ended, on the
+  // reasoning that its cancellations had gone out — so the child's booking
+  // cascaded away in silence, under a ✓ line saying nobody needed telling.
+
+  it("ends an already-ended class that still holds a live booking before deleting it", async () => {
+    const db = admin();
+    const coach = await createCoach();
+    const parent = await createClient({ children: 1, groupPlanId: SEED.groupPlan1x });
+    const classId = await createGroupClass(`Ended but live ${uniq()}`);
+    const [session] = await createWeeklySlot({ weeks: 1, classId, coachId: coach.id, istHour: 19 });
+    await bookSession({
+      email: parent.email,
+      sessionId: session.sessionId,
+      playerId: parent.playerIds[0],
+    });
+    // Ended — but the future session and its booking are deliberately left live.
+    await db
+      .from("classes")
+      .update({ active: false, ends_on: new Date().toISOString().slice(0, 10) })
+      .eq("id", classId);
+
+    const founder = await asUser(FOUNDER_EMAIL);
+    const guard = await deleteGroupClassCore(typed(founder), SEED.founder, classId);
+    expect(guard.ok).toBe(false);
+    expect(guard.code).toBe("needs_force");
+
+    const r = await deleteGroupClassCore(typed(founder), SEED.founder, classId, true);
+    expect(r.ok).toBe(true);
+    // The number the sheet builds its "everyone was told" line from. It used to
+    // be hard-coded to 0 for any class that had already ended.
+    expect(r.cancelledBookings).toBe(1);
+
+    const { data: left } = await db.from("classes").select("id").eq("id", classId);
+    expect(left ?? []).toHaveLength(0);
+    await expectNotificationCount(db, { userId: parent.id, type: "session_cancelled" }, 1);
+  });
+
+  it("does the same in the bulk path, where a whole selection can hide one", async () => {
+    const db = admin();
+    const coach = await createCoach();
+    const parent = await createClient({ children: 1, groupPlanId: SEED.groupPlan1x });
+    const classId = await createGroupClass(`Bulk ended but live ${uniq()}`);
+    const [session] = await createWeeklySlot({ weeks: 1, classId, coachId: coach.id, istHour: 20 });
+    await bookSession({
+      email: parent.email,
+      sessionId: session.sessionId,
+      playerId: parent.playerIds[0],
+    });
+    await db
+      .from("classes")
+      .update({ active: false, ends_on: new Date().toISOString().slice(0, 10) })
+      .eq("id", classId);
+
+    const founder = await asUser(FOUNDER_EMAIL);
+    const plan = await planClassRemovalCore(typed(founder), [classId]);
+    // Its own bucket: it goes under the same tick as `purgeable`, but only this
+    // one owes somebody a message — which is what lets the sheet stop asserting
+    // that nobody is messaged again.
+    expect(plan.purgeableLive).toEqual([classId]);
+    expect(plan.purgeable).toEqual([]);
+    expect(plan.purgeCost.liveBookings).toBe(1);
+
+    const r = await bulkRemoveClassesCore(typed(founder), SEED.founder, [classId], {
+      purgeEnded: true,
+    });
+    expect(r.ok).toBe(true);
+    expect(r.purged).toBe(1);
+    const { data: left } = await db.from("classes").select("id").eq("id", classId);
+    expect(left ?? []).toHaveLength(0);
+    await expectNotificationCount(db, { userId: parent.id, type: "session_cancelled" }, 1);
+  });
+
+  it("sends ONE message to a family losing a class and a weekly private slot together", async () => {
+    // The guarantee that used to belong to `endGroupClassesCore` and could not
+    // survive a clear-out spanning two tables. The collapse now lives in
+    // CancellationNotice.flush, the one thing both cores write into.
+    const db = admin();
+    const coach = await createCoach();
+    const series = await createPrivateSeries({ weekday: 6, startTime: "16:30", coachId: coach.id });
+    // The private plan carries no group access, so this family needs a group
+    // plan too in order to be in both halves at once.
+    const { error: subErr } = await db.from("subscriptions").insert({
+      client_id: series.clientId,
+      plan_id: SEED.groupPlan3x,
+      source: "comp",
+      status: "active",
+      current_period_start: new Date().toISOString(),
+      current_period_end: new Date(Date.now() + 30 * 86_400_000).toISOString(),
+    });
+    if (subErr) throw new Error(`group plan: ${subErr.message}`);
+
+    const classId = await createGroupClass(`Cross kind ${uniq()}`);
+    const [session] = await createWeeklySlot({ weeks: 1, classId, coachId: coach.id, istHour: 21 });
+    await bookSession({
+      email: series.email,
+      sessionId: session.sessionId,
+      playerId: series.playerId,
+    });
+
+    const founder = await asUser(FOUNDER_EMAIL);
+    const r = await bulkRemoveClassesCore(typed(founder), SEED.founder, [classId], {
+      endBooked: true,
+      privateSeriesIds: [series.seriesId],
+      endPrivateSeries: true,
+    });
+    expect(r.ok).toBe(true);
+    expect(r.privateSeriesEnded).toBe(1);
+    expect(r.minutesReturned).toBeGreaterThan(0);
+
+    // One message each, not one per kind — and the same coach taught both.
+    const rows = await expectNotificationCount(
+      db,
+      { userId: series.clientId, type: "session_cancelled" },
+      1
+    );
+    expect(rows[0].data.collapsed).toBe(true);
+    expect(rows[0].data.series_count).toBe(1);
+    expect(rows[0].data.class_count).toBe(1);
+    await expectNotificationCount(db, { userId: coach.id, type: "session_cancelled" }, 1);
   });
 });

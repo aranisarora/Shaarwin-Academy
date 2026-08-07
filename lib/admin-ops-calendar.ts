@@ -810,12 +810,20 @@ export async function assignPrivateSessionClientCore(
  * Cancel all future scheduled private sessions for the same client as the
  * given session. Refunds minutes and notifies the client + affected coaches.
  * Used by the admin "Cancel all upcoming sessions" action on the session sheet.
+ *
+ * It also RETIRES that client's live weekly slots, and that is not a detail.
+ * Cancelling the sessions alone leaves `private_booking_series.active` true, and
+ * `generate_private_sessions` loops over exactly that flag under a nightly cron
+ * — so the founder cancelled the weeks, and the generator put them back the
+ * following night, every night. Worse, the refund this function issues restores
+ * the balance, so the minutes check passes and the family is debited again. The
+ * slot was, in practice, uncancellable from the admin.
  */
 export async function cancelFuturePrivateSessionsCore(
   supabase: SupabaseClient<Database>,
   founderId: string,
   sessionId: string
-): Promise<OpResult & { cancelled?: number }> {
+): Promise<OpResult & { cancelled?: number; seriesRetired?: number }> {
   // Resolve the client from this session's class.
   const { data: anchor } = await supabase
     .from("class_sessions")
@@ -830,13 +838,29 @@ export async function cancelFuturePrivateSessionsCore(
   const clientId = Array.isArray(det) ? det[0]?.client_id : det?.client_id;
   if (!clientId) return { ok: false, error: "Client not found." };
 
+  // Retire the templates FIRST, for the reason in the doc comment. This also
+  // does the honest half of the cancellation for any week the series generated:
+  // full refund, 'cancelled_by_academy', reminders dropped. Whatever is left
+  // afterwards is a one-off private with no series behind it, and the sweep
+  // below still catches it.
+  const { data: liveSeries } = await supabase
+    .from("private_booking_series")
+    .select("id")
+    .eq("client_id", clientId)
+    .eq("active", true);
+  let seriesRetired = 0;
+  for (const s of liveSeries ?? []) {
+    const { error } = await supabase.rpc("end_private_series_as_academy", { p_series: s.id });
+    if (!error) seriesRetired += 1;
+  }
+
   // All future class IDs for this client's private sessions.
   const { data: clientClasses } = await supabase
     .from("private_class_details")
     .select("class_id")
     .eq("client_id", clientId);
   const classIds = (clientClasses ?? []).map((c) => c.class_id);
-  if (!classIds.length) return { ok: true, cancelled: 0 };
+  if (!classIds.length) return { ok: true, cancelled: 0, seriesRetired };
 
   // Future scheduled sessions across those classes.
   const { data: futureSessions } = await supabase
@@ -847,7 +871,7 @@ export async function cancelFuturePrivateSessionsCore(
     .gt("starts_at", new Date().toISOString());
 
   const sessions = futureSessions ?? [];
-  if (!sessions.length) return { ok: true, cancelled: 0 };
+  if (!sessions.length) return { ok: true, cancelled: 0, seriesRetired };
 
   const sessionIds = sessions.map((s) => s.id);
 
@@ -924,7 +948,7 @@ export async function cancelFuturePrivateSessionsCore(
     meta: { client_id: clientId, cancelled: sessions.length },
   });
 
-  return { ok: true, cancelled: sessions.length };
+  return { ok: true, cancelled: sessions.length, seriesRetired };
 }
 
 /** Add a single extra session to an existing class (e.g. a holiday special). */

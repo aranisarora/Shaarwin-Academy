@@ -400,6 +400,114 @@ export async function createPrivateSession(opts: {
 }
 
 /** Book a single session as the given client (real book_session RPC). */
+export type CreatedPrivateSeries = {
+  seriesId: string;
+  clientId: string;
+  playerId: string;
+  email: string;
+  weekday: number;
+  startTime: string;
+  durationMinutes: number;
+};
+
+/**
+ * A weekly private slot — the standing arrangement, plus the weeks the real
+ * generator materialises from it.
+ *
+ * Deliberately built from `generate_private_sessions` rather than by hand. Half
+ * of what these tests are about is whether that generator brings a retired slot
+ * back, so a fixture that faked its output would be testing nothing. The series
+ * row itself is inserted directly (rather than through `create_private_series`)
+ * so a test can hold more slots than the plan's weekly cap allows a client to
+ * book for themselves — the founder's clear-out has to cope with whatever is
+ * actually on the calendar, not only with what the booking flow would permit.
+ */
+export async function createPrivateSeries(opts: {
+  weekday?: number; // ISO 1..7, default Wednesday
+  startTime?: string; // IST wall clock "HH:MM", default 17:00
+  durationMinutes?: number;
+  weeks?: number; // horizon to generate, default 4
+  /** Minutes granted up front — the generator debits each week it creates and
+   * refuses ('insufficient_minutes') once the balance runs out. */
+  minutes?: number;
+  coachId?: string;
+  fullName?: string;
+} = {}): Promise<CreatedPrivateSeries> {
+  const db = admin();
+  const weekday = opts.weekday ?? 3;
+  const startTime = opts.startTime ?? "17:00";
+  const duration = opts.durationMinutes ?? 60;
+  const weeks = opts.weeks ?? 4;
+
+  const client = await createClient({ children: 1, fullName: opts.fullName ?? "Private Family" });
+  const playerId = client.playerIds[0];
+
+  // A standing private slot needs a private plan behind it: the generator reads
+  // private_plan_limits and RETIRES any series whose plan has lapsed.
+  const { error: subErr } = await db.from("subscriptions").insert({
+    client_id: client.id,
+    plan_id: "00000000-0000-4000-8000-0000000000d7", // Private — weekly, 60 min
+    source: "comp",
+    status: "active",
+    current_period_start: new Date().toISOString(),
+    current_period_end: daysFromNow(30).toISOString(),
+  });
+  if (subErr) throw new Error(`createPrivateSeries subscription: ${subErr.message}`);
+
+  const { error: ledgerErr } = await db.from("private_credit_ledger").insert({
+    client_id: client.id,
+    delta_minutes: opts.minutes ?? duration * (weeks + 4),
+    reason: "grant",
+    note: "test fixture",
+  });
+  if (ledgerErr) throw new Error(`createPrivateSeries minutes: ${ledgerErr.message}`);
+
+  const { data: series, error: seriesErr } = await db
+    .from("private_booking_series")
+    .insert({
+      client_id: client.id,
+      player_id: playerId,
+      preferred_coach: opts.coachId ?? null,
+      weekday,
+      start_time: startTime,
+      duration_minutes: duration,
+      address: "12 Whitefield Court, Whitefield",
+      postcode: "",
+      lat: 12.9698, // within the default coach's teachable range
+      lng: 77.75,
+      has_table: true,
+    })
+    .select("id")
+    .single();
+  if (seriesErr || !series) throw new Error(`createPrivateSeries: ${seriesErr?.message}`);
+
+  const { error: genErr } = await db.rpc("generate_private_sessions", { p_weeks: weeks });
+  if (genErr) throw new Error(`createPrivateSeries generate: ${genErr.message}`);
+
+  return {
+    seriesId: series.id as string,
+    clientId: client.id,
+    playerId,
+    email: client.email,
+    weekday,
+    startTime,
+    durationMinutes: duration,
+  };
+}
+
+/** How many future weeks a series currently has on the calendar. The number
+ * every "did it come back?" assertion is made of. */
+export async function countFutureSeriesSessions(seriesId: string): Promise<number> {
+  const { data, error } = await admin()
+    .from("bookings")
+    .select("id,class_sessions!inner(starts_at,status)")
+    .eq("private_series_id", seriesId)
+    .gt("class_sessions.starts_at", new Date().toISOString())
+    .eq("class_sessions.status", "scheduled");
+  if (error) throw new Error(`countFutureSeriesSessions: ${error.message}`);
+  return (data ?? []).length;
+}
+
 export async function bookSession(args: {
   email: string;
   password?: string;

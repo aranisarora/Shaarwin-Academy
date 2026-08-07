@@ -12,8 +12,15 @@ import {
   createOneOffClassCore,
   createPrivateSessionCore,
   deleteGroupClassCore,
+  endPrivateSeriesCore,
+  planCalendarWipeCore,
   planClassRemovalCore,
+  planPrivateSeriesRemovalCore,
+  wipeCalendarCore,
+  type CalendarWipePreview,
+  type CalendarWipeResult,
   type ClassRemovalPlan,
+  type PrivateSeriesRemovalPlan,
   materializeInviteCore,
   endGroupClassCore,
   moveSessionCore,
@@ -41,7 +48,14 @@ import {
 //   updateGroupClass ................. notifies everyone booked *iff* the slot moves
 //   endGroupClass .................... notifies everyone booked (sessions cancelled)
 //   restoreGroupClass ................ notifies nobody
-//   cancelAllFuturePrivateSessions ... notifies the client
+//   cancelAllFuturePrivateSessions ... notifies the client + affected coaches, and
+//                                      retires the client's weekly slots so they stop
+//                                      regenerating
+//   endPrivateSeries ................. notifies each family + each coach, ONE message
+//                                      each across every slot in the selection; the
+//                                      minutes go back in full, including a week
+//                                      inside the 24-hour window
+//   planPrivateSeriesRemoval ......... notifies nobody (read-only preview)
 //   reassignClassCoach ............... notifies the coach(es)
 //   deleteGroupClass ................. notifies nobody when the class holds no live booking;
 //                                      when it does, `force` ends it first, so everyone
@@ -52,7 +66,15 @@ import {
 //                                      running; every class it ends — including the ones it
 //                                      ends AND deletes (deleteBooked) — notifies everyone
 //                                      booked + their coaches, ONE message each no matter how
-//                                      many classes went (see endGroupClassesCore)
+//                                      many classes went. That guarantee now spans BOTH
+//                                      kinds: a parent losing three classes and a weekly
+//                                      private slot in one clear-out hears once (the collapse
+//                                      is CancellationNotice.flush, not endGroupClassesCore)
+//   planCalendarWipe ................. notifies nobody (read-only preview)
+//   wipeCalendar ..................... notifies everyone booked + every coach rostered, ONE
+//                                      message each for the whole calendar (one SQL
+//                                      INSERT..SELECT..GROUP BY — there is no loop to get it
+//                                      wrong)
 //   topUpSessions .................... notifies nobody
 //   createOneOffClass ................ notifies nobody (nothing booked yet)
 //   addSchoolPlayer .................. notifies nobody
@@ -191,14 +213,43 @@ export async function deleteGroupClass(
   };
 }
 
-/** What a bulk removal would do, so the confirm step can say it out loud. */
+/**
+ * What a bulk removal would do, so the confirm step can say it out loud.
+ *
+ * Two id spaces, two plans, deliberately never merged: `classIds` are `classes`
+ * rows, `seriesIds` are `private_booking_series` rows, and there is no foreign
+ * key between the tables. A series id passed as a class id matches nothing and
+ * disappears.
+ */
 export async function planClassRemoval(
-  classIds: string[]
-): Promise<Result & Partial<ClassRemovalPlan>> {
+  classIds: string[],
+  seriesIds: string[] = []
+): Promise<Result & Partial<ClassRemovalPlan> & { series?: PrivateSeriesRemovalPlan }> {
   const { supabase, founder } = await requireFounder();
   if (!founder) return { ok: false, error: "Founder only." };
-  const plan = await planClassRemovalCore(supabase, classIds);
-  return { ok: true, ...plan };
+  const [plan, series] = await Promise.all([
+    planClassRemovalCore(supabase, classIds),
+    planPrivateSeriesRemovalCore(supabase, seriesIds),
+  ]);
+  return { ok: true, ...plan, series };
+}
+
+/** Retire weekly private slots outright — the Schedule tab's client-wide
+ * "cancel all upcoming" is a different, blunter thing. */
+export async function endPrivateSeries(
+  seriesIds: string[]
+): Promise<Result & { ended?: number; cancelled?: number; minutesReturned?: number }> {
+  const { supabase, founder } = await requireFounder();
+  if (!founder) return { ok: false, error: "Founder only." };
+  const result = await endPrivateSeriesCore(supabase, founder.id, seriesIds);
+  if (!result.ok) return result;
+  refresh();
+  return {
+    ok: true,
+    ended: result.ended,
+    cancelled: result.cancelled,
+    minutesReturned: result.minutesReturned,
+  };
 }
 
 /** Clear a selection of weekly classes — delete the stopped ones that carry no
@@ -210,6 +261,8 @@ export async function bulkRemoveClasses(
     purgeEnded?: boolean;
     deleteBooked?: boolean;
     deleteRunningEmpty?: boolean;
+    privateSeriesIds?: string[];
+    endPrivateSeries?: boolean;
   }
 ): Promise<
   Result & {
@@ -219,6 +272,9 @@ export async function bulkRemoveClasses(
     purged?: number;
     deletedBooked?: number;
     kept?: number;
+    privateSeriesEnded?: number;
+    minutesReturned?: number;
+    unsupported?: number;
     warning?: string;
   }
 > {
@@ -227,6 +283,36 @@ export async function bulkRemoveClasses(
   const result = await bulkRemoveClassesCore(supabase, founder.id, classIds, opts);
   if (!result.ok) return result;
   refresh();
+  return result;
+}
+
+// ── The whole calendar ───────────────────────────────────────────────────────
+
+/** Read-only. What is on the calendar right now, so the confirm step can name
+ * the cost before the founder is anywhere near a destructive control. */
+export async function planCalendarWipe(): Promise<Result & { preview?: CalendarWipePreview }> {
+  const { supabase, founder } = await requireFounder();
+  if (!founder) return { ok: false, error: "Founder only." };
+  return planCalendarWipeCore(supabase);
+}
+
+/**
+ * Clear everything. `confirm` must be the literal "WIPE" — checked again in the
+ * RPC, so the guard survives anything the client does.
+ */
+export async function wipeCalendar(
+  confirm: string,
+  keepHistory: boolean
+): Promise<Result & { wiped?: CalendarWipeResult }> {
+  const { supabase, founder } = await requireFounder();
+  if (!founder) return { ok: false, error: "Founder only." };
+  const result = await wipeCalendarCore(supabase, founder.id, { confirm, keepHistory });
+  if (!result.ok) return result;
+  refresh();
+  // A wipe reaches further than the calendar screens: a parent's schedule and
+  // the players list both read from what just went.
+  revalidatePath("/admin/players");
+  revalidatePath("/app/schedule");
   return result;
 }
 
