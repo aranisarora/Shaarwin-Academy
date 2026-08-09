@@ -21,15 +21,21 @@ export const metadata: Metadata = {
     default: "Sharwin Table Tennis Academy — Bengaluru",
     template: "%s — Sharwin Table Tennis Academy",
   },
+  // Read as the headline in every share preview — WhatsApp, iMessage, Slack —
+  // so it opens on the hero's own words. It used to open "Play faster. Think
+  // faster.", a half-remembered inversion of a line the site does not contain;
+  // whoever tapped through landed on "Think smarter. Play faster." and met a
+  // page that did not match its own link. Keep this first sentence in step with
+  // the <h1> in app/page.tsx.
   description:
-    "ITTF-certified coaching at your society, school, college or office. Play faster. Think faster.",
+    "Think smarter. Play faster. ITTF-certified coaching at your society, school, college or office.",
   alternates: {
     canonical: siteUrl,
   },
   openGraph: {
     title: "Sharwin Table Tennis Academy — Bengaluru",
     description:
-      "ITTF-certified coaching at your society, school, college or office. Play faster. Think faster.",
+      "Think smarter. Play faster. ITTF-certified coaching at your society, school, college or office.",
     url: siteUrl,
     siteName: "Sharwin Table Tennis Academy",
     images: [

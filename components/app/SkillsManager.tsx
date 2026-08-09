@@ -72,7 +72,12 @@ export function SkillsManager({
             }, "Category added.");
           }}
         >
-          <div className="flex-1">
+          {/* min-w-0 on every flex-1 that holds an <input> in this file. A bare
+              flex-1 is `flex: 1 1 0%` with min-width:auto, and an input's auto
+              minimum is its intrinsic size — the default 20-character box, near
+              enough 176px — so the track refuses to shrink under it and pushes
+              the button beside it off the right of the phone. */}
+          <div className="min-w-0 flex-1">
             <Input
               label="New category"
               placeholder="e.g. Physical, Mental, Technique"
@@ -136,14 +141,17 @@ function CategoryCard({
                 run(() => renameCategory(category.id, name), "Category renamed.");
               }
             }}
-            className="min-h-11 flex-1 rounded-[8px] border border-transparent bg-transparent px-2 text-lg font-semibold text-fg hover:border-line focus:border-line"
+            className="min-h-11 min-w-0 flex-1 rounded-[8px] border border-transparent bg-transparent px-2 text-lg font-semibold text-fg hover:border-line focus:border-line"
           />
         ) : (
-          <h2 className="flex-1 px-2 text-lg font-semibold">{category.name}</h2>
+          <h2 className="min-w-0 flex-1 truncate px-2 text-lg font-semibold">
+            {category.name}
+          </h2>
         )}
         {isFounder && (
           <Button
             variant="destructive"
+            className="shrink-0 px-3"
             onClick={() => {
               if (
                 confirm(
@@ -188,14 +196,19 @@ function CategoryCard({
           }, "Skill added.");
         }}
       >
-        <div className="flex-1">
+        <div className="min-w-0 flex-1">
           <Input
             placeholder="Add a skill…"
             value={newSkill}
             onChange={(e) => setNewSkill(e.target.value)}
           />
         </div>
-        <Button type="submit" variant="ghost" disabled={pending || !newSkill.trim()}>
+        <Button
+          type="submit"
+          variant="ghost"
+          className="shrink-0 px-3"
+          disabled={pending || !newSkill.trim()}
+        >
           Add skill
         </Button>
       </form>
@@ -217,7 +230,23 @@ function SkillRow({
   const [name, setName] = useState(skill.name);
 
   return (
-    <li className={`flex items-center gap-2 py-2 ${skill.active ? "" : "opacity-50"}`}>
+    // The name and its buttons are two groups that wrap as units, not four
+    // controls in a row. A founder's row is a rename field, a "Hidden" badge,
+    // Hide/Restore and Delete — about 364px of content inside a card that is
+    // 318px wide on a 390px phone, so it ran off the right edge and took the
+    // page's horizontal scroll with it: Delete was unreachable and every other
+    // screen in the app could be dragged sideways from here.
+    //
+    // basis-40 is the hinge. It lets the name shrink to 10rem before the button
+    // group drops to its own line, so a desktop row stays exactly as it was and
+    // a phone gets two clean lines instead of one broken one. The buttons keep
+    // min-h-11 and only lose horizontal padding — this is a row you scan, not
+    // one you should have to aim carefully at.
+    <li
+      className={`flex flex-wrap items-center gap-x-2 gap-y-1 py-2 ${
+        skill.active ? "" : "opacity-50"
+      }`}
+    >
       {isFounder ? (
         <input
           value={name}
@@ -227,40 +256,44 @@ function SkillRow({
               run(() => renameSkill(skill.id, name), "Skill renamed.");
             }
           }}
-          className="min-h-9 flex-1 rounded-[8px] border border-transparent bg-transparent px-2 text-base text-fg hover:border-line focus:border-line"
+          className="min-h-9 min-w-0 flex-1 basis-40 rounded-[8px] border border-transparent bg-transparent px-2 text-base text-fg hover:border-line focus:border-line"
         />
       ) : (
-        <span className="flex-1 px-2 text-base">{skill.name}</span>
+        <span className="min-w-0 flex-1 basis-40 px-2 text-base">{skill.name}</span>
       )}
 
-      {!skill.active && <Badge>Hidden</Badge>}
+      <div className="ml-auto flex shrink-0 items-center gap-2">
+        {!skill.active && <Badge>Hidden</Badge>}
 
-      <Button
-        variant="ghost"
-        onClick={() =>
-          run(
-            () => setSkillActive(skill.id, !skill.active),
-            skill.active ? "Skill hidden." : "Skill restored."
-          )
-        }
-        disabled={pending}
-      >
-        {skill.active ? "Hide" : "Restore"}
-      </Button>
-
-      {isFounder && (
         <Button
-          variant="destructive"
-          onClick={() => {
-            if (confirm(`Delete “${skill.name}” and its rating history?`)) {
-              run(() => deleteSkill(skill.id), "Skill deleted.");
-            }
-          }}
+          variant="ghost"
+          className="px-3"
+          onClick={() =>
+            run(
+              () => setSkillActive(skill.id, !skill.active),
+              skill.active ? "Skill hidden." : "Skill restored."
+            )
+          }
           disabled={pending}
         >
-          Delete
+          {skill.active ? "Hide" : "Restore"}
         </Button>
-      )}
+
+        {isFounder && (
+          <Button
+            variant="destructive"
+            className="px-3"
+            onClick={() => {
+              if (confirm(`Delete “${skill.name}” and its rating history?`)) {
+                run(() => deleteSkill(skill.id), "Skill deleted.");
+              }
+            }}
+            disabled={pending}
+          >
+            Delete
+          </Button>
+        )}
+      </div>
     </li>
   );
 }

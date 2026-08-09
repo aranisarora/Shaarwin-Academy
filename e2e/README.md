@@ -5,6 +5,7 @@ Two independent things live under `e2e/` — don't confuse them:
 | | What it proves | Runs against | Command |
 |---|---|---|---|
 | **Viewport audit** (`e2e/public.spec.ts`) | The public marketing pages don't scroll sideways at phone widths | `localhost:3000` (your normal dev server) — no login needed | `npm run e2e` |
+| **Viewport audit, signed in** (`e2e/flows/viewport.spec.ts`) | Every tab of every role doesn't scroll sideways at phone widths | **Local** Supabase, same as the flow harness below | `npm run e2e:flows` |
 | **E2E flow harness** (`tests/db/`, `e2e/flows/`) | The app's DB logic and critical screens actually work — notifications queued to the right person at the right time | **Local** Supabase in Docker, seeded fresh; auth minted automatically | `npm run test:db`, `npm run e2e:flows` |
 
 The flow harness never touches the live database (every entry point hard-fails against a non-local Supabase host). Full design: `docs/testing-harness-plan.md`.
@@ -74,6 +75,24 @@ removed rather than kept as three files that quietly never ran.
 To audit a screen behind a login, add a spec under `e2e/flows/`: the flow
 harness signs in for you against local Supabase (`e2e/lib/auth.ts`), so there
 is nothing to capture by hand and nothing to keep fresh.
+
+That is what `e2e/flows/viewport.spec.ts` is — the signed-in half of this audit,
+brought back the way this section says to bring it back. It walks every tab of
+the founder, coach, client and school apps at 360px and 390px, and reports the
+*deepest* element sticking out past the viewport rather than just naming the
+route. Two things it does deliberately:
+
+- It **seeds** what a screen needs to be worth auditing. An empty screen cannot
+  overflow, so a green tick on an empty `/admin/skills` proves only that the
+  page loaded. Add a row to `seedSkills()` (or a new seeder) whenever a screen
+  gets a denser worst case than the seed produces.
+- It **excuses** anything inside a container that scrolls sideways on purpose —
+  the filter chip row, the week strip, the slot picker. Overflow there is the
+  design, and flagging it would train you to ignore the whole report.
+
+Add the route to `ROUTES` when you add a tab. If the screen needs an id to
+exist (a player, a school pupil), extend the "player and school detail screens
+fit" test instead, which builds its own.
 
 The `.auth/` directory and `test-results/` are gitignored — nothing here is
 committed.

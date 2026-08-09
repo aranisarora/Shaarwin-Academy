@@ -363,6 +363,49 @@ body {
   }
 }
 
+/* A row that scrolls sideways rather than wrapping — the filter chips, and
+ * anything else that is a single line of controls on a phone. The scrollbar is
+ * suppressed because a phone has no room to spend 15px of vertical space on a
+ * track nobody can grab; what tells you there is more is `.scroll-x-fade`
+ * below, plus the half-chip left peeking at the edge.
+ *
+ * overscroll-behavior-x: contain stops a swipe that runs out of chips from
+ * turning into the browser's back-navigation gesture. */
+.scroll-x {
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+
+.scroll-x::-webkit-scrollbar {
+  display: none;
+}
+
+/* The affordance. Applied only while there is actually something past the edge
+ * (the component measures and toggles it), so a row of two chips that fits gets
+ * no phantom fade suggesting a third. Both edges are driven independently:
+ * scrolled to the middle of a long row, both ends are soft.
+ *
+ * mask-image, not an absolutely-positioned gradient overlay — the row sits on
+ * three different backgrounds (surface, surface-2, and the sticky schedule
+ * header) and a painted scrim has to know which. A mask does not. */
+.scroll-x-fade-e {
+  mask-image: linear-gradient(to right, #000 calc(100% - 2rem), transparent);
+}
+
+.scroll-x-fade-s {
+  mask-image: linear-gradient(to left, #000 calc(100% - 2rem), transparent);
+}
+
+.scroll-x-fade-s.scroll-x-fade-e {
+  mask-image: linear-gradient(
+    to right,
+    transparent,
+    #000 2rem calc(100% - 2rem),
+    transparent
+  );
+}
+
 /* Deep-link landing ring — a "needs your attention" row on Today scrolls the
  * exact item into view and pulses this ring so the founder sees what to fix. */
 .deep-focus-ring {
