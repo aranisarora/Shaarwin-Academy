@@ -16,7 +16,12 @@
 // was called off, and that is a different fact from a day we never ran.
 
 import { useRef } from "react";
-import { formatWallDay, formatWallMonthRange, shiftWallDate } from "@/lib/academy-time";
+import {
+  formatWallDay,
+  formatWallMonthRange,
+  formatWallWeekdayNarrow,
+  shiftWallDate,
+} from "@/lib/academy-time";
 
 export type DayDensity = {
   /** Academy wall date, "YYYY-MM-DD". */
@@ -27,7 +32,7 @@ export type DayDensity = {
   cancelled: number;
 };
 
-const LETTERS = ["M", "T", "W", "T", "F", "S", "S"];
+const DAYS_SHOWN = 7;
 
 export function WeekStrip({
   anchor,
@@ -39,7 +44,9 @@ export function WeekStrip({
   onPick,
   selected,
 }: {
-  /** First day of the shown week, "YYYY-MM-DD". */
+  /** First of the seven days shown, "YYYY-MM-DD". Not necessarily a Monday —
+   *  the window is seven days from wherever you are, and "Today" parks it on
+   *  today whatever weekday that is. */
   anchor: string;
   today: string;
   days: DayDensity[];
@@ -51,7 +58,7 @@ export function WeekStrip({
   /** The day the list is parked on, if any — drawn as a ring. */
   selected?: string | null;
 }) {
-  const dates = LETTERS.map((_, i) => shiftWallDate(anchor, i));
+  const dates = Array.from({ length: DAYS_SHOWN }, (_, i) => shiftWallDate(anchor, i));
   const byDate = new Map(days.map((d) => [d.date, d]));
   const isThisWeek = anchor === today || (today >= anchor && today <= dates[6]);
 
@@ -123,7 +130,7 @@ export function WeekStrip({
           in coach lanes anyway, so a seven-cell summary of a week already fully
           on screen was the redundant half of a broken control. */}
       <div className="grid grid-cols-7 gap-0.5 px-1 pb-1.5 lg:hidden">
-        {dates.map((date, i) => {
+        {dates.map((date) => {
           const d = byDate.get(date);
           const live = d?.live ?? 0;
           const cancelled = d?.cancelled ?? 0;
@@ -144,8 +151,13 @@ export function WeekStrip({
                 isSelected ? "bg-surface ring-1 ring-ember" : "hover:bg-surface"
               }`}
             >
+              {/* The letter comes off this date, not off the column. A fixed
+                  M-T-W-T-F-S-S row assumed the week began on a Monday, and the
+                  window begins on whatever day you are on — so every letter was
+                  wrong six days in seven, with the date sitting right under it
+                  saying otherwise. */}
               <span className="text-[10px] uppercase leading-none text-fg-2">
-                {LETTERS[i]}
+                {formatWallWeekdayNarrow(date)}
               </span>
               <span
                 className={`tnum text-sm leading-none ${

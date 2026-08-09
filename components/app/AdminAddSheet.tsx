@@ -46,6 +46,7 @@ import {
   ClassDetailFields,
   EMPTY_CLASS_FORM,
   ItemTimesList,
+  durationOptions,
   generateClassTitle,
   time12h,
   type ClassFormState,
@@ -351,12 +352,22 @@ export function AdminAddSheet({
   // "open" → hold a private slot with no client, to be assigned later.
   const isOpen = priv.clientId === "open";
 
-  // Derived from the one Repeat field rather than kept as a second flag. An
-  // open slot is a single held hour with nobody on it, so it never repeats
-  // however Repeat is set — that exception lives here, once, instead of being
-  // re-asserted at every call site the way `privRecurring` had to be.
+  // Derived from the one Repeat field rather than kept as a second flag.
+  //
+  // An open slot used to be forced to a single hour here — `repeats && !isOpen`
+  // — on the reasoning that a standing weekly slot is a private_booking_series
+  // row and that table's client_id is NOT NULL. But the series is only the
+  // rolling template; the occurrences themselves never needed a client, so an
+  // open run holds its N weeks the same way a client's booking does and simply
+  // goes without the template. `createPrivateSessionCore` has said so for a
+  // while (`recurring = weeks > 1 && !isOpen`) and tests/db/open-private-slot
+  // pins it. The exception here outlived the reason for it, and cost more than
+  // the repeat it refused: picking "open slot" while Repeats was on "Every
+  // week" tore the days, the start date and the length of the run off the form
+  // in one go — and hid the Repeats control on the way, so there was no way to
+  // see what had happened or to put it back.
   const repeats = repeat === "weekly";
-  const privRecurring = repeats && !isOpen;
+  const privRecurring = repeats;
 
   // ── What's already in the slot he's picking ────────────────────────────────
   //
@@ -842,39 +853,38 @@ export function AdminAddSheet({
           </div>
         </div>
 
-        {/* An open slot is one held hour by definition, so the question does not
-            apply and asking it would only offer an answer that gets ignored. */}
-        {!isOpen && (
-          <div>
-            <p className="label mb-2">Repeats</p>
-            <div role="radiogroup" aria-label="How often" className="grid grid-cols-2 gap-2">
-              {(
-                [
-                  { value: "once", label: "Just once" },
-                  { value: "weekly", label: "Every week" },
-                ] as const
-              ).map((r) => (
-                <button
-                  key={r.value}
-                  type="button"
-                  role="radio"
-                  aria-checked={repeat === r.value}
-                  onClick={() => {
-                    mark();
-                    setRepeat(r.value);
-                  }}
-                  className={`pressable min-h-11 rounded-[8px] border px-2 text-sm font-semibold ${
-                    repeat === r.value
-                      ? "border-ember bg-ember text-ivory"
-                      : "border-line hover:border-ember"
-                  }`}
-                >
-                  {r.label}
-                </button>
-              ))}
-            </div>
+        {/* Asked of every kind of class, including an open slot — holding the
+            same free hour every week for a client you have not named yet is the
+            ordinary reason to hold one at all. */}
+        <div>
+          <p className="label mb-2">Repeats</p>
+          <div role="radiogroup" aria-label="How often" className="grid grid-cols-2 gap-2">
+            {(
+              [
+                { value: "once", label: "Just once" },
+                { value: "weekly", label: "Every week" },
+              ] as const
+            ).map((r) => (
+              <button
+                key={r.value}
+                type="button"
+                role="radio"
+                aria-checked={repeat === r.value}
+                onClick={() => {
+                  mark();
+                  setRepeat(r.value);
+                }}
+                className={`pressable min-h-11 rounded-[8px] border px-2 text-sm font-semibold ${
+                  repeat === r.value
+                    ? "border-ember bg-ember text-ivory"
+                    : "border-line hover:border-ember"
+                }`}
+              >
+                {r.label}
+              </button>
+            ))}
           </div>
-        )}
+        </div>
 
         {/* ── Group / school class ──────────────────────────────────────────── */}
         {(mode === "weekly" || mode === "school") && (
@@ -1052,12 +1062,19 @@ export function AdminAddSheet({
                   </option>
                 ))}
               </Select>
+              {/* The same lengths a group or school class gets. This offered
+                  60 and 90 only, which made "how long is it" the one question
+                  on the sheet whose answer depended on which kind of class was
+                  selected — and there is nothing about a private that makes a
+                  two-hour one impossible. `durationOptions` also folds in a
+                  length already on the class, so duplicating a private booked
+                  before this can't open with the field blank. */}
               <Select
                 label="Length"
                 value={priv.duration}
                 onChange={(e) => updatePriv({ duration: Number(e.target.value) })}
               >
-                {[60, 90].map((d) => (
+                {durationOptions(priv.duration).map((d) => (
                   <option key={d} value={d}>{d} min</option>
                 ))}
               </Select>

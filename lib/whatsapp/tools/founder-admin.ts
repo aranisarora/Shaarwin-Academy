@@ -390,7 +390,7 @@ const createPrivate: WaTool = {
       player_name: { type: "string", description: "Which household player — omit for the default" },
       date: { type: "string", description: "YYYY-MM-DD (IST) — first (or only) session date" },
       time: { type: "string", description: "HH:MM (IST)" },
-      duration_minutes: { type: "number", description: "60 or 90 — defaults to 60 if omitted" },
+      duration_minutes: { type: "number", description: "How long, in minutes — 30 to 360, usually 60 or 90. Defaults to 60 if omitted." },
       recur_weeks: {
         type: "number",
         description: "1–12. Stands up a weekly private slot starting on date (same weekday/time), booked N weeks ahead as a managed series the nightly generator keeps rolling. Default 1 (single one-off session). Mirrors admin recurring toggle.",
@@ -446,7 +446,13 @@ const createPrivate: WaTool = {
       playerId = match.id;
     }
 
-    const durationMinutes = Number(input.duration_minutes) === 90 ? 90 : 60;
+    // 30–360, the range the classes table allows and the admin sheet offers.
+    // Pinned to 60/90 before this, which quietly booked an hour when the
+    // founder asked over WhatsApp for two.
+    const durationMinutes =
+      input.duration_minutes != null
+        ? Math.min(Math.max(Math.trunc(Number(input.duration_minutes)) || 60, 30), 360)
+        : 60;
     const hasTable = input.has_table != null ? Boolean(input.has_table) : true;
     const recurWeeks = input.recur_weeks != null ? Math.min(Math.max(Math.trunc(Number(input.recur_weeks)), 1), 12) : 1;
     const result = await createPrivateSessionCore(ctx.supabase!, ctx.profile!.id, {
