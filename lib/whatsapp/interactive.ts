@@ -284,6 +284,13 @@ async function handleCoachReply(opts: {
 
   const first = (profile.full_name ?? "").trim().split(/\s+/)[0] || "there";
   const sessionLink = `${appUrl()}/coach/session/${sessionId}`;
+  // The same screen, told why the coach is arriving. `?wrap=1` means "finish
+  // this class": if attendance is already in, the app opens straight into the
+  // assessments that are left instead of showing a page of ticks the coach has
+  // to read before finding the one thing still outstanding. Only the
+  // after-class branches use it — a "to cancel, do it in the app" link is not
+  // a wrap-up and must not behave like one.
+  const wrapLink = `${sessionLink}?wrap=1`;
 
   switch (action) {
     case WA_BUTTON.COACH_CONFIRM: {
@@ -336,11 +343,11 @@ async function handleCoachReply(opts: {
       if (error) return "Couldn't save attendance just now — please mark it in the app.";
       const n = data?.length ?? 0;
       const who = n === 0 ? "everyone" : n === 1 ? "the student" : `all ${n} students`;
-      const next = await nextAssessmentLink(supabase, sessionId, sessionLink);
+      const next = await nextAssessmentLink(supabase, sessionId, wrapLink);
       return `✅ Marked ${who} present. ${next}`;
     }
     case WA_BUTTON.AC_ABSENT: {
-      return startAbsentPrompt(admin, supabase, profile.id, sessionId, sessionLink);
+      return startAbsentPrompt(admin, supabase, profile.id, sessionId, wrapLink);
     }
   }
   return null;
@@ -432,7 +439,11 @@ async function handleAbsentDigits(
     .maybeSingle();
   if (!note) return null;
 
-  const data = note.data as { absent_prompt?: string[]; absent_prompt_at?: string };
+  const data = note.data as {
+    absent_prompt?: string[];
+    absent_prompt_at?: string;
+    session_id?: string;
+  };
   const ids = data.absent_prompt ?? [];
   const at = data.absent_prompt_at ? new Date(data.absent_prompt_at).getTime() : 0;
   if (!ids.length || Date.now() - at > 2 * 3600000) return null;
@@ -464,12 +475,25 @@ async function handleAbsentDigits(
   delete cleared.absent_prompt_at;
   await admin.from("notifications").update({ data: cleared }).eq("id", note.id);
 
+  // Attendance is only half the wrap-up, and this branch used to stop here —
+  // a coach who did the whole roster over WhatsApp got a tick and nothing
+  // else, while the "All present" branch beside it handed them the next
+  // assessment. Same ending for both, so finishing one way or the other leads
+  // to the same place.
+  const sessionId = data.session_id;
+  const wrapLink = sessionId
+    ? `${appUrl()}/coach/session/${sessionId}?wrap=1`
+    : `${appUrl()}/coach`;
+  const next = sessionId
+    ? ` ${await nextAssessmentLink(supabase, sessionId, wrapLink)}`
+    : "";
+
   if (!absentIds.length) {
-    return `Great — marked all ${presentIds.length} present ✅`;
+    return `Great — marked all ${presentIds.length} present ✅${next}`;
   }
   const names = await bookingNames(supabase, absentIds);
   const absentPhrase = names.length ? names.join(", ") : `${absentIds.length}`;
-  return `Marked ${absentPhrase} absent, ${presentIds.length} present ✅`;
+  return `Marked ${absentPhrase} absent, ${presentIds.length} present ✅${next}`;
 }
 
 /** Confirmed bookings for a session, ordered by player name. */

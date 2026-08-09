@@ -2252,6 +2252,18 @@ export type Database = {
           starts_at: string
         }[]
       }
+      get_coach_wrapup_queue: {
+        Args: { p_coach?: string }
+        Returns: {
+          class_title: string
+          kind: string
+          pending_count: number
+          player_id: string | null
+          player_name: string | null
+          session_ended_at: string
+          session_id: string
+        }[]
+      }
       get_pending_assessments: {
         Args: { p_coach?: string }
         Returns: {
@@ -2296,6 +2308,10 @@ export type Database = {
       is_coach: { Args: never; Returns: boolean }
       is_founder: { Args: never; Returns: boolean }
       is_school_admin: { Args: never; Returns: boolean }
+      save_session_assessment: {
+        Args: { p_player: string; p_session?: string | null; p_ratings?: Json }
+        Returns: string
+      }
       school_admin_class: { Args: { p_class: string }; Returns: boolean }
       school_admin_session: { Args: { p_session: string }; Returns: boolean }
       school_admin_venues: { Args: never; Returns: string[] }

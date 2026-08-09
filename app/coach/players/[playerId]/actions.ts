@@ -31,6 +31,21 @@ export async function addStudentNote(
   return { ok: true };
 }
 
+/**
+ * File or amend this coach's assessment of a player.
+ *
+ * Previously an INSERT straight at `skill_assessments`, which meant the second
+ * save for a session hit `skill_assessments_once_per_session` and came back as
+ * "Already assessed for that session." — a dead end, because neither that table
+ * nor `skill_ratings` carries an UPDATE policy, so there was no route to a
+ * correction at all. A coach who tapped 1 where they meant 4 left a child's
+ * mastery score wrong permanently, in a number their parent can see.
+ *
+ * `save_session_assessment` (migration 0075) owns the whole edit instead:
+ * find-or-create on (player, session, coach), then upsert only the skills the
+ * coach touched. Saving twice is now how you fix a mistake, and a skill left
+ * alone keeps the rating it already had.
+ */
 export async function submitAssessment(
   playerId: string,
   sessionId: string | null,
@@ -42,35 +57,28 @@ export async function submitAssessment(
   } = await supabase.auth.getUser();
   if (!user) return { ok: false, error: "Sign in first." };
 
-  // The assessment row itself is the "pending" completion marker, so always
-  // insert it even when no ratings changed. RLS requires coach_id = caller.
-  const { data: assessment, error: aErr } = await supabase
-    .from("skill_assessments")
-    .insert({ player_id: playerId, coach_id: user.id, session_id: sessionId })
-    .select("id")
-    .single();
-  if (aErr) {
-    // Unique (player, session, coach) — this session was already assessed.
-    if (aErr.code === "23505") {
-      return { ok: false, error: "Already assessed for that session." };
+  const clean = ratings.filter((r) => r.rating >= 1 && r.rating <= 5);
+
+  // The assessment row itself is the completion marker the backlog reads, so
+  // it is written even when nothing changed — "I have looked at this child and
+  // they are where they were" is a real answer, and the one a coach in a hurry
+  // most often gives.
+  const { error } = await supabase.rpc("save_session_assessment", {
+    p_player: playerId,
+    p_session: sessionId,
+    p_ratings: clean.map((r) => ({ skill_id: r.skillId, rating: r.rating })),
+  });
+
+  if (error) {
+    if (error.message.includes("not_your_session")) {
+      return { ok: false, error: "That class isn't on your schedule." };
     }
     return { ok: false, error: "Couldn’t save the assessment." };
   }
 
-  const clean = ratings.filter((r) => r.rating >= 1 && r.rating <= 5);
-  if (clean.length > 0) {
-    const { error: rErr } = await supabase.from("skill_ratings").insert(
-      clean.map((r) => ({
-        assessment_id: assessment.id,
-        skill_id: r.skillId,
-        rating: r.rating,
-      }))
-    );
-    if (rErr) return { ok: false, error: "Couldn’t save the ratings." };
-  }
-
   revalidatePath(`/coach/players/${playerId}`);
   revalidatePath(`/admin/players/${playerId}`);
+  revalidatePath("/coach");
   revalidatePath("/app");
   revalidatePath(`/app/players/${playerId}`);
   return { ok: true };

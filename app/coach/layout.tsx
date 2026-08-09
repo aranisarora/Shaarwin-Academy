@@ -3,7 +3,7 @@ import type { Viewport } from "next";
 import { ServiceWorkerRegistrar } from "@/components/app/ServiceWorkerRegistrar";
 import { RealtimeRefresh } from "@/components/app/RealtimeRefresh";
 import { InstallPrompt } from "@/components/app/InstallPrompt";
-import { PendingAssessments } from "@/components/app/PendingAssessments";
+import { CoachWrapUpPrompt } from "@/components/app/CoachWrapUpPrompt";
 import { PreviewBanner } from "@/components/app/PreviewBanner";
 import { getCoachPreview } from "@/lib/coach-preview";
 import { exitCoachView } from "@/app/coach/preview-actions";
@@ -45,7 +45,7 @@ export default function CoachLayout({ children }: { children: React.ReactNode })
       <RealtimeRefresh tables={["bookings", "class_sessions"]} />
       {children}
       <InstallPrompt />
-      <PendingAssessments />
+      <CoachWrapUpPrompt />
     </>
   );
 }

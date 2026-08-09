@@ -13,6 +13,17 @@ type Skill = { id: string; category_id: string; name: string };
  * coach) so a coach adjusts rather than starts blank. Only skills the coach
  * touches are submitted; the assessment row itself always is (the pending
  * marker). `sessionId` deep-links a pending session; null = ad-hoc assessment.
+ *
+ * Saving twice for the same session used to fail — the insert hit
+ * skill_assessments_once_per_session and came back "Already assessed for that
+ * session.", with no UPDATE policy anywhere to offer a way round it. Since
+ * migration 0075 a second save amends the first, so this is now a form a coach
+ * can correct rather than one shot they had to get right.
+ *
+ * The considered version of this screen: the whole skill list, in a page that
+ * also shows the player's history. `AssessmentSheet` is the same ratings in a
+ * sheet, for the thirty seconds after a class when the only question is how
+ * today went.
  */
 export function AssessmentEditor({
   playerId,
@@ -41,15 +52,15 @@ export function AssessmentEditor({
     setMessage(null);
   }
 
-  function save() {
+  function save(explicit?: string[]) {
     startTransition(async () => {
-      const ratings = [...touched].map((skillId) => ({
+      const ratings = (explicit ?? [...touched]).map((skillId) => ({
         skillId,
         rating: values[skillId],
       }));
       const r = await submitAssessment(playerId, sessionId, ratings);
       if (r.ok) {
-        setMessage("Assessment saved.");
+        setMessage("Saved — you can change this any time.");
         setTouched(new Set());
         router.refresh();
       } else {
@@ -57,6 +68,8 @@ export function AssessmentEditor({
       }
     });
   }
+
+  const hasPrefill = Object.keys(initialRatings).length > 0;
 
   if (skills.length === 0) {
     return (
@@ -72,6 +85,17 @@ export function AssessmentEditor({
         <p className="rounded-[8px] border border-ember/40 bg-surface-2 px-3.5 py-2 text-sm">
           Assessing for <strong>{classTitle}</strong>
         </p>
+      )}
+
+      {/* The honest majority verdict most weeks, and one tap rather than a
+          scroll past every skill to reach Save. It files a real assessment: a
+          coach who has watched a child and judged they are where they were has
+          assessed them. The alternative on offer was not a more considered
+          rating, it was no assessment at all. */}
+      {hasPrefill && (
+        <Button variant="ghost" className="w-full" disabled={pending} onClick={() => save([])}>
+          No change today
+        </Button>
       )}
 
       {categories.map((cat) => {
@@ -115,8 +139,8 @@ export function AssessmentEditor({
       })}
 
       <div className="flex items-center gap-3">
-        <Button onClick={save} disabled={pending}>
-          {pending ? "Saving…" : "Save assessment"}
+        <Button onClick={() => save()} loading={pending}>
+          Save assessment
         </Button>
         {message && <span className="text-sm text-fg-2">{message}</span>}
       </div>
