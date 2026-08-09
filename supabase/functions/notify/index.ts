@@ -134,7 +134,8 @@ const FEED_ONLY = new Set([
   "ops_new_client",
   "ops_new_coach",
   "ops_player_added",
-  "ops_wa_linked",
+  // "ops_wa_linked" retired with the link table — a number saved on a profile
+  // is now just a profile edit, not a separate linking event worth a feed row.
   "ops_credit_used",
   "ops_coach_change",
   // Cover was picked up by a coach — an outcome, not a task.
@@ -411,6 +412,7 @@ Deno.serve(async () => {
         .update({
           channel_attempted: attempt.channel,
           ...(attempt.note ? { error: attempt.note.slice(0, 500) } : {}),
+          ...(attempt.whatsapp ? { whatsapp_status: attempt.whatsapp } : {}),
         })
         .eq("id", row.id);
     } else {
@@ -421,6 +423,7 @@ Deno.serve(async () => {
           status: "failed",
           channel_attempted: attempt.channel,
           error: (attempt.error ?? "unknown").slice(0, 500),
+          ...(attempt.whatsapp ? { whatsapp_status: attempt.whatsapp } : {}),
         })
         .eq("id", row.id);
     }
@@ -1506,7 +1509,25 @@ async function sweepWaitlistOffers() {
  * log that rolls over after 24 hours. `channel_attempted` could tell you a
  * linked member had been downgraded to email; nothing could tell you why.
  */
-type Attempt = { ok: boolean; channel: string; error?: string; note?: string };
+/**
+ * `whatsapp` is deliberately independent of `ok`. WhatsApp is the channel these
+ * members actually read, so "did WhatsApp carry this?" has to survive a later
+ * leg succeeding — otherwise an email fallback marks the row green and the miss
+ * is invisible. Written to notifications.whatsapp_status (migration 0074).
+ *   sent     — WhatsApp delivered it
+ *   failed   — we had a number and the send did not land
+ *   no_phone — no number on the profile, so it was never attempted
+ *   skipped  — an earlier channel ended the chain before WhatsApp's turn
+ */
+type WhatsAppOutcome = "sent" | "failed" | "no_phone" | "skipped";
+
+type Attempt = {
+  ok: boolean;
+  channel: string;
+  error?: string;
+  note?: string;
+  whatsapp?: WhatsAppOutcome;
+};
 
 /**
  * Push needs one extra bit that no other channel does. `ok` answers "may this
@@ -1556,9 +1577,14 @@ async function deliver(row: {
   body: string;
   data: { url?: string } & Record<string, unknown>;
 }): Promise<Attempt> {
+  // phone comes from here now, not a second query against a link table.
+  // profiles.phone IS the WhatsApp binding — the same column inbound identity
+  // resolves against — so the two directions cannot disagree about who is
+  // reachable. They used to, and it cost two coaches and eleven clients months
+  // of silent demotion to email.
   const { data: profile } = await supabase
     .from("profiles")
-    .select("email,full_name")
+    .select("email,full_name,phone")
     .eq("id", row.user_id)
     .maybeSingle();
   const firstName = (profile?.full_name ?? "").trim().split(/\s+/)[0] || "there";
@@ -1575,21 +1601,38 @@ async function deliver(row: {
   // person who has never subscribed — and stamping those on every failed row
   // would bury the reason that actually explains the failure.
   const notes: string[] = push.channel === "push" && push.error ? [`push: ${push.error}`] : [];
-  if (push.ok && !PUSH_ADDITIVE.has(row.type)) return { ok: true, channel: "push" };
+  if (push.ok && !PUSH_ADDITIVE.has(row.type)) {
+    return { ok: true, channel: "push", whatsapp: "skipped" };
+  }
 
-  /** Push already carried it, so a dead fallback isn't a failed notification. */
+  /** Push already carried it, so a dead fallback isn't a failed notification.
+   *  The WhatsApp outcome still rides along: push landing does not mean
+   *  WhatsApp worked, and conflating them is what hid this class of failure. */
   const orPush = (attempt: Attempt): Attempt =>
-    push.ok ? { ok: true, channel: "push" } : attempt;
+    push.ok ? { ok: true, channel: "push", whatsapp: attempt.whatsapp } : attempt;
 
   /** What to call the channel once a later leg lands. */
   const withPush = (channel: string) => (push.accepted ? `push+${channel}` : channel);
 
-  // WhatsApp for linked users. Inside the 24h service window we send rich
-  // free-form text; outside it we fall back to the approved template (with the
-  // member's name), and only then to email.
-  const wa = await deliverWhatsApp(row, firstName);
-  if (wa.ok) return { ok: true, channel: withPush("whatsapp"), note: notes.join("; ") || undefined };
+  // WhatsApp: the channel these members actually read. Inside the 24h service
+  // window we send rich free-form text; outside it we fall back to the approved
+  // template (with the member's name), and only then to email.
+  const wa = await deliverWhatsApp(row, firstName, profile?.phone ?? null);
+  if (wa.ok) {
+    return {
+      ok: true,
+      channel: withPush("whatsapp"),
+      note: notes.join("; ") || undefined,
+      whatsapp: "sent",
+    };
+  }
   if (wa.error) notes.push(`whatsapp: ${wa.error}`);
+  // Whatever happens below, this turn did not reach them on WhatsApp. Email is
+  // additive here, not a substitute: it may carry the row, but it must never
+  // erase the fact that the preferred channel failed. `whatsapp` rides all the
+  // way out to the row so "who did we fail to reach on WhatsApp" is a column
+  // lookup rather than a substring search through a free-text note.
+  const waOutcome = wa.error === "no_phone" ? "no_phone" : "failed";
 
   // Email fallback via Resend.
   //
@@ -1598,11 +1641,11 @@ async function deliver(row: {
   // carries `no_channel` and shows up in the failure query.
   if (!RESEND_KEY) {
     notes.push("email: no_channel");
-    return orPush({ ok: false, channel: wa.channel, error: notes.join("; ") });
+    return orPush({ ok: false, channel: wa.channel, error: notes.join("; "), whatsapp: waOutcome });
   }
   if (!profile?.email) {
     notes.push("email: no_address");
-    return orPush({ ok: false, channel: wa.channel, error: notes.join("; ") });
+    return orPush({ ok: false, channel: wa.channel, error: notes.join("; "), whatsapp: waOutcome });
   }
 
   // APP_URL, not a second copy of it. This read had its own `http://localhost:3000`
@@ -1636,11 +1679,21 @@ async function deliver(row: {
     }),
   });
   // The row went out, so this is not a failure — but WhatsApp was preferred and
-  // did not carry it, and that sentence is the whole diagnosis. Keep it.
-  if (res.ok) return { ok: true, channel: withPush("email"), note: notes.join("; ") || undefined };
+  // did not carry it, and that sentence is the whole diagnosis. Keep it, and
+  // keep `whatsapp` too: a successful email must not launder a WhatsApp miss
+  // into a clean row. That laundering is exactly how two active coaches sat on
+  // email-only for months while every report read green.
+  if (res.ok) {
+    return {
+      ok: true,
+      channel: withPush("email"),
+      note: notes.join("; ") || undefined,
+      whatsapp: waOutcome,
+    };
+  }
   const detail = (await res.text().catch(() => "")).slice(0, 200);
   notes.push(`email: ${res.status} ${detail}`.trim());
-  return orPush({ ok: false, channel: "email", error: notes.join("; ") });
+  return orPush({ ok: false, channel: "email", error: notes.join("; "), whatsapp: waOutcome });
 }
 
 // ---------------------------------------------------------------------------
@@ -1957,20 +2010,18 @@ async function deliverWhatsApp(
     body: string;
     data: Record<string, unknown>;
   },
-  firstName: string
+  firstName: string,
+  phone: string | null
 ): Promise<Attempt> {
   if (!TWILIO_SID || !TWILIO_TOKEN || !TWILIO_FROM) {
     return { ok: false, channel: "none", error: "not_configured" };
   }
 
-  const { data: link } = await supabase
-    .from("wa_links")
-    .select("phone")
-    .eq("user_id", row.user_id)
-    .maybeSingle();
-  // The single biggest cause of the audit's ~300 failed rows for the second
-  // founder account. Now it says so on the row instead of failing anonymously.
-  if (!link?.phone) return { ok: false, channel: "none", error: "not_linked" };
+  // If we hold the number, we message it. There is no separate opt-in, no link
+  // row and no code: the number on the profile is the binding, and it is the
+  // same column inbound identity resolves against. The old wa_links gate is
+  // what let profiles.phone and "reachable on WhatsApp" drift apart.
+  if (!phone) return { ok: false, channel: "none", error: "no_phone" };
 
   const endpoint = `https://api.twilio.com/2010-04-01/Accounts/${TWILIO_SID}/Messages.json`;
   const notes: string[] = [];
@@ -1981,7 +2032,7 @@ async function deliverWhatsApp(
   // on the row so an inbound button tap can be mapped back to the session.
   const interactive = interactiveContentFor(row, firstName);
   if (interactive) {
-    const res = await twilioSend(endpoint, { To: `whatsapp:${link.phone}`, ...interactive });
+    const res = await twilioSend(endpoint, { To: `whatsapp:${phone}`, ...interactive });
     if (res.sid) {
       await supabase
         .from("notifications")
@@ -2000,7 +2051,7 @@ async function deliverWhatsApp(
   const { data: lastInbound } = await supabase
     .from("wa_messages")
     .select("created_at")
-    .eq("phone", link.phone)
+    .eq("phone", phone)
     .eq("role", "user")
     .order("created_at", { ascending: false })
     .limit(1)
@@ -2008,7 +2059,7 @@ async function deliverWhatsApp(
   const inWindow =
     !!lastInbound && Date.now() - new Date(lastInbound.created_at).getTime() < WINDOW_MS;
 
-  const fields: Record<string, string> = { To: `whatsapp:${link.phone}` };
+  const fields: Record<string, string> = { To: `whatsapp:${phone}` };
   if (inWindow) {
     fields.Body = `*${row.title}*\n${row.body}`;
   } else if (TWILIO_TEMPLATE_SID) {

@@ -2,7 +2,7 @@ import { Card } from "@/components/ui/Card";
 import { WhatsAppSayHi } from "@/components/app/WhatsAppSayHi";
 
 /** WhatsApp assistant promo card. There's no linking flow anymore — the
- *  account's confirmed phone is bound to the bot (wa_links) when it's saved,
+ *  account's confirmed phone IS the bot binding the moment it's saved,
  *  so the only action left is opening the chat. Renders nothing when no bot
  *  number is configured (WhatsAppSayHi returns null). */
 export function WhatsAppAssistantCard() {

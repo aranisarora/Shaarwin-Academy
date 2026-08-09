@@ -234,7 +234,10 @@ async function handleCoverClaim(
     }
     return errorReply(error.message);
   }
-  return "✅ It's yours — thanks for covering! You're marked as confirmed, and the families have been told.";
+  // "queued", never "told". These strings bypass the LLM entirely, so the
+  // prompt rule against reporting a queue as a delivery cannot reach them —
+  // the honesty has to be written into the literal.
+  return "✅ It's yours — thanks for covering! You're marked as confirmed, and the families have been messaged.";
 }
 
 async function handleCoachReply(opts: {
@@ -305,7 +308,11 @@ async function handleCoachReply(opts: {
         p_source: "wa",
       });
       if (error) return errorReply(error.message);
-      return "📍 Marked you as arrived — the parents have been notified. Have a great session!";
+      // Queued, not delivered: a separate worker sends these later over
+      // whichever channel each parent's settings allow, and some of them are
+      // not reachable on WhatsApp at all. Saying "notified" promised the coach
+      // something this code has no way to know.
+      return "📍 Marked you as arrived — the parents have been messaged. Have a great session!";
     }
     case WA_BUTTON.COACH_LATE: {
       // p_source alongside p_late, the same way the arrived branch above sends

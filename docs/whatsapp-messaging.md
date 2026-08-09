@@ -101,12 +101,17 @@ this gauntlet in order:
 
 Then email via Resend, and — note — **if `RESEND_KEY` is unset the row is
 counted as delivered** (`return true`) to avoid retry loops. A member with no
-`wa_links` row and no Resend key gets nothing, silently.
+phone number and no Resend key gets nothing, silently.
 
-**No `wa_links` row = no WhatsApp, ever.** Linking happens three ways: saving a
-verified phone in the webapp (auto-linked on first inbound message by
-`resolveIdentity`), approval (`review_signup_request` writes `wa_links`), or
-messaging the bot from an unknown number (auto-provisions a client account).
+**No `profiles.phone` = no WhatsApp, ever.** As of migration 0074 there is no
+link table and no link code: the number saved on the profile IS the binding,
+and it is the same column `resolveIdentity` reads for inbound messages. A
+number arrives three ways — saved in the webapp, set by a founder, or
+auto-provisioned when an unknown number messages the bot. Whichever it is,
+inbound and outbound cannot disagree, because there is only one column to
+disagree about. (They used to: `wa_links` gated outbound only, which left two
+active coaches and eleven clients recognised on the way in and email-only on
+the way out.)
 
 ### Timed prompts the worker generates itself
 
@@ -428,8 +433,7 @@ had confirmed:
 
 `app/api/whatsapp/route.ts`: validates `X-Twilio-Signature`, acks Twilio with
 empty TwiML immediately, then does the work in `after()`. Identity is resolved
-phone-first (`wa_links` → unique `profiles.phone` → auto-provision a client
-account). A **real Supabase session is minted for that user**, so RLS — not the
+phone-first (unique `profiles.phone` → auto-provision a client account). A **real Supabase session is minted for that user**, so RLS — not the
 LLM — is the security boundary. Rate limit: 12 inbound user messages/minute.
 
 Order of handling: **deterministic action → assistant**.
@@ -698,8 +702,10 @@ Cancellations arguably *should* be immediate; a schedule tweak probably shouldn'
 
 **G8 — Silent drops when Resend is unconfigured.**
 `deliver()` returns `true` when `RESEND_KEY` is unset, so a member with no
-`wa_links` row never receives anything and the row still reads `sent`. There is
-no metric distinguishing "delivered" from "given up on".
+phone number never receives anything and the row still reads `sent`. Partly
+addressed: `notifications.whatsapp_status` (migration 0073) now records the
+WhatsApp outcome independently of `status`, so a row delivered by email still
+carries `whatsapp_status='failed'` or `'no_phone'` and the miss is queryable.
 
 **G9 — Members can only mute 5 of ~30 types.**
 `PREF_TYPES` covers reminders, waitlist, coach changes, reschedules and the
@@ -741,7 +747,7 @@ prompt, for example, invites no reply words at all, unlike its T-60 sibling.
 - Coaches get loose word matching; clients and the founder deliberately do not.
 - Reminders are swept on cancel and re-queued on reschedule.
 - Interactive templates bypass the 24h window entirely.
-- Approving a signup writes `wa_links`, so the approval message can actually land.
+- Approving a signup no longer writes any link row — the phone on the profile is already the binding.
 - School players (no account) are skipped everywhere a notification loops over bookings.
 
 ---
@@ -1445,10 +1451,10 @@ brief. The redesign adds information and removes messages, which is the only
 direction worth moving in.
 
 **Fix the delivery hole first.** Of three founder profiles, one
-(`sharwinttacademy@gmail.com`) has no phone and no `wa_links` row and has
-**failed all 6 digests**; another has no `wa_links` row and is reaching email
-only. Richer briefings are worthless to an account that cannot receive them —
-link a phone or drop the founder role before building any of this.
+(`sharwinttacademy@gmail.com`) has no phone and has **failed all 6 digests**;
+another was reaching email only. Richer briefings are worthless to an account
+that cannot receive them — save a phone number on it or drop the founder role
+before building any of this. Since 0074 that is the whole fix: one column.
 
 ---
 

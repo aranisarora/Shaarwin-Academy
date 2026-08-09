@@ -3,7 +3,7 @@
 /**
  * Client-side WhatsApp CTA: a wa.me deep link that opens the assistant chat
  * with a prefilled message. The account is already bound to its confirmed
- * number (wa_links, written when the phone is saved), so no handshake is
+ * number (profiles.phone, saved in the webapp), so no handshake is
  * needed — but the first inbound message opens the 24h WhatsApp session
  * window, letting the assistant reply free-form instead of via template.
  * Renders nothing if no bot number is configured.

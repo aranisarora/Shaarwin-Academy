@@ -5,7 +5,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/database.types";
 import { isMuted } from "@/lib/notification-prefs";
 import { normalizePhoneInput } from "@/lib/whatsapp/phone";
-import { adminClient, autoProvisionClient, linkPhoneToUser } from "@/lib/whatsapp/identity";
+import { adminClient, autoProvisionClient } from "@/lib/whatsapp/identity";
 import type { OpResult } from "@/lib/admin-ops-types";
 
 export async function updateClientCore(
@@ -42,9 +42,9 @@ export async function updateClientCore(
     .eq("role", "client");
   if (error) return { ok: false, error: "Couldn't save the details." };
 
-  // Keep WhatsApp identity/delivery in step with the number.
-  if (normalized) await linkPhoneToUser(admin, normalized, clientId);
-  else await admin.from("wa_links").delete().eq("user_id", clientId);
+  // The profiles.phone write above IS the WhatsApp binding — inbound identity
+  // and outbound delivery both read that column, so there is nothing else to
+  // keep in step. Clearing the number simply makes them unreachable there.
 
   await supabase.from("audit_log").insert({
     actor_id: founderId,
@@ -249,7 +249,14 @@ export async function notifyUsersCore(
   title?: string,
   audit?: { action?: string; meta?: Record<string, unknown> },
   type: NotifyType = "announcement"
-): Promise<OpResult & { recipients?: number; muted?: string[]; skipped_deleted?: number }> {
+): Promise<
+  OpResult & {
+    recipients?: number;
+    muted?: string[];
+    skipped_deleted?: number;
+    unreachable?: string[];
+  }
+> {
   const body = message.trim();
   if (!body) return { ok: false, error: "The message can't be empty." };
 
@@ -269,9 +276,14 @@ export async function notifyUsersCore(
   //    founder needs "3 queued, Ravi has announcements muted" — not a bare
   //    success. We queue for them anyway: the row still shows in-app, and it is
   //    the member's own toggle deciding the rest.
+  //  * People with no phone number. profiles.phone IS the WhatsApp binding, so
+  //    no number means this message cannot reach them on the channel they
+  //    actually read — it will quietly go out as email instead. That silence
+  //    is what left two active coaches on email-only for months while every
+  //    report read green, so it gets named rather than absorbed.
   const { data: profiles } = await supabase
     .from("profiles")
-    .select("id,full_name,deleted_at,notification_prefs")
+    .select("id,full_name,deleted_at,notification_prefs,phone")
     .in("id", requested);
 
   const known = new Map((profiles ?? []).map((p) => [p.id, p]));
@@ -285,6 +297,10 @@ export async function notifyUsersCore(
     .filter((id) =>
       isMuted(type, known.get(id)?.notification_prefs as Record<string, boolean> | null)
     )
+    .map((id) => known.get(id)?.full_name ?? "someone");
+
+  const unreachable = ids
+    .filter((id) => !known.get(id)?.phone)
     .map((id) => known.get(id)?.full_name ?? "someone");
 
   const heading = title?.trim() || "Message from the academy";
@@ -319,6 +335,7 @@ export async function notifyUsersCore(
     recipients: ids.length,
     muted,
     skipped_deleted: skippedDeleted,
+    unreachable,
   };
 }
 

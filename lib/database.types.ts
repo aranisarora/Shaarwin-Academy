@@ -1,8 +1,13 @@
 // Generated from the live Postgres schema — DO NOT EDIT BY HAND.
 //
-// Regenerate via the Supabase MCP (`generate_typescript_types`, project ref
-// jkjgdpifimvnptpxjixk) whenever the schema changes, and commit it in the same
-// commit as the migration + supabase/schema.sql. See AGENTS.md → Database.
+// ...with two exceptions, so regenerate by DIFFING, never by overwriting:
+// `npm run db:reset && supabase gen types typescript --local`, then port the
+// delta. The generator emits a `graphql_public` schema this file drops, and it
+// does NOT emit the PostgREST computed fields under `classes` (location_label
+// and friends, migration 0052) — those are maintained by hand below.
+//
+// Commit it in the same commit as the migration + supabase/schema.sql.
+// See AGENTS.md → Database.
 
 export type Json =
   | string
@@ -926,6 +931,7 @@ export type Database = {
           title: string
           type: string
           user_id: string
+          whatsapp_status: string | null
         }
         Insert: {
           body: string
@@ -942,6 +948,7 @@ export type Database = {
           title: string
           type: string
           user_id: string
+          whatsapp_status?: string | null
         }
         Update: {
           body?: string
@@ -958,6 +965,7 @@ export type Database = {
           title?: string
           type?: string
           user_id?: string
+          whatsapp_status?: string | null
         }
         Relationships: [
           {
@@ -1972,39 +1980,6 @@ export type Database = {
         }
         Relationships: []
       }
-      wa_links: {
-        Row: {
-          linked_at: string
-          phone: string
-          user_id: string
-        }
-        Insert: {
-          linked_at?: string
-          phone: string
-          user_id: string
-        }
-        Update: {
-          linked_at?: string
-          phone?: string
-          user_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "wa_links_user_id_fkey"
-            columns: ["user_id"]
-            isOneToOne: true
-            referencedRelation: "coach_client_view"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "wa_links_user_id_fkey"
-            columns: ["user_id"]
-            isOneToOne: true
-            referencedRelation: "profiles"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       wa_messages: {
         Row: {
           content: string
@@ -2012,6 +1987,7 @@ export type Database = {
           id: string
           phone: string
           role: string
+          seq: number
         }
         Insert: {
           content: string
@@ -2019,6 +1995,7 @@ export type Database = {
           id?: string
           phone: string
           role: string
+          seq?: number
         }
         Update: {
           content?: string
@@ -2026,6 +2003,7 @@ export type Database = {
           id?: string
           phone?: string
           role?: string
+          seq?: number
         }
         Relationships: []
       }

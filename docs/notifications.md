@@ -54,7 +54,8 @@ session; one channel for receipts and news.
 > ```
 >
 > This needs a machine whose Supabase CLI is signed in to the account that owns
-> the project. It cannot be done from the MCP tooling alone.
+> the project. There is no way to deploy the worker from the app or the SQL
+> editor — the running function only changes when someone runs this command.
 
 ---
 
@@ -579,8 +580,11 @@ Re-verified against production, Twilio and the deployed worker on 2026-07-31
    submitted and `pending`. Swap the SID on approval and delete v1. Untestable
    in production either way until item 8 fires.
 3. **The phone-less founder account is still failing daily.** "Sharwin Table
-   Tennis Academy" has no `phone` and no `wa_links`, so every escalation fanned
-   out to it fails — **316 failed against 636 sent, all-time**. It is the
+   Tennis Academy" has no `phone`, so every escalation fanned out to it fails —
+   **316 failed against 636 sent, all-time**. Since the linking feature was
+   removed, `profiles.phone` is the whole binding: giving that account a number
+   is now the entire fix, and the row records `whatsapp_status='no_phone'`
+   rather than failing anonymously. It is the
    original admin login and must not be deleted, so the fix is to either give it
    a phone or stop fanning escalations to it.
 4. **Escalation volume is still high** — 120 in the 36h to 2026-07-31 (69
@@ -656,9 +660,17 @@ and 106 of 436 (24%) across 30 days.
 So this is adoption, concentrated in two coaches — not a delivery fault. Two
 real defects sit underneath it, though:
 
-1. **Sunil Hatti has no `wa_links` row**, so every prompt reaches him by
+1. **Sunil Hatti had no `wa_links` row**, so every prompt reached him by
    *email*. He is the one coach never actually on WhatsApp, and (at 60%) among
    the better markers regardless — he taps in the app instead.
+
+   **Fixed by the wa_links removal.** He always had a number on his profile
+   (`+917756036037`); only the link table was missing, and it gated outbound
+   delivery while inbound identity had long since learned to fall back to
+   `profiles.phone`. Outbound now reads the same column, so he — and Ramesh
+   Simpi, and eleven clients in the same state — are reachable without anyone
+   doing anything. The founder is also told by name when a recipient has no
+   number (`unreachable_on_whatsapp` on the `notify` result).
 2. **246 founder escalations in three days** (132 `ops_coach_not_arrived`, 114
    `ops_coach_unconfirmed`). Past the point anyone reads them, which makes the
    escalation ladder self-defeating: the alert that matters is buried in the

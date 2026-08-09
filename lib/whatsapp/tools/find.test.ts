@@ -117,7 +117,6 @@ describe("find — the questions that had no entity", () => {
     // clients read own and founder all — there is no coach policy at all.
     private_series: ["client", "founder"],
     audit_log: ["founder"],
-    wa_links: ["founder"],
   };
 
   it("reaches each new entity for exactly the roles that can read it", async () => {
@@ -158,19 +157,40 @@ describe("find — the questions that had no entity", () => {
   });
 
   it("answers which coaches are on WhatsApp, which used to be a refusal", async () => {
+    // This used to read a wa_links entity. The link table is gone: the number
+    // on the profile IS the WhatsApp binding, for inbound identity and outbound
+    // delivery alike, so the question is now a has_phone filter over profiles.
+    // The capability has to survive the table it was built on.
     const { calls } = await run("founder", {
-      entity: "wa_links",
-      where: [{ field: "role", value: "coach" }],
+      entity: "clients",
+      where: [
+        { field: "role", value: "coach" },
+        { field: "has_phone", op: "not_null" },
+      ],
     });
-    expect(calls[0].table).toBe("wa_links");
-    expect(calls[0].ops).toContain('eq("profiles.role","coach")');
-    // Without the promotion the filter prunes nothing and every link comes back.
-    expect(calls[0].select).toContain("profiles!inner(");
+    expect(calls[0].table).toBe("profiles");
+    expect(calls[0].ops).toContain('eq("role","coach")');
+    expect(calls[0].ops).toContain('not("phone","is",null)');
   });
 
-  it("reads a linked number the way the founder says it", async () => {
+  it("names the coaches it CANNOT reach on WhatsApp", async () => {
+    // The inverse is the one the founder actually needs — the silent failure
+    // was people with no number being served email while every report read
+    // green. Answering it must not require a table join any more.
     const { calls } = await run("founder", {
-      entity: "wa_links",
+      entity: "clients",
+      where: [
+        { field: "role", value: "coach" },
+        { field: "has_phone", op: "is_null" },
+      ],
+    });
+    expect(calls[0].table).toBe("profiles");
+    expect(calls[0].ops).toContain('is("phone",null)');
+  });
+
+  it("reads a number the way the founder says it", async () => {
+    const { calls } = await run("founder", {
+      entity: "clients",
       where: [{ field: "phone", value: "07708688495" }],
     });
     expect(calls[0].ops).toContain('eq("phone","+917708688495")');
@@ -293,8 +313,8 @@ describe("find — the column allow-list", () => {
   });
 
   it("leaves the chat transcript unregistered", async () => {
-    // wa_links is queryable now; the messages either side of it are not, and
-    // that is a design line rather than an omission someone can tidy up.
+    // The transcript stays unreadable by the LLM. That is a design line rather
+    // than an omission someone can tidy up.
     for (const def of Object.values(ENTITIES)) {
       expect(def.table).not.toBe("wa_messages");
       expect(def.table).not.toBe("wa_inbound_seen");

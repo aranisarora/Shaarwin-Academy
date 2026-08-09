@@ -286,11 +286,11 @@ const CLIENT_FOOTPRINT = [
  * and approval — so a coach who is taken off the roster must not keep a working
  * login. Demoting them to `role = 'client'` (what this used to do) left them
  * signed in as a customer, listed among the families, offerable in the private
- * booking dropdown, and still bound to the WhatsApp bot through `wa_links`.
+ * booking dropdown, and still reachable by the WhatsApp bot through profiles.phone.
  *
  * Deleting the auth user is the whole operation: `profiles.id` → `auth.users`
  * is ON DELETE CASCADE, and everything hanging off the profile — the `coaches`
- * row with its assignments/availability/time-off, notifications, wa_links —
+ * row with its assignments/availability/time-off, notifications —
  * goes with it. `audit_log.actor_id` and the `coach_invites` row are ON DELETE
  * SET NULL, so the record that they were here, and were removed, survives them.
  *
@@ -389,7 +389,8 @@ export async function deleteCoachCore(
 
   // Delete the account. One call: profiles cascades off auth.users, and the
   // coaches row (with its assignments, availability and time-off), the
-  // notifications and the wa_links binding all cascade off profiles.
+  // notifications all cascade off profiles. The WhatsApp binding is
+  // profiles.phone itself, so it goes with the row rather than cascading.
   const { error: delErr } = await createAdminClient().auth.admin.deleteUser(coachId);
   if (delErr) return { ok: false, error: "Couldn't remove the coach." };
 

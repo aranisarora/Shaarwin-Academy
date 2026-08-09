@@ -144,7 +144,7 @@ async function handleInbound(
   // code or OTP is needed). A DB error must NOT silently degrade to guest.
   const identity = await resolveIdentity(admin, phone);
   let profile = identity.profile;
-  if (!profile && identity.reason === "not_linked") {
+  if (!profile && identity.reason === "no_account") {
     profile = await autoProvisionClient(admin, phone);
     if (profile) console.info("wa: auto-provisioned client for", phone);
   }
