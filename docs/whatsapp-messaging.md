@@ -140,7 +140,7 @@ All are once-per-(user, session) via an `alreadyFired` existence check.
 **`DEFERRABLE`** — held overnight to 08:00 IST:
 `booking_confirmed`, `booking_rescheduled`, `coach_assigned`, `coach_changed`,
 `role_changed`, `private_series_ended`, `private_minutes_low`, `payment_failed`,
-`ops_daily_digest`, `time_off_requested`, `time_off_decision`, `signup_approved`.
+`ops_daily_digest`, `signup_approved`.
 
 Deliberately **not** deferrable (must fire at 2am if that's when they're due):
 `reminder_upcoming`, `waitlist_spot`, `coach_before_class`, `coach_arrival_check`,
@@ -333,11 +333,6 @@ Notes worth reviewing:
 > *You're a coach now*
 > Message me any time for your schedule, rosters and availability.
 
-**`time_off_decision`** — founder approved/rejected. Deferrable.
-
-> *Time off approved* / `Your sessions in the range are being covered.`
-> *Time off rejected* / `Talk to the founder if you need this changed.`
-
 Plus `announcement` (coach audience).
 
 ---
@@ -414,10 +409,6 @@ had confirmed:
 **`session_issue`** — coach tapped "report a problem".
 
 > *Coach reported a problem* / Open the session to follow up.
-
-**`time_off_requested`** — deferrable.
-
-> *Time-off request* / A coach requested time off — review it.
 
 **`ops_payment_issue`** — see gap **G2** (an `ops_*` type that is *not* feed-only).
 
@@ -507,8 +498,8 @@ prompt), except a founder giving a complete, unambiguous booking instruction.
 | --- | --- | --- |
 | guest | 1 | `get_academy_info` (rare — unknown numbers are auto-provisioned to `client`) |
 | client | 18 | schedule, browse/book/cancel/reschedule group, private availability + booking, membership status, plans and one-off products, payment links, profile, players, `find` |
-| coach | 15 | sessions, confirm, mark arrival, roster, availability windows, time off, attendance, notes, can't-make-session, `find` |
-| founder | 46 | classes, sessions, coaches, clients, venues, settings, subscriptions, dunning, comps, credits, broadcast, targeted `notify`, time-off decisions, `find` |
+| coach | 11 | sessions, confirm, mark arrival, roster, cover offers, attendance, notes, can't-make-session, `find` |
+| founder | 44 | classes, sessions, coaches, clients, venues, settings, subscriptions, dunning, comps, credits, broadcast, targeted `notify`, `find` |
 
 Failure copy: bad signature → 403; media-only → `I can only read text messages
 for now — type what you need!`; rate limited → `You're messaging faster than I
@@ -647,7 +638,7 @@ provisioning script — it must be built and approved by hand.
 **Types with no template at all** (free-form inside 24h, generic template
 outside, else email): `coach_confirm_nudge_2`, `coach_changed`, `coach_assigned`,
 `booking_rescheduled`, `session_cancelled`, `session_moved`, `class_updated`,
-`session_booked`, `role_changed`, `time_off_requested`, `time_off_decision`,
+`session_booked`, `role_changed`,
 `private_series_ended`, `private_minutes_low`, `announcement`,
 `session_unassigned`, `private_request_parked`, `session_issue`,
 `ops_coach_unconfirmed`, `ops_coach_not_arrived`, `ops_payment_issue`,
@@ -817,7 +808,6 @@ to churn.
 | **M21** | Day-before reminder | client | 18:00 IST the evening before | T-3h (3:30pm for a 6:30pm class) is too late to arrange a lift. |
 | **M22** | Invite delivered | client / coach | `client_invites`, `coach_invites` insert | We store a phone number and then never message it. |
 | **M23** | Welcome / first-session prep | client | first confirmed booking | What to bring, where to park, when to arrive. Absent. |
-| **M24** | Time-off request received | coach | `coach_time_off` insert | Founder is told; the requesting coach gets no ack until a decision. |
 | **M25** | Roster churn | coach | student joins/leaves their class | Coaches can't see who's new or who left. |
 | **M26** | Birthday / milestone | client | `players.date_of_birth` | Cheap goodwill; DOB is already stored and unused. |
 
@@ -1010,12 +1000,12 @@ Flagging **new** students matters: first impressions are what convert a trial
 
 When `session_unassigned` or `handle_coach_dropout` fires, **only the founder is
 told**. The founder then chases coaches by hand. The system already knows which
-coaches are eligible — `rank_coaches`, `coach_filter_failure` and
-`coach_availability` exist precisely for this — so the fix for the escalation
+coaches are eligible — `rank_coaches` and `coach_filter_failure` exist
+precisely for this — so the fix for the escalation
 could be broadcast automatically to the people who can resolve it.
 
 > *Cover needed — Sat 12 Jul, 6:30 pm*
-> Improvers at La Plazza needs a coach. It's in your usual availability.
+> Improvers at La Plazza needs a coach. First to claim it takes it.
 > `[ I'll take it ]` `[ Not free ]`
 
 First tap wins (mirror the `claim_waitlist_spot` race handling exactly —
@@ -1037,12 +1027,7 @@ Weekly, one message, only when the count is non-zero. M8 and M9 are worthless if
 the underlying assessments are never written — this is the message that makes
 the parent-facing progress reports possible.
 
-#### M24–M25 · Acknowledgements and roster churn
-
-**M24 — time-off received.** A coach files time off; `time_off_requested` goes to
-the founder; the coach hears nothing until a decision lands. One-line ack:
-
-> *Time-off request received* / We've got it — the founder will confirm shortly.
+#### M25 · Roster churn
 
 **M25 — roster churn.** Students joining or leaving a coach's regular class are
 invisible to them until they notice a different face. Batch this into M10's
@@ -1153,7 +1138,6 @@ template (business-initiated, will often land outside the 24h window).
 | `coach_day_ahead` | coach | ❌ | ❌ | ❌ | ✅ | 07:30 IST; skip empty days. |
 | `cover_offer` | coach | ❌ | ❌ | ❌ | ✅ | Quick-reply buttons; first tap wins. |
 | `coach_assessments_due` | coach | ❌ | ✅ | ❌ | ✅ | Weekly, only when non-zero. |
-| `time_off_received` | coach | ✅ | ❌ | ❌ | ❌ | One-line ack. |
 | `ops_at_risk` | founder | ❌ | ✅ | ❌ | ✅ | Weekly; the only pushed founder addition. |
 | `ops_capacity` | founder | — | — | — | — | `FEED_ONLY` + weekly rollup. |
 | `ops_trial_funnel` | founder | — | — | — | — | `FEED_ONLY` + weekly rollup. |
@@ -1312,8 +1296,8 @@ digest to **exceptions only**:
 Composition rules, in order:
 
 1. **Headline** — class count, student count, first start.
-2. **Exceptions, if any** — unassigned sessions, coaches on approved time off,
-   signup requests awaiting approval, `past_due` members with a session today.
+2. **Exceptions, if any** — unassigned sessions, signup requests awaiting
+   approval, `past_due` members with a session today.
    Omit the whole line when empty; never print "0 problems".
 3. **The schedule** — time · class · venue · coach · booked/capacity. A missing
    coach renders as `—` so the gap is visually obvious.
@@ -1321,7 +1305,7 @@ Composition rules, in order:
    today (the highest-leverage hour in the funnel — see M4).
 
 Everything here is already in `class_sessions`, `bookings`, `classes`, `venues`,
-`subscriptions`, `class_credits` and `coach_time_off`. No new tables.
+`subscriptions` and `class_credits`. No new tables.
 
 ### 10.5 Coach morning briefing — `coach_day_ahead`
 
@@ -1506,7 +1490,7 @@ determines the delivery rules, which is why the same type (`session_cancelled`,
 | **Reassurance** | something you can't see is going fine | `coach_arrived`, `coach_late` |
 | **Escalation** | someone else's failure now needs a human | `ops_coach_unconfirmed`, `ops_coach_not_arrived`, `session_unassigned`, `private_request_parked`, `session_issue`, `ops_payment_issue`, `ops_private_series_paused` |
 | **Money** | an obligation involving payment | `payment_failed` |
-| **Access** | your relationship to the system changed | `signup_request`, `signup_approved`, `role_changed`, `time_off_requested`, `time_off_decision` |
+| **Access** | your relationship to the system changed | `signup_request`, `signup_approved`, `role_changed` |
 
 Everything else — the 11 `ops_*` feed types, `ops_daily_digest`, `announcement` —
 does **no** job in this taxonomy. That's not a criticism; it's the definition of
@@ -1692,12 +1676,7 @@ around it yet, so there's no plan to correct.
 
 **`role_changed`** exists because promotion to coach silently changes what the
 app and the bot will do for you. Without it, a newly promoted coach has no way to
-discover that messaging the bot now returns rosters and availability.
-
-**`time_off_decision`** closes a loop the coach opened. Its absence would leave
-someone unable to plan their own life, which is the whole point of requesting
-time off. That it's **deferrable** reflects that a decision is rarely so urgent
-it can't wait for morning.
+discover that messaging the bot now returns their schedule and rosters.
 
 ### 11.5 Founder messages — the reasoning
 

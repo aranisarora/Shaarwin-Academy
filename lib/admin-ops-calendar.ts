@@ -54,8 +54,6 @@ export async function reassignSessionCore(
       const reason = error.message.split("filter_failed_")[1] ?? "hard filter";
       const friendly: Record<string, string> = {
         inactive: "they're paused",
-        time_off: "they're on approved time off",
-        unavailable: "the slot is outside their availability hours",
         overlap: "they'd clash with another session (incl. travel buffer)",
         level_too_high: "the class level is above what they teach",
         dbs_required: "a junior is booked and they have no DBS check",
@@ -205,7 +203,13 @@ export type PrivateSessionInput = {
   playerId?: string; // defaults to the client's first player
   date: string; // YYYY-MM-DD academy wall clock
   time: string; // HH:MM
-  durationMinutes: number; // 60 | 90
+  /**
+   * How long the session runs. Clamped to 30–360 below, which is the range
+   * `classes_duration_minutes_check` allows — the same range a group or school
+   * class picks from. It used to be pinned to 60 or 90 here, so a longer
+   * private chosen anywhere upstream was silently written as 60.
+   */
+  durationMinutes: number;
   address: string;
   postcode?: string;
   lat: number;
@@ -310,7 +314,10 @@ export async function createPrivateSessionCore(
     }
   }
 
-  const duration = input.durationMinutes === 90 ? 90 : 60;
+  // Clamped to what the classes table will accept rather than to 60/90, so a
+  // caller asking for a two-hour private gets a two-hour private and a caller
+  // asking for nonsense still can't trip the CHECK and 500.
+  const duration = Math.min(Math.max(Math.trunc(input.durationMinutes) || 60, 30), 360);
   const weeks = Math.min(Math.max(Math.trunc(input.recurWeeks ?? 1), 1), 12);
   // >1 week means a standing weekly slot, not a fixed block: we create a real
   // private_booking_series (same model as the client-side create_private_series)

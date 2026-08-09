@@ -26,9 +26,8 @@ import {
 // Four, not five. The freed slots went back into whitespace rather than being
 // spent because they were there — five 20%-wide targets is a crowded row on a
 // 390px phone, and Coaches is a screen he opens when a coach asks him for
-// something, not one he passes through. It reads better from More, where the
-// thing that actually needs him (a time-off request) reaches him as an Alert
-// anyway.
+// something, not one he passes through. It reads better from More, where
+// anything that actually needs him reaches him as an Alert anyway.
 //
 // Alerts is /admin/notifications: the only surface that renders eleven of the
 // thirteen ops_* feed types, and now also the queue of things waiting on him.

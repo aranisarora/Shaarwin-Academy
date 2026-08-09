@@ -161,8 +161,6 @@ const DEFERRABLE = new Set([
   "private_minutes_low",
   "payment_failed",
   "ops_daily_digest",
-  "time_off_requested",
-  "time_off_decision",
   // Client copy of an academy-booked private (G1). Informational, not urgent —
   // the session itself gets its own reminder 3h before.
   "private_session_booked",
@@ -911,7 +909,12 @@ async function sweepAfterClass() {
       ? `Up next today: ${titleOf(next.classes)} at ${fmtClock(next.starts_at)}.`
       : "That's all your classes today — brilliant work, enjoy the rest of your day! 🎉";
 
-    const url = `/coach/session/${s.id}`;
+    // `?wrap=1` tells the app why the coach is arriving: finish this class. A
+    // coach who has already marked attendance lands straight in the assessments
+    // that are left, rather than on a screen of ticks they have to read before
+    // finding the one thing still outstanding. Carried by both the WhatsApp
+    // template (variable 3) and the push deep link, since they share this url.
+    const url = `/coach/session/${s.id}?wrap=1`;
     const firstName = await firstNameOf(s.coach_id);
 
     await supabase.from("notifications").insert({

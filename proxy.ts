@@ -67,9 +67,19 @@ export async function proxy(request: NextRequest) {
   if (!wanted) return response;
 
   if (!userId) {
+    // The query string is part of the destination, not decoration on it, so it
+    // travels with the path. Every deep link we send out is read on a phone
+    // that may not have a live session: the after-class WhatsApp points a coach
+    // at /coach/players/<player>?session=<session>, and `session` is the whole
+    // reason that link exists — it binds the assessment to the class just
+    // taught. Sending only the pathname landed a signed-out coach on a bare
+    // player page, where filing an assessment recorded an undated one and left
+    // the session's entry in the backlog untouched, so the prompt went on
+    // asking for work they had just done.
     const url = request.nextUrl.clone();
+    const target = `${pathname}${request.nextUrl.search}`;
     url.pathname = "/login";
-    url.search = `?next=${encodeURIComponent(pathname)}`;
+    url.search = `?next=${encodeURIComponent(target)}`;
     return NextResponse.redirect(url);
   }
 

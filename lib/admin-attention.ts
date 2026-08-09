@@ -10,7 +10,7 @@
 // item. Never a generic list the founder then has to search.
 
 import type { createClient } from "@/lib/supabase/server";
-import { formatDateFull, formatSessionDate, utcToAcademyWall } from "@/lib/academy-time";
+import { formatSessionDate, utcToAcademyWall } from "@/lib/academy-time";
 
 type Supabase = Awaited<ReturnType<typeof createClient>>;
 
@@ -39,7 +39,7 @@ export type AttentionItem = {
 export async function fetchAttention(supabase: Supabase): Promise<AttentionItem[]> {
   const now = new Date();
 
-  const [unassigned, pastDue, timeOff, issues, signups] = await Promise.all([
+  const [unassigned, pastDue, issues, signups] = await Promise.all([
     // Every coachless session ahead, not just the first ten — they are grouped
     // by class below, and a count is only honest if it counted everything.
     supabase
@@ -54,13 +54,6 @@ export async function fetchAttention(supabase: Supabase): Promise<AttentionItem[
       .from("subscriptions")
       .select("id,client_id,profiles!subscriptions_client_id_fkey(full_name)")
       .eq("status", "past_due")
-      .limit(10),
-    supabase
-      .from("coach_time_off")
-      .select(
-        "id,coach_id,starts_at,ends_at,reason,profiles!coach_time_off_coach_id_fkey(full_name)"
-      )
-      .eq("status", "pending")
       .limit(10),
     supabase
       .from("notifications")
@@ -230,19 +223,6 @@ export async function fetchAttention(supabase: Supabase): Promise<AttentionItem[
       action: "Payment overdue",
       urgent: true,
       rank: 2,
-    });
-  }
-
-  for (const t of timeOff.data ?? []) {
-    const name = (t.profiles as unknown as { full_name: string } | null)?.full_name;
-    items.push({
-      key: `timeoff:${t.id}`,
-      href: `/admin/coaches?coach=${t.coach_id}`,
-      title: `Time off — ${name}`,
-      detail: `${formatDateFull(t.starts_at)} – ${formatDateFull(t.ends_at)}${t.reason ? ` · ${t.reason}` : ""}`,
-      action: "Review",
-      urgent: false,
-      rank: 3,
     });
   }
 

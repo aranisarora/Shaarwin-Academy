@@ -150,9 +150,9 @@ export async function createClient(opts: {
 export type CreatedCoach = { id: string; email: string };
 
 /**
- * A coach account: auth user + coach profile + coaches row (the coaches insert
- * fires seed_default_coach_availability, so the coach is immediately
- * assignable). Defaults place them at the Bellandur hub near the seeded venues.
+ * A coach account: auth user + coach profile + coaches row. Since 0075 dropped
+ * weekly availability windows, an active coach with a clear diary is assignable
+ * straight away. Defaults place them at the Bellandur hub near the seeded venues.
  */
 export async function createCoach(opts: {
   baseLat?: number;

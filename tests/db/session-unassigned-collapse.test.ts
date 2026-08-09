@@ -39,9 +39,8 @@ async function founderIds(): Promise<string[]> {
 
 /**
  * rank_coaches() draws from `coaches where active` (schema.sql), so switching
- * every coach off is the one lever that makes a session genuinely unassignable
- * regardless of what availability the seed happens to carry. Restored in a
- * finally so a failure can't leak into the next file.
+ * every coach off is the one lever that makes a session genuinely unassignable.
+ * Restored in a finally so a failure can't leak into the next file.
  */
 async function withNoEligibleCoach<T>(fn: () => Promise<T>): Promise<T> {
   const { data: before, error } = await db.from("coaches").select("id").eq("active", true);

@@ -1,11 +1,9 @@
 "use server";
 
 import { revalidatePath, revalidateTag } from "next/cache";
-import { createClient } from "@/lib/supabase/server";
 import { requireFounder } from "@/lib/founder";
 import {
   addCoachCore,
-  decideTimeOffCore,
   deleteCoachCore,
   deletePendingCoachCore,
   saveCoachCore,
@@ -140,34 +138,5 @@ export async function setCoachActive(coachId: string, active: boolean): Promise<
   revalidatePath("/admin/coaches");
   revalidateTag("coaches", "max");
   revalidatePath("/admin/schedule");
-  return { ok: true };
-}
-
-export async function decideTimeOff(
-  timeOffId: string,
-  approve: boolean
-): Promise<{ ok: boolean; error?: string }> {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return { ok: false, error: "Sign in first." };
-
-  const { data: me } = await supabase
-    .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .maybeSingle();
-  if (me?.role !== "founder") return { ok: false, error: "Founder only." };
-
-  const result = await decideTimeOffCore(supabase, user.id, timeOffId, approve);
-  if (!result.ok) return result;
-
-  // Deliberately NOT revalidating /admin/coaches: the card replaces itself with
-  // the outcome sentence, and re-rendering the page here unmounts that row
-  // before he can read what happened to the coach's classes. The next
-  // navigation picks up the new state anyway.
-  revalidateTag("coaches", "max");
-  revalidatePath("/admin");
   return { ok: true };
 }

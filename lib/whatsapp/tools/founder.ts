@@ -6,7 +6,6 @@ import {
   adjustCreditsCore,
   cancelSessionCore,
   createGroupClassCore,
-  decideTimeOffCore,
   grantCompCore,
 } from "@/lib/admin-ops";
 import { formatSessionDate } from "@/lib/academy-time";
@@ -18,13 +17,13 @@ import { founderAdminTools } from "./founder-admin";
 const overview: WaTool = {
   name: "academy_overview",
   description:
-    "Snapshot of the academy: upcoming sessions, unassigned sessions needing a coach, pending time-off requests, client and active-membership counts.",
+    "Snapshot of the academy: upcoming sessions, unassigned sessions needing a coach, client and active-membership counts.",
   input_schema: { type: "object", properties: {} },
   run: async (_input, ctx) => {
     const supabase = ctx.supabase!;
     const now = new Date().toISOString();
     const week = new Date(Date.now() + 7 * 86400000).toISOString();
-    const [sessions, unassigned, timeOff, clients, activeSubs] = await Promise.all([
+    const [sessions, unassigned, clients, activeSubs] = await Promise.all([
       supabase
         .from("class_sessions")
         .select("id", { count: "exact", head: true })
@@ -38,10 +37,6 @@ const overview: WaTool = {
         .is("coach_id", null)
         .gt("starts_at", now),
       supabase
-        .from("coach_time_off")
-        .select("id", { count: "exact", head: true })
-        .eq("status", "pending"),
-      supabase
         .from("profiles")
         .select("id", { count: "exact", head: true })
         .eq("role", "client"),
@@ -53,7 +48,6 @@ const overview: WaTool = {
     return ok({
       sessions_next_7_days: sessions.count ?? 0,
       unassigned_future_sessions: unassigned.count ?? 0,
-      pending_time_off_requests: timeOff.count ?? 0,
       total_clients: clients.count ?? 0,
       active_memberships: activeSubs.count ?? 0,
     });
@@ -482,49 +476,6 @@ const adjustCredits: WaTool = {
   },
 };
 
-const pendingTimeOff: WaTool = {
-  name: "pending_time_off",
-  description: "Coach time-off requests awaiting a decision (time_off_id values included).",
-  input_schema: { type: "object", properties: {} },
-  run: async (_input, ctx) => {
-    const supabase = ctx.supabase!;
-    const { data } = await supabase
-      .from("coach_time_off")
-      .select("id,coach_id,starts_at,ends_at,reason,profiles!coach_time_off_coach_id_fkey(full_name)")
-      .eq("status", "pending")
-      .order("starts_at");
-    return ok(
-      (data ?? []).map((t) => ({
-        time_off_id: t.id,
-        coach: (t.profiles as unknown as { full_name: string } | null)?.full_name ?? "?",
-        from: formatSessionDate(t.starts_at),
-        to: formatSessionDate(t.ends_at),
-        reason: t.reason,
-      }))
-    );
-  },
-};
-
-const decideTimeOff: WaTool = {
-  name: "decide_time_off",
-  description:
-    "Approve or reject a coach time-off request. Approving triggers the dropout cascade (overlapping sessions get reassigned or parked) — confirm before approving.",
-  input_schema: {
-    type: "object",
-    properties: { time_off_id: { type: "string" }, approve: { type: "boolean" } },
-    required: ["time_off_id", "approve"],
-  },
-  run: async (input, ctx) => {
-    const result = await decideTimeOffCore(
-      ctx.supabase!,
-      ctx.profile!.id,
-      String(input.time_off_id),
-      Boolean(input.approve)
-    );
-    return result.ok ? ok({ decided: true }) : fail(result.error ?? "Failed.");
-  },
-};
-
 export const founderTools: WaTool[] = [
   overview,
   listSessions,
@@ -538,7 +489,5 @@ export const founderTools: WaTool[] = [
   listPlans,
   grantComp,
   adjustCredits,
-  pendingTimeOff,
-  decideTimeOff,
   ...founderAdminTools,
 ];

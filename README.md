@@ -26,11 +26,10 @@ token. Two secrets are still placeholders — see Go-live below.
   schedule with cancel windows, private-session wizard (address → pin → slots
   → confirm), membership screen, notifications inbox, `.ics` downloads.
 - **Coach app** — Today timeline with travel gaps, session sheet (attendance,
-  autosaving notes, report problem, can't-make-it cover), calendar,
-  availability + time-off requests, clients.
+  autosaving notes, report problem, can't-make-it cover), calendar, players.
 - **Founder admin** — KPI dashboard + exceptions inbox, master calendar with
-  unassigned lane + tap-to-reassign (+ lock), classes, coaches (time-off
-  approvals), clients, settings editor.
+  unassigned lane + tap-to-reassign (+ lock), classes, coaches, clients,
+  settings editor.
 - **PWA** — manifest, icons, service worker (app-shell cache + push handlers).
 - **Design system** — Court Noir tokens, Fraunces/Inter, both moods, on
   display at `/styleguide`.

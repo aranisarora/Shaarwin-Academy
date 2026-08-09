@@ -24,14 +24,14 @@ function tomorrow(): string {
 }
 
 /** Holds an open slot (no clientId) for `recurWeeks` weeks on a fresh coach. */
-async function holdOpenSlot(recurWeeks?: number) {
+async function holdOpenSlot(recurWeeks?: number, durationMinutes = 60) {
   const coach = await createCoach();
   const founder = await asUser(FOUNDER_EMAIL);
 
   const result = await createPrivateSessionCore(founder, FOUNDER_ID, {
     date: tomorrow(),
     time: "16:00",
-    durationMinutes: 60,
+    durationMinutes,
     address: "12 Whitefield Court, Whitefield",
     lat: 12.9698,
     lng: 77.75,
@@ -46,8 +46,13 @@ type Details = { client_id: string | null; player_id: string | null };
 type HeldSession = {
   id: string;
   starts_at: string;
+  ends_at: string;
   class_id: string;
-  classes: { class_type: string; private_class_details: Details | Details[] | null };
+  classes: {
+    class_type: string;
+    duration_minutes: number;
+    private_class_details: Details | Details[] | null;
+  };
 };
 
 /** private_class_details is one-per-class, but PostgREST embeds vary by shape. */
@@ -62,7 +67,9 @@ function detailsOf(s: HeldSession): Details {
 async function sessionsFor(coachId: string) {
   const { data } = await admin()
     .from("class_sessions")
-    .select("id,starts_at,class_id,classes!inner(class_type,private_class_details(client_id,player_id))")
+    .select(
+      "id,starts_at,ends_at,class_id,classes!inner(class_type,duration_minutes,private_class_details(client_id,player_id))"
+    )
     .eq("coach_id", coachId)
     .order("starts_at");
   return (data ?? []) as unknown as HeldSession[];
@@ -136,5 +143,21 @@ describe("open private slots", () => {
     );
     expect(rows[0].data.session_count).toBe(4);
     expect(String(rows[0].body)).toContain("4 sessions");
+  });
+
+  // The length asked for is the length booked. createPrivateSessionCore pinned
+  // this to 60-or-90 regardless of what it was handed, so a two-hour private
+  // was written as a one-hour one — silently, since nothing failed and the
+  // session simply appeared an hour short. The clamp is now the classes table's
+  // own 30–360, which is the list the admin sheet offers.
+  it("keeps a length outside the old 60/90 pair", async () => {
+    const { coach, result } = await holdOpenSlot(undefined, 120);
+    expect(result.ok).toBe(true);
+
+    const [session] = await sessionsFor(coach.id);
+    expect(session.classes.duration_minutes).toBe(120);
+    const held =
+      new Date(session.ends_at).getTime() - new Date(session.starts_at).getTime();
+    expect(held).toBe(120 * 60_000);
   });
 });

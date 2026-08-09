@@ -227,6 +227,25 @@ export function formatWallDay(dateStr: string): string {
   }).format(new Date(Date.UTC(y, m - 1, d)));
 }
 
+const WALL_WEEKDAY_NARROW = new Intl.DateTimeFormat("en-GB", {
+  timeZone: "UTC",
+  weekday: "narrow",
+});
+
+/**
+ * "S" for a bare "YYYY-MM-DD" wall date — the single letter over a day in the
+ * admin week strip. UTC-formatted for the same reason as `formatWallDay`.
+ *
+ * The letter is read off the date rather than off the column it sits in. The
+ * strip shows seven days from an anchor that is usually just today, so a fixed
+ * M-T-W-T-F-S-S row sat over the right dates only in the weeks the anchor
+ * happened to land on a Monday.
+ */
+export function formatWallWeekdayNarrow(dateStr: string): string {
+  const [y, m, d] = dateStr.split("-").map(Number);
+  return WALL_WEEKDAY_NARROW.format(new Date(Date.UTC(y, m - 1, d)));
+}
+
 /**
  * "August 2026", or "Jul – Aug 2026" when the two dates straddle a month —
  * the caption over the admin week strip, which has the seven day numbers
