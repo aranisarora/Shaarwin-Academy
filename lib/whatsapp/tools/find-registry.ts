@@ -524,6 +524,12 @@ export const ENTITIES: Record<string, EntityDef> = {
       full_name: { path: "full_name", description: "Name, matched loosely", loose: true },
       email: { path: "email", description: "Email, matched loosely", loose: true },
       phone: { path: "phone", description: "Phone number, however it was written", ...PHONE },
+      has_phone: {
+        path: "phone",
+        description:
+          "Use with not_null for people this bot can reach on WhatsApp, is_null for those it cannot. The number IS the WhatsApp binding, so 'which coaches are on WhatsApp' is role=coach + has_phone not_null.",
+        ops: ["is_null", "not_null"],
+      },
       approval_status: {
         path: "approval_status",
         description: "pending | approved | denied",
@@ -825,45 +831,11 @@ export const ENTITIES: Record<string, EntityDef> = {
     groupable: ["action", "entity", "actor_id", "profiles.full_name"],
   },
 
-  wa_links: {
-    table: "wa_links",
-    description:
-      "Which phone numbers are linked to an account for WhatsApp. Someone with no row here cannot be reached by this bot at all.",
-    // Founder-only, matching the SELECT policy 0069 adds — until that migration
-    // the table had no policy at all and this entity reads empty for everyone.
-    // Nothing here is new to the founder: "founder all profiles" already hands
-    // over every number in the academy. The one fact added is whether a link
-    // exists, which is the question that got refused.
-    roles: FOUNDER,
-    columns: "phone,user_id,linked_at",
-    includes: { user: "profiles(id,full_name,role)" },
-    defaultIncludes: ["user"],
-    filters: {
-      phone: { path: "phone", description: "The linked number, however it was written", ...PHONE },
-      user_id: { path: "user_id", description: "The account it is linked to" },
-      role: {
-        path: "profiles.role",
-        requires: "profiles!inner(id,role)",
-        description: "client | coach | founder | school — this is 'which coaches are on WhatsApp'",
-        values: ["client", "coach", "founder", "school"],
-      },
-      full_name: {
-        path: "profiles.full_name",
-        requires: "profiles!inner(id,full_name)",
-        description: "Name on the account, matched loosely",
-        loose: true,
-      },
-      from: {
-        path: "linked_at",
-        description: "Linked at or after",
-        ops: ["gte", "gt"],
-        ...FROM_IST,
-      },
-      to: { path: "linked_at", description: "Linked at or before", ops: ["lte", "lt"], ...TO_IST },
-    },
-    order: { path: "linked_at", ascending: false },
-    groupable: ["profiles.role", "user_id"],
-  },
+  // wa_links used to live here — "which phone numbers are linked for WhatsApp".
+  // The link table is gone: profiles.phone IS the binding, for inbound identity
+  // and outbound delivery alike. The question it answered now reads
+  //   find clients role=coach has_phone=not_null
+  // via the has_phone filter on `clients` above.
 
   // ── Delivery ─────────────────────────────────────────────────────────────
   notifications: {

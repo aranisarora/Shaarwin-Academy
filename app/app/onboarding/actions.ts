@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
-import { adminClient, linkPhoneToUser } from "@/lib/whatsapp/identity";
+import { adminClient } from "@/lib/whatsapp/identity";
 import { normalizePhoneInput } from "@/lib/whatsapp/phone";
 
 type Result = { ok: boolean; error?: string };
@@ -109,7 +109,7 @@ export type ConfirmPhoneResult = Result & {
  * Step 2 — confirm a phone number. Updating profiles.phone fires the
  * profiles_claim_client_invite trigger, which claims any pre-registration
  * invite for this number and grants its gifted plan — so pre-registered
- * clients can book immediately. The wa_links row is created right here, so
+ * clients can book immediately. profiles.phone is saved right here, so
  * WhatsApp notifications flow without waiting for a first inbound message
  * (out-of-window sends use the approved template).
  */
@@ -147,8 +147,8 @@ export async function confirmPhone(rawPhone: string): Promise<ConfirmPhoneResult
     .eq("id", user.id);
   if (error) return { ok: false, error: "Couldn't save the number. Try again." };
 
-  // Bind the number for WhatsApp delivery and inbound identity immediately.
-  await linkPhoneToUser(admin, phone, user.id);
+  // Saving profiles.phone IS the binding: WhatsApp delivery and inbound
+  // identity both read that column. Nothing further to write.
 
   await bumpStep(supabase, user.id, 2);
 

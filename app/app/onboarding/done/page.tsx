@@ -10,7 +10,7 @@ export const metadata: Metadata = { title: "You're all set" };
  * Final onboarding screen, reached after the first booking (group and private
  * both land here): say hi to the WhatsApp assistant, then get the app on the
  * home screen. The account is already linked to its number (the phone step
- * writes wa_links), so the CTA's job is opening the WhatsApp chat — a first
+ * saves profiles.phone), so the CTA's job is opening the WhatsApp chat — a first
  * message starts the 24h session window that lets the assistant reply
  * free-form instead of via template. Lives outside the onboarded_at gate
  * (booking already stamped it); install is last because iOS install is a

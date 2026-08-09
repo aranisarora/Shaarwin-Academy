@@ -2,10 +2,16 @@
 // act as them?
 //
 // Security model (phone-first):
-//  - The WhatsApp sender number is Twilio-verified. It maps to an account via
-//    wa_links, falling back to a unique profiles.phone match (numbers are
-//    confirmed in the webapp while signed in); genuinely unknown numbers get
-//    a fresh client account auto-provisioned.
+//  - The WhatsApp sender number is Twilio-verified. It maps to an account by a
+//    direct profiles.phone match — the column carries a partial UNIQUE index
+//    (profiles_phone_key, WHERE phone IS NOT NULL), so one number is one
+//    account by construction. Genuinely unknown numbers get a fresh client
+//    account auto-provisioned.
+//  - There is no separate link table and no link code. If we hold the number,
+//    we can both recognise an inbound message and send an outbound one; the
+//    two directions read the SAME column, so they can never disagree. (They
+//    used to: wa_links gated outbound only, which silently demoted two active
+//    coaches and eleven clients to email for months.)
 //  - For every conversation turn the bot mints a REAL Supabase session for the
 //    linked user (admin generateLink → verifyOtp), so all reads/writes run as
 //    that user and Postgres RLS is the enforcement layer — not the LLM.
@@ -19,8 +25,7 @@ import type { Profile } from "@/lib/auth";
 import { normalizePhone } from "./phone";
 
 /** Supabase Auth needs an email; for phone-first users we mint a synthetic one
- *  that never receives mail. The phone (in wa_links + profiles.phone) is the
- *  real identity. */
+ *  that never receives mail. profiles.phone is the real identity. */
 function syntheticEmailFor(phone: string): string {
   const digits = phone.replace(/\D/g, "");
   return `wa${digits}@sharwin.local`;
@@ -34,51 +39,34 @@ export function adminClient(): SupabaseClient<Database> {
   );
 }
 
-/** Why a message is being handled without a linked account — for logging. */
-type GuestReason = "not_linked" | "db_error";
+/** Why a message is being handled without an account — for logging. */
+type GuestReason = "no_account" | "db_error";
 
 export type IdentityResult =
   | { profile: Profile; reason: null }
   | { profile: null; reason: GuestReason };
 
 /**
- * Resolve the account behind a phone number. Order:
- *   1. Explicit wa_links row (the canonical link).
- *   2. Fallback: the profile whose (unique) profiles.phone matches — auto-link
- *      it so step 1 hits next time. This is what makes "sign up on the web,
- *      just message the bot" work.
+ * Resolve the account behind a phone number: the profile whose phone matches.
+ * profiles_phone_key (partial UNIQUE, WHERE phone IS NOT NULL) guarantees at
+ * most one, so maybeSingle() is exact rather than a "pick the first" guess.
+ *
  * Returns a typed reason when nothing matches so the caller can log/act.
+ *
+ * NOTE the db_error branch is load-bearing and must not be "simplified" into
+ * the no_account path. It is now the ONLY thing standing between a transient
+ * query failure and autoProvisionClient minting a SECOND account for a member
+ * who already has one — stranding their bookings, credits and membership on
+ * the original. There is no second lookup left to fall back on.
  */
 export async function resolveIdentity(
   admin: SupabaseClient<Database>,
   rawPhone: string
 ): Promise<IdentityResult> {
   const phone = normalizePhone(rawPhone);
-  if (!phone) return { profile: null, reason: "not_linked" };
+  if (!phone) return { profile: null, reason: "no_account" };
 
   try {
-    const { data: link, error: linkErr } = await admin
-      .from("wa_links")
-      .select("user_id")
-      .eq("phone", phone)
-      .maybeSingle();
-    if (linkErr) {
-      console.error("wa: wa_links lookup failed", linkErr.message);
-      return { profile: null, reason: "db_error" };
-    }
-
-    if (link) {
-      const { data: profile } = await admin
-        .from("profiles")
-        .select("*")
-        .eq("id", link.user_id)
-        .maybeSingle();
-      if (profile) return { profile: profile as Profile, reason: null };
-    }
-
-    // No link row — try matching an existing account by phone and auto-link it.
-    // A query error here must NOT fall through to "not_linked": the caller
-    // would auto-provision a duplicate account for a number that has one.
     const { data: byPhone, error: byPhoneErr } = await admin
       .from("profiles")
       .select("*")
@@ -88,14 +76,9 @@ export async function resolveIdentity(
       console.error("wa: profiles.phone lookup failed", byPhoneErr.message);
       return { profile: null, reason: "db_error" };
     }
-    if (byPhone) {
-      await admin
-        .from("wa_links")
-        .upsert({ phone, user_id: byPhone.id }, { onConflict: "phone" });
-      return { profile: byPhone as Profile, reason: null };
-    }
+    if (byPhone) return { profile: byPhone as Profile, reason: null };
 
-    return { profile: null, reason: "not_linked" };
+    return { profile: null, reason: "no_account" };
   } catch (err) {
     console.error("wa: resolveIdentity crashed", err);
     return { profile: null, reason: "db_error" };
@@ -103,26 +86,10 @@ export async function resolveIdentity(
 }
 
 /**
- * Bind a phone to an account in wa_links — the table notification delivery
- * and inbound identity read. One phone ↔ one account: any previous link for
- * either side is replaced, so callers must have verified the pair belongs
- * together (unique profiles.phone does this for webapp saves).
- */
-export async function linkPhoneToUser(
-  admin: SupabaseClient<Database>,
-  phone: string,
-  userId: string
-): Promise<void> {
-  await admin.from("wa_links").delete().eq("phone", phone);
-  await admin.from("wa_links").delete().eq("user_id", userId);
-  await admin.from("wa_links").insert({ phone, user_id: userId });
-}
-
-/**
  * Phone-first onboarding: the number is already Twilio-verified, so create a
- * client account bound to it (synthetic email, no OTP, no code) and link it.
- * fullName is a placeholder until the bot collects the real one via
- * update_profile. Returns the fresh profile, or null on failure.
+ * client account bound to it (synthetic email, no OTP, no code). The name is a
+ * placeholder until the bot collects the real one via update_profile.
+ * Returns the fresh profile, or null on failure.
  */
 export async function autoProvisionClient(
   admin: SupabaseClient<Database>,
@@ -131,10 +98,12 @@ export async function autoProvisionClient(
   const phone = normalizePhone(rawPhone);
   if (!phone) return null;
 
-  // Guard against races: if any account already owns this phone (via wa_links
-  // or profiles.phone), return it instead of creating a duplicate.
+  // Guard against races: if an account already owns this phone, return it
+  // instead of creating a duplicate. A db_error here is NOT "no account" —
+  // provisioning on a failed lookup is exactly how duplicates get minted.
   const existing = await resolveIdentity(admin, phone);
   if (existing.profile) return existing.profile;
+  if (existing.reason === "db_error") return null;
 
   const email = syntheticEmailFor(phone);
   const { data: created, error } = await admin.auth.admin.createUser({
@@ -157,11 +126,13 @@ export async function autoProvisionClient(
   if (!provisioned) {
     await admin
       .from("profiles")
-      .insert({ id: userId, role: "client", full_name: "", email });
+      .insert({ id: userId, role: "client", full_name: "", email, phone });
     await admin.from("players").insert({ client_id: userId, full_name: "there" });
   }
 
-  await linkPhoneToUser(admin, phone, userId);
+  // The phone IS the identity now, so it must land on the row. Carried on the
+  // insert above when we create the profile ourselves; this update covers the
+  // handle_new_user trigger path, which does not know the number.
   await admin.from("profiles").update({ phone }).eq("id", userId);
 
   // If an admin pre-registered this phone as a coach, upgrade the fresh account.
