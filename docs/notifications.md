@@ -54,7 +54,8 @@ session; one channel for receipts and news.
 > ```
 >
 > This needs a machine whose Supabase CLI is signed in to the account that owns
-> the project. It cannot be done from the MCP tooling alone.
+> the project. There is no way to deploy the worker from the app or the SQL
+> editor — the running function only changes when someone runs this command.
 
 ---
 

@@ -12,6 +12,11 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Scratch space the Supabase CLI writes into on `status`/`db dump`/`start`
+    // — gitignored, vendored, and minified, so linting it reports ~150 errors
+    // in code nobody here wrote. Without this, running any of the CLI commands
+    // AGENTS.md tells you to run makes `npm run lint` fail.
+    "supabase/.temp/**",
   ]),
   // Every user-facing timestamp goes through lib/academy-time.ts, so the app
   // renders in academy time (Asia/Kolkata) rather than the viewer's timezone.

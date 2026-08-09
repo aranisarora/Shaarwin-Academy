@@ -8,19 +8,43 @@ This version has breaking changes — APIs, conventions, and file structure may 
 
 The canonical Postgres schema is **`supabase/schema.sql`** — a full snapshot of the `public` schema (tables, columns, types, enums, constraints, indexes, functions, RLS policies). **Read it before writing any SQL, migration, or Supabase `.from()/.select()` query** so column names, types, and enum values are exact. Do not infer the schema from migrations or app code — the live schema has drifted ahead of the migration files.
 
-## Live access & regeneration — Supabase MCP
+## Live access — the Supabase CLI
 
-The **Supabase MCP server** is the source of truth for the live database. Use it to inspect the schema on demand (`list_tables`, `execute_sql` against `pg_catalog`) and to apply changes (`apply_migration`). Project ref: `jkjgdpifimvnptpxjixk` (subdomain of `NEXT_PUBLIC_SUPABASE_URL`).
+The **Supabase CLI** is how you reach the live database. Project ref: `jkjgdpifimvnptpxjixk` (subdomain of `NEXT_PUBLIC_SUPABASE_URL`), already linked. Read the live schema with:
 
-`supabase/schema.sql` is regenerated **via the MCP** (query the catalog for tables, constraints, indexes, functions, policies and assemble the file) — there is no CLI dump step. When Claude has MCP access, ask it to refresh the file after a schema change.
+```bash
+supabase db dump --linked --schema public -f /tmp/live.sql
+```
+
+That is the ground truth to check `supabase/schema.sql` against. It is read-only and safe to run any time.
+
+### Do NOT push migrations with the CLI
+
+`supabase db push` is a deliberate no-op here — `[db.migrations] enabled = false` in `config.toml`. Do not "fix" that:
+
+- `supabase/migrations/` has drifted behind the live DB and no longer replays from empty (0001 assumes a pre-migration base schema).
+- The remote migration history shares **no versions at all** with the local files — every remote entry is a timestamp (`20260808045552`) stamped by the tooling that applied it, and `supabase migration list --linked` shows all 74 local files as unapplied. Re-enabling the push would try to replay 0001 onwards against production.
+
+So a migration reaches production by **executing its SQL directly against the linked database** — the Studio SQL editor, or a `pg` script like `scripts/test-db-reset.mjs` pointed at the pooler. Add the file under `supabase/migrations/` for the record either way.
 
 ## Keep it in sync
 
 Any change to the database schema **must** refresh and commit `supabase/schema.sql` in the same commit as the change:
 
-1. Apply the migration (via MCP `apply_migration`, or add it under `supabase/migrations/`).
-2. Regenerate `supabase/schema.sql` from the live DB via the MCP.
-3. `git add supabase/schema.sql` and commit it alongside the change.
+1. Add the migration under `supabase/migrations/` and apply it to production (see above).
+2. Update `supabase/schema.sql` **by hand**, in the file's existing style. It is a curated, readability-grouped snapshot — lowercase `create table`, explanatory comments, no GRANTs — not a `pg_dump`. Pasting a dump over it destroys the comments and breaks the regex parsing in `scripts/test-db-reset.mjs`.
+3. Verify both directions: `npm run db:reset` must rebuild the local DB from it cleanly, and the objects you changed must match `supabase db dump --linked`. Remember to include everything the migration touched — a dropped table's trigger functions do not go with it, and a dropped policy can orphan the comment above it.
+4. `git add supabase/schema.sql` and commit it alongside the change.
+
+### Types
+
+`lib/database.types.ts` is generated but **not** wholesale-replaceable:
+
+```bash
+npm run db:reset && supabase gen types typescript --local
+```
+
+Diff that against the committed file and port the delta. Do not overwrite — the committed file drops the `graphql_public` schema and carries a hand-maintained block of PostgREST computed fields (`classes.location_label` and friends, migration 0052) that `gen types` does not emit.
 
 A pre-commit hook (`.githooks/pre-commit`) blocks any commit that stages a file under `supabase/migrations/` without also staging `supabase/schema.sql`. The hook is enrolled automatically by the `prepare` npm script on `npm install` (it sets `core.hooksPath` to `.githooks`).
 

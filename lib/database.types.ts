@@ -1,8 +1,13 @@
 // Generated from the live Postgres schema — DO NOT EDIT BY HAND.
 //
-// Regenerate via the Supabase MCP (`generate_typescript_types`, project ref
-// jkjgdpifimvnptpxjixk) whenever the schema changes, and commit it in the same
-// commit as the migration + supabase/schema.sql. See AGENTS.md → Database.
+// ...with two exceptions, so regenerate by DIFFING, never by overwriting:
+// `npm run db:reset && supabase gen types typescript --local`, then port the
+// delta. The generator emits a `graphql_public` schema this file drops, and it
+// does NOT emit the PostgREST computed fields under `classes` (location_label
+// and friends, migration 0052) — those are maintained by hand below.
+//
+// Commit it in the same commit as the migration + supabase/schema.sql.
+// See AGENTS.md → Database.
 
 export type Json =
   | string
@@ -2130,9 +2135,29 @@ export type Database = {
         }
         Returns: string
       }
+      _session_alert_text: {
+        Args: {
+          p_base_body: string
+          p_base_title: string
+          p_sessions: Json
+          p_summary_fmt: string
+        }
+        Returns: Json
+      }
       add_school_player: {
         Args: { p_full_name: string; p_grade: number; p_session: string }
         Returns: string
+      }
+      alert_founders_session: {
+        Args: {
+          p_body: string
+          p_session: string
+          p_summary_fmt?: string
+          p_title: string
+          p_type: string
+          p_url: string
+        }
+        Returns: undefined
       }
       assign_coach: {
         Args: { p_preferred?: string; p_session: string }
@@ -2346,6 +2371,18 @@ export type Database = {
         }
         Returns: undefined
       }
+      queue_session_alert: {
+        Args: {
+          p_body: string
+          p_session: string
+          p_summary_fmt?: string
+          p_title: string
+          p_type: string
+          p_url: string
+          p_user: string
+        }
+        Returns: undefined
+      }
       rank_coaches: {
         Args: { p_preferred?: string; p_session: string }
         Returns: {
@@ -2389,6 +2426,7 @@ export type Database = {
         Args: { p_booking: string; p_target_session: string }
         Returns: Json
       }
+      resolve_session_alert: { Args: { p_session: string }; Returns: undefined }
       review_signup_request: {
         Args: { p_approve: boolean; p_client: string; p_reviewer?: string }
         Returns: Json

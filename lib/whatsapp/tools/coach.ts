@@ -540,18 +540,19 @@ const cantMakeSession: WaTool = {
     if (error) {
       // Engine not applied — unassign and alert founders directly.
       await supabase.from("class_sessions").update({ coach_id: null }).eq("id", input.session_id);
-      const { data: founders } = await supabase.from("profiles").select("id").eq("role", "founder");
-      if (founders?.length) {
-        await supabase.from("notifications").insert(
-          founders.map((f) => ({
-            user_id: f.id,
-            type: "session_unassigned",
-            title: "Cover needed",
-            body: "A coach dropped a session.",
-            data: { session_id: input.session_id, url: "/admin/schedule" },
-          }))
-        );
-      }
+      // Through the same queue site as the SQL writers (migration 0069), so
+      // this fallback inherits the once-per-founder-per-day collapse instead of
+      // being the one path that still sends a message per dropped session. On
+      // `admin` because the queue is a system alert, not a coach's write — and
+      // because 0069 revokes it from `authenticated`.
+      await ctx.admin.rpc("alert_founders_session", {
+        p_type: "session_unassigned",
+        p_title: "Cover needed",
+        p_body: "A coach dropped a session.",
+        p_url: "/admin/schedule",
+        p_session: input.session_id,
+        p_summary_fmt: "%s sessions need cover",
+      });
     }
     return ok({ reported: true, note: "Cover is being arranged and the founder has been alerted." });
   },

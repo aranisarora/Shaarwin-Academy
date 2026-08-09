@@ -36,9 +36,9 @@ the one on :3000 — that database is live. Stop the dev server, then run it.
 
 - This Next.js version has breaking changes; read `node_modules/next/dist/docs/`
   before writing code against an unfamiliar API.
-- `supabase/schema.sql` is the canonical schema. Any migration must regenerate it
-  via the Supabase MCP and commit it in the same commit (pre-commit hook
-  enforces this).
+- `supabase/schema.sql` is the canonical schema. Any migration must update it to
+  match and commit it in the same commit (pre-commit hook enforces this); check
+  the result against `supabase db dump --linked --schema public`.
 - Any change to a Postgres function runs `npm run test:db` and updates the
   affected `tests/db/` specs in the same commit.
 

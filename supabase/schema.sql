@@ -1,9 +1,15 @@
 -- Sharwin Academy — canonical public schema.
 --
--- GENERATED from the live database via the Supabase MCP server. Do not edit by
--- hand. Regenerate after any schema change (see AGENTS.md -> Database).
--- Last verified: 2026-08-06 (migrations 0057, 0058, 0059, 0062, 0063 applied to
--- prod).
+-- MAINTAINED BY HAND to mirror the live database — this is not a pg_dump, and a
+-- dump must not be pasted over it (see AGENTS.md -> Database). Edit it in the
+-- same commit as the migration, then check it both ways: `npm run db:reset`
+-- must rebuild the local DB from it, and the objects you touched must match
+-- `supabase db dump --linked --schema public`.
+-- Last verified: 2026-08-09 (0072/0073/0074 — not yet applied to prod; local
+-- rebuild from this file diffed object-by-object against a live dump, which
+-- differs by exactly those three migrations). Earlier: 2026-08-08 (0069 applied
+-- to prod; function bodies diffed statement-for-statement against live),
+-- 2026-08-06 (0057, 0058, 0059, 0062, 0063).
 --
 -- This is a reference dump, grouped for readability (extensions, enums, tables,
 -- constraints, indexes, functions, view, RLS). It is not guaranteed to run
@@ -675,6 +681,7 @@ CREATE INDEX wa_inbound_seen_created_at_idx ON public.wa_inbound_seen USING btre
 CREATE INDEX bookings_player_id_idx ON public.bookings USING btree (player_id);
 CREATE INDEX notifications_user_id_idx ON public.notifications USING btree (user_id);
 CREATE INDEX notifications_failed_idx ON public.notifications USING btree (created_at DESC) WHERE (status = 'failed'::notification_status);
+CREATE INDEX notifications_user_type_created_idx ON public.notifications USING btree (user_id, type, created_at DESC);
 CREATE INDEX notifications_whatsapp_missed_idx ON public.notifications USING btree (whatsapp_status, created_at DESC) WHERE (whatsapp_status = ANY (ARRAY['failed'::text, 'no_phone'::text]));
 CREATE INDEX class_credits_booking_id_idx ON public.class_credits USING btree (booking_id);
 CREATE INDEX class_credits_order_id_idx ON public.class_credits USING btree (order_id);
@@ -981,11 +988,10 @@ begin
 
   if v_winner is null then
     update class_sessions set coach_id = null where id = p_session;
-    insert into notifications (user_id, type, title, body, data)
-    select p.id, 'session_unassigned', 'Session needs a coach',
-           'No coach fits this slot — resolve it in the calendar.',
-           jsonb_build_object('session_id', p_session, 'url', '/admin/calendar')
-    from profiles p where p.role = 'founder';
+    perform alert_founders_session(
+      'session_unassigned', 'Session needs a coach',
+      'No coach fits this slot — resolve it in the calendar.',
+      '/admin/calendar', p_session);
     return null;
   end if;
 
@@ -2189,6 +2195,255 @@ $function$;
 comment on function public.queue_coach_changed is
   'Queue a coach_changed notification, collapsing repeats for the same user on the same IST day into one summary row that names the first session and counts the rest. The per-session wording is added by notify_name_the_session.';
 
+-- ── Session alerts — the same collapse for standing conditions (0069) ────────
+--
+-- `session_unassigned` sent 105 messages about 18 sessions on 2026-08-08, and
+-- 120 about 12 on 2026-08-02. Two multipliers: assign_coach re-announces an
+-- unchanged condition every time any scheduling path re-runs it (one session
+-- produced 15 rows in twenty minutes), and every unassigned session fans out to
+-- every founder. The type is CAP_EXEMPT in the worker, so the daily cap that
+-- holds other types down was never going to catch it. See migration 0069.
+
+create or replace function public._session_alert_text(
+  p_sessions    jsonb,
+  p_base_title  text,
+  p_base_body   text,
+  p_summary_fmt text
+)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path to 'public'
+as $function$
+declare
+  v_n     int := coalesce(jsonb_array_length(p_sessions), 0);
+  v_label text;
+begin
+  if v_n = 0 then
+    return jsonb_build_object('title', p_base_title, 'body', p_base_body);
+  end if;
+
+  v_label := session_label((p_sessions ->> 0)::uuid);
+
+  if v_n = 1 then
+    return jsonb_build_object(
+      'title', p_base_title,
+      'body',  case when v_label is null then p_base_body
+                    else rtrim(p_base_body, ' .') || ' — ' || v_label || '.' end);
+  end if;
+
+  return jsonb_build_object(
+    'title', format(p_summary_fmt, v_n),
+    'body',  coalesce(v_label || ' and ', '')
+             || (v_n - 1) || ' other session' || case when v_n > 2 then 's' else '' end
+             || ' have no coach — open the calendar to assign.');
+end;
+$function$;
+
+comment on function public._session_alert_text is
+  'Title/body for a session alert carrying N sessions. Names the first and counts the rest (0055 house style). Shared by queue_session_alert and resolve_session_alert so a rewrite reads like a fresh queue.';
+
+create or replace function public.queue_session_alert(
+  p_user        uuid,
+  p_type        text,
+  p_title       text,
+  p_body        text,
+  p_url         text,
+  p_session     uuid,
+  p_summary_fmt text default '%s sessions need a coach'
+)
+returns void
+language plpgsql
+security definer
+set search_path to 'public'
+as $function$
+declare
+  v_existing  notifications%rowtype;
+  v_day_start timestamptz;
+  v_sessions  jsonb;
+  v_text      jsonb;
+  v_starts    timestamptz;
+  v_delay     interval;
+begin
+  if p_user is null or p_session is null then return; end if;
+
+  v_day_start := date_trunc('day', now() at time zone 'Asia/Kolkata')
+                 at time zone 'Asia/Kolkata';
+
+  -- Already told today? Then there is nothing new to say.
+  if exists (
+    select 1 from notifications
+    where user_id = p_user
+      and type = p_type
+      and created_at >= v_day_start
+      and (data -> 'session_ids' @> to_jsonb(p_session::text)
+           or data ->> 'session_id' = p_session::text)
+  ) then
+    return;
+  end if;
+
+  select starts_at into v_starts from class_sessions where id = p_session;
+  v_delay := case
+               when v_starts is not null and v_starts < now() + interval '6 hours'
+               then interval '2 minutes'
+               else interval '10 minutes'
+             end;
+
+  select * into v_existing
+  from notifications
+  where user_id = p_user
+    and type = p_type
+    and status = 'pending'
+    and created_at >= v_day_start
+  order by created_at
+  limit 1
+  for update;
+
+  if found then
+    v_sessions := coalesce(v_existing.data -> 'session_ids', '[]'::jsonb)
+                  || to_jsonb(p_session::text);
+    v_text := _session_alert_text(
+                v_sessions,
+                coalesce(v_existing.data ->> 'base_title', p_title),
+                coalesce(v_existing.data ->> 'base_body',  p_body),
+                coalesce(v_existing.data ->> 'summary_fmt', p_summary_fmt));
+
+    update notifications
+    set title = v_text ->> 'title',
+        body  = v_text ->> 'body',
+        data  = v_existing.data || jsonb_build_object(
+                  'session_ids', v_sessions,
+                  'alert_count', jsonb_array_length(v_sessions),
+                  'collapsed',   jsonb_array_length(v_sessions) > 1),
+        -- Urgency may pull the batch forward, never push it back.
+        scheduled_for = least(v_existing.scheduled_for, now() + v_delay)
+    where id = v_existing.id;
+    return;
+  end if;
+
+  v_sessions := jsonb_build_array(p_session::text);
+  v_text := _session_alert_text(v_sessions, p_title, p_body, p_summary_fmt);
+
+  insert into notifications (user_id, type, title, body, data, scheduled_for)
+  values (p_user, p_type, v_text ->> 'title', v_text ->> 'body',
+          jsonb_build_object(
+            'session_id',  p_session,
+            'session_ids', v_sessions,
+            'url',         p_url,
+            'alert_count', 1,
+            'collapsed',   false,
+            'base_title',  p_title,
+            'base_body',   p_body,
+            'summary_fmt', p_summary_fmt),
+          now() + v_delay);
+end;
+$function$;
+
+comment on function public.queue_session_alert is
+  'Queue a standing-condition alert about one session for one person. Tells them at most once per IST day per session, and folds a burst into one summary row. See migration 0069.';
+
+create or replace function public.alert_founders_session(
+  p_type        text,
+  p_title       text,
+  p_body        text,
+  p_url         text,
+  p_session     uuid,
+  p_summary_fmt text default '%s sessions need a coach'
+)
+returns void
+language plpgsql
+security definer
+set search_path to 'public'
+as $function$
+declare
+  f record;
+begin
+  for f in
+    select id from profiles where role = 'founder' and deleted_at is null
+  loop
+    perform queue_session_alert(f.id, p_type, p_title, p_body, p_url,
+                                p_session, p_summary_fmt);
+  end loop;
+end;
+$function$;
+
+comment on function public.alert_founders_session is
+  'Queue a session alert for every active founder, collapsed per founder. The single definition of "tell the founders about this session".';
+
+create or replace function public.resolve_session_alert(p_session uuid)
+returns void
+language plpgsql
+security definer
+set search_path to 'public'
+as $function$
+declare
+  r      record;
+  v_left jsonb;
+  v_text jsonb;
+begin
+  if p_session is null then return; end if;
+
+  for r in
+    select * from notifications
+    where status = 'pending'
+      and data -> 'session_ids' @> to_jsonb(p_session::text)
+    for update
+  loop
+    select coalesce(jsonb_agg(s), '[]'::jsonb) into v_left
+    from jsonb_array_elements(r.data -> 'session_ids') s
+    where s <> to_jsonb(p_session::text);
+
+    if jsonb_array_length(v_left) = 0 then
+      -- Nothing left to report and it never went out. Say nothing.
+      delete from notifications where id = r.id;
+      continue;
+    end if;
+
+    v_text := _session_alert_text(
+                v_left,
+                coalesce(r.data ->> 'base_title', r.title),
+                coalesce(r.data ->> 'base_body',  r.body),
+                coalesce(r.data ->> 'summary_fmt', '%s sessions need a coach'));
+
+    update notifications
+    set title = v_text ->> 'title',
+        body  = v_text ->> 'body',
+        data  = r.data || jsonb_build_object(
+                  'session_id',  (v_left ->> 0)::uuid,
+                  'session_ids', v_left,
+                  'alert_count', jsonb_array_length(v_left),
+                  'collapsed',   jsonb_array_length(v_left) > 1)
+    where id = r.id;
+  end loop;
+end;
+$function$;
+
+comment on function public.resolve_session_alert is
+  'Drop a session from any session alert that has not been sent yet, deleting the alert if it was the last one. Makes the batching delay in queue_session_alert safe.';
+
+create or replace function public._session_alert_resolve_trigger()
+returns trigger
+language plpgsql
+security definer
+set search_path to 'public'
+as $function$
+begin
+  if tg_op = 'DELETE' then
+    perform resolve_session_alert(old.id);
+    return old;
+  end if;
+
+  if (new.coach_id is not null and old.coach_id is distinct from new.coach_id)
+     or (new.status is distinct from old.status and new.status <> 'scheduled')
+  then
+    perform resolve_session_alert(new.id);
+  end if;
+
+  return new;
+end;
+$function$;
+
 CREATE OR REPLACE FUNCTION public.founder_reassign(p_session uuid, p_coach uuid, p_lock boolean DEFAULT false, p_force boolean DEFAULT false)
  RETURNS void
  LANGUAGE plpgsql
@@ -2606,11 +2861,10 @@ begin
                 'Your session has a new coach.', '/app/schedule');
       end loop;
     else
-      insert into notifications (user_id, type, title, body, data)
-      select p.id, 'session_unassigned', 'Cover needed',
-             'A coach dropped a session and no substitute fits.',
-             jsonb_build_object('session_id', r.id, 'url', '/admin/calendar')
-      from profiles p where p.role = 'founder';
+      perform alert_founders_session(
+        'session_unassigned', 'Cover needed',
+        'A coach dropped a session and no substitute fits.',
+        '/admin/calendar', r.id, '%s sessions need cover');
       -- clients are NOT notified — founder decides the outcome
       --
       -- ...but before the founder has to ring anyone, offer it out (K8). This
@@ -4349,23 +4603,6 @@ begin
 end;
 $function$;
 
-CREATE OR REPLACE FUNCTION public.ops_notify_wa_linked()
- RETURNS trigger
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public'
-AS $function$
-declare
-  v_name text;
-begin
-  select full_name into v_name from profiles where id = new.user_id;
-  perform notify_founders('ops_wa_linked', 'WhatsApp linked',
-    coalesce(v_name, 'A user') || ' linked WhatsApp (' || new.phone || ').',
-    jsonb_build_object('client_id', new.user_id, 'url', '/admin/clients'));
-  return new;
-end;
-$function$;
-
 CREATE OR REPLACE FUNCTION public.ops_notify_credit_used()
  RETURNS trigger
  LANGUAGE plpgsql
@@ -4989,6 +5226,7 @@ CREATE TRIGGER profiles_ops_feed AFTER INSERT ON public.profiles FOR EACH ROW EX
 CREATE TRIGGER subscriptions_ops_feed AFTER INSERT OR UPDATE OF status ON public.subscriptions FOR EACH ROW EXECUTE FUNCTION ops_notify_subscription();
 CREATE TRIGGER profiles_claim_client_invite AFTER INSERT OR UPDATE OF phone ON public.profiles FOR EACH ROW WHEN ((new.phone IS NOT NULL)) EXECUTE FUNCTION claim_client_invite();
 CREATE TRIGGER push_subscriptions_touch BEFORE INSERT OR UPDATE ON public.push_subscriptions FOR EACH ROW EXECUTE FUNCTION touch_push_subscription();
+CREATE TRIGGER class_sessions_resolve_alerts AFTER UPDATE OR DELETE ON public.class_sessions FOR EACH ROW EXECUTE FUNCTION _session_alert_resolve_trigger();
 
 -- ── Row Level Security ───────────────────────────────────────────────────────
 alter table public.area_interest enable row level security;
@@ -5100,8 +5338,11 @@ CREATE POLICY "founder all school admins" ON public.school_admins AS PERMISSIVE 
 CREATE POLICY "school reads own link" ON public.school_admins AS PERMISSIVE FOR SELECT TO public USING ((user_id = ( SELECT auth.uid() AS uid)));
 CREATE POLICY "founder writes venues" ON public.venues AS PERMISSIVE FOR ALL TO public USING (( SELECT is_founder() AS is_founder));
 CREATE POLICY "public reads active venues" ON public.venues AS PERMISSIVE FOR SELECT TO public USING (((active = true) OR ( SELECT is_founder() AS is_founder)));
--- The only wa_* policy there will be: whether a phone is linked is a question
--- the founder asks, the transcript in wa_messages is not.
+-- There is no wa_* policy, and that absence is deliberate. The one that existed
+-- read wa_links, which 0074 dropped: profiles.phone is the binding now, and it
+-- is covered by the profiles policies. wa_messages and wa_inbound_seen keep RLS
+-- on with no policy at all — service-role only, so the chat transcript stays
+-- out of the chat's own reach.
 CREATE POLICY "founder reads webhook events" ON public.webhook_events AS PERMISSIVE FOR SELECT TO public USING (( SELECT is_founder() AS is_founder));
 CREATE POLICY "staff reads categories" ON public.skill_categories AS PERMISSIVE FOR SELECT TO public USING ((( SELECT is_coach() AS is_coach) OR ( SELECT is_founder() AS is_founder)));
 CREATE POLICY "founder manages categories" ON public.skill_categories AS PERMISSIVE FOR ALL TO public USING (( SELECT is_founder() AS is_founder)) WITH CHECK (( SELECT is_founder() AS is_founder));
