@@ -24,14 +24,73 @@ describe("delivery observability (migration 0041)", () => {
         data: {},
         status: "failed",
         channel_attempted: "whatsapp",
-        error: "whatsapp: not_linked; email: no_channel",
+        error: "whatsapp: no_phone; email: no_channel",
+        whatsapp_status: "no_phone",
       })
-      .select("status,error,channel_attempted")
+      .select("status,error,channel_attempted,whatsapp_status")
       .single();
 
     expect(error).toBeNull();
     expect(row!.channel_attempted).toBe("whatsapp");
-    expect(row!.error).toContain("not_linked");
+    expect(row!.error).toContain("no_phone");
+    expect(row!.whatsapp_status).toBe("no_phone");
+  });
+
+  it("keeps a WhatsApp failure visible on a row that email delivered", async () => {
+    // The bug this column exists for. Email is additive, not a replacement:
+    // WhatsApp is what these members read. The chain used to mark the row
+    // `sent` the moment ANY leg landed, so a WhatsApp miss vanished — 1,027 of
+    // 2,507 notifications since 2026-08-01 went out by email and a query for
+    // the reason returned zero rows. status and whatsapp_status must be able
+    // to disagree, because that disagreement IS the diagnosis.
+    const db = admin();
+    const parent = await createClient({ children: 0 });
+
+    const { data: row, error } = await db
+      .from("notifications")
+      .insert({
+        user_id: parent.id,
+        type: "booking_confirmed",
+        title: "Test",
+        body: "Test",
+        data: {},
+        status: "sent",
+        channel_attempted: "email",
+        error: "whatsapp: no_phone",
+        whatsapp_status: "no_phone",
+      })
+      .select("status,whatsapp_status")
+      .single();
+
+    expect(error).toBeNull();
+    expect(row!.status).toBe("sent");
+    expect(row!.whatsapp_status).toBe("no_phone");
+
+    // …and the founder-facing question — "who did we fail to reach on the
+    // channel they actually read?" — must be one indexed query, not a
+    // substring hunt through free text.
+    const { data: missed, error: missedErr } = await db
+      .from("notifications")
+      .select("id")
+      .in("whatsapp_status", ["failed", "no_phone"])
+      .eq("user_id", parent.id);
+    expect(missedErr).toBeNull();
+    expect(missed!.length).toBeGreaterThan(0);
+  });
+
+  it("rejects a whatsapp_status the worker would never write", async () => {
+    const db = admin();
+    const parent = await createClient({ children: 0 });
+    const { error } = await db.from("notifications").insert({
+      user_id: parent.id,
+      type: "booking_confirmed",
+      title: "Test",
+      body: "Test",
+      data: {},
+      whatsapp_status: "delivered-ish",
+    });
+    expect(error).not.toBeNull();
+    expect(error!.code).toBe("23514"); // check_violation
   });
 
   it("leaves error null on the happy path, so the failure query stays clean", async () => {

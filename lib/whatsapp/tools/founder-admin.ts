@@ -840,7 +840,7 @@ const NOTIFY_CAP = 50;
 const notify: WaTool = {
   name: "notify",
   description:
-    "Message specific people — one person or a chosen group. Use find to get the user ids first, then send: 'message the coach taking Saturday's La Plazza session', 'tell everyone booked into tomorrow's beginner class it's moved indoors', 'message the three clients whose payment failed'. For bookings, the person to message is the booking's client_id (the parent), not the player. To reach EVERY active coach or EVERY active client, use broadcast_message instead — it resolves the audience itself and skips deleted accounts. Restate who (by name, and the count) and the exact message, and get an explicit yes, before calling — this cannot be unsent.",
+    "Message specific people — one person or a chosen group. The result names anyone with no phone number saved (unreachable_on_whatsapp) — they cannot be reached on WhatsApp at all, so you MUST pass those names on rather than reporting a clean success. Use find to get the user ids first, then send: 'message the coach taking Saturday's La Plazza session', 'tell everyone booked into tomorrow's beginner class it's moved indoors', 'message the three clients whose payment failed'. For bookings, the person to message is the booking's client_id (the parent), not the player. To reach EVERY active coach or EVERY active client, use broadcast_message instead — it resolves the audience itself and skips deleted accounts. Restate who (by name, and the count) and the exact message, and get an explicit yes, before calling — this cannot be unsent.",
   input_schema: {
     type: "object",
     properties: {
@@ -890,9 +890,21 @@ const notify: WaTool = {
       type,
       skipped_deleted: result.skipped_deleted || undefined,
       muted_for: result.muted?.length ? result.muted : undefined,
-      note: result.muted?.length
-        ? `Queued. ${result.muted.join(" and ")} ${result.muted.length === 1 ? "has" : "have"} this kind of message muted, so ${result.muted.length === 1 ? "they" : "they"} will only see it in the app — tell the founder, and offer to call instead if it's urgent.`
-        : undefined,
+      // No number on the profile means no WhatsApp, full stop — they will get
+      // an email instead and very likely never read it. The founder has to
+      // hear this by name, because the alternative is what already happened:
+      // months of "why do my coaches never get your messages".
+      unreachable_on_whatsapp: result.unreachable?.length ? result.unreachable : undefined,
+      note: [
+        result.muted?.length
+          ? `${result.muted.join(" and ")} ${result.muted.length === 1 ? "has" : "have"} this kind of message muted, so they will only see it in the app.`
+          : "",
+        result.unreachable?.length
+          ? `${result.unreachable.join(" and ")} ${result.unreachable.length === 1 ? "has" : "have"} no phone number saved, so this cannot reach ${result.unreachable.length === 1 ? "them" : "them"} on WhatsApp at all — it will go by email. Say so by name, and offer to call.`
+          : "",
+      ]
+        .filter(Boolean)
+        .join(" ") || undefined,
     });
   },
 };
