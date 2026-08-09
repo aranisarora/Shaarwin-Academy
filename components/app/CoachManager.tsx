@@ -93,14 +93,10 @@ type Mode = "add" | "edit" | "pending" | null;
 export function CoachManager({
   coaches,
   pending,
-  away: awayById = {},
 }: {
   coaches: CoachRow[];
   pending: PendingCoachRow[];
-  /** coachId → "Away until 15 Aug", for leave already approved. */
-  away?: Record<string, string>;
 }) {
-  const away = new Map(Object.entries(awayById));
   const [mode, setMode] = useState<Mode>(null);
   const [form, setForm] = useState<Form>(EMPTY_FORM);
   // Address typeahead state lives here so it resets correctly each time a
@@ -334,9 +330,6 @@ export function CoachManager({
                   <span className="truncate">{c.name}</span>
                   {!c.active && (
                     <Badge className="shrink-0">Paused</Badge>
-                  )}
-                  {away.get(c.id) && (
-                    <Badge className="shrink-0">{away.get(c.id)}</Badge>
                   )}
                 </p>
                 <p className="truncate text-sm text-fg-2">{c.email}</p>

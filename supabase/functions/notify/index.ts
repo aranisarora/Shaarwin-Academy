@@ -161,8 +161,6 @@ const DEFERRABLE = new Set([
   "private_minutes_low",
   "payment_failed",
   "ops_daily_digest",
-  "time_off_requested",
-  "time_off_decision",
   // Client copy of an academy-booked private (G1). Informational, not urgent —
   // the session itself gets its own reminder 3h before.
   "private_session_booked",

@@ -31,27 +31,6 @@ insert into coaches (id, bio, base_lat, base_lng, max_teachable_level, dbs_check
   ('00000000-0000-4000-8000-000000000013', 'Junior development specialist — patient and precise.', 12.9290, 77.6014, 'advanced', false)
 on conflict (id) do nothing;
 
--- weekly availability: Mon–Sat, mornings through evenings (earliest batch 08:00)
-insert into coach_availability (coach_id, weekday, start_time, end_time)
-select c.id, d.weekday, time '07:30', time '21:30'
-from coaches c
-cross join (values (0),(1),(2),(3),(4),(5)) as d(weekday)
-where c.id in ('00000000-0000-4000-8000-000000000011',
-               '00000000-0000-4000-8000-000000000012',
-               '00000000-0000-4000-8000-000000000013')
-  and not exists (
-    select 1 from coach_availability a where a.coach_id = c.id and a.weekday = d.weekday
-  );
-
--- one approved time-off next week for Samir
-insert into coach_time_off (id, coach_id, starts_at, ends_at, reason, status)
-values ('00000000-0000-4000-8000-0000000000a1',
-        '00000000-0000-4000-8000-000000000011',
-        date_trunc('week', now()) + interval '7 days',
-        date_trunc('week', now()) + interval '8 days',
-        'Tournament', 'approved')
-on conflict (id) do nothing;
-
 -- players: clients themselves + two children for Priya
 insert into players (id, client_id, full_name, date_of_birth, skill_level) values
   ('00000000-0000-4000-8000-0000000000b1', '00000000-0000-4000-8000-000000000021', 'Alex Morgan', '1992-04-12', 'intermediate'),

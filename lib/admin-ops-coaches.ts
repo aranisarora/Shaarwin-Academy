@@ -290,7 +290,7 @@ const CLIENT_FOOTPRINT = [
  *
  * Deleting the auth user is the whole operation: `profiles.id` → `auth.users`
  * is ON DELETE CASCADE, and everything hanging off the profile — the `coaches`
- * row with its assignments/availability/time-off, notifications —
+ * row with its assignments, notifications —
  * goes with it. `audit_log.actor_id` and the `coach_invites` row are ON DELETE
  * SET NULL, so the record that they were here, and were removed, survives them.
  *
@@ -388,8 +388,8 @@ export async function deleteCoachCore(
     .eq("preferred_coach", coachId);
 
   // Delete the account. One call: profiles cascades off auth.users, and the
-  // coaches row (with its assignments, availability and time-off), the
-  // notifications all cascade off profiles. The WhatsApp binding is
+  // coaches row (with its assignments) and the notifications all cascade off
+  // profiles. The WhatsApp binding is
   // profiles.phone itself, so it goes with the row rather than cascading.
   const { error: delErr } = await createAdminClient().auth.admin.deleteUser(coachId);
   if (delErr) return { ok: false, error: "Couldn't remove the coach." };

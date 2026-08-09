@@ -388,7 +388,7 @@ export const ENTITIES: Record<string, EntityDef> = {
       active: { path: "active", description: "true for series still generating bookings" },
       weekday: {
         path: "weekday",
-        description: "1=Monday … 7=Sunday — NOT the 0-based weekday coach_availability uses",
+        description: "1=Monday … 7=Sunday",
       },
       start_time: { path: "start_time", description: "HH:MM:SS, IST" },
       title: {
@@ -451,7 +451,7 @@ export const ENTITIES: Record<string, EntityDef> = {
       active: { path: "active", description: "true for series still generating sessions" },
       weekday: {
         path: "weekday",
-        description: "1=Monday … 7=Sunday — NOT the 0-based weekday coach_availability uses",
+        description: "1=Monday … 7=Sunday",
       },
       start_time: { path: "start_time", description: "HH:MM:SS, IST" },
       venue_id: { path: "venue_id", description: "Venue id, when the slot is at a venue" },
@@ -559,8 +559,7 @@ export const ENTITIES: Record<string, EntityDef> = {
     // base_address / base_lat / base_lng withheld — a coach's home address.
     columns: "id,bio,quote,credentials,photo_url,active,max_teachable_level,created_at",
     includes: {
-      profile: "profiles(id,full_name,phone)",
-      availability: "coach_availability(id,weekday,start_time,end_time)",
+      profile: "profiles(id,full_name,phone)",
       sessions: "class_sessions(id,starts_at,status)",
     },
     defaultIncludes: ["profile"],
@@ -605,49 +604,6 @@ export const ENTITIES: Record<string, EntityDef> = {
     },
     order: { path: "name", ascending: true },
     groupable: ["active", "is_school"],
-  },
-
-  // ── Availability ─────────────────────────────────────────────────────────
-  coach_availability: {
-    table: "coach_availability",
-    description: "Weekly windows a coach can teach in. weekday is 0=Monday … 6=Sunday.",
-    roles: STAFF,
-    columns: "id,coach_id,weekday,start_time,end_time",
-    includes: { coach: "coaches(id,active,profiles(id,full_name))" },
-    defaultIncludes: ["coach"],
-    filters: {
-      id: { path: "id", description: "Window id", ops: ["eq", "in", "not_in"] },
-      coach_id: { path: "coach_id", description: "Windows for this coach" },
-      weekday: { path: "weekday", description: "0=Monday … 6=Sunday" },
-      start_time: { path: "start_time", description: "HH:MM:SS" },
-      end_time: { path: "end_time", description: "HH:MM:SS" },
-    },
-    order: { path: "weekday", ascending: true },
-    groupable: ["coach_id", "weekday"],
-  },
-
-  time_off: {
-    table: "coach_time_off",
-    description: "Coach time-off requests and their approval state.",
-    roles: STAFF,
-    // reason withheld — can be medical. The pending_time_off tool shows it to
-    // the founder, who is the person entitled to weigh it.
-    columns: "id,coach_id,starts_at,ends_at,status,created_at",
-    includes: { coach: "coaches(id,profiles(id,full_name))" },
-    defaultIncludes: ["coach"],
-    filters: {
-      id: { path: "id", description: "Request id", ops: ["eq", "in", "not_in"] },
-      coach_id: { path: "coach_id", description: "Requests from this coach" },
-      status: {
-        path: "status",
-        description: "pending | approved | rejected",
-        values: ["pending", "approved", "rejected"],
-      },
-      from: { path: "starts_at", description: "At or after", ops: ["gte", "gt"], ...FROM_IST },
-      to: { path: "ends_at", description: "At or before", ops: ["lte", "lt"], ...TO_IST },
-    },
-    order: { path: "starts_at", ascending: true },
-    groupable: ["status", "coach_id"],
   },
 
   // ── Money ────────────────────────────────────────────────────────────────

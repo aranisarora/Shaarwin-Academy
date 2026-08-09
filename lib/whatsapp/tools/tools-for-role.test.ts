@@ -22,15 +22,15 @@ describe("toolsForRole", () => {
     }
   });
 
-  it("gives coaches schedule, roster, availability, attendance and drop tools", () => {
+  it("gives coaches schedule, roster, cover, attendance and drop tools", () => {
     const n = names("coach");
     for (const tool of [
       "my_coach_sessions",
       "session_roster",
       "confirm_session",
       "mark_arrival",
-      "add_availability_window",
-      "request_time_off",
+      "list_cover_offers",
+      "claim_cover_session",
       "mark_attendance",
       "cant_make_session",
     ]) {
@@ -80,8 +80,8 @@ describe("toolsForRole", () => {
     expect(forRole("founder")).toContain("subscriptions:");
     expect(forRole("client")).not.toContain("subscriptions:");
     expect(forRole("client")).not.toContain("clients:");
-    expect(forRole("coach")).toContain("coach_availability:");
-    expect(forRole("client")).not.toContain("coach_availability:");
+    expect(forRole("coach")).toContain("coaches:");
+    expect(forRole("client")).not.toContain("coaches:");
   });
 
   it("only the founder can message an arbitrary set of people", () => {
@@ -94,7 +94,6 @@ describe("toolsForRole", () => {
     expect(names("founder")).toContain("cancel_sessions");
     expect(names("founder")).not.toContain("cancel_session");
     expect(names("client")).not.toContain("cancel_booking");
-    expect(names("coach")).toContain("remove_availability_windows");
   });
 
   it("every set-taking tool asks for an array, not a single id", () => {
