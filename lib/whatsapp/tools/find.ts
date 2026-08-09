@@ -218,7 +218,6 @@ function buildSelect(
 /** Tables whose rows name a coach, and the column that does it. */
 const COACH_COLUMN: Partial<Record<TableName, string>> = {
   class_sessions: "coach_id",
-  coach_availability: "coach_id",
   private_booking_series: "preferred_coach",
 };
 

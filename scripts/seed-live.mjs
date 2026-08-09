@@ -126,11 +126,6 @@ for (const spec of coachSpecs) {
   await upsert("coaches", [
     { id, bio: spec.bio, base_lat: spec.lat, base_lng: spec.lng, max_teachable_level: spec.level, dbs_checked: spec.dbs },
   ]);
-  const avail = [];
-  for (let wd = 0; wd <= 5; wd++)
-    avail.push({ coach_id: id, weekday: wd, start_time: "07:30", end_time: "21:30" });
-  const have = await select("coach_availability", `coach_id=eq.${id}&select=id`);
-  if (have.length === 0) await upsert("coach_availability", avail);
 }
 
 // ── venues / plans / settings ───────────────────────────────────────────────

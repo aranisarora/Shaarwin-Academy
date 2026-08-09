@@ -54,8 +54,6 @@ export async function reassignSessionCore(
       const reason = error.message.split("filter_failed_")[1] ?? "hard filter";
       const friendly: Record<string, string> = {
         inactive: "they're paused",
-        time_off: "they're on approved time off",
-        unavailable: "the slot is outside their availability hours",
         overlap: "they'd clash with another session (incl. travel buffer)",
         level_too_high: "the class level is above what they teach",
         dbs_required: "a junior is booked and they have no DBS check",

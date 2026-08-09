@@ -38,7 +38,6 @@ create type public.signup_approval_status as enum ('pending', 'approved', 'denie
 create type public.skill_level as enum ('beginner', 'intermediate', 'advanced', 'elite', 'any');
 create type public.subscription_source as enum ('stripe', 'comp', 'razorpay');
 create type public.subscription_status as enum ('incomplete', 'trialing', 'active', 'past_due', 'canceled', 'paused');
-create type public.time_off_status as enum ('pending', 'approved', 'rejected');
 create type public.user_role as enum ('client', 'coach', 'founder', 'school');
 
 -- ── Tables ───────────────────────────────────────────────────────────────────
@@ -159,25 +158,6 @@ create table public.coach_assignments (
   score numeric(5,2),
   locked boolean default false not null,
   status assignment_status default 'active'::assignment_status not null,
-  created_at timestamptz default now() not null
-);
-
-create table public.coach_availability (
-  id uuid default gen_random_uuid() not null,
-  coach_id uuid not null,
-  weekday smallint not null,
-  start_time time not null,
-  end_time time not null
-);
-
-create table public.coach_time_off (
-  id uuid default gen_random_uuid() not null,
-  coach_id uuid not null,
-  starts_at timestamptz not null,
-  ends_at timestamptz not null,
-  reason text,
-  status time_off_status default 'pending'::time_off_status not null,
-  decided_by uuid,
   created_at timestamptz default now() not null
 );
 
@@ -565,14 +545,6 @@ ALTER TABLE public.coach_assignments ADD CONSTRAINT coach_assignments_pkey PRIMA
 ALTER TABLE public.coach_assignments ADD CONSTRAINT coach_assignments_assigned_by_fkey FOREIGN KEY (assigned_by) REFERENCES profiles(id) ON DELETE SET NULL;
 ALTER TABLE public.coach_assignments ADD CONSTRAINT coach_assignments_coach_id_fkey FOREIGN KEY (coach_id) REFERENCES coaches(id) ON DELETE CASCADE;
 ALTER TABLE public.coach_assignments ADD CONSTRAINT coach_assignments_session_id_fkey FOREIGN KEY (session_id) REFERENCES class_sessions(id) ON DELETE CASCADE;
-ALTER TABLE public.coach_availability ADD CONSTRAINT coach_availability_pkey PRIMARY KEY (id);
-ALTER TABLE public.coach_availability ADD CONSTRAINT coach_availability_coach_id_fkey FOREIGN KEY (coach_id) REFERENCES coaches(id) ON DELETE CASCADE;
-ALTER TABLE public.coach_availability ADD CONSTRAINT availability_window CHECK ((start_time < end_time));
-ALTER TABLE public.coach_availability ADD CONSTRAINT coach_availability_weekday_check CHECK (((weekday >= 0) AND (weekday <= 6)));
-ALTER TABLE public.coach_time_off ADD CONSTRAINT coach_time_off_pkey PRIMARY KEY (id);
-ALTER TABLE public.coach_time_off ADD CONSTRAINT coach_time_off_coach_id_fkey FOREIGN KEY (coach_id) REFERENCES coaches(id) ON DELETE CASCADE;
-ALTER TABLE public.coach_time_off ADD CONSTRAINT coach_time_off_decided_by_fkey FOREIGN KEY (decided_by) REFERENCES profiles(id) ON DELETE SET NULL;
-ALTER TABLE public.coach_time_off ADD CONSTRAINT time_off_window CHECK ((starts_at < ends_at));
 ALTER TABLE public.coaches ADD CONSTRAINT coaches_pkey PRIMARY KEY (id);
 ALTER TABLE public.coaches ADD CONSTRAINT coaches_id_fkey FOREIGN KEY (id) REFERENCES profiles(id) ON DELETE CASCADE;
 ALTER TABLE public.coach_invites ADD CONSTRAINT coach_invites_pkey PRIMARY KEY (id);
@@ -663,8 +635,6 @@ CREATE INDEX class_sessions_starts_at_idx ON public.class_sessions USING btree (
 CREATE INDEX classes_class_type_active_idx ON public.classes USING btree (class_type, active);
 CREATE INDEX classes_venue_id_idx ON public.classes USING btree (venue_id) WHERE (venue_id IS NOT NULL);
 CREATE INDEX coach_assignments_session_id_status_idx ON public.coach_assignments USING btree (session_id, status);
-CREATE INDEX coach_availability_coach_id_weekday_idx ON public.coach_availability USING btree (coach_id, weekday);
-CREATE INDEX coach_time_off_coach_id_starts_at_idx ON public.coach_time_off USING btree (coach_id, starts_at);
 CREATE INDEX coach_invites_phone_idx ON public.coach_invites USING btree (phone) WHERE (phone IS NOT NULL);
 CREATE UNIQUE INDEX invoices_razorpay_payment_id_key ON public.invoices USING btree (razorpay_payment_id) WHERE (razorpay_payment_id IS NOT NULL);
 CREATE INDEX notifications_status_scheduled_for_idx ON public.notifications USING btree (status, scheduled_for);
@@ -1914,8 +1884,6 @@ declare
   v_session class_sessions%rowtype;
   v_class classes%rowtype;
   v_buffer int := get_setting_int('travel_buffer_minutes', 30);
-  v_wd smallint;
-  v_start time; v_end time;
 begin
   select * into v_coach from coaches where id = p_coach and active;
   if not found then return 'inactive'; end if;
@@ -1923,24 +1891,7 @@ begin
   select * into v_session from class_sessions where id = p_session;
   select * into v_class from classes where id = v_session.class_id;
 
-  -- 1. approved time off overlaps session
-  if exists (
-    select 1 from coach_time_off t
-    where t.coach_id = p_coach and t.status = 'approved'
-      and tstzrange(t.starts_at, t.ends_at) && tstzrange(v_session.starts_at, v_session.ends_at)
-  ) then return 'time_off'; end if;
-
-  -- 2. availability window (Asia/Kolkata wall clock, weekday 0=Mon)
-  v_wd := ((extract(isodow from v_session.starts_at at time zone 'Asia/Kolkata'))::int - 1);
-  v_start := (v_session.starts_at at time zone 'Asia/Kolkata')::time;
-  v_end   := (v_session.ends_at   at time zone 'Asia/Kolkata')::time;
-  if not exists (
-    select 1 from coach_availability a
-    where a.coach_id = p_coach and a.weekday = v_wd
-      and a.start_time <= v_start and a.end_time >= v_end
-  ) then return 'unavailable'; end if;
-
-  -- 3. scheduling overlap (+ travel buffer between different venues)
+  -- scheduling overlap (+ travel buffer between different venues)
   if exists (
     select 1 from class_sessions s2
     join classes c2 on c2.id = s2.class_id
@@ -1993,6 +1944,47 @@ AS $function$
     select 1 from class_sessions s
     where s.class_id = p_class and s.coach_id = auth.uid()
   );
+$function$;
+
+-- The read-side twin of coach_has_player, one step wider: the campus rather
+-- than the individual booking. A school class books a pupil onto its sessions
+-- only from the session they were added to onwards (add_school_player), so a
+-- coach who picks the class up later would otherwise see a roster missing
+-- pupils they are about to teach. `client_id is null` keeps it to school
+-- pupils — a private client's child at the same school stays out (0076).
+CREATE OR REPLACE FUNCTION public.coach_teaches_school_of(p_player uuid)
+ RETURNS boolean
+ LANGUAGE sql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+  select exists (
+    select 1
+    from players p
+    join classes c
+      on c.is_school and c.venue_id = p.school_venue_id
+    join class_sessions s
+      on s.class_id = c.id and s.coach_id = auth.uid()
+    where p.id = p_player
+      and p.school_venue_id is not null
+      and p.client_id is null
+  );
+$function$;
+
+-- Campuses where the signed-in coach is rostered onto a school class. The
+-- roster screen needs the set the policy above implies, and a coach cannot read
+-- `classes` and `class_sessions` widely enough to derive it client-side (0076).
+CREATE OR REPLACE FUNCTION public.coach_school_venues()
+ RETURNS TABLE(venue_id uuid, venue_name text)
+ LANGUAGE sql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+  select distinct v.id, v.name
+  from class_sessions s
+  join classes c on c.id = s.class_id and c.is_school
+  join venues v on v.id = c.venue_id
+  where s.coach_id = auth.uid();
 $function$;
 
 CREATE OR REPLACE FUNCTION public.create_private_series(payload jsonb)
@@ -2646,23 +2638,8 @@ begin
   from slots s
   cross join candidate_coaches c
   where
-    -- availability window
-    exists (
-      select 1 from coach_availability a
-      where a.coach_id = c.id
-        and a.weekday = ((extract(isodow from s.slot_start at time zone 'Asia/Kolkata'))::int - 1)
-        and a.start_time <= (s.slot_start at time zone 'Asia/Kolkata')::time
-        and a.end_time >= ((s.slot_start + make_interval(mins => p_duration)) at time zone 'Asia/Kolkata')::time
-    )
-    -- no approved time off
-    and not exists (
-      select 1 from coach_time_off t
-      where t.coach_id = c.id and t.status = 'approved'
-        and tstzrange(t.starts_at, t.ends_at)
-          && tstzrange(s.slot_start, s.slot_start + make_interval(mins => p_duration))
-    )
     -- no overlapping scheduled session (+ buffer, conservatively applied)
-    and not exists (
+    not exists (
       select 1 from class_sessions cs
       where cs.coach_id = c.id and cs.status = 'scheduled'
         and tstzrange(cs.starts_at - make_interval(mins => get_setting_int('travel_buffer_minutes', 30)),
@@ -3971,18 +3948,6 @@ begin
     -- Temporarily test the coach against the new window via a lightweight check
     v_fail := null;
     if exists (
-      select 1 from coach_time_off t
-      where t.coach_id = v_old_coach and t.status = 'approved'
-        and tstzrange(t.starts_at, t.ends_at) && tstzrange(p_new_start, v_new_end)
-    ) then v_fail := 'time_off'; end if;
-    if v_fail is null and not exists (
-      select 1 from coach_availability a
-      where a.coach_id = v_old_coach
-        and a.weekday = ((extract(isodow from p_new_start at time zone 'Asia/Kolkata'))::int - 1)
-        and a.start_time <= (p_new_start at time zone 'Asia/Kolkata')::time
-        and a.end_time >= (v_new_end at time zone 'Asia/Kolkata')::time
-    ) then v_fail := 'unavailable'; end if;
-    if v_fail is null and exists (
       select 1 from class_sessions s2
       where s2.coach_id = v_old_coach and s2.status = 'scheduled' and s2.id <> p_session
         and tstzrange(s2.starts_at, s2.ends_at) && tstzrange(p_new_start, v_new_end)
@@ -4318,23 +4283,6 @@ begin
   select new.id, v_name
   where not exists (select 1 from players where client_id = new.id);
 
-  return new;
-end;
-$function$;
-
-CREATE OR REPLACE FUNCTION public.seed_default_coach_availability()
- RETURNS trigger
- LANGUAGE plpgsql
- SECURITY DEFINER
- SET search_path TO 'public'
-AS $function$
-begin
-  insert into coach_availability (coach_id, weekday, start_time, end_time)
-  select new.id, d, '10:00', '22:00'
-  from generate_series(0, 6) as d
-  where not exists (
-    select 1 from coach_availability where coach_id = new.id
-  );
   return new;
 end;
 $function$;
@@ -5353,7 +5301,6 @@ CREATE VIEW public.latest_skill_ratings WITH (security_invoker='true') AS
 -- ── Triggers ─────────────────────────────────────────────────────────────────
 CREATE TRIGGER trg_private_class_details_after_delete AFTER DELETE ON public.private_class_details FOR EACH ROW EXECUTE FUNCTION _delete_class_on_private_details_delete();
 CREATE TRIGGER profiles_grant_trial AFTER INSERT ON public.profiles FOR EACH ROW WHEN ((new.role = 'client'::user_role)) EXECUTE FUNCTION grant_signup_trial();
-CREATE TRIGGER seed_coach_availability AFTER INSERT ON public.coaches FOR EACH ROW EXECUTE FUNCTION seed_default_coach_availability();
 CREATE TRIGGER bookings_ops_feed_insert AFTER INSERT ON public.bookings FOR EACH ROW EXECUTE FUNCTION ops_notify_booking_created();
 CREATE TRIGGER bookings_ops_feed_status AFTER UPDATE OF status ON public.bookings FOR EACH ROW EXECUTE FUNCTION ops_notify_booking_status();
 CREATE TRIGGER class_credits_ops_feed AFTER UPDATE ON public.class_credits FOR EACH ROW EXECUTE FUNCTION ops_notify_credit_used();
@@ -5382,8 +5329,6 @@ alter table public.class_sessions enable row level security;
 alter table public.classes enable row level security;
 alter table public.client_invites enable row level security;
 alter table public.coach_assignments enable row level security;
-alter table public.coach_availability enable row level security;
-alter table public.coach_time_off enable row level security;
 alter table public.coach_invites enable row level security;
 alter table public.coaches enable row level security;
 alter table public.invoices enable row level security;
@@ -5438,11 +5383,6 @@ CREATE POLICY "school reads pupil classes" ON public.classes AS PERMISSIVE FOR S
 CREATE POLICY "founder all client invites" ON public.client_invites AS PERMISSIVE FOR ALL TO public USING (( SELECT is_founder() AS is_founder));
 CREATE POLICY "assignments visible" ON public.coach_assignments AS PERMISSIVE FOR SELECT TO public USING (((coach_id = ( SELECT auth.uid() AS uid)) OR ( SELECT is_founder() AS is_founder)));
 CREATE POLICY "founder writes assignments" ON public.coach_assignments AS PERMISSIVE FOR ALL TO public USING (( SELECT is_founder() AS is_founder));
-CREATE POLICY "coach writes own availability" ON public.coach_availability AS PERMISSIVE FOR ALL TO public USING ((coach_id = ( SELECT auth.uid() AS uid))) WITH CHECK ((coach_id = ( SELECT auth.uid() AS uid)));
-CREATE POLICY "founder all availability" ON public.coach_availability AS PERMISSIVE FOR ALL TO public USING (( SELECT is_founder() AS is_founder));
-CREATE POLICY "public reads availability" ON public.coach_availability AS PERMISSIVE FOR SELECT TO public USING (true);
-CREATE POLICY "coach own time off" ON public.coach_time_off AS PERMISSIVE FOR ALL TO public USING ((coach_id = ( SELECT auth.uid() AS uid))) WITH CHECK ((coach_id = ( SELECT auth.uid() AS uid)));
-CREATE POLICY "founder all time off" ON public.coach_time_off AS PERMISSIVE FOR ALL TO public USING (( SELECT is_founder() AS is_founder));
 CREATE POLICY "coach writes own row" ON public.coaches AS PERMISSIVE FOR UPDATE TO public USING ((id = ( SELECT auth.uid() AS uid)));
 CREATE POLICY "founder all coaches" ON public.coaches AS PERMISSIVE FOR ALL TO public USING (( SELECT is_founder() AS is_founder));
 CREATE POLICY "founder all coach invites" ON public.coach_invites AS PERMISSIVE FOR ALL TO public USING (( SELECT is_founder() AS is_founder));
@@ -5459,6 +5399,7 @@ CREATE POLICY "founder writes plans" ON public.plans AS PERMISSIVE FOR ALL TO pu
 CREATE POLICY "anyone reads active products" ON public.products AS PERMISSIVE FOR SELECT TO public USING (((active = true) OR ( SELECT is_founder() AS is_founder)));
 CREATE POLICY "founder writes products" ON public.products AS PERMISSIVE FOR ALL TO public USING (( SELECT is_founder() AS is_founder));
 CREATE POLICY "coach reads own rosters players" ON public.players AS PERMISSIVE FOR SELECT TO public USING ((( SELECT is_coach() AS is_coach) AND coach_has_player(id)));
+CREATE POLICY "coach reads school pupils" ON public.players AS PERMISSIVE FOR SELECT TO public USING ((( SELECT is_coach() AS is_coach) AND coach_teaches_school_of(id)));
 CREATE POLICY "founder all players" ON public.players AS PERMISSIVE FOR ALL TO public USING (( SELECT is_founder() AS is_founder));
 CREATE POLICY "own household" ON public.players AS PERMISSIVE FOR ALL TO public USING ((client_id = ( SELECT auth.uid() AS uid))) WITH CHECK ((client_id = ( SELECT auth.uid() AS uid)));
 CREATE POLICY "school reads own pupils" ON public.players AS PERMISSIVE FOR SELECT TO public USING ((( SELECT is_school_admin() AS is_school_admin) AND school_has_player(id)));

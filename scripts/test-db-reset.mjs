@@ -46,11 +46,18 @@ const seedSql = readFileSync(join(root, "supabase", "seed.sql"), "utf8");
 // function` redefinitions of generate_class_sessions/rank_coaches — schema.sql
 // already carries the canonical, newer versions and we must not revert them.
 // The DO-block anchors and INSERTs are kept.
+//
+// Also strip 0009's narrowing of coach_availability: 0075 dropped that table
+// outright, so replaying the statement now fails on a relation that no longer
+// exists. Stripping beats editing 0009 — a migration is a record of what ran.
 const FUNC_REDEF = /create or replace function[\s\S]*?\bas \$\$[\s\S]*?\$\$;/gi;
+const DROPPED_TABLE_DML = /^update coach_availability\b[\s\S]*?;/gim;
 const batchesSql = readFileSync(
   join(root, "supabase", "migrations", "0009_bengaluru_batches.sql"),
   "utf8"
-).replace(FUNC_REDEF, "-- [harness] 0009 function redef stripped (schema.sql is canonical)");
+)
+  .replace(FUNC_REDEF, "-- [harness] 0009 function redef stripped (schema.sql is canonical)")
+  .replace(DROPPED_TABLE_DML, "-- [harness] coach_availability DML stripped (table dropped in 0075)");
 
 // schema.sql is a readability-grouped dump, NOT dependency-ordered: foreign keys
 // (both standalone `ALTER TABLE … ADD FOREIGN KEY` and inline `… references …`

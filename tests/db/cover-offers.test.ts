@@ -18,23 +18,42 @@ import {
 import { expectNotification, expectNotificationCount } from "../../e2e/lib/notifications";
 
 /**
- * A coach who is actually eligible for anything. createCoach() creates no
- * availability windows, and rank_coaches correctly excludes a coach with none —
- * so cover tests have to supply them or every claim fails `filter_failed_unavailable`.
+ * A coach who is actually eligible for anything. Since 0075 dropped weekly
+ * availability windows, `active` plus a clear diary is the whole of it — the
+ * remaining hard filters are `inactive`, `overlap` and `level_too_high`. Kept
+ * as a named helper so the cover tests still read as "an eligible coach".
  */
 async function availableCoach() {
-  const coach = await createCoach();
+  return createCoach();
+}
+
+/**
+ * Run `fn` with every coach but `keep` paused.
+ *
+ * offer_cover_session walks `rank_coaches(...) limit 10`. While weekly
+ * availability windows existed they pre-narrowed that pool, so a freshly made
+ * coach reliably surfaced; since 0075 dropped them every active coach in the
+ * shared local DB competes on score alone, and a test coach with no continuity
+ * sinks below the cut once earlier specs have created a dozen others. Pausing
+ * the rest makes "did the offer reach an eligible coach" a question about the
+ * offer, not about how many coaches the suite happened to leave behind.
+ * Restored in a finally so a failure can't leak into the next file.
+ */
+async function withOnlyCoach<T>(keep: string, fn: () => Promise<T>): Promise<T> {
   const db = admin();
-  const { error } = await db.from("coach_availability").insert(
-    [0, 1, 2, 3, 4, 5, 6].map((weekday) => ({
-      coach_id: coach.id,
-      weekday,
-      start_time: "00:00",
-      end_time: "23:59",
-    }))
-  );
-  if (error) throw new Error(`availableCoach: ${error.message}`);
-  return coach;
+  const { data: before, error } = await db
+    .from("coaches")
+    .select("id")
+    .eq("active", true)
+    .neq("id", keep);
+  if (error) throw new Error(`withOnlyCoach: ${error.message}`);
+  const paused = (before ?? []).map((c) => c.id as string);
+  if (paused.length) await db.from("coaches").update({ active: false }).in("id", paused);
+  try {
+    return await fn();
+  } finally {
+    if (paused.length) await db.from("coaches").update({ active: true }).in("id", paused);
+  }
 }
 
 /** An upcoming group session with nobody assigned to it. */
@@ -56,16 +75,18 @@ describe("cover offers (K8)", () => {
     const coach = await availableCoach();
     const session = await uncoveredSession();
 
-    const { data: offered, error } = await db.rpc("offer_cover_session", {
-      p_session: session.sessionId,
-    });
-    expect(error).toBeNull();
-    expect(Number(offered)).toBeGreaterThan(0);
+    const offer = await withOnlyCoach(coach.id, async () => {
+      const { data: offered, error } = await db.rpc("offer_cover_session", {
+        p_session: session.sessionId,
+      });
+      expect(error).toBeNull();
+      expect(Number(offered)).toBeGreaterThan(0);
 
-    const offer = await expectNotification(db, {
-      type: "cover_offer",
-      userId: coach.id,
-      dataContains: { session_id: session.sessionId },
+      return expectNotification(db, {
+        type: "cover_offer",
+        userId: coach.id,
+        dataContains: { session_id: session.sessionId },
+      });
     });
     // The coach needs to know what they'd be taking on before saying yes.
     expect(offer.data.class_title).toBeTruthy();
@@ -78,15 +99,17 @@ describe("cover offers (K8)", () => {
     const coach = await availableCoach();
     const session = await uncoveredSession();
 
-    await db.rpc("offer_cover_session", { p_session: session.sessionId });
-    const second = await db.rpc("offer_cover_session", { p_session: session.sessionId });
-    expect(Number(second.data)).toBe(0);
+    await withOnlyCoach(coach.id, async () => {
+      await db.rpc("offer_cover_session", { p_session: session.sessionId });
+      const second = await db.rpc("offer_cover_session", { p_session: session.sessionId });
+      expect(Number(second.data)).toBe(0);
 
-    await expectNotificationCount(
-      db,
-      { type: "cover_offer", userId: coach.id, dataContains: { session_id: session.sessionId } },
-      1
-    );
+      await expectNotificationCount(
+        db,
+        { type: "cover_offer", userId: coach.id, dataContains: { session_id: session.sessionId } },
+        1
+      );
+    });
   });
 
   it("gives the session to the first claimer and refuses the second", async () => {

@@ -13,7 +13,7 @@ const items = [
   {
     href: "/admin/coaches",
     label: "Coaches",
-    hint: "Profiles, availability & time off",
+    hint: "Profiles, invites & who's teaching",
   },
   {
     href: "/admin/skills",

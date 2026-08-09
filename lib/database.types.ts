@@ -624,38 +624,6 @@ export type Database = {
           },
         ]
       }
-      coach_availability: {
-        Row: {
-          coach_id: string
-          end_time: string
-          id: string
-          start_time: string
-          weekday: number
-        }
-        Insert: {
-          coach_id: string
-          end_time: string
-          id?: string
-          start_time: string
-          weekday: number
-        }
-        Update: {
-          coach_id?: string
-          end_time?: string
-          id?: string
-          start_time?: string
-          weekday?: number
-        }
-        Relationships: [
-          {
-            foreignKeyName: "coach_availability_coach_id_fkey"
-            columns: ["coach_id"]
-            isOneToOne: false
-            referencedRelation: "coaches"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       coach_invites: {
         Row: {
           base_address: string | null
@@ -730,61 +698,6 @@ export type Database = {
           {
             foreignKeyName: "coach_invites_created_by_fkey"
             columns: ["created_by"]
-            isOneToOne: false
-            referencedRelation: "profiles"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
-      coach_time_off: {
-        Row: {
-          coach_id: string
-          created_at: string
-          decided_by: string | null
-          ends_at: string
-          id: string
-          reason: string | null
-          starts_at: string
-          status: Database["public"]["Enums"]["time_off_status"]
-        }
-        Insert: {
-          coach_id: string
-          created_at?: string
-          decided_by?: string | null
-          ends_at: string
-          id?: string
-          reason?: string | null
-          starts_at: string
-          status?: Database["public"]["Enums"]["time_off_status"]
-        }
-        Update: {
-          coach_id?: string
-          created_at?: string
-          decided_by?: string | null
-          ends_at?: string
-          id?: string
-          reason?: string | null
-          starts_at?: string
-          status?: Database["public"]["Enums"]["time_off_status"]
-        }
-        Relationships: [
-          {
-            foreignKeyName: "coach_time_off_coach_id_fkey"
-            columns: ["coach_id"]
-            isOneToOne: false
-            referencedRelation: "coaches"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "coach_time_off_decided_by_fkey"
-            columns: ["decided_by"]
-            isOneToOne: false
-            referencedRelation: "coach_client_view"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "coach_time_off_decided_by_fkey"
-            columns: ["decided_by"]
             isOneToOne: false
             referencedRelation: "profiles"
             referencedColumns: ["id"]
@@ -2221,7 +2134,12 @@ export type Database = {
         }
         Returns: string
       }
+      coach_school_venues: {
+        Args: Record<PropertyKey, never>
+        Returns: { venue_id: string; venue_name: string }[]
+      }
       coach_teaches_class: { Args: { p_class: string }; Returns: boolean }
+      coach_teaches_school_of: { Args: { p_player: string }; Returns: boolean }
       coach_undo_arrival: { Args: { p_session: string }; Returns: undefined }
       create_private_series: { Args: { payload: Json }; Returns: Json }
       end_private_series_as_academy: { Args: { p_series: string }; Returns: Json }
@@ -2495,7 +2413,6 @@ export type Database = {
         | "past_due"
         | "canceled"
         | "paused"
-      time_off_status: "pending" | "approved" | "rejected"
       user_role: "client" | "coach" | "founder" | "school"
     }
     CompositeTypes: {
@@ -2660,7 +2577,6 @@ export const Constants = {
         "canceled",
         "paused",
       ],
-      time_off_status: ["pending", "approved", "rejected"],
       user_role: ["client", "coach", "founder", "school"],
     },
   },
