@@ -14,6 +14,8 @@ import { formatClock, formatDayLong, nowMs } from "@/lib/academy-time";
 
 export const metadata: Metadata = { title: "Session" };
 
+type SearchParams = Promise<{ wrap?: string }>;
+
 /**
  * The session and its roster. Wrapped in React `cache` so the header title and
  * the body below it — two children of the same page, each streamed behind its
@@ -36,7 +38,7 @@ const loadSession = cache(async (id: string) => {
       .maybeSingle(),
     supabase
       .from("bookings")
-      .select("id,status,coach_note,players(full_name,date_of_birth,skill_level)")
+      .select("id,status,coach_note,player_id,players(full_name,date_of_birth,skill_level)")
       .eq("session_id", id)
       .in("status", ["confirmed", "attended", "no_show"]),
   ]);
@@ -52,8 +54,14 @@ async function SessionTitle({ params }: { params: Promise<{ id: string }> }) {
   return <>{session.classes.title}</>;
 }
 
-async function SessionBody({ params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
+async function SessionBody({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>;
+  searchParams: SearchParams;
+}) {
+  const [{ id }, { wrap }] = await Promise.all([params, searchParams]);
   const { session, roster } = await loadSession(id);
 
   const cls = session.classes;
@@ -83,6 +91,7 @@ async function SessionBody({ params }: { params: Promise<{ id: string }> }) {
         new Date(nowMs() - 18 * 365.25 * 86400000);
     return {
       id: b.id,
+      playerId: b.player_id,
       status: b.status,
       coachNote: b.coach_note,
       name: player.full_name,
@@ -135,9 +144,16 @@ async function SessionBody({ params }: { params: Promise<{ id: string }> }) {
       <SessionRoster
         sessionId={session.id}
         startsAt={session.starts_at}
+        endsAt={session.ends_at}
+        classTitle={cls.title}
         roster={rows}
         coachNotes={session.coach_notes}
         isSchool={cls.is_school}
+        // `?wrap=1` is what the after-class WhatsApp links to. It means "finish
+        // this class", so a coach who has already marked attendance lands
+        // straight in the assessments rather than on a screen of ticks they
+        // have to read before finding the one thing left to do.
+        autoWrap={wrap === "1"}
       />
     </>
   );
@@ -145,8 +161,10 @@ async function SessionBody({ params }: { params: Promise<{ id: string }> }) {
 
 export default function CoachSessionPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: SearchParams;
 }) {
   return (
     <CoachShell
@@ -158,7 +176,7 @@ export default function CoachSessionPage({
     >
       <div className="mx-auto max-w-2xl space-y-6">
         <Suspense fallback={<PageSkeleton />}>
-          <SessionBody params={params} />
+          <SessionBody params={params} searchParams={searchParams} />
         </Suspense>
       </div>
     </CoachShell>

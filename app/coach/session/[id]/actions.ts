@@ -2,8 +2,11 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { attendanceClosedReason, attendanceState } from "@/lib/attendance-window";
 
 type Result = { ok: boolean; error?: string };
+
+export type AttendanceStatus = "attended" | "no_show" | "confirmed";
 
 async function requireCoachSession(sessionId: string) {
   const supabase = await createClient();
@@ -24,7 +27,7 @@ async function requireCoachSession(sessionId: string) {
 
 export async function setAttendance(
   bookingId: string,
-  status: "attended" | "no_show" | "confirmed"
+  status: AttendanceStatus
 ): Promise<Result> {
   const supabase = await createClient();
   const {
@@ -34,7 +37,7 @@ export async function setAttendance(
 
   const { data: booking } = await supabase
     .from("bookings")
-    .select("id,session_id,class_sessions!inner(coach_id,starts_at)")
+    .select("id,session_id,class_sessions!inner(coach_id,starts_at,ends_at)")
     .eq("id", bookingId)
     .maybeSingle();
   if (!booking) return { ok: false, error: "Booking not found." };
@@ -42,10 +45,11 @@ export async function setAttendance(
   const session = booking.class_sessions;
   if (session.coach_id !== user.id) return { ok: false, error: "Not your session." };
 
-  // Server-side window: 15 min before start → 48h after.
-  const start = new Date(session.starts_at).getTime();
-  if (Date.now() < start - 15 * 60000 || Date.now() > start + 48 * 3600000) {
-    return { ok: false, error: "Attendance can only be set around the session." };
+  // Same window the roster renders and the backlog chases — see
+  // lib/attendance-window.ts for why all three had to become one literal.
+  const state = attendanceState(session.starts_at, session.ends_at, Date.now());
+  if (state !== "open") {
+    return { ok: false, error: attendanceClosedReason(state) ?? "Attendance is closed." };
   }
 
   const { error } = await supabase
@@ -54,6 +58,80 @@ export async function setAttendance(
     .eq("id", bookingId);
   if (error) return { ok: false, error: "Couldn't save." };
   revalidatePath(`/coach/session/${booking.session_id}`);
+  return { ok: true };
+}
+
+/**
+ * Mark a whole roster at once.
+ *
+ * "All present" used to call setAttendance in a `for` loop — one HTTP round
+ * trip, one auth check and one booking lookup PER CHILD, awaited in series. A
+ * twelve-player class on a school-hall connection was twelve sequential
+ * requests behind one tap, and a failure halfway left the roster half-written
+ * with no sign of which half. This is at most three updates (one per distinct
+ * status) after a single ownership check, and it is the only path the roster
+ * uses now — the per-row toggle included, as a batch of one.
+ *
+ * Ownership is checked once against the session, then every booking id is
+ * confirmed to belong to it. A caller who mixes in someone else's booking is
+ * refused outright rather than partly applied; RLS ("coaches write attendance")
+ * is still the backstop under that.
+ */
+export async function setAttendanceBulk(
+  sessionId: string,
+  updates: { bookingId: string; status: AttendanceStatus }[]
+): Promise<Result> {
+  if (updates.length === 0) return { ok: true };
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Sign in first." };
+
+  const { data: session } = await supabase
+    .from("class_sessions")
+    .select("id,coach_id,starts_at,ends_at")
+    .eq("id", sessionId)
+    .maybeSingle();
+  if (!session || session.coach_id !== user.id) {
+    return { ok: false, error: "Not your session." };
+  }
+
+  const state = attendanceState(session.starts_at, session.ends_at, Date.now());
+  if (state !== "open") {
+    return { ok: false, error: attendanceClosedReason(state) ?? "Attendance is closed." };
+  }
+
+  const ids = [...new Set(updates.map((u) => u.bookingId))];
+  const { data: owned } = await supabase
+    .from("bookings")
+    .select("id")
+    .eq("session_id", sessionId)
+    .in("id", ids);
+  if ((owned?.length ?? 0) !== ids.length) {
+    return { ok: false, error: "Some of those bookings aren't on this class." };
+  }
+
+  // Group by target status so the whole roster costs one update per status,
+  // not one per player.
+  const byStatus = new Map<AttendanceStatus, string[]>();
+  for (const u of updates) {
+    const list = byStatus.get(u.status) ?? [];
+    list.push(u.bookingId);
+    byStatus.set(u.status, list);
+  }
+
+  for (const [status, bookingIds] of byStatus) {
+    const { error } = await supabase
+      .from("bookings")
+      .update({ status })
+      .in("id", bookingIds);
+    if (error) return { ok: false, error: "Couldn't save attendance." };
+  }
+
+  revalidatePath(`/coach/session/${sessionId}`);
+  revalidatePath("/coach");
   return { ok: true };
 }
 

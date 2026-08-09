@@ -5172,6 +5172,150 @@ begin
 end;
 $function$;
 
+-- Everything a coach still owes on classes that ended in the last 7 days —
+-- attendance AND assessments, in one read (migration 0075). A superset of
+-- get_pending_assessments above, which is kept because the WhatsApp after-class
+-- reply composes its "rate X next" link from it.
+--
+-- Attendance rows sort first because they gate the assessments behind them: an
+-- unmarked roster has no attended bookings, so its assessment rows cannot exist
+-- until it is done. That is what lets the in-app prompt cycle to genuinely
+-- empty rather than stalling on work the coach cannot yet see.
+create or replace function public.get_coach_wrapup_queue(p_coach uuid default auth.uid())
+returns table(
+  kind text,
+  session_id uuid,
+  class_title text,
+  session_ended_at timestamptz,
+  player_id uuid,
+  player_name text,
+  pending_count integer
+)
+language plpgsql
+stable
+security definer
+set search_path to 'public'
+as $function$
+begin
+  if p_coach <> auth.uid() and not is_founder() then
+    raise exception 'not_authorised';
+  end if;
+
+  return query
+  select 'attendance'::text,
+         s.id,
+         c.title,
+         s.ends_at,
+         null::uuid,
+         null::text,
+         count(*)::integer
+    from bookings b
+    join class_sessions s on s.id = b.session_id
+    join classes c on c.id = s.class_id
+   where s.coach_id = p_coach
+     and b.status = 'confirmed'
+     and s.ends_at < now()
+     and s.ends_at > now() - interval '7 days'
+   group by s.id, c.title, s.ends_at
+
+  union all
+
+  select 'assessment'::text,
+         s.id,
+         c.title,
+         s.ends_at,
+         b.player_id,
+         pl.full_name,
+         1
+    from bookings b
+    join class_sessions s on s.id = b.session_id
+    join classes c on c.id = s.class_id
+    join players pl on pl.id = b.player_id
+   where s.coach_id = p_coach
+     and b.status = 'attended'
+     and s.ends_at < now()
+     and s.ends_at > now() - interval '7 days'
+     and not exists (
+       select 1 from skill_assessments a
+        where a.player_id = b.player_id
+          and a.session_id = s.id
+          and a.coach_id = p_coach
+     )
+
+  order by 1 asc, 4 asc, 6 asc;
+end;
+$function$;
+
+-- File or amend one coach's assessment of one player for one session
+-- (migration 0075). SECURITY DEFINER because skill_assessments and
+-- skill_ratings carry an INSERT policy and a founder-only DELETE policy and no
+-- UPDATE policy at all — a coach could not amend a rating even in principle, so
+-- a mis-tapped score was permanent and the parent-facing mastery number stayed
+-- wrong. Find-or-create keys on exactly the columns
+-- skill_assessments_once_per_session indexes, so a second save edits the first
+-- instead of failing 23505; ratings upsert, so a skill the coach did not touch
+-- keeps its value. Ad-hoc assessments (p_session null) sit outside that partial
+-- index and stay append-only — they are dated notes, not a record of one class.
+--
+-- skill_assessments_notify fires AFTER INSERT only, so an edit deliberately
+-- does not re-announce itself in the founder's ops feed.
+create or replace function public.save_session_assessment(
+  p_player uuid,
+  p_session uuid default null,
+  p_ratings jsonb default '[]'::jsonb
+)
+returns uuid
+language plpgsql
+security definer
+set search_path to 'public'
+as $function$
+declare
+  v_coach uuid := auth.uid();
+  v_assessment uuid;
+begin
+  if v_coach is null then
+    raise exception 'not_authenticated';
+  end if;
+  if not (is_coach() or is_founder()) then
+    raise exception 'not_authorised';
+  end if;
+
+  if p_session is not null and not exists (
+    select 1 from class_sessions s
+     where s.id = p_session
+       and (s.coach_id = v_coach or is_founder())
+  ) then
+    raise exception 'not_your_session';
+  end if;
+
+  if p_session is not null then
+    select id into v_assessment
+      from skill_assessments
+     where player_id = p_player
+       and session_id = p_session
+       and coach_id = v_coach;
+  end if;
+
+  if v_assessment is null then
+    insert into skill_assessments (player_id, coach_id, session_id)
+    values (p_player, v_coach, p_session)
+    returning id into v_assessment;
+  end if;
+
+  insert into skill_ratings (assessment_id, skill_id, rating)
+  select v_assessment,
+         (r->>'skill_id')::uuid,
+         (r->>'rating')::smallint
+    from jsonb_array_elements(coalesce(p_ratings, '[]'::jsonb)) as r
+   where (r->>'skill_id') is not null
+     and (r->>'rating') ~ '^[1-5]$'
+  on conflict (assessment_id, skill_id)
+    do update set rating = excluded.rating;
+
+  return v_assessment;
+end;
+$function$;
+
 create or replace function public.prune_wa_inbound_seen()
 returns void
 language sql
