@@ -9,7 +9,7 @@ import {
 } from "../../e2e/lib/scenario";
 
 /**
- * Migration 0075 — the end-of-class paperwork a coach can finish and correct.
+ * Migration 0077 — the end-of-class paperwork a coach can finish and correct.
  *
  * Two behaviours are pinned here because both were previously impossible, and
  * both fail silently rather than loudly if they regress: an assessment that
@@ -86,7 +86,7 @@ async function ratingsFor(assessmentId: string) {
   return new Map((data ?? []).map((r) => [r.skill_id as string, r.rating as number]));
 }
 
-describe("save_session_assessment (migration 0075)", () => {
+describe("save_session_assessment (migration 0077)", () => {
   it("files an assessment, then AMENDS it on a second save rather than failing", async () => {
     const db = admin();
     const { coach, session, playerId } = await endedSession();
@@ -180,7 +180,125 @@ describe("save_session_assessment (migration 0075)", () => {
   });
 });
 
-describe("get_coach_wrapup_queue (migration 0075)", () => {
+/**
+ * Migration 0078 — who a correction made in "view as coach" belongs to.
+ *
+ * The founder's preview is the only route to fix a coach's paperwork (there is
+ * no assessment editor under /admin), and crediting that fix to the founder
+ * failed twice over without erroring once: the coach's wrong rating stayed
+ * where it was, and the coach's backlog never cleared because both queue
+ * functions match on `a.coach_id = p_coach`. Every assertion here passes
+ * trivially against a function that ignores p_coach EXCEPT the coach_id and
+ * queue ones, which are the point.
+ */
+describe("save_session_assessment — author attribution (migration 0078)", () => {
+  it("credits a founder's preview save to the COACH, and clears that coach's backlog", async () => {
+    const { coach, session, playerId, booking } = await endedSession();
+    const { skillA } = await makeSkills();
+    await mark(coach.email, booking.id, "attended");
+
+    // The coach owes this assessment before the founder steps in.
+    const asCoach = await asUser(coach.email);
+    const { data: before } = await asCoach.rpc("get_coach_wrapup_queue", {});
+    expect(
+      ((before ?? []) as { kind: string; player_id: string | null }[]).filter(
+        (r) => r.kind === "assessment" && r.player_id === playerId
+      )
+    ).toHaveLength(1);
+
+    // Founder files it from the preview, naming the coach.
+    const asFounder = await asUser("founder@sharwin.example");
+    const { data: id, error } = await asFounder.rpc("save_session_assessment", {
+      p_player: playerId,
+      p_session: session.sessionId,
+      p_ratings: [{ skill_id: skillA, rating: 4 }],
+      p_coach: coach.id,
+    });
+    expect(error).toBeNull();
+
+    // Authored by the coach, not by the founder who typed it.
+    const { data: row } = await admin()
+      .from("skill_assessments")
+      .select("coach_id")
+      .eq("id", id as string)
+      .single();
+    expect(row?.coach_id).toBe(coach.id);
+
+    // …which is what makes the coach's own backlog go quiet about this child.
+    const { data: after } = await asCoach.rpc("get_coach_wrapup_queue", {});
+    expect(
+      ((after ?? []) as { kind: string; player_id: string | null }[]).filter(
+        (r) => r.kind === "assessment" && r.player_id === playerId
+      )
+    ).toHaveLength(0);
+  });
+
+  it("AMENDS the coach's existing assessment rather than opening a second one", async () => {
+    const { coach, session, playerId } = await endedSession();
+    const { skillA } = await makeSkills();
+
+    const asCoach = await asUser(coach.email);
+    const { data: coachFiled } = await asCoach.rpc("save_session_assessment", {
+      p_player: playerId,
+      p_session: session.sessionId,
+      p_ratings: [{ skill_id: skillA, rating: 1 }],
+    });
+
+    // The mis-tapped 1 is exactly what the founder is here to correct.
+    const asFounder = await asUser("founder@sharwin.example");
+    const { data: founderFiled, error } = await asFounder.rpc("save_session_assessment", {
+      p_player: playerId,
+      p_session: session.sessionId,
+      p_ratings: [{ skill_id: skillA, rating: 4 }],
+      p_coach: coach.id,
+    });
+    expect(error).toBeNull();
+    expect(founderFiled).toBe(coachFiled);
+    expect((await ratingsFor(coachFiled as string)).get(skillA)).toBe(4);
+
+    const { count } = await admin()
+      .from("skill_assessments")
+      .select("id", { count: "exact", head: true })
+      .eq("player_id", playerId)
+      .eq("session_id", session.sessionId);
+    expect(count).toBe(1);
+  });
+
+  it("refuses a coach who tries to file under another coach's name", async () => {
+    const { coach, session, playerId } = await endedSession();
+    const stranger = await createCoach();
+    const asStranger = await asUser(stranger.email);
+
+    const { error } = await asStranger.rpc("save_session_assessment", {
+      p_player: playerId,
+      p_session: session.sessionId,
+      p_ratings: [],
+      p_coach: coach.id,
+    });
+    expect(error?.message ?? "").toContain("not_authorised");
+  });
+
+  it("still defaults to the caller when p_coach is omitted", async () => {
+    const { coach, session, playerId } = await endedSession();
+    const asCoach = await asUser(coach.email);
+
+    const { data: id, error } = await asCoach.rpc("save_session_assessment", {
+      p_player: playerId,
+      p_session: session.sessionId,
+      p_ratings: [],
+    });
+    expect(error).toBeNull();
+
+    const { data: row } = await admin()
+      .from("skill_assessments")
+      .select("coach_id")
+      .eq("id", id as string)
+      .single();
+    expect(row?.coach_id).toBe(coach.id);
+  });
+});
+
+describe("get_coach_wrapup_queue (migration 0077)", () => {
   type Row = {
     kind: string;
     session_id: string;

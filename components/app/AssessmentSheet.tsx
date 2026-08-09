@@ -31,7 +31,7 @@ import { submitAssessment } from "@/app/coach/players/[playerId]/actions";
  *     that is the honest majority verdict week to week. The alternative on offer
  *     was not a more thoughtful rating, it was no assessment at all.
  *   • Saving twice amends rather than fails. `save_session_assessment`
- *     (migration 0075) find-or-creates, so a coach who taps 2 and meant 4 taps 4
+ *     (migration 0077) find-or-creates, so a coach who taps 2 and meant 4 taps 4
  *     and saves again. Before this, that mistake was permanent and visible to
  *     the child's parent as a wrong mastery score.
  */

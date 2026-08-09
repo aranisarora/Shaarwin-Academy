@@ -5121,7 +5121,7 @@ end;
 $function$;
 
 -- Everything a coach still owes on classes that ended in the last 7 days —
--- attendance AND assessments, in one read (migration 0075). A superset of
+-- attendance AND assessments, in one read (migration 0077). A superset of
 -- get_pending_assessments above, which is kept because the WhatsApp after-class
 -- reply composes its "rate X next" link from it.
 --
@@ -5195,7 +5195,7 @@ end;
 $function$;
 
 -- File or amend one coach's assessment of one player for one session
--- (migration 0075). SECURITY DEFINER because skill_assessments and
+-- (migrations 0077, 0078). SECURITY DEFINER because skill_assessments and
 -- skill_ratings carry an INSERT policy and a founder-only DELETE policy and no
 -- UPDATE policy at all — a coach could not amend a rating even in principle, so
 -- a mis-tapped score was permanent and the parent-facing mastery number stayed
@@ -5207,10 +5207,19 @@ $function$;
 --
 -- skill_assessments_notify fires AFTER INSERT only, so an edit deliberately
 -- does not re-announce itself in the founder's ops feed.
+--
+-- p_coach (0078) is who the assessment is credited to, defaulting to the caller.
+-- It exists because the founder's "view as coach" preview is the only route to
+-- correct a coach's paperwork — /admin has no assessment editor — and crediting
+-- that correction to the founder both left the coach's wrong rating in place
+-- (the sheet tests `alreadyFiled` as the previewed coach) and left the coach's
+-- backlog un-cleared (both queue functions test `a.coach_id = p_coach`).
+-- Passing a coach other than yourself is founder-only.
 create or replace function public.save_session_assessment(
   p_player uuid,
   p_session uuid default null,
-  p_ratings jsonb default '[]'::jsonb
+  p_ratings jsonb default '[]'::jsonb,
+  p_coach uuid default null
 )
 returns uuid
 language plpgsql
@@ -5218,13 +5227,18 @@ security definer
 set search_path to 'public'
 as $function$
 declare
-  v_coach uuid := auth.uid();
+  v_actor uuid := auth.uid();
+  v_coach uuid := coalesce(p_coach, auth.uid());
   v_assessment uuid;
 begin
-  if v_coach is null then
+  if v_actor is null then
     raise exception 'not_authenticated';
   end if;
   if not (is_coach() or is_founder()) then
+    raise exception 'not_authorised';
+  end if;
+
+  if v_coach <> v_actor and not is_founder() then
     raise exception 'not_authorised';
   end if;
 
