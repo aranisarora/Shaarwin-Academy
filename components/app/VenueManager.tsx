@@ -28,6 +28,7 @@ import { Input } from "@/components/ui/Input";
 import { Sheet } from "@/components/ui/Sheet";
 import { Spinner } from "@/components/ui/Spinner";
 import { Switch } from "@/components/ui/Switch";
+import { KindIcon } from "./class-type";
 import { ConfirmAction } from "@/components/ui/ConfirmAction";
 import { AddressForm, isAddressComplete } from "@/components/app/AddressForm";
 import {
@@ -72,8 +73,18 @@ function VenueCard({ venue, onOpen }: { venue: Venue; onOpen: () => void }) {
     >
       <span className="flex w-full items-start justify-between gap-2">
         <span className="min-w-0 font-medium">{venueDisplayName(venue)}</span>
-        <span className="flex shrink-0 gap-1.5 pt-0.5">
-          {venue.is_school && <Badge tone="ember">School</Badge>}
+        {/* "This place is a school" is the same fact a school class carries on
+            the Schedule, so it is said the same way: the teal glyph, not an
+            ember badge. Ember here meant a venue could look live, and a badge
+            here meant identity could look like a state — on the one screen
+            where the only real badge, Hidden, IS a state. */}
+        <span className="flex shrink-0 items-center gap-1.5 pt-0.5">
+          {venue.is_school && (
+            <span className="flex items-center gap-1 text-xs text-fg-2">
+              <KindIcon kind="school" className="text-school" />
+              School
+            </span>
+          )}
           {!venue.active && <Badge>Hidden</Badge>}
         </span>
       </span>

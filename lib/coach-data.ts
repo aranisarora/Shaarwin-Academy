@@ -9,6 +9,12 @@ export type CoachSession = {
   status: string;
   classTitle: string;
   isPrivate: boolean;
+  // A group class held at a school: nobody books it online, the coach adds the
+  // pupils who turn up. The admin app has told private, school and group apart
+  // since the kind system landed; the coach's schedule never selected the flag,
+  // so a school block arrived on his phone labelled "Group class" — the one
+  // kind where he, not a parent, is responsible for the register.
+  isSchool: boolean;
   level: string;
   capacity: number;
   confirmed: number;
@@ -33,7 +39,7 @@ export async function getCoachSessions(
   const { data: sessions } = await supabase
     .from("class_sessions")
     .select(
-      "id,starts_at,ends_at,status,capacity_override,classes!inner(id,title,skill_level,capacity,class_type,location_label,venues(name,address,postcode,lat,lng,address_details),private_class_details(address,postcode,lat,lng,access_notes,address_details,profiles!client_id(full_name)))"
+      "id,starts_at,ends_at,status,capacity_override,classes!inner(id,title,skill_level,capacity,class_type,is_school,location_label,venues(name,address,postcode,lat,lng,address_details),private_class_details(address,postcode,lat,lng,access_notes,address_details,profiles!client_id(full_name)))"
     )
     .eq("coach_id", coachId)
     .in("status", ["scheduled", "completed"])
@@ -80,6 +86,7 @@ export async function getCoachSessions(
       status: s.status,
       classTitle: cls.title,
       isPrivate: cls.class_type === "private",
+      isSchool: !!cls.is_school,
       level: cls.skill_level,
       capacity: s.capacity_override ?? cls.capacity,
       confirmed: counts.get(s.id) ?? 0,
