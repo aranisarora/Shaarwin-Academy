@@ -3,8 +3,8 @@ import { Suspense } from "react";
 import Link from "next/link";
 import { requireUser } from "@/lib/auth";
 import { getSubscriptionSummary, formatRenewalDate } from "@/lib/billing";
-import { getMyBookings } from "@/lib/booking";
-import { formatSessionDate } from "@/lib/academy-time";
+import { getMyBookings, splitBookings } from "@/lib/booking";
+import { formatSessionDate, nowMs } from "@/lib/academy-time";
 import { ClientShell } from "@/components/app/ClientShell";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ButtonLink } from "@/components/ui/Button";
@@ -55,11 +55,9 @@ async function HomeBody() {
     players.map((p) => p.id),
   );
 
-  const upcoming = bookings.filter(
-    (b) =>
-      ["confirmed", "waitlisted"].includes(b.status) &&
-      new Date(b.session.starts_at) > new Date(),
-  );
+  // Sorted, so `[0]` really is the next session and each player's `find` below
+  // really is their soonest — both used to take whatever the query listed first.
+  const { upcoming } = splitBookings(bookings, nowMs());
   const next = upcoming[0];
   const attended = bookings.filter((b) => b.status === "attended").length;
 

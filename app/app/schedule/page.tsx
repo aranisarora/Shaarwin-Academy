@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { Suspense } from "react";
 import { requireUser } from "@/lib/auth";
-import { getMyBookings } from "@/lib/booking";
+import { getMyBookings, splitBookings } from "@/lib/booking";
 import { ClientShell } from "@/components/app/ClientShell";
 import { ScheduleList } from "@/components/app/ScheduleList";
 import { PageSkeleton } from "@/components/ui/Skeleton";
@@ -17,16 +17,7 @@ export const metadata: Metadata = { title: "Schedule" };
 async function Bookings() {
   const { supabase, user } = await requireUser("/app/schedule");
   const bookings = await getMyBookings(supabase, user.id);
-
-  const now = nowMs();
-  const upcoming = bookings.filter(
-    (b) =>
-      ["confirmed", "waitlisted"].includes(b.status) &&
-      new Date(b.session.starts_at).getTime() > now
-  );
-  const past = bookings.filter(
-    (b) => new Date(b.session.starts_at).getTime() <= now
-  );
+  const { upcoming, past } = splitBookings(bookings, nowMs());
 
   return <ScheduleList upcoming={upcoming} past={past} />;
 }
