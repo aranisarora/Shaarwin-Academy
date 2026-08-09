@@ -926,6 +926,7 @@ export type Database = {
           title: string
           type: string
           user_id: string
+          whatsapp_status: string | null
         }
         Insert: {
           body: string
@@ -942,6 +943,7 @@ export type Database = {
           title: string
           type: string
           user_id: string
+          whatsapp_status?: string | null
         }
         Update: {
           body?: string
@@ -958,6 +960,7 @@ export type Database = {
           title?: string
           type?: string
           user_id?: string
+          whatsapp_status?: string | null
         }
         Relationships: [
           {
@@ -1972,39 +1975,6 @@ export type Database = {
         }
         Relationships: []
       }
-      wa_links: {
-        Row: {
-          linked_at: string
-          phone: string
-          user_id: string
-        }
-        Insert: {
-          linked_at?: string
-          phone: string
-          user_id: string
-        }
-        Update: {
-          linked_at?: string
-          phone?: string
-          user_id?: string
-        }
-        Relationships: [
-          {
-            foreignKeyName: "wa_links_user_id_fkey"
-            columns: ["user_id"]
-            isOneToOne: true
-            referencedRelation: "coach_client_view"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "wa_links_user_id_fkey"
-            columns: ["user_id"]
-            isOneToOne: true
-            referencedRelation: "profiles"
-            referencedColumns: ["id"]
-          },
-        ]
-      }
       wa_messages: {
         Row: {
           content: string
@@ -2012,6 +1982,7 @@ export type Database = {
           id: string
           phone: string
           role: string
+          seq: number
         }
         Insert: {
           content: string
@@ -2019,6 +1990,7 @@ export type Database = {
           id?: string
           phone: string
           role: string
+          seq?: number
         }
         Update: {
           content?: string
@@ -2026,6 +1998,7 @@ export type Database = {
           id?: string
           phone?: string
           role?: string
+          seq?: number
         }
         Relationships: []
       }
