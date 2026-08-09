@@ -127,6 +127,42 @@ export type MyBooking = {
   };
 };
 
+/** Statuses that still put a client in the room — the rest is history. */
+const LIVE_STATUSES = new Set(["confirmed", "waitlisted"]);
+
+const startMs = (b: MyBooking) => new Date(b.session.starts_at).getTime();
+
+/** A booking the client is still expected at: live status, and yet to start. */
+export function isUpcoming(booking: MyBooking, now: number): boolean {
+  return LIVE_STATUSES.has(booking.status) && startMs(booking) > now;
+}
+
+/**
+ * Split what `getMyBookings` returned into the Upcoming and Past tabs.
+ *
+ * The two halves are a *partition*: `past` is everything `upcoming` didn't take,
+ * so every booking fetched is on screen somewhere. The screens used to ask two
+ * independent questions instead — "live and future?" for one tab, "already
+ * started?" for the other — which left a booking marked attended ahead of its
+ * start time (a coach marking the register early) matching neither, and it
+ * vanished from the client's schedule while still showing on the player profile.
+ *
+ * Sorting here as well as in SQL is deliberate: it is what makes the Past tab
+ * read newest-first rather than inheriting the query's ascending order, and it
+ * keeps `upcoming[0]` an honest "next session" for callers that take the head.
+ */
+export function splitBookings(
+  bookings: MyBooking[],
+  now: number
+): { upcoming: MyBooking[]; past: MyBooking[] } {
+  const upcoming: MyBooking[] = [];
+  const past: MyBooking[] = [];
+  for (const b of bookings) (isUpcoming(b, now) ? upcoming : past).push(b);
+  upcoming.sort((a, b) => startMs(a) - startMs(b));
+  past.sort((a, b) => startMs(b) - startMs(a));
+  return { upcoming, past };
+}
+
 export async function getMyBookings(
   supabase: SupabaseClient<Database>,
   clientId: string
@@ -138,7 +174,13 @@ export async function getMyBookings(
     )
     .eq("client_id", clientId)
     .in("status", ["confirmed", "waitlisted", "attended", "no_show"])
-    .order("starts_at", { referencedTable: "class_sessions", ascending: true });
+    // Order the BOOKINGS by their session's start, not the embedded session by
+    // its own. `{ referencedTable }` spells the latter: it sorts rows *within* a
+    // to-many embed, so on a to-one embed like this one it is a silent no-op and
+    // the bookings came back in whatever order Postgres happened to read them —
+    // a client with weekly slots saw 10, 17, 24, 31 Aug and then back to 11 Aug.
+    // `class_sessions(starts_at)` is the top-level form and does sort the rows.
+    .order("class_sessions(starts_at)", { ascending: true });
 
   if (!data) return [];
 
