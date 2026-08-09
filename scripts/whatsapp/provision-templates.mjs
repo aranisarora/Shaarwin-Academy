@@ -18,15 +18,37 @@
  * Usage: npm run wa:provision   (or: node scripts/whatsapp/provision-templates.mjs)
  *
  * After approval (check the Twilio Console → Messaging → Content Template
- * Builder), set the printed SIDs on the Supabase edge function:
+ * Builder), set the printed SIDs on the Supabase edge function. Every key the
+ * registry below defines is listed here — all 16. Keep the two in step: this
+ * block is what people actually copy, so a template added below and forgotten
+ * here is a template that never reaches production.
+ *
+ * That is not hypothetical. TWILIO_WA_COACH_NUDGE_SID, TWILIO_WA_COACH_COVER_SID
+ * and TWILIO_WA_FOUNDER_DIGEST_V3_SID were added to the registry and not to this
+ * list, so the 13 keys named here were exactly the 13 set in production for
+ * weeks. Nothing failed loudly — interactiveContentFor() returns null on an
+ * unset SID and the message degrades to plain text — so the T-30 coach chase
+ * and every cover offer went out with no buttons at all, silently.
+ *
  *   supabase secrets set \
  *     TWILIO_WA_COACH_AFTERCLASS_SID=HX... \
  *     TWILIO_WA_CLIENT_REMINDER_SID=HX... TWILIO_WA_CLIENT_WAITLIST_SID=HX... \
  *     TWILIO_WA_CLIENT_PAYMENT_SID=HX... TWILIO_WA_CLIENT_BOOKED_SID=HX... \
  *     TWILIO_WA_COACH_PRIVATE_SID=HX... TWILIO_WA_FOUNDER_DIGEST_SID=HX... \
+ *     TWILIO_WA_FOUNDER_DIGEST_V3_SID=HX... \
  *     TWILIO_WA_FOUNDER_SIGNUP_SID=HX... TWILIO_WA_CLIENT_APPROVED_SID=HX... \
  *     TWILIO_WA_COACH_COMING_SID=HX... TWILIO_WA_COACH_ARRIVAL_SID=HX... \
+ *     TWILIO_WA_COACH_NUDGE_SID=HX... TWILIO_WA_COACH_COVER_SID=HX... \
  *     TWILIO_WA_CLIENT_ARRIVED_SID=HX... TWILIO_WA_CLIENT_LATE_SID=HX...
+ *
+ * Do NOT paste the run's full `supabase secrets set` line blindly. The script
+ * prints every SID, including ones already live, and "idempotent" is keyed on
+ * friendly_name — so RENAMING a template (client_session_reminder →
+ * client_session_reminder_v2) does not upgrade it, it creates a second, brand
+ * new, UNAPPROVED one and prints that SID under the same key. Pasting the whole
+ * line then swaps a working approved template for one Meta has not cleared yet,
+ * and that notification degrades to text until it is. Set only the keys you
+ * actually intend to change, and only once the Console shows them approved.
  *
  * Plus ONE template this script cannot create: the generic
  * TWILIO_WA_TEMPLATE_SID (two variables — {{1}} name, {{2}} message) used for
