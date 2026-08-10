@@ -5,23 +5,24 @@
 //     headers := '{"Authorization": "Bearer <service-role-key>"}'::jsonb)$$);
 //
 // Claims due rows (skip-locked semantics via status flip), delivers them over
-// web push / WhatsApp / Resend email, marks sent/failed. After delivery it runs
-// a set of sweeps (waitlist offers, coach prompts, founder escalations,
-// after-class summaries).
+// web push and WhatsApp, marks sent/failed. After delivery it runs a set of
+// sweeps (waitlist offers, coach prompts, founder escalations, after-class
+// summaries).
 //
-// The comment that used to sit here claimed the worker tried "web push, falling
-// back to email". It never did — there were no VAPID keys and no sender, so
-// push was a table with zero rows and a service worker listening for a message
-// nobody sent. deliverPush() below is that missing leg. Read it together with
-// the note above PUSH_ADDITIVE: push is deliberately NOT a cheaper substitute
-// for WhatsApp on anything time-critical.
+// Two channels, and only two. WhatsApp is the guaranteed one — it is where
+// everyone actually is — and push is additive on top of it, never a substitute:
+// a swiped or silenced push is gone with no history, and on iOS it renders no
+// action buttons at all. Email is OTP and auth only and is not a channel here;
+// see the note in deliver() for why the fallback was removed rather than fixed.
+//
+// Which of the two carries a given message is one lookup in TYPES below.
 
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import * as webpush from "jsr:@negrel/webpush@0.5";
 // The 21:00 founder summary. Pure and Deno-free so it can be unit-tested —
-// see digest.test.ts. (The PREF_GROUP_FOR_TYPE duplication further down is a
-// different case: that one is shared with lib/, across the Deno/Next boundary.)
-import { summariseDay, type DayReportRow } from "./digest.ts";
+// see digest.test.ts. (The TYPES duplication further down is a different case:
+// that one is shared with lib/, across the Deno/Next boundary.)
+import { summariseDay, type DayReportRow, type UnreachableRow } from "./digest.ts";
 import { notArrivedBody } from "./escalation.ts";
 
 const supabase = createClient(
@@ -29,13 +30,9 @@ const supabase = createClient(
   Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
 );
 
-const RESEND_KEY = Deno.env.get("RESEND_API_KEY");
-// Must be an address on a domain verified in Resend. It used to be
-// notify@resend.dev — Resend's shared test domain, which hard-403s any
-// recipient other than the account owner ("You can only send testing emails to
-// your own email address"). That silently broke the email fallback for every
-// user except one, which is most of what `status='failed'` was.
-const RESEND_FROM = Deno.env.get("RESEND_FROM") ?? "Sharwin TTA <notify@sharwinacademy.com>";
+// RESEND_API_KEY / RESEND_FROM are deliberately not read here any more. Email
+// left the notification path entirely; the secrets can stay set on the function
+// without doing anything, and Supabase Auth's own mail is unaffected.
 const TWILIO_SID = Deno.env.get("TWILIO_ACCOUNT_SID");
 const TWILIO_TOKEN = Deno.env.get("TWILIO_AUTH_TOKEN");
 const TWILIO_FROM = Deno.env.get("TWILIO_WHATSAPP_FROM"); // "whatsapp:+1..."
@@ -108,153 +105,233 @@ const APP_URL = Deno.env.get("APP_URL") ?? "https://sharwinacademy.com";
 const WINDOW_MS = 24 * 60 * 60 * 1000;
 const IST = "Asia/Kolkata";
 
-// Types that ignore user prefs (always deliver). The signup-approval messages
-// are account-critical: the applicant is waiting on the pending screen, and the
-// founder needs to act — neither should be silenced by a pref toggle.
-const TRANSACTIONAL = new Set([
-  "payment_failed",
-  "session_cancelled",
-  "signup_request",
-  "signup_approved",
-  // A parent believing their child is at the table when they aren't is a
-  // safety matter, not a preference. (C11 / M1.)
-  "player_absent",
-]);
-
-// Founder ops-feed types that live in-app only (/admin). We never deliver these
-// over WhatsApp/email — the row is claimed (flipped to sent) and left for the
-// dashboard to render. The founder's WhatsApp is escalations + the daily digest
-// only. (whatsapp-upgrade-plan Part 1.)
-const FEED_ONLY = new Set([
-  "ops_booking",
-  "ops_cancellation",
-  "ops_attendance",
-  "ops_payment",
-  "ops_membership",
-  "ops_new_client",
-  "ops_new_coach",
-  "ops_player_added",
-  // "ops_wa_linked" retired with the link table — a number saved on a profile
-  // is now just a profile edit, not a separate linking event worth a feed row.
-  "ops_credit_used",
-  "ops_coach_change",
-  // Cover was picked up by a coach — an outcome, not a task.
-  "ops_cover_claimed",
-  // Data-integrity alert: a session whose assigned coach isn't a coach. Feed +
-  // digest rather than an interrupt — it needs fixing, not acting on mid-class.
-  "ops_session_coach_invalid",
-]);
-
-// Quiet hours: these non-time-critical types, when they come due inside IST
-// [21:30, 08:00), are pushed to the next 08:00 IST instead of pinging someone
-// overnight. Time-bound types (reminders, waitlist, arrivals, escalations) are
-// deliberately absent so they still fire. Kept separate from TRANSACTIONAL:
-// payment_failed bypasses *prefs* but is still deferred (nobody fixes a card at
-// 2am). (whatsapp-upgrade-plan Part 7.)
-const DEFERRABLE = new Set([
-  "booking_confirmed",
-  "booking_rescheduled",
-  "coach_assigned",
-  "coach_changed",
-  "role_changed",
-  "private_series_ended",
-  "private_minutes_low",
-  "payment_failed",
-  "ops_daily_digest",
-  // Client copy of an academy-booked private (G1). Informational, not urgent —
-  // the session itself gets its own reminder 3h before.
-  "private_session_booked",
-  // "You're approved" — nobody onboards at 2am, so hold it to 08:00 IST. The
-  // signup *request* is deliberately absent: the applicant is waiting live.
-  "signup_approved",
-  // The six types that were wired into the prefs UI with no sender (0048 +
-  // the two sweeps below). Every one is informational — a receipt, a progress
-  // note, a class that opened — so none of them earns waking anyone up.
-  "payment_receipt",
-  "renewal_upcoming",
-  "new_class_open",
-  "assessment_ready",
-  "student_note",
-  "monthly_progress",
-  // NOTE: coach_day_ahead and founder_morning_brief are deliberately absent.
-  // They fire at 07:00 IST, which is inside quiet hours [21:30, 08:00) — adding
-  // them here would push a 07:00 briefing to 08:00 and silently destroy the
-  // hour of lead time that is the entire reason the message exists.
-]);
-
-// ── The urgent set ──────────────────────────────────────────────────────────
+// ── One row per notification type ───────────────────────────────────────────
 //
-// A miss on any of these causes a real-world failure, not just a quieter phone:
-// a coach teaching four classes needs all four before-class prompts, and a
-// parent needs to hear their coach is running late whether or not it is their
-// fourth message of the day.
+// This table replaces five overlapping sets (TRANSACTIONAL, FEED_ONLY,
+// DEFERRABLE, CAP_EXEMPT, PUSH_ADDITIVE) and a duplicated preference map. There
+// used to be six places to look to answer "what happens to this message", and
+// no single place that listed them all — so adding a type meant remembering
+// four lists, and forgetting one failed quietly. Adding a type is now filling
+// in one row.
 //
-// The name is what it used to do. These types were exempt from a per-user daily
-// cap, and that cap is gone: on 7 Aug a founder broadcast to 8 coaches reached
-// 2, because the counter behind it made no distinction by type. A day of
-// ordinary coaching traffic — before-class, after-class, arrival checks — spent
-// an allowance those same messages could never themselves be charged against,
-// so the harder a coach worked the less reachable they became.
+// The routing rule the `answer` column encodes, in one line:
 //
-// The set outlived the rule because PUSH_ADDITIVE is derived from it. Its one
-// remaining job is to say which types are urgent enough that a push must not
-// stand in for a WhatsApp.
-const CAP_EXEMPT = new Set([
-  // Coach: running their own class.
-  "coach_before_class",
-  "coach_confirm_nudge_2",
-  "coach_arrival_check",
-  "coach_after_class",
-  "new_private_session",
-  "session_unassigned",
+//   Needs an answer, or a miss breaks something real → WhatsApp always, push
+//   on top. Otherwise → push if they have it, WhatsApp if they don't.
+//
+// Email is not a channel here. It is OTP and auth only (Supabase Auth, a
+// different system entirely); it is not a notification channel and not a
+// fallback. See deliver().
+//
+// ── The columns ─────────────────────────────────────────────────────────────
+//
+// `who`      Who reads it. Descriptive only — nothing branches on it — but it
+//            is what makes this table reviewable by someone who doesn't know
+//            the code, and it is the axis docs/notifications.md groups by.
+//
+// `answer`   true  → WhatsApp ALWAYS, and push additionally if they have it.
+//            false → push if a FRESH subscription exists, else WhatsApp.
+//
+//            This is the old CAP_EXEMPT ∪ TRANSACTIONAL, and it exists because
+//            first-success-wins is right for the informational tail and quietly
+//            wrong for everything else. Anyone who subscribes to push would
+//            otherwise STOP getting WhatsApp — including a coach whose phone is
+//            face-down on a bench, on Do Not Disturb, in a hall with no wifi,
+//            forty minutes before the class they haven't confirmed. A banner
+//            nobody sees would count as delivered, and the escalation ladder
+//            that exists precisely because a coach is a single point of failure
+//            would fire against a message we told ourselves went out. So for
+//            these, both legs go. The row records `push+whatsapp`.
+//
+// `mute`     Which preference toggle silences it, or false for none.
+//            A type with no row at all is treated as unmutable and delivered,
+//            so an omission fails LOUD (a message that keeps arriving) rather
+//            than silent (one nobody ever gets). MUST stay in sync with
+//            PREF_GROUP_FOR_TYPE in lib/notification-prefs.ts — the worker is
+//            Deno and can't import from lib/, so the map is duplicated there on
+//            purpose and lib/notification-prefs.test.ts reads this source and
+//            compares. (Same arrangement as the WhatsApp button ids.)
+//
+// `critical` Ignores preferences AND a STOP. Distinct from `answer`: a coach's
+//            before-class prompt is urgent (answer) but still respects a STOP,
+//            while a failed payment overrides one. Reserved for account- and
+//            safety-critical messages — a parent believing their child is at
+//            the table when they aren't is not a preference. (C11 / M1.)
+//
+// `defer`    Quiet hours: when it comes due inside IST [21:30, 08:00) it is
+//            held to the next 08:00 rather than pinging someone overnight.
+//            Note payment_failed is BOTH critical and deferred — it bypasses
+//            prefs, but nobody fixes a card at 2am. Time-bound types are
+//            deliberately false so they still fire, and the two 07:00 morning
+//            briefings especially: deferring a 07:00 briefing to 08:00 destroys
+//            the hour of lead time that is the entire reason it exists.
+//
+// `feedOnly` Never delivered on any channel. The row is claimed and left for
+//            /admin to render, so the founder's WhatsApp stays escalations +
+//            the daily digest only. The in-app feed is also the safety net
+//            behind removing email: every notification is a row rendered at
+//            /app/notifications, /coach/notifications and /admin/notifications,
+//            so nothing is ever lost — it just doesn't ping.
+//
+// A note on the counts you may be tempted to reach for: the notifications table
+// begins 2026-07-11, so all_time ≈ last_30d for essentially every type and
+// every number is one month of a beta. Channel is decided by WHAT THE MESSAGE
+// IS — does it need an answer, does a miss break something — never by volume.
+type Audience = "parent" | "coach" | "founder" | "both";
+
+type NotificationRule = {
+  who: Audience;
+  /** WhatsApp always + push additive. False means push may end the chain. */
+  answer: boolean;
+  /** The toggle that silences it, or false if none does. */
+  mute: PrefGroup | false;
+  /** Held to 08:00 IST when it comes due inside quiet hours. */
+  defer: boolean;
+  /** Overrides preferences and a STOP. Account- and safety-critical only. */
+  critical?: true;
+  /** Never delivered; rendered in the in-app feed only. */
+  feedOnly?: true;
+};
+
+type PrefGroup = "reminders" | "progress" | "news";
+
+const TYPES: Record<string, NotificationRule> = {
+  // ── Parent: the session is happening, or it isn't ─────────────────────────
+  reminder_upcoming:     { who: "parent", answer: true,  mute: "reminders", defer: false },
+  coach_arrived:         { who: "parent", answer: true,  mute: "reminders", defer: false },
+  // coach_late is deliberately unmutable while coach_arrived is not:
+  // reassurance decays with repetition, but a coach NOT being there is the
+  // thing a parent actually needs to know. (Plan 2.6 / the C10 amendment.)
+  coach_late:            { who: "parent", answer: true,  mute: false,       defer: false },
+  waitlist_spot:         { who: "parent", answer: true,  mute: "reminders", defer: false },
+  session_cancelled:     { who: "parent", answer: true,  mute: false,       defer: false, critical: true },
+  player_absent:         { who: "parent", answer: true,  mute: false,       defer: false, critical: true },
+  session_outcome:       { who: "parent", answer: true,  mute: "progress",  defer: false },
+
+  // Schedule changes to a parent. Promoted to `answer: true` in the collapse:
+  // under the old shape a parent who enabled push stopped getting these on
+  // WhatsApp, and a missed schedule change means arriving at the wrong time or
+  // not at all — which is the "a miss breaks something real" test, whatever the
+  // (beta-inflated) counts say.
+  coach_changed:         { who: "parent", answer: true,  mute: "reminders", defer: true  },
+  session_moved:         { who: "both",   answer: true,  mute: "reminders", defer: false },
+  private_session_booked:{ who: "parent", answer: true,  mute: "reminders", defer: true  },
+
+  // ── Parent: money ─────────────────────────────────────────────────────────
+  payment_failed:        { who: "parent", answer: true,  mute: false,       defer: true,  critical: true },
+  payment_receipt:       { who: "parent", answer: false, mute: "news",      defer: true  },
+  renewal_upcoming:      { who: "parent", answer: false, mute: "news",      defer: true  },
+
+  // ── Parent: account ───────────────────────────────────────────────────────
+  signup_approved:       { who: "parent", answer: true,  mute: false,       defer: true,  critical: true },
+
+  // ── Parent: the informational tail ────────────────────────────────────────
+  booking_confirmed:     { who: "parent", answer: false, mute: "reminders", defer: true  },
+  booking_rescheduled:   { who: "parent", answer: false, mute: "reminders", defer: true  },
+  coach_assigned:        { who: "parent", answer: false, mute: "reminders", defer: true  },
+  class_updated:         { who: "parent", answer: false, mute: "reminders", defer: false },
+  session_booked:        { who: "parent", answer: false, mute: "reminders", defer: false },
+  private_series_ended:  { who: "parent", answer: false, mute: false,       defer: true  },
+  private_minutes_low:   { who: "parent", answer: false, mute: false,       defer: true  },
+  assessment_ready:      { who: "parent", answer: false, mute: "progress",  defer: true  },
+  student_note:          { who: "parent", answer: false, mute: "progress",  defer: true  },
+  monthly_progress:      { who: "parent", answer: false, mute: "progress",  defer: true  },
+  new_class_open:        { who: "parent", answer: false, mute: "news",      defer: true  },
+  announcement:          { who: "both",   answer: false, mute: "news",      defer: false },
+
+  // ── Coach: running their own class ────────────────────────────────────────
+  // A coach teaching four classes needs all four before-class prompts. These
+  // were the set behind a per-user daily cap that is now gone: on 7 Aug a
+  // founder broadcast to 8 coaches reached 2, because the counter made no
+  // distinction by type, so a day of ordinary coaching traffic spent an
+  // allowance those same messages could never be charged against — the harder
+  // a coach worked, the less reachable they became.
+  coach_before_class:    { who: "coach",  answer: true,  mute: false,       defer: false },
+  coach_confirm_nudge_2: { who: "coach",  answer: true,  mute: false,       defer: false },
+  coach_arrival_check:   { who: "coach",  answer: true,  mute: false,       defer: false },
+  coach_after_class:     { who: "coach",  answer: true,  mute: false,       defer: false },
+  new_private_session:   { who: "coach",  answer: true,  mute: false,       defer: false },
+  session_unassigned:    { who: "coach",  answer: true,  mute: false,       defer: false },
   // A class with no coach is an emergency for whoever can fix it.
-  "cover_offer",
-  // Parent: did my child turn up, where is their coach, is the session still on.
-  // Both outcome types are at most one per player per session, so a family with
-  // three children legitimately gets three — the Progress toggle is the right
-  // lever for that.
-  "player_absent",
-  "session_outcome",
-  "coach_arrived",
-  "coach_late",
-  "reminder_upcoming",
-  "waitlist_spot",
-  // Founder: act-now escalations and the once-a-day digest.
-  "ops_coach_unconfirmed",
-  "ops_coach_not_arrived",
-  "ops_daily_digest",
-  // The morning briefings. Both are once per day and both are the message the
-  // whole day is planned from — a coach who doesn't get theirs drives to the
-  // wrong venue.
-  "coach_day_ahead",
-  "founder_morning_brief",
-]);
+  cover_offer:           { who: "coach",  answer: true,  mute: false,       defer: false },
+  // Fires at 07:00 IST — inside quiet hours. NOT deferred, on purpose: this is
+  // the message the whole day is planned from, and a coach who doesn't get
+  // theirs drives to the wrong venue.
+  coach_day_ahead:       { who: "coach",  answer: true,  mute: false,       defer: false },
+  role_changed:          { who: "coach",  answer: false, mute: false,       defer: true  },
 
-// ── Push is ADDITIVE for these, not a substitute ────────────────────────────
-//
-// deliver() is first-success-wins by design, and that is right for the
-// informational tail: if a receipt lands on someone's lock screen there is no
-// reason to also spend a WhatsApp on it. Applied to the whole list, though, it
-// quietly does the opposite of what push is for. Anyone who subscribes STOPS
-// getting WhatsApp — including a coach whose phone is face-down on a bench, on
-// Do Not Disturb, in a hall with no wifi, forty minutes before the class they
-// haven't confirmed. A push banner nobody sees would then count as delivered,
-// and the escalation ladder that exists precisely because the coach is a single
-// point of failure (docs/whatsapp-messaging.md is explicit about there being no
-// redundancy behind them) would fire against a message we told ourselves went
-// out.
-//
-// So for the time-critical set, push goes out AND WhatsApp follows. Two
-// channels for the handful of messages where a miss costs a real session, one
-// channel for everything else. The row records `push+whatsapp` so it still
-// explains itself afterwards.
-//
-// The set is CAP_EXEMPT (already curated as "a miss here causes a real-world
-// failure, not just a quieter phone") plus TRANSACTIONAL (account-critical
-// enough to ignore preferences — a failed payment, a cancelled session, someone
-// waiting on an approval). Deriving it rather than writing a third list is
-// deliberate: two definitions of "urgent" would drift apart within a month.
-const PUSH_ADDITIVE = new Set([...CAP_EXEMPT, ...TRANSACTIONAL]);
+  // ── Founder: act now ──────────────────────────────────────────────────────
+  ops_coach_unconfirmed: { who: "founder", answer: true,  mute: false,      defer: false },
+  ops_coach_not_arrived: { who: "founder", answer: true,  mute: false,      defer: false },
+  signup_request:        { who: "founder", answer: true,  mute: false,      defer: false, critical: true },
+  // Same 07:00 exception as coach_day_ahead.
+  founder_morning_brief: { who: "founder", answer: true,  mute: false,      defer: false },
+  ops_daily_digest:      { who: "founder", answer: true,  mute: false,      defer: true  },
+  // Nobody reached this message on any channel. See maybeAlertUnreachable() —
+  // this is the alert that replaces email as the thing that catches a total
+  // delivery failure, and it is rate-limited to one per affected person per
+  // day because an unbounded per-message alert would be worse than the silence
+  // it reports. (ops_coach_unconfirmed reached 705 sends in 30 days precisely
+  // because nothing bounded it.)
+  ops_unreachable:       { who: "founder", answer: true,  mute: false,      defer: false },
+  private_request_parked:{ who: "founder", answer: false, mute: false,      defer: false },
+  ops_private_series_paused: { who: "founder", answer: false, mute: false,  defer: false },
+  ops_payment_issue:     { who: "founder", answer: false, mute: false,      defer: false },
+
+  // ── Founder: the /admin feed, never delivered ─────────────────────────────
+  ops_booking:           { who: "founder", answer: false, mute: false, defer: false, feedOnly: true },
+  ops_cancellation:      { who: "founder", answer: false, mute: false, defer: false, feedOnly: true },
+  ops_attendance:        { who: "founder", answer: false, mute: false, defer: false, feedOnly: true },
+  ops_payment:           { who: "founder", answer: false, mute: false, defer: false, feedOnly: true },
+  ops_membership:        { who: "founder", answer: false, mute: false, defer: false, feedOnly: true },
+  ops_new_client:        { who: "founder", answer: false, mute: false, defer: false, feedOnly: true },
+  ops_new_coach:         { who: "founder", answer: false, mute: false, defer: false, feedOnly: true },
+  ops_player_added:      { who: "founder", answer: false, mute: false, defer: false, feedOnly: true },
+  ops_credit_used:       { who: "founder", answer: false, mute: false, defer: false, feedOnly: true },
+  ops_coach_change:      { who: "founder", answer: false, mute: false, defer: false, feedOnly: true },
+  // Cover was picked up by a coach — an outcome, not a task.
+  ops_cover_claimed:     { who: "founder", answer: false, mute: false, defer: false, feedOnly: true },
+  // A session whose assigned coach isn't a coach. Feed + digest rather than an
+  // interrupt — it needs fixing, not acting on mid-class.
+  ops_session_coach_invalid: { who: "founder", answer: false, mute: false, defer: false, feedOnly: true },
+
+  // ── No producer today ─────────────────────────────────────────────────────
+  //
+  // Kept, not deleted. Each of these was superseded rather than removed, and
+  // the row costs nothing while guaranteeing that if a producer ever comes
+  // back the message routes correctly instead of falling through the
+  // unknown-type default. Verified against production on 2026-08-10:
+  //
+  //   reminder_24h, reminder_2h      collapsed into the single reminder_upcoming
+  //                                  at T−3h by migration 0036. Both survive only
+  //                                  in `delete ... where type in (...)` cleanup
+  //                                  predicates that sweep in-flight legacy rows.
+  //   confirm_session_nudge          superseded by coach_before_class +
+  //                                  coach_confirm_nudge_2.
+  //   ops_coach_confirmed            the happy-path feed row; the alert that
+  //                                  matters, ops_coach_unconfirmed, is alive.
+  //   ops_wa_linked                  its trigger went with the wa_links table in
+  //                                  migration 0074. A number on a profile is now
+  //                                  just a profile edit.
+  reminder_24h:          { who: "parent", answer: false, mute: "reminders", defer: false },
+  reminder_2h:           { who: "parent", answer: false, mute: "reminders", defer: false },
+  confirm_session_nudge: { who: "coach",  answer: false, mute: false,       defer: false },
+  ops_coach_confirmed:   { who: "founder", answer: false, mute: false,      defer: false },
+  ops_wa_linked:         { who: "founder", answer: false, mute: false,      defer: false },
+};
+
+/**
+ * The rule for a type, or the fail-loud default for one nobody added a row for.
+ *
+ * Unknown types get `answer: true` and no mute deliberately: an omission should
+ * surface as a message that keeps arriving on WhatsApp, which someone notices
+ * and fixes, rather than one that silently stops. The alternative default —
+ * letting push end the chain — is the failure mode this whole table exists to
+ * prevent, and it would be invisible.
+ */
+function ruleFor(type: string): NotificationRule {
+  return TYPES[type] ?? { who: "both", answer: true, mute: false, defer: false };
+}
 
 // ── A subscription can be valid and still be nobody ─────────────────────────
 //
@@ -284,43 +361,16 @@ const PUSH_STALE_MS = 90 * 86400000;
 
 // ── Grouped preferences (notification-fix-plan 2.6 / G9) ────────────────────
 //
-// Members now toggle three groups — Reminders · Progress · News & offers —
-// instead of five per-type switches that covered a fraction of what we send.
+// Members toggle three groups — Reminders · Progress · News & offers — instead
+// of five per-type switches that covered a fraction of what we send. Which
+// group governs which type is the `mute` column of TYPES above; this is just
+// the lookup.
 //
-// MUST stay in sync with PREF_GROUP_FOR_TYPE in lib/notification-prefs.ts. The
-// worker is Deno and can't import from lib/, so the map is duplicated here on
-// purpose (same arrangement as the WhatsApp button ids). A type in neither map
-// is unmutable, so an omission fails loud rather than silent.
-const PREF_GROUP_FOR_TYPE: Record<string, string> = {
-  reminder_upcoming: "reminders",
-  waitlist_spot: "reminders",
-  coach_changed: "reminders",
-  booking_rescheduled: "reminders",
-  booking_confirmed: "reminders",
-  session_moved: "reminders",
-  class_updated: "reminders",
-  coach_assigned: "reminders",
-  private_session_booked: "reminders",
-  // Mutable on purpose: reassurance decays with repetition. coach_late is NOT
-  // here — a coach *not* being there is what a parent needs to know.
-  coach_arrived: "reminders",
-
-  session_outcome: "progress",
-  monthly_progress: "progress",
-  assessment_ready: "progress",
-  student_note: "progress",
-
-  announcement: "news",
-  renewal_upcoming: "news",
-  new_class_open: "news",
-  payment_receipt: "news",
-};
-
 /** Per-type keys win over the group toggle, so pre-regrouping choices survive. */
 function mutedByPrefs(type: string, prefs: Record<string, boolean> | null): boolean {
   if (!prefs) return false;
   if (prefs[type] === false) return true;
-  const group = PREF_GROUP_FOR_TYPE[type];
+  const group = ruleFor(type).mute;
   return group ? prefs[group] === false : false;
 }
 
@@ -349,15 +399,18 @@ Deno.serve(async () => {
     }
     seen.add(dedupeKey);
 
+    // Everything this row's handling depends on, read once. (See TYPES.)
+    const rule = ruleFor(row.type);
+
     // Feed-only ops rows never leave the DB: claim and move on so the founder's
     // WhatsApp stays quiet while /admin still renders them. (Part 1.)
-    if (FEED_ONLY.has(row.type)) {
+    if (rule.feedOnly) {
       await markSent(row.id);
       continue;
     }
 
     // Quiet hours: defer non-urgent types that come due overnight. (Part 7.)
-    if (DEFERRABLE.has(row.type)) {
+    if (rule.defer) {
       const deferTo = quietHoursDefer();
       if (deferTo) {
         await supabase
@@ -369,10 +422,11 @@ Deno.serve(async () => {
       }
     }
 
-    // Prefs: non-transactional types respect profiles.notification_prefs, and
-    // a member who sent STOP is muted for everything non-transactional
-    // regardless of type — including types added after they opted out. (2.3.)
-    if (!TRANSACTIONAL.has(row.type)) {
+    // Prefs: everything except a `critical` type respects
+    // profiles.notification_prefs, and a member who sent STOP is muted for all
+    // of them regardless of type — including types added after they opted out.
+    // (2.3.)
+    if (!rule.critical) {
       const { data: profile } = await supabase
         .from("profiles")
         .select("notification_prefs,wa_muted")
@@ -424,6 +478,14 @@ Deno.serve(async () => {
           ...(attempt.whatsapp ? { whatsapp_status: attempt.whatsapp } : {}),
         })
         .eq("id", row.id);
+      // Nobody got this. Tell the founders — inside its own try, because an
+      // alert that throws must not take down the delivery loop that produced
+      // it. The row is already marked failed above either way.
+      try {
+        await maybeAlertUnreachable(row, attempt);
+      } catch (err) {
+        console.error("notify: unreachable alert failed", err);
+      }
     }
   }
 
@@ -983,7 +1045,7 @@ async function sweepFounderDigest() {
   // cleanly is worth saying out loud — that is the founder's "all good".
   if (!sessions.length) return;
 
-  const summary = summariseDay(sessions);
+  const summary = summariseDay(sessions, await unreachableToday());
 
   for (const f of founders) {
     const { data: already } = await supabase
@@ -1028,6 +1090,55 @@ async function sweepFounderDigest() {
   }
 }
 
+
+/**
+ * Everyone a notification failed to reach today, for the digest's last line.
+ *
+ * Reads the rows the delivery loop already marked — whatsapp_status is written
+ * on every attempt (migration 0074), so this needs no new column and no new
+ * bookkeeping. It deliberately counts PEOPLE, not messages: the digest line is
+ * "who couldn't we reach", and one person with no number fails everything they
+ * were due.
+ */
+async function unreachableToday(): Promise<UnreachableRow[]> {
+  // Start of the current IST day, as an instant. IST is a fixed +05:30, so the
+  // offset can be written into the string rather than computed.
+  const istDate = new Intl.DateTimeFormat("en-CA", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    timeZone: IST,
+  }).format(new Date());
+  const dayStart = new Date(`${istDate}T00:00:00+05:30`).toISOString();
+
+  const { data: rows } = await supabase
+    .from("notifications")
+    .select("user_id,whatsapp_status")
+    .eq("status", "failed")
+    .in("whatsapp_status", ["failed", "no_phone"])
+    .gte("sent_at", dayStart)
+    .limit(500);
+  if (!rows?.length) return [];
+
+  // Collapse to one entry per user before looking any names up — a person with
+  // no number can easily account for dozens of these rows.
+  const worst = new Map<string, "failed" | "no_phone">();
+  for (const r of rows) {
+    const status = r.whatsapp_status as "failed" | "no_phone";
+    if (worst.get(r.user_id) !== "no_phone") worst.set(r.user_id, status);
+  }
+
+  const { data: people } = await supabase
+    .from("profiles")
+    .select("id,full_name")
+    .in("id", [...worst.keys()]);
+  const nameOf = new Map((people ?? []).map((p) => [p.id, (p.full_name ?? "").trim()]));
+
+  return [...worst.entries()].map(([id, reason]) => ({
+    name: nameOf.get(id) || "Someone",
+    reason,
+  }));
+}
 
 // ── Morning briefings + the two time-driven dead types ──────────────────────
 //
@@ -1493,30 +1604,32 @@ async function sweepWaitlistOffers() {
 
 /**
  * Outcome of one delivery attempt. `channel` is what actually carried it, or
- * the last channel we tried when nothing did ("push" | "whatsapp" | "email" |
- * "none"); `error` is the accumulated reason chain, written to
- * notifications.error so a failed row explains itself.
- * (notification-fix-plan 1.5.)
+ * the last channel we tried when nothing did ("push" | "whatsapp" | "none");
+ * `error` is the accumulated reason chain, written to notifications.error so a
+ * failed row explains itself. (notification-fix-plan 1.5.)
  *
- * Since push arrived it can also be compound — "push+whatsapp", "push+email" —
- * for the PUSH_ADDITIVE types, where both legs are sent on purpose. Anything
- * reading this column should treat it as a set, not an enum: `= 'push'` means
- * push ALONE, so "did a banner go out" is `like 'push%'`.
+ * Since push arrived it can also be compound — "push+whatsapp" — for the
+ * `answer: true` types, where both legs are sent on purpose. Anything reading
+ * this column should treat it as a set, not an enum: `= 'push'` means push
+ * ALONE, so "did a banner go out" is `like 'push%'`.
+ *
+ * Historical rows also carry "email" and "push+email". Nothing writes those any
+ * more — email left the notification path — but a query over the archive will
+ * still meet them.
  */
 /**
  * `note` is the reason a *preferred* channel was skipped on a delivery that
- * nonetheless succeeded — "whatsapp: not_configured" on a row that went out by
- * email. It exists because losing that sentence once cost four days: when
- * Twilio ran dry on 2026-08-02 the email fallback covered every message, so
- * nothing was ever marked failed, and the reason lived only in an edge-function
- * log that rolls over after 24 hours. `channel_attempted` could tell you a
- * linked member had been downgraded to email; nothing could tell you why.
+ * nonetheless succeeded — "push: <reason>" on a row WhatsApp then carried. It
+ * exists because losing that sentence once cost four days: when Twilio ran dry
+ * on 2026-08-02 the (then-present) email fallback covered every message, so
+ * nothing was ever marked failed, and the reason lived only in an
+ * edge-function log that rolls over after 24 hours.
  */
 /**
- * `whatsapp` is deliberately independent of `ok`. WhatsApp is the channel these
- * members actually read, so "did WhatsApp carry this?" has to survive a later
- * leg succeeding — otherwise an email fallback marks the row green and the miss
- * is invisible. Written to notifications.whatsapp_status (migration 0074).
+ * `whatsapp` is deliberately independent of `ok`. WhatsApp is the guaranteed
+ * channel, so "did WhatsApp carry this?" has to survive a push leg succeeding —
+ * otherwise a banner nobody saw marks the row green and the miss is invisible.
+ * Written to notifications.whatsapp_status (migration 0074).
  *   sent     — WhatsApp delivered it
  *   failed   — we had a number and the send did not land
  *   no_phone — no number on the profile, so it was never attempted
@@ -1587,13 +1700,13 @@ async function deliver(row: {
   // of silent demotion to email.
   const { data: profile } = await supabase
     .from("profiles")
-    .select("email,full_name,phone")
+    .select("full_name,phone")
     .eq("id", row.user_id)
     .maybeSingle();
   const firstName = (profile?.full_name ?? "").trim().split(/\s+/)[0] || "there";
 
-  // Push first, because it is instant and costs nothing — but see PUSH_ADDITIVE:
-  // for the time-critical set it does NOT end the chain, it runs alongside it.
+  // Push first, because it is instant and costs nothing — but see `answer` in
+  // TYPES: for that set it does NOT end the chain, it runs alongside WhatsApp.
   // `push.ok` means a device we have reason to believe somebody still opens
   // accepted it; `push.accepted` means some endpoint took it. The two differ
   // exactly when every subscription this person has is stale, which is the case
@@ -1604,7 +1717,7 @@ async function deliver(row: {
   // person who has never subscribed — and stamping those on every failed row
   // would bury the reason that actually explains the failure.
   const notes: string[] = push.channel === "push" && push.error ? [`push: ${push.error}`] : [];
-  if (push.ok && !PUSH_ADDITIVE.has(row.type)) {
+  if (push.ok && !ruleFor(row.type).answer) {
     return { ok: true, channel: "push", whatsapp: "skipped" };
   }
 
@@ -1617,9 +1730,10 @@ async function deliver(row: {
   /** What to call the channel once a later leg lands. */
   const withPush = (channel: string) => (push.accepted ? `push+${channel}` : channel);
 
-  // WhatsApp: the channel these members actually read. Inside the 24h service
-  // window we send rich free-form text; outside it we fall back to the approved
-  // template (with the member's name), and only then to email.
+  // WhatsApp: the guaranteed channel, and the one these members actually read.
+  // Inside the 24h service window we send rich free-form text; outside it we
+  // fall back to the approved template (with the member's name). There is
+  // nothing after it — see the note on email below.
   const wa = await deliverWhatsApp(row, firstName, profile?.phone ?? null);
   if (wa.ok) {
     return {
@@ -1630,73 +1744,104 @@ async function deliver(row: {
     };
   }
   if (wa.error) notes.push(`whatsapp: ${wa.error}`);
-  // Whatever happens below, this turn did not reach them on WhatsApp. Email is
-  // additive here, not a substitute: it may carry the row, but it must never
-  // erase the fact that the preferred channel failed. `whatsapp` rides all the
-  // way out to the row so "who did we fail to reach on WhatsApp" is a column
-  // lookup rather than a substring search through a free-text note.
+  // This turn did not reach them on WhatsApp. `whatsapp` rides all the way out
+  // to the row so "who did we fail to reach on WhatsApp" is a column lookup
+  // rather than a substring search through a free-text note.
   const waOutcome = wa.error === "no_phone" ? "no_phone" : "failed";
 
-  // Email fallback via Resend.
+  // ── There is no email leg, and that is the decision, not an omission ──────
   //
-  // Previously an unset RESEND_API_KEY returned `true` here — every undeliverable
-  // row was silently recorded as sent (G8). Now it fails honestly so the row
-  // carries `no_channel` and shows up in the failure query.
-  if (!RESEND_KEY) {
-    notes.push("email: no_channel");
-    return orPush({ ok: false, channel: wa.channel, error: notes.join("; "), whatsapp: waOutcome });
-  }
-  if (!profile?.email) {
-    notes.push("email: no_address");
-    return orPush({ ok: false, channel: wa.channel, error: notes.join("; "), whatsapp: waOutcome });
-  }
+  // Email is for OTP and auth only. It does not belong in notifying, not even
+  // as a fallback. Supabase Auth's own mail (magic links, one-time codes) is a
+  // different system entirely and is untouched by this.
+  //
+  // What used to sit here was a Resend send that ran whenever WhatsApp failed.
+  // On paper it was the safety net; in practice it was the opposite. The
+  // "Sharwin Table Tennis Academy" account alone received 1,475 notifications
+  // and read 11 of them, and because a successful email marked the row green,
+  // two active coaches sat on email-only for months while every report read
+  // clean. A channel nobody reads that also hides the fact that the channel
+  // they do read failed is worse than no channel at all.
+  //
+  // So the chain ends here and the row is honestly marked failed. Two things
+  // stand behind it:
+  //
+  //   1. Every notification is still a row, rendered at /app/notifications,
+  //      /coach/notifications and /admin/notifications. Nothing is lost — it
+  //      just doesn't ping.
+  //   2. maybeAlertUnreachable() tells the founders when a message reached
+  //      nobody, which is the part email was pretending to do.
+  return orPush({ ok: false, channel: wa.channel, error: notes.join("; "), whatsapp: waOutcome });
+}
 
-  // APP_URL, not a second copy of it. This read had its own `http://localhost:3000`
-  // default while the module-level APP_URL 1500 lines above defaults to
-  // production, so an unset function secret sent every fallback email with a
-  // dead localhost "Open" button — the same class of defect as the frozen
-  // template button URLs, on the channel that only runs when WhatsApp failed.
-  const deepLink = `${APP_URL}${row.data?.url ?? "/app"}`;
-  const res = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${RESEND_KEY}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      from: RESEND_FROM,
-      to: profile.email,
-      subject: row.title,
-      html: `
-        <div style="background:#0B0C0F;padding:32px;font-family:Inter,system-ui,sans-serif">
-          <div style="max-width:480px;margin:0 auto;background:#14161B;border:1px solid #26282E;border-radius:12px;padding:28px">
-            <p style="color:#E8590C;font-size:11px;letter-spacing:.08em;text-transform:uppercase;margin:0 0 12px">Sharwin TTA</p>
-            <h1 style="color:#F4F1EA;font-size:22px;margin:0 0 8px">${row.title}</h1>
-            <!-- pre-line so a multi-line body (the digest, the two morning
-                 briefings) keeps its lines instead of collapsing into HTML's
-                 one paragraph. -->
-            <p style="color:#A3A7B0;font-size:15px;margin:0 0 24px;white-space:pre-line">${row.body}</p>
-            <a href="${deepLink}" style="display:inline-block;background:#E8590C;color:#F4F1EA;text-decoration:none;font-weight:600;padding:12px 24px;border-radius:8px">Open</a>
-          </div>
-        </div>`,
-    }),
-  });
-  // The row went out, so this is not a failure — but WhatsApp was preferred and
-  // did not carry it, and that sentence is the whole diagnosis. Keep it, and
-  // keep `whatsapp` too: a successful email must not launder a WhatsApp miss
-  // into a clean row. That laundering is exactly how two active coaches sat on
-  // email-only for months while every report read green.
-  if (res.ok) {
-    return {
-      ok: true,
-      channel: withPush("email"),
-      note: notes.join("; ") || undefined,
-      whatsapp: waOutcome,
-    };
+/**
+ * Removing email opens one hole: a row that fails WhatsApp with no usable push
+ * used to at least land in an inbox. Now it reaches nobody, and nobody knows.
+ * This is what closes it — an alert to the founders, not a screen to check.
+ *
+ * Rate limiting is not optional here. ops_coach_unconfirmed reached 705 sends
+ * in 30 days precisely because nothing bounded it, and a per-message
+ * delivery-failure alert would be worse: one undeliverable person generates one
+ * alert for every message they were due. So the immediate alert fires at most
+ * once per affected person per day, and only for messages that needed an answer
+ * or had to land. Everything else rolls up into one line of the 21:00 digest.
+ */
+async function maybeAlertUnreachable(row: {
+  id: string;
+  user_id: string;
+  type: string;
+}, attempt: Attempt): Promise<void> {
+  // Only a total failure counts. A row that WhatsApp carried, or that a fresh
+  // push ended the chain on, reached somebody.
+  if (attempt.ok) return;
+  if (attempt.whatsapp !== "failed" && attempt.whatsapp !== "no_phone") return;
+
+  // The digest picks up everything, so the only question here is whether it
+  // also deserves an interrupt. `answer` is the same test the routing uses:
+  // needs a reply, or a miss breaks something real.
+  if (!ruleFor(row.type).answer) return;
+
+  const { data: person } = await supabase
+    .from("profiles")
+    .select("full_name,phone")
+    .eq("id", row.user_id)
+    .maybeSingle();
+  const name = (person?.full_name ?? "").trim() || "Someone";
+  const why = attempt.whatsapp === "no_phone" ? "no WhatsApp number" : "WhatsApp send failed";
+
+  const { data: founders } = await supabase.from("profiles").select("id").eq("role", "founder");
+  if (!founders?.length) return;
+
+  // One per affected person per IST day. alreadyFired keys on
+  // (type, data->>session_id, user) — the affected person's id goes in the
+  // session slot together with the date, which is exactly the grain we want:
+  // the same unreachable person on the same day never alerts twice, and a
+  // second person on the same day still does.
+  const istDate = new Intl.DateTimeFormat("en-CA", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    timeZone: IST,
+  }).format(new Date());
+  const dayKey = `${row.user_id}:${istDate}`;
+
+  for (const f of founders) {
+    if (await alreadyFired("ops_unreachable", dayKey, f.id)) continue;
+    await supabase.from("notifications").insert({
+      user_id: f.id,
+      type: "ops_unreachable",
+      title: "Couldn't reach someone",
+      body: `${name} did not receive "${row.type}" — ${why}. Nothing else was tried; email is not a notification channel.`,
+      data: {
+        session_id: dayKey,
+        unreachable_user: row.user_id,
+        unreachable_name: name,
+        reason: attempt.whatsapp,
+        failed_type: row.type,
+        url: "/admin/clients",
+      },
+    });
   }
-  const detail = (await res.text().catch(() => "")).slice(0, 200);
-  notes.push(`email: ${res.status} ${detail}`.trim());
-  return orPush({ ok: false, channel: "email", error: notes.join("; "), whatsapp: waOutcome });
 }
 
 // ---------------------------------------------------------------------------
@@ -1840,7 +1985,7 @@ async function deliverPush(row: {
   }
 
   const d = row.data ?? {};
-  const urgent = PUSH_ADDITIVE.has(row.type);
+  const urgent = ruleFor(row.type).answer;
   const payload = JSON.stringify({
     title: row.title,
     // Push services cap the encrypted payload (4KB on most, less on some), and

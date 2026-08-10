@@ -17,13 +17,25 @@ decides the channel.
 > whatsapp 637, null 3,711 — **zero pushes, ever**. The order below is the one
 > that is now actually implemented.
 
-**The order, as built.** Push first, then WhatsApp, then email — but with one
-rule that is not "first one that works":
+> **Correction (2026-08-10).** Email is no longer a notification channel at
+> all. `deliver()` used to fall back to Resend whenever WhatsApp failed; that
+> branch is gone. Email is **OTP and auth only** — Supabase Auth's own mail
+> (magic links, one-time codes) is a different system and is untouched.
+>
+> The fallback read as a safety net and behaved as the opposite. A successful
+> email marked the row green, so two active coaches sat on email-only for
+> months while every report read clean, and the "Sharwin Table Tennis Academy"
+> account received 1,475 notifications and read 11. A channel nobody reads,
+> which also hides the failure of the channel they do read, is worse than no
+> channel. What replaces it is §2c.
+
+**The order, as built.** Push first, then WhatsApp. Two channels, and one rule
+that is not "first one that works":
 
 | Types | Behaviour |
 | --- | --- |
-| `PUSH_ADDITIVE` — every `CAP_EXEMPT` and `TRANSACTIONAL` type | Push **and** WhatsApp. Both legs go out; the row records `push+whatsapp`. |
-| Everything else (the informational tail) | First one that works. A push that lands ends the chain. |
+| `answer: true` in the type table | Push **and** WhatsApp. Both legs go out; the row records `push+whatsapp`. |
+| Everything else (the informational tail) | First one that works. A push to a **fresh** subscription ends the chain. |
 
 The additive rule is the whole design decision, so it is worth stating why.
 First-success-wins applied to a coach prompt means anyone who turns push on
@@ -35,23 +47,35 @@ precisely because a coach has no redundancy behind them
 went out. Two channels for the handful of messages where a miss costs a real
 session; one channel for receipts and news.
 
+The routing rule in one line:
+
+> Needs an answer, or a miss breaks something real → **WhatsApp always, push on
+> top**. Otherwise → **push if they have it, WhatsApp if they don't**. Email
+> never.
+
 > `notify` has **no autodeploy**. Editing `supabase/functions/notify/index.ts`
 > and pushing changes nothing in production until someone runs
 > `supabase functions deploy notify`.
 
-> **⚠ Production is running v32, which predates the push sender entirely
-> (checked 2026-08-06).** The deployed worker has no `deliverPush`, no
-> `PUSH_ADDITIVE` and no `pushActionsFor` — 1,944 lines against 2,334 in the
-> repo. Everything §2b describes is written, tested and **not live**. The repo
-> version is a strict superset of what is deployed (0 declarations would be
-> lost), so the deploy is safe whenever someone runs it — but until they do,
-> push sends nothing, and neither does anything else added to the worker since
-> the `founder_day_report` era.
+> **⚠ Production was on v36 when this was last checked (2026-08-10), which
+> predates the removal of email and the type-table collapse.** Until someone
+> deploys, `deliver()` in production still falls back to Resend and still reads
+> the five old sets — everything §1, §2 and §2c describe is written, tested and
+> **not live**.
 >
 > ```bash
-> supabase link --project-ref jkjgdpifimvnptpxjixk
-> supabase functions deploy notify
+> supabase functions deploy notify --project-ref jkjgdpifimvnptpxjixk
 > ```
+>
+> `--project-ref` matters from a worktree, which is not linked. Confirm it took
+> with `list_edge_functions` (the version should bump) and then:
+>
+> ```sql
+> select channel_attempted, count(*) from notifications
+> where sent_at > now() - interval '1 day' group by channel_attempted;
+> ```
+>
+> There should be **no `email` rows at all**.
 >
 > This needs a machine whose Supabase CLI is signed in to the account that owns
 > the project. There is no way to deploy the worker from the app or the SQL
@@ -59,61 +83,145 @@ session; one channel for receipts and news.
 
 ---
 
-## 1. The four rules that shape everything
+## 1. One table, five columns
 
-| Rule | Where | Effect |
-| --- | --- | --- |
-| **Feed-only** | `FEED_ONLY` | 13 `ops_*` types render on `/admin` and are **never** delivered. The founder's phone gets escalations + one digest, not a running commentary. |
-| **Quiet hours** | `DEFERRABLE` | Non-urgent types coming due in IST 21:30–08:00 are pushed to 08:00. Reminders, arrivals and escalations are deliberately excluded so they still fire. |
-| **Daily cap** | `DAILY_SEND_CAP = 3` | Nobody gets more than 3 non-essential messages per IST day; overflow is **held to the next morning**, not dropped (and abandoned after 3 days). |
-| **Cap exemptions** | `CAP_EXEMPT` | The cap must not muzzle a coach teaching four classes or a parent hearing their coach is late. Time-critical and session-operational types are exempt, so the cap bites the informational tail. |
+There used to be six overlapping places to look to find out what happens to any
+one message — `TRANSACTIONAL`, `FEED_ONLY`, `DEFERRABLE`, `CAP_EXEMPT`,
+`PUSH_ADDITIVE` and a preference map — spread over ~150 lines. Adding a type
+meant remembering four lists, and forgetting one failed quietly.
 
-Two more cross-cutting switches: `TRANSACTIONAL` types ignore user preferences
-entirely (payment failed, cancellation, signup, `player_absent`), and
-`profiles.wa_muted` (STOP/START) silences WhatsApp for one person.
+They are now **one row per type** in `TYPES`
+(`supabase/functions/notify/index.ts`), mirrored in `NOTIFICATION_TYPES`
+(`lib/notification-prefs.ts`) because Deno cannot import from `lib/`.
+`lib/notification-prefs.test.ts` reads the worker's source and compares the two
+entry by entry, so they cannot drift.
+
+```ts
+reminder_upcoming: { who: "parent", answer: true,  mute: "reminders", defer: false }
+payment_failed:    { who: "parent", answer: true,  mute: false, defer: true, critical: true }
+ops_booking:       { who: "founder", answer: false, mute: false, defer: false, feedOnly: true }
+```
+
+| Column | Effect |
+| --- | --- |
+| `who` | Who reads it. Descriptive only — nothing branches on it. |
+| `answer` | `true` → WhatsApp **always**, push additionally. `false` → push if a *fresh* subscription exists, else WhatsApp. |
+| `mute` | Which of the three toggles silences it, or `false` for none. |
+| `critical` | Ignores preferences **and** a STOP. Account- and safety-critical only. |
+| `defer` | Quiet hours: held to 08:00 IST when it comes due in [21:30, 08:00). |
+| `feedOnly` | Never delivered. Renders on `/admin`, so the founder's phone gets escalations + one digest, not a running commentary. |
+
+A type with **no row at all** is treated as unmutable and delivered on WhatsApp,
+so an omission fails loud — a message that keeps arriving, which somebody
+notices — rather than silent, which nobody does.
+
+`critical` and `answer` are deliberately separate. A coach's before-class prompt
+is urgent (`answer`) but still respects a STOP; a failed payment overrides one.
+Conflating them would either muzzle safety messages or ignore opt-outs.
+
+`profiles.wa_muted` (STOP/START) silences WhatsApp for one person across
+everything non-`critical`.
 
 Members see **three** grouped toggles — Reminders · Progress · News & offers —
 not a switch per type.
 
 ---
 
-## 2. What each role actually receives
+## 2. What each person actually receives
 
-### Coaches
+The complete catalogue — **61 types**, every one of them, grouped by who reads
+it. This is generated from the same table the worker routes on, so it is the
+whole list and not a summary of it.
 
-| Message | When | Buttons |
-| --- | --- | --- |
-| `coach_before_class` | T−60min | Yes, I'm coming / Can't make it |
-| `coach_confirm_nudge_2` | T−30min, only if still silent | — (plain text) |
-| `coach_arrival_check` | At start, only if arrival unmarked | I've arrived / Running late |
-| `coach_after_class` | After the session | All present / Some absent |
-| `new_private_session` | On assignment | View session |
-| `cover_offer` | When a session loses its coach | First tap wins |
-| `session_cancelled`, `coach_changed`, `session_moved` | On the change | — |
+Read the **Channel** column as: *WA + push* = WhatsApp always with a push banner
+on top (`answer: true`); *Push or WA* = a push if they have a subscription seen
+in the last 30 days, otherwise WhatsApp; *In-app only* = never delivered, it
+just appears in their notifications list. **Mute** is which toggle silences it.
+*Held* means quiet hours apply: due between 21:30 and 08:00 IST, it waits.
 
-### Parents / clients
+### Parents / clients — 26 types
 
-| Message | When | Buttons |
-| --- | --- | --- |
-| `reminder_upcoming` | T−3h, **one** consolidated reminder | I'll be there / Can't make it |
-| `coach_arrived` / `coach_late` | When the coach marks it | — |
-| `session_outcome` | After the session, carries the coach's note | — |
-| `player_absent` | Child marked absent — **never** deferred or muted | — |
-| `waitlist_spot` | A place opens | Claim spot / Pass |
-| `booking_confirmed`, `private_session_booked`, `coach_assigned` | On booking | View schedule |
-| `signup_approved` | Founder approves | Open the app |
-| `payment_failed` | Card declines | Fix payment |
+| Message | When | Channel | Mute | Held |
+| --- | --- | --- | --- | --- |
+| `reminder_upcoming` | T−3h, **one** consolidated reminder | WA + push | Reminders | — |
+| `coach_arrived` | Coach marks arrival | WA + push | Reminders | — |
+| `coach_late` | Coach marks running late | WA + push | **No** | — |
+| `waitlist_spot` | A place opens | WA + push | Reminders | — |
+| `session_cancelled` | Session called off | WA + push | **No — overrides STOP** | — |
+| `player_absent` | Child marked absent | WA + push | **No — overrides STOP** | — |
+| `session_outcome` | After the session, carries the coach's note | WA + push | Progress | — |
+| `coach_changed` | Their coach changed | WA + push | Reminders | Held |
+| `private_session_booked` | Academy books them a private | WA + push | Reminders | Held |
+| `payment_failed` | Card declines | WA + push | **No — overrides STOP** | Held |
+| `signup_approved` | Founder approves them | WA + push | **No — overrides STOP** | Held |
+| `booking_confirmed` | They book a session | Push or WA | Reminders | Held |
+| `booking_rescheduled` | They move a booking | Push or WA | Reminders | Held |
+| `coach_assigned` | A coach is put on their session | Push or WA | Reminders | Held |
+| `class_updated` | Admin edits a weekly class | Push or WA | Reminders | — |
+| `session_booked` | Admin restores a cancelled class | Push or WA | Reminders | — |
+| `private_series_ended` | Weekly private series ends | Push or WA | **No** | Held |
+| `private_minutes_low` | Not enough minutes for the next one | Push or WA | **No** | Held |
+| `payment_receipt` | A payment succeeds | Push or WA | News & offers | Held |
+| `renewal_upcoming` | Membership is due | Push or WA | News & offers | Held |
+| `new_class_open` | A class opens at their player's level | Push or WA | News & offers | Held |
+| `assessment_ready` | A coach files an assessment | Push or WA | Progress | Held |
+| `student_note` | A coach writes a note | Push or WA | Progress | Held |
+| `monthly_progress` | Monthly summary sweep | Push or WA | Progress | Held |
+| `reminder_24h` | *(no producer — see below)* | Push or WA | Reminders | — |
+| `reminder_2h` | *(no producer — see below)* | Push or WA | Reminders | — |
 
-### Founders
+### Coaches — 10 types
 
-Escalations only — `ops_coach_unconfirmed` (T−10, coach fully silent) and
-`ops_coach_not_arrived` (start+10) — plus `signup_request` (Approve/Deny) and
-one `ops_daily_digest` at 21:00 IST. Everything else is the in-app feed.
+| Message | When | Channel | Mute | Held |
+| --- | --- | --- | --- | --- |
+| `coach_before_class` | T−60min · *Yes, I'm coming / Can't make it* | WA + push | **No** | — |
+| `coach_confirm_nudge_2` | T−30min, only if still silent | WA + push | **No** | — |
+| `coach_arrival_check` | At start, if arrival unmarked · *I've arrived / Running late* | WA + push | **No** | — |
+| `coach_after_class` | After the session · *All present / Some absent* | WA + push | **No** | — |
+| `new_private_session` | A private is assigned to them | WA + push | **No** | — |
+| `session_unassigned` | They are taken off a session | WA + push | **No** | — |
+| `cover_offer` | A session loses its coach · *first tap wins* | WA + push | **No** | — |
+| `coach_day_ahead` | 07:00 IST — the day's schedule | WA + push | **No** | — (never held) |
+| `role_changed` | Their role changes | Push or WA | **No** | Held |
+| `confirm_session_nudge` | *(no producer — see below)* | Push or WA | **No** | — |
 
-`ops_coach_not_arrived` picks one of **three** sentences, ordered by how much
-the coach has told us, because that is what decides whether the founder should
-pick up the phone (`supabase/functions/notify/escalation.ts`, pinned by
-`escalation.test.ts`):
+### Either a parent or a coach — 2 types
+
+| Message | When | Channel | Mute | Held |
+| --- | --- | --- | --- | --- |
+| `session_moved` | A session is rescheduled — goes to both sides | WA + push | Reminders | — |
+| `announcement` | Admin broadcast to chosen recipients | Push or WA | News & offers | — |
+
+### Founders — 11 delivered
+
+| Message | When | Channel | Mute | Held |
+| --- | --- | --- | --- | --- |
+| `ops_coach_unconfirmed` | T−10, coach fully silent | WA + push | **No** | — |
+| `ops_coach_not_arrived` | Start+10, nobody marked arrival | WA + push | **No** | — |
+| `signup_request` | Someone applies · *Approve / Deny* | WA + push | **No — overrides STOP** | — |
+| `founder_morning_brief` | 07:00 IST | WA + push | **No** | — (never held) |
+| `ops_daily_digest` | 21:00 IST | WA + push | **No** | Held |
+| `ops_unreachable` | A message reached nobody — **new**, §2c | WA + push | **No** | — |
+| `private_request_parked` | A private request has no available coach | Push or WA | **No** | — |
+| `ops_private_series_paused` | A series pauses for want of minutes | Push or WA | **No** | — |
+| `ops_payment_issue` | A membership goes past due | Push or WA | **No** | — |
+| `ops_coach_confirmed` | *(no producer — see below)* | Push or WA | **No** | — |
+| `ops_wa_linked` | *(no producer — see below)* | Push or WA | **No** | — |
+
+### Founders — 12 in-app only
+
+Rendered at `/admin/notifications`, never delivered on any channel:
+
+`ops_booking` · `ops_cancellation` · `ops_attendance` · `ops_payment` ·
+`ops_membership` · `ops_new_client` · `ops_new_coach` · `ops_player_added` ·
+`ops_credit_used` · `ops_coach_change` · `ops_cover_claimed` ·
+`ops_session_coach_invalid`
+
+#### What `ops_coach_not_arrived` actually says
+
+It picks one of **three** sentences, ordered by how much the coach has told us,
+because that is what decides whether the founder should pick up the phone
+(`supabase/functions/notify/escalation.ts`, pinned by `escalation.test.ts`):
 
 | Session state | What the founder is told | Action implied |
 | --- | --- | --- |
@@ -132,8 +240,64 @@ and the T−10 escalation chasing someone who has already answered.
 `coach_arrived_at` stays NULL — they are not there yet, and start+10 must still
 fire if they never turn up.
 
+### The five with no producer
+
+Kept in the table rather than deleted, so that if a producer ever returns the
+message routes correctly instead of falling through the unknown-type default.
+Verified against production on 2026-08-10 — each was **superseded, not removed**:
+
+| Type | What replaced it |
+| --- | --- |
+| `reminder_24h`, `reminder_2h` | Collapsed into the single `reminder_upcoming` at T−3h by migration 0036. Both survive only in `delete … where type in (…)` predicates that sweep in-flight legacy rows. |
+| `confirm_session_nudge` | `coach_before_class` + `coach_confirm_nudge_2`. |
+| `ops_coach_confirmed` | The happy-path feed row. The alert that matters, `ops_coach_unconfirmed`, is alive. |
+| `ops_wa_linked` | Its trigger went with the `wa_links` table in migration 0074. A number on a profile is now just a profile edit. |
+
+Three types that *look* dead by volume are not: `booking_confirmed` (3 rows),
+`class_updated` (7) and `session_booked` (3) all have live producers —
+respectively the three booking RPCs, the admin "notify clients" dropdown, and
+"restore a cancelled class". They are rare because the action is rare.
+
 There is no separate "admin" role: `profiles.role` is `founder`, `coach` or
 `client`, and admin *is* founder.
+
+---
+
+## 2c. When a message reaches nobody
+
+Removing email opened one hole: a row that fails WhatsApp with no usable push
+used to at least land in an inbox nobody read. Now it reaches nobody, and
+without this, nobody would know. Two things close it.
+
+**The in-app feed is the floor.** Every notification is still a row, rendered at
+`/app/notifications`, `/coach/notifications` and `/admin/notifications`. Nothing
+is ever lost — it just doesn't ping.
+
+**`ops_unreachable` is the alert.** When `deliver()` fails and
+`whatsapp_status` is `failed` or `no_phone`, the founders are told. Bounded
+hard, because an unbounded per-message alert would be worse than the silence it
+reports — `ops_coach_unconfirmed` reached 705 sends in 30 days precisely because
+nothing bounded it:
+
+- **Immediate** only for `answer: true` types (needs a reply, or a miss breaks
+  something real), and at most **once per affected person per IST day**. The
+  rate limit reuses `alreadyFired()` with `${user_id}:${date}` in the session
+  slot.
+- **Everything else** rolls into one line of the 21:00 digest, appended to
+  `Needs you:` — *"Couldn't reach 2 people today: Riyansh (no WhatsApp number),
+  Shilpa Sawarthia (send failed)"*. People, not messages: somebody with no
+  number fails everything they were due that day.
+
+It is folded into the existing `attention` variable rather than added as a fifth
+line because `founder_daily_digest_v3` declares four — a new line would need a
+template revision before anyone saw it.
+
+**That line must stay newline-free.** A newline is legal in a WhatsApp template
+*body* and illegal in a template *variable*; Twilio rejects the whole send with
+63016. `full_name` is user-editable free text, so `summariseUnreachable()`
+collapses whitespace rather than trimming it, and `digest.test.ts` pins that.
+This constraint has already cost the digest three days of arriving as one
+run-on paragraph.
 
 ---
 
@@ -181,9 +345,9 @@ coach, hide the rest, and never answer "who is actually using this?".
 
 `founder_morning_brief` and `coach_day_ahead` both run at 07:00 IST
 (`sweepFounderMorningBrief`, `sweepCoachDayAhead`) and both are deliberately
-absent from `DEFERRABLE` — quiet hours run to 08:00, and deferring a 07:00
-briefing destroys the lead time that is its entire point. `household_day_ahead`
-remains a proposal.
+`defer: false` — quiet hours run to 08:00, and deferring a 07:00 briefing
+destroys the lead time that is its entire point. `household_day_ahead` remains a
+proposal.
 
 ---
 
@@ -384,8 +548,17 @@ step already lives.
 
 ### Push does not eat the WhatsApp allowance
 
-`deliveredTodayCount()` counts rows with a non-null `channel_attempted` against
-`DAILY_SEND_CAP = 3`. Rows whose channel is exactly `push` are excluded. The cap
+> **Stale as of 2026-08-10.** The per-user daily cap this section describes is
+> gone — neither `DAILY_SEND_CAP` nor `deliveredTodayCount()` exists in the
+> worker any more. It was removed after a founder broadcast to 8 coaches reached
+> 2, because the counter made no distinction by type: a day of ordinary coaching
+> traffic spent an allowance those same messages could never be charged against,
+> so the harder a coach worked the less reachable they became. The reasoning
+> below is kept because it is why `push` alone was excluded from the count, and
+> the same instinct should apply to any cap proposed in future.
+
+`deliveredTodayCount()` counted rows with a non-null `channel_attempted` against
+`DAILY_SEND_CAP = 3`. Rows whose channel is exactly `push` were excluded. The cap
 was written to stop us interrupting a family three times a day on their
 messaging app; counting a free, dismissible, per-device opt-in banner would mean
 that **turning notifications on silently reduced how many WhatsApps you could
@@ -440,8 +613,8 @@ query using `error is not null` as a proxy for failure needs the status test.
   keeps no history, so the person most likely to need the list is the one who
   just dismissed one — and they are not on the settings screen. `/coach/
   notifications` and `/admin/notifications` are in the coach bar and the founder
-  rail; the founder's is also the only surface rendering eleven of the thirteen
-  `FEED_ONLY` `ops_*` types.
+  rail; the founder's is also the only surface rendering the twelve `feedOnly`
+  `ops_*` types.
 
 ### Offline
 
@@ -608,9 +781,12 @@ Re-verified against production, Twilio and the deployed worker on 2026-07-31
    innocent (no class has filled and then freed a seat), but it means the whole
    claim path is unproven.
 9. **`ops_payment_issue` / `ops_private_series_paused`** are named like feed
-   items but are in neither `FEED_ONLY` nor the digest labels, so they would
-   interrupt the founder *and* be invisible in the digest. **Neither has ever
-   fired**, so this is a latent decision, not a live problem.
+   items but carry `feedOnly: false`, so they would interrupt the founder *and*
+   be invisible in the digest. Still open after the type-table collapse — the
+   collapse made the inconsistency visible in one place rather than resolving
+   it, since changing either is a behaviour decision, not a refactor.
+   `ops_payment_issue` has never fired; `ops_private_series_paused` has fired 3
+   times (last 2026-08-07). Same question for `private_request_parked` (18).
 10. **`getCoachNames()` in `lib/booking.ts`** reads `profiles` directly and hits
     the RLS wall, so parents see a null coach name on `/app`. Fix is
     `public_coach_roster()`, as the bot tool already does.
