@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Spinner } from "@/components/ui/Spinner";
 import { disablePush, enablePush, pushState, refreshPush, type PushState } from "@/lib/push";
+import { PUSH_STATE_COPY } from "@/lib/push-prompt";
 
 /**
  * The one place anyone turns push on or off — clients on /app/profile, coaches
@@ -21,22 +22,11 @@ import { disablePush, enablePush, pushState, refreshPush, type PushState } from 
  * problem with a different fix, and the old UI collapsed all of them into
  * "Notifications: email on this device." — which reads as a settled decision
  * rather than the several separate, fixable things it actually was.
+ *
+ * That copy now lives in lib/push-prompt.ts, because PushPrompt describes the
+ * same eight states and two surfaces telling one person different things about
+ * their own phone is the drift worth designing out.
  */
-
-const COPY: Record<PushState, string> = {
-  subscribed: "This device buzzes the moment something needs you.",
-  off: "Get a buzz on this device the moment something needs you. Anything urgent still reaches you on WhatsApp either way.",
-  denied:
-    "Your browser is blocking notifications for Sharwin. Switch them back on in its site settings, then tap again.",
-  not_configured:
-    "Push isn't switched on for the academy yet. WhatsApp and email carry everything in the meantime.",
-  signed_out: "We couldn't tell who you are. Sign in again and turn this back on.",
-  save_failed:
-    "This device is ready, but we couldn't save it on our side — so nothing would reach you yet. Tap to try again.",
-  needs_install:
-    "On iPhone and iPad, notifications only work once Sharwin is on your Home Screen. Tap Share, then “Add to Home Screen”, and open it from there.",
-  unsupported: "This browser can't show notifications. WhatsApp and email still reach you.",
-};
 
 export function PushToggle({
   feedHref,
@@ -84,7 +74,9 @@ export function PushToggle({
         <p className="label">Notifications on this device</p>
         {state === "subscribed" && <Badge tone="ok">On</Badge>}
       </div>
-      <p className="mt-1 text-sm text-fg-2">{state ? COPY[state] : "Checking this device…"}</p>
+      <p className="mt-1 text-sm text-fg-2">
+        {state ? PUSH_STATE_COPY[state] : "Checking this device…"}
+      </p>
 
       {/* Every state that has something the person can actually do gets a
           button. save_failed belongs here as much as denied does: the fix for a
