@@ -3,10 +3,38 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { attendanceClosedReason, attendanceState } from "@/lib/attendance-window";
+import { effectiveCoachId, getCoachPreview } from "@/lib/coach-preview";
 
 type Result = { ok: boolean; error?: string };
 
 export type AttendanceStatus = "attended" | "no_show" | "confirmed";
+
+/**
+ * Where a founder's "view as coach" preview may and may not write.
+ *
+ * Every read on these screens already resolves through `effectiveCoachId`, but
+ * every write compared `session.coach_id` against the founder's own id — so a
+ * founder in preview met "Not your session." on the two jobs the preview exists
+ * to reach. That matters more than a cosmetic gap: /admin has no attendance
+ * marker and no assessment editor, so the preview is the founder's *only* route
+ * to correct a roster or a rating, and the wrap-up flow was built on the premise
+ * that wrong paperwork must have a way back in.
+ *
+ * The line is drawn at side effects, not at write-vs-read. Marking a register,
+ * amending a rating and editing the coach's own notes are corrections to a
+ * record, and resolve to the previewed coach. Anything that reaches a real
+ * person — telling a parent the coach has arrived, reporting running late,
+ * starting a cover search — refuses, because a founder looking around must not
+ * be able to fire it. `refuseInPreview` guards that second group.
+ */
+async function refuseInPreview(): Promise<Result | null> {
+  const preview = await getCoachPreview();
+  if (!preview) return null;
+  return {
+    ok: false,
+    error: `You're viewing as ${preview.coachName}. Exit the preview to do this for real.`,
+  };
+}
 
 async function requireCoachSession(sessionId: string) {
   const supabase = await createClient();
@@ -14,12 +42,13 @@ async function requireCoachSession(sessionId: string) {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return { supabase, user: null, session: null };
+  const coachId = await effectiveCoachId(user.id);
   const { data: session } = await supabase
     .from("class_sessions")
     .select("id,coach_id,starts_at,ends_at")
     .eq("id", sessionId)
     .maybeSingle();
-  if (!session || session.coach_id !== user.id) {
+  if (!session || session.coach_id !== coachId) {
     return { supabase, user, session: null };
   }
   return { supabase, user, session };
@@ -43,7 +72,8 @@ export async function setAttendance(
   if (!booking) return { ok: false, error: "Booking not found." };
 
   const session = booking.class_sessions;
-  if (session.coach_id !== user.id) return { ok: false, error: "Not your session." };
+  const coachId = await effectiveCoachId(user.id);
+  if (session.coach_id !== coachId) return { ok: false, error: "Not your session." };
 
   // Same window the roster renders and the backlog chases — see
   // lib/attendance-window.ts for why all three had to become one literal.
@@ -94,7 +124,8 @@ export async function setAttendanceBulk(
     .select("id,coach_id,starts_at,ends_at")
     .eq("id", sessionId)
     .maybeSingle();
-  if (!session || session.coach_id !== user.id) {
+  const coachId = await effectiveCoachId(user.id);
+  if (!session || session.coach_id !== coachId) {
     return { ok: false, error: "Not your session." };
   }
 
@@ -146,6 +177,9 @@ export async function addSchoolPlayer(
   fullName: string,
   grade: number | null
 ): Promise<Result & { bookingId?: string }> {
+  const blocked = await refuseInPreview();
+  if (blocked) return blocked;
+
   const supabase = await createClient();
   const {
     data: { user },
@@ -187,6 +221,9 @@ export async function saveSessionNotes(sessionId: string, notes: string): Promis
 }
 
 export async function confirmComing(sessionId: string): Promise<Result> {
+  const blocked = await refuseInPreview();
+  if (blocked) return blocked;
+
   const supabase = await createClient();
   const {
     data: { user },
@@ -205,6 +242,9 @@ export async function markArrived(
   sessionId: string,
   opts?: { source?: "auto" | "tap"; distanceM?: number | null }
 ): Promise<Result> {
+  const blocked = await refuseInPreview();
+  if (blocked) return blocked;
+
   const supabase = await createClient();
   const {
     data: { user },
@@ -224,6 +264,9 @@ export async function markArrived(
 }
 
 export async function undoArrival(sessionId: string): Promise<Result> {
+  const blocked = await refuseInPreview();
+  if (blocked) return blocked;
+
   const supabase = await createClient();
   const {
     data: { user },
@@ -242,6 +285,9 @@ export async function undoArrival(sessionId: string): Promise<Result> {
 }
 
 export async function markRunningLate(sessionId: string): Promise<Result> {
+  const blocked = await refuseInPreview();
+  if (blocked) return blocked;
+
   const supabase = await createClient();
   const {
     data: { user },
@@ -262,6 +308,9 @@ export async function markRunningLate(sessionId: string): Promise<Result> {
 }
 
 export async function reportProblem(sessionId: string): Promise<Result> {
+  const blocked = await refuseInPreview();
+  if (blocked) return blocked;
+
   const { supabase, user, session } = await requireCoachSession(sessionId);
   if (!session || !user) return { ok: false, error: "Not your session." };
 
@@ -284,6 +333,12 @@ export async function reportProblem(sessionId: string): Promise<Result> {
 }
 
 export async function cantMakeIt(sessionId: string): Promise<Result> {
+  // Not merely a write: handle_coach_dropout unassigns the session and starts a
+  // cover search across every active coach. `user.id` below is therefore always
+  // the real signed-in coach, never a previewed one.
+  const blocked = await refuseInPreview();
+  if (blocked) return blocked;
+
   const { supabase, user, session } = await requireCoachSession(sessionId);
   if (!session || !user) return { ok: false, error: "Not your session." };
 

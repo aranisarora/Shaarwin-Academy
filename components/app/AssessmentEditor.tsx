@@ -17,7 +17,7 @@ type Skill = { id: string; category_id: string; name: string };
  * Saving twice for the same session used to fail — the insert hit
  * skill_assessments_once_per_session and came back "Already assessed for that
  * session.", with no UPDATE policy anywhere to offer a way round it. Since
- * migration 0075 a second save amends the first, so this is now a form a coach
+ * migration 0077 a second save amends the first, so this is now a form a coach
  * can correct rather than one shot they had to get right.
  *
  * The considered version of this screen: the whole skill list, in a page that

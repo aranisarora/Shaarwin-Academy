@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { effectiveCoachId } from "@/lib/coach-preview";
 
 type Result = { ok: boolean; error?: string };
 
@@ -41,7 +42,7 @@ export async function addStudentNote(
  * correction at all. A coach who tapped 1 where they meant 4 left a child's
  * mastery score wrong permanently, in a number their parent can see.
  *
- * `save_session_assessment` (migration 0075) owns the whole edit instead:
+ * `save_session_assessment` (migration 0077) owns the whole edit instead:
  * find-or-create on (player, session, coach), then upsert only the skills the
  * coach touched. Saving twice is now how you fix a mistake, and a skill left
  * alone keeps the rating it already had.
@@ -63,10 +64,15 @@ export async function submitAssessment(
   // it is written even when nothing changed — "I have looked at this child and
   // they are where they were" is a real answer, and the one a coach in a hurry
   // most often gives.
+  // Credited to the previewed coach inside a founder preview, to the signed-in
+  // coach otherwise — the same id `getAssessmentForm` used to decide whether
+  // this is a new assessment or an amendment, and the id whose backlog the save
+  // has to clear. 0078 makes the author an argument for exactly this reason.
   const { error } = await supabase.rpc("save_session_assessment", {
     p_player: playerId,
     p_session: sessionId,
     p_ratings: clean.map((r) => ({ skill_id: r.skillId, rating: r.rating })),
+    p_coach: await effectiveCoachId(user.id),
   });
 
   if (error) {

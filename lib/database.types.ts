@@ -2227,7 +2227,12 @@ export type Database = {
       is_founder: { Args: never; Returns: boolean }
       is_school_admin: { Args: never; Returns: boolean }
       save_session_assessment: {
-        Args: { p_player: string; p_session?: string | null; p_ratings?: Json }
+        Args: {
+          p_player: string
+          p_session?: string | null
+          p_ratings?: Json
+          p_coach?: string | null
+        }
         Returns: string
       }
       school_admin_class: { Args: { p_class: string }; Returns: boolean }
