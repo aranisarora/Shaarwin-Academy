@@ -6,6 +6,7 @@ import { Spinner } from "@/components/ui/Spinner";
 import { AddressSearch, type GeocodeHit } from "@/components/app/AddressSearch";
 import { LocationPinMap } from "@/components/app/LocationPinMap";
 import { PushToggle } from "@/components/app/PushToggle";
+import { LocationToggle } from "@/components/app/LocationToggle";
 import { saveCoachProfile } from "@/app/coach/more/actions";
 
 export function CoachProfileEditor({
@@ -98,6 +99,13 @@ export function CoachProfileEditor({
           that has never existed for them, so the switch lives on the screen
           they already open to change anything about themselves. */}
       <PushToggle feedHref="/coach/notifications" />
+
+      {/* The other half of the class-day loop. Push is how the app reaches the
+          coach; location is how it can stop asking them to confirm something it
+          can already see. Beside each other because they are the two permissions
+          this phone is asked for, and a coach who refused one should be able to
+          find both in the same place. */}
+      <LocationToggle className="mt-4" />
     </div>
   );
 }

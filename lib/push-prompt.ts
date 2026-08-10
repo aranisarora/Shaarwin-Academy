@@ -14,26 +14,13 @@
 // the same person two different stories about their own phone.
 
 import type { PushState } from "@/lib/push";
+import { HIDDEN, type PromptCopy, type PromptDecision } from "@/lib/permission-prompt";
 
 /** What we are asking for. `install` is iOS: there is no permission to grant yet. */
 export type PromptKind = "enable" | "install";
 
-/**
- * How hard we ask. The first ask in a browsing session interrupts; after that
- * it steps back to a card for the rest of the session.
- *
- * There is deliberately no snooze, no decline counter and no persisted timer.
- * A dismissal lasts the session and nothing longer — open the app again with
- * push still off and it asks again, because "everyone has it on" is the goal
- * and a permanent dismissal is how you get one subscriber out of seventy-five.
- */
-export type PromptMode = "modal" | "card";
-
-export type PromptDecision =
-  | { show: false }
-  | { show: true; kind: PromptKind; mode: PromptMode };
-
-const HIDDEN: PromptDecision = { show: false };
+/** The dismissal key for the push ask. Session-scoped — see readDismissed(). */
+export const PUSH_DISMISSED_KEY = "sharwin:push-prompt-dismissed";
 
 /**
  * The eight honest push states, worded for a person. Shared with PushToggle.
@@ -66,10 +53,7 @@ export const PUSH_STATE_COPY: Record<PushState, string> = {
  * the work and it happens in Safari's own share menu; a "Turn on" button there
  * would open a permission prompt that cannot exist yet.
  */
-export const PROMPT_COPY: Record<
-  PromptKind,
-  { title: string; body: string; confirm: string | null; dismiss: string }
-> = {
+export const PROMPT_COPY: Record<PromptKind, PromptCopy> = {
   enable: {
     title: "Get a buzz when something needs you",
     body: "Sessions get moved, coaches run late, classes get called off. With notifications on, this device tells you the moment it happens — not the next time you open the app.",
@@ -109,7 +93,7 @@ export const PROMPT_COPY: Record<
 export function pushPromptFor(
   state: PushState | null,
   dismissed: boolean
-): PromptDecision {
+): PromptDecision<PromptKind> {
   // Still reading the device. Rendering nothing beats flashing a prompt at
   // someone who turns out to have push on already.
   if (state === null) return HIDDEN;
