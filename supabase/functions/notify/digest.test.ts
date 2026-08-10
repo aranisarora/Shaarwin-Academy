@@ -1,5 +1,10 @@
 import { describe, it, expect } from "vitest";
-import { summariseDay, type DayReportRow } from "./digest.ts";
+import {
+  summariseDay,
+  summariseUnreachable,
+  type DayReportRow,
+  type UnreachableRow,
+} from "./digest.ts";
 
 // The 21:00 founder summary. Two defects are pinned here because both reached
 // production and both were invisible in the data — they only showed up in the
@@ -151,5 +156,105 @@ describe("summariseDay — WhatsApp template safety", () => {
     expectNoNewlines(s);
     // Truncation markers, so the founder knows the line is not the whole story.
     expect(s.attention).toContain("+1 more with no coach");
+  });
+});
+
+// ── Unreachable people ──────────────────────────────────────────────────────
+//
+// With email gone, a row that fails WhatsApp and has no usable push reaches
+// nobody. The immediate ops_unreachable alert covers the messages that needed
+// an answer; everything else surfaces only here, so if this line is wrong the
+// failure is invisible.
+
+function unreachable(over: Partial<UnreachableRow> = {}): UnreachableRow {
+  return { name: "Riyansh", reason: "no_phone", ...over };
+}
+
+describe("summariseUnreachable", () => {
+  it("says nothing when everyone was reachable", () => {
+    expect(summariseUnreachable([])).toBe("");
+  });
+
+  it("names who could not be reached and why", () => {
+    const line = summariseUnreachable([
+      unreachable({ name: "Riyansh", reason: "no_phone" }),
+      unreachable({ name: "Shilpa Sawarthia", reason: "failed" }),
+    ]);
+    expect(line).toBe(
+      "Couldn't reach 2 people today: Riyansh (no WhatsApp number), Shilpa Sawarthia (send failed)"
+    );
+  });
+
+  it("counts people, not messages", () => {
+    // Somebody with no number fails every message they were due that day.
+    // Reporting each would bury every other line in the digest.
+    const line = summariseUnreachable(
+      Array.from({ length: 12 }, () => unreachable({ name: "Riyansh" }))
+    );
+    expect(line).toBe("Couldn't reach 1 person today: Riyansh (no WhatsApp number)");
+  });
+
+  it("prefers the actionable reason when one person has both", () => {
+    // "add a number" is a fix; "the send failed" is a symptom of the same thing.
+    const line = summariseUnreachable([
+      unreachable({ name: "Riyansh", reason: "failed" }),
+      unreachable({ name: "Riyansh", reason: "no_phone" }),
+    ]);
+    expect(line).toContain("no WhatsApp number");
+    expect(line).not.toContain("send failed");
+  });
+
+  it("truncates rather than running off the end of a phone", () => {
+    const line = summariseUnreachable(
+      Array.from({ length: 7 }, (_, i) => unreachable({ name: `Person ${i}` }))
+    );
+    expect(line).toContain("Couldn't reach 7 people today");
+    expect(line).toContain("+3 more");
+  });
+
+  it("falls back to a placeholder for a profile with no name", () => {
+    expect(summariseUnreachable([unreachable({ name: "  " })])).toContain("Someone");
+  });
+
+  it("never emits a newline", () => {
+    // A newline is legal in a WhatsApp template body and illegal in a template
+    // VARIABLE — Twilio 63016s the whole send. This string is folded into
+    // `attention`, which is one variable of founder_daily_digest_v3.
+    const line = summariseUnreachable([
+      unreachable({ name: "Line\nBreak" }),
+      unreachable({ name: "Tab\tCharacter", reason: "failed" }),
+    ]);
+    expect(line).not.toMatch(/[\n\r\t]/);
+  });
+});
+
+describe("summariseDay — the unreachable rollup", () => {
+  it("appends the line to `attention` so the live template renders it", () => {
+    // Deliberately folded into an existing variable rather than added as a
+    // fifth: founder_daily_digest_v3 declares four, so a new line would need a
+    // template revision before anyone saw it.
+    const s = summariseDay([row()], [unreachable({ name: "Riyansh" })]);
+    expect(s.attention).toContain("Couldn't reach 1 person today");
+    expectNoNewlines(s);
+  });
+
+  it("does not call a day clean when somebody was unreachable", () => {
+    const s = summariseDay([row()], [unreachable()]);
+    expect(s.attention).not.toContain("clean day");
+  });
+
+  it("still reads clean when nothing failed", () => {
+    expect(summariseDay([row()], []).attention).toBe("Nothing — a clean day.");
+    // The argument is optional, so every existing caller keeps working.
+    expect(summariseDay([row()]).attention).toBe("Nothing — a clean day.");
+  });
+
+  it("puts the sessions before the plumbing", () => {
+    // A founder scans this line left to right and wants today's coaching first.
+    const s = summariseDay(
+      [row({ coach_name: null, class_title: "Beginners Batch" })],
+      [unreachable()]
+    );
+    expect(s.attention.indexOf("had NO coach")).toBeLessThan(s.attention.indexOf("Couldn't reach"));
   });
 });

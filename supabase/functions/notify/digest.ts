@@ -6,7 +6,8 @@
 // was never rostered) and it is a pure function of one array. Deliberately free
 // of Deno globals so `vitest` can import it directly — see digest.test.ts.
 //
-// Read by supabase/functions/notify/index.ts (sweepFounderDigest).
+// Read by supabase/functions/notify/index.ts (sweepFounderDigest, which pairs
+// summariseDay with unreachableToday()).
 
 /** One row of `founder_day_report(p_date)` — see migration 0057. */
 export type DayReportRow = {
@@ -28,6 +29,57 @@ export type DaySummary = {
   adoption: string;
   attention: string;
 };
+
+/**
+ * One person a notification failed to reach today. `reason` is the row's
+ * whatsapp_status: no number on the profile at all, or a send that didn't land.
+ */
+export type UnreachableRow = { name: string; reason: "failed" | "no_phone" };
+
+/** Names listed before the line truncates. Same reasoning as COACHES_SHOWN. */
+const UNREACHABLE_SHOWN = 4;
+
+/**
+ * "Couldn't reach 2 people today: Riyansh (no WhatsApp number), Shilpa (send
+ * failed)" — or "" when everyone was reachable.
+ *
+ * This is the quiet half of the safety net behind removing email. The loud half
+ * is the immediate ops_unreachable alert, which fires only for messages that
+ * needed an answer and at most once per person per day; everything below that
+ * bar lands here instead, where it is one line at 21:00 rather than a stream of
+ * interrupts. A founder who reads nothing else still learns that somebody has
+ * been unreachable all day.
+ *
+ * MUST stay newline-free. A newline is legal in a WhatsApp template BODY and
+ * illegal in a template VARIABLE — Twilio rejects the whole send with 63016 —
+ * and this string is folded into `attention`, which is one variable of
+ * founder_daily_digest_v3. That distinction already cost the digest three days
+ * of arriving as one run-on paragraph.
+ */
+export function summariseUnreachable(rows: UnreachableRow[]): string {
+  // One line per person, not per message. Somebody with no number fails every
+  // message they are due, and reporting each would bury the other lines.
+  const byName = new Map<string, UnreachableRow["reason"]>();
+  for (const r of rows) {
+    // Collapse whitespace, don't just trim. `name` is profiles.full_name —
+    // user-editable free text — and a single newline anywhere in this string
+    // makes Twilio reject the whole digest with 63016, for every founder. The
+    // one field here that a member controls is the one that must be flattened.
+    const name = r.name.replace(/\s+/g, " ").trim() || "Someone";
+    // no_phone is the more actionable diagnosis, so it wins a tie: "add a
+    // number" is a fix, "the send failed" is a symptom.
+    if (byName.get(name) !== "no_phone") byName.set(name, r.reason);
+  }
+  if (!byName.size) return "";
+
+  const people = [...byName.entries()];
+  const shown = people
+    .slice(0, UNREACHABLE_SHOWN)
+    .map(([name, reason]) => `${name} (${reason === "no_phone" ? "no WhatsApp number" : "send failed"})`)
+    .join(", ");
+  const more = people.length > UNREACHABLE_SHOWN ? ` +${people.length - UNREACHABLE_SHOWN} more` : "";
+  return `Couldn't reach ${people.length} ${people.length === 1 ? "person" : "people"} today: ${shown}${more}`;
+}
 
 /** How late a coach can be before it is worth the founder's attention. */
 export const LATE_THRESHOLD_MIN = 5;
@@ -65,7 +117,7 @@ function shortNames(full: string[]): Map<string, string> {
  * VARIABLE (the body may contain them, the variable may not), and each of these
  * is one variable of founder_daily_digest_v3.
  */
-export function summariseDay(rows: DayReportRow[]): DaySummary {
+export function summariseDay(rows: DayReportRow[], unreachable: UnreachableRow[] = []): DaySummary {
   // Unassigned sessions are a scheduling gap, not a coach failure — they are
   // excluded from every coach-facing statistic and reported on their own in
   // `attention`. Before migration 0057 they arrived here named "Unassigned" and
@@ -149,6 +201,13 @@ export function summariseDay(rows: DayReportRow[]): DaySummary {
   if (silent.length > 3) parts.push(`+${silent.length - 3} more marked none`);
 
   for (const r of blank.slice(0, 2)) parts.push(`${r.class_title} roster still blank`);
+
+  // Delivery failures go last: they are about the academy's plumbing rather
+  // than today's coaching, and a founder scanning this line wants the sessions
+  // first. But they do belong here — with no email fallback, an unreachable
+  // person is otherwise visible only to whoever opens /admin/notifications.
+  const unreached = summariseUnreachable(unreachable);
+  if (unreached) parts.push(unreached);
 
   const attention = parts.length ? parts.join(" · ") : "Nothing — a clean day.";
 
