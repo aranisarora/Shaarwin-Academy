@@ -184,22 +184,31 @@ const DEFERRABLE = new Set([
 
 // ── The urgent set ──────────────────────────────────────────────────────────
 //
-// A miss on any of these causes a real-world failure, not just a quieter phone:
-// a coach teaching four classes needs all four before-class prompts, and a
-// parent needs to hear their coach is running late whether or not it is their
-// fourth message of the day.
+// One question, asked of every type: IS A MISS HERE A REAL-WORLD FAILURE RATHER
+// THAN JUST A QUIETER PHONE? Yes means a push must not stand in for a WhatsApp
+// — the message goes out on both (see PUSH_ADDITIVE).
 //
-// The name is what it used to do. These types were exempt from a per-user daily
-// cap, and that cap is gone: on 7 Aug a founder broadcast to 8 coaches reached
-// 2, because the counter behind it made no distinction by type. A day of
-// ordinary coaching traffic — before-class, after-class, arrival checks — spent
-// an allowance those same messages could never themselves be charged against,
-// so the harder a coach worked the less reachable they became.
+// This was called CAP_EXEMPT until 10 Aug 2026, after a per-user daily message
+// cap these types were exempt from. That cap is gone — on 7 Aug a founder
+// broadcast to 8 coaches reached 2, because the counter behind it made no
+// distinction by type, so a day of ordinary coaching traffic spent an allowance
+// those same messages could never be charged against and the harder a coach
+// worked the less reachable they became.
 //
-// The set outlived the rule because PUSH_ADDITIVE is derived from it. Its one
-// remaining job is to say which types are urgent enough that a push must not
-// stand in for a WhatsApp.
-const CAP_EXEMPT = new Set([
+// The set outlived the rule, and the dead name then cost us the thing it was
+// kept for: `session_moved` and `announcement` were never added, because nobody
+// asked to add a type here ever thought "is this exempt from a cap we deleted?"
+// They would have answered "is this urgent?" correctly. On 10 Aug a coach was
+// told on push alone that her session had moved, with `whatsapp_status
+// = 'skipped'`. Renamed so the next person is asked the question that decides
+// it.
+//
+// Distinct from TRANSACTIONAL, which answers a different question — "may the
+// member mute this?" — and is checked against notification_prefs. A type can be
+// urgent and mutable (coach_arrived), or transactional and calm
+// (signup_approved). PUSH_ADDITIVE is the union because either answer is reason
+// enough to keep WhatsApp in the chain.
+const URGENT = new Set([
   // Coach: running their own class.
   "coach_before_class",
   "coach_confirm_nudge_2",
@@ -222,7 +231,17 @@ const CAP_EXEMPT = new Set([
   // Founder: act-now escalations and the once-a-day digest.
   "ops_coach_unconfirmed",
   "ops_coach_not_arrived",
+  // The stand-down for the line above (migration 0079). It has to travel the
+  // same way the alarm did — a founder who was told on WhatsApp to call a coach
+  // now must learn on WhatsApp that they needn't.
+  "ops_coach_arrived_late",
   "ops_daily_digest",
+  // A coach who misses this drives to the wrong place at the wrong time, which
+  // is the definition this set exists to catch.
+  "session_moved",
+  // Reach is the entire point of a broadcast, and this is the second time it
+  // has narrowed silently — see the 7 Aug note above.
+  "announcement",
   // The morning briefings. Both are once per day and both are the message the
   // whole day is planned from — a coach who doesn't get theirs drives to the
   // wrong venue.
@@ -249,12 +268,12 @@ const CAP_EXEMPT = new Set([
 // channel for everything else. The row records `push+whatsapp` so it still
 // explains itself afterwards.
 //
-// The set is CAP_EXEMPT (already curated as "a miss here causes a real-world
-// failure, not just a quieter phone") plus TRANSACTIONAL (account-critical
-// enough to ignore preferences — a failed payment, a cancelled session, someone
-// waiting on an approval). Deriving it rather than writing a third list is
-// deliberate: two definitions of "urgent" would drift apart within a month.
-const PUSH_ADDITIVE = new Set([...CAP_EXEMPT, ...TRANSACTIONAL]);
+// The set is URGENT (a miss causes a real-world failure) plus TRANSACTIONAL
+// (account-critical enough to ignore preferences — a failed payment, a
+// cancelled session, someone waiting on an approval). Deriving it rather than
+// writing a third list is deliberate: two definitions of "urgent" would drift
+// apart within a month.
+const PUSH_ADDITIVE = new Set([...URGENT, ...TRANSACTIONAL]);
 
 // ── A subscription can be valid and still be nobody ─────────────────────────
 //
@@ -707,11 +726,26 @@ async function sweepCoachConfirmNudge() {
 }
 
 /**
- * At start time (window [now-10min, now]) — if the coach hasn't marked arrival,
- * ask ONE thing: "Have you reached?" with I've arrived / Running late buttons.
- * Sent only once per (coach, session); arrival being marked by any surface
- * short-circuits it via the coach_arrived_at filter. Plain text fallback until
- * the template is provisioned.
+ * At start time — if the coach hasn't marked arrival, ask ONE thing: "Have you
+ * reached?" with I've arrived / Running late buttons. Sent only once per
+ * (coach, session); arrival being marked by any surface short-circuits it via
+ * the coach_arrived_at filter. Plain text fallback until the template is
+ * provisioned.
+ *
+ * The window is 70 minutes back, not 10, and it matches sweepFounderEscalations
+ * deliberately. Every other rung on this ladder is already built to survive a
+ * skipped tick — sweepBeforeClass sweeps a whole hour and says so — but this
+ * one swept [now-10min, now] while the escalation that punishes an unanswered
+ * arrival looks back across [now-70min, now-10min]. Any worker gap longer than
+ * ten minutes therefore dropped the QUESTION and still delivered the
+ * PUNISHMENT: the coach was never asked whether they had arrived, and the
+ * founders were told they hadn't answered.
+ *
+ * Matching the two windows closes it by construction, because this sweep runs
+ * before the escalation inside the same invocation (see the call order in the
+ * handler). After an outage the coach is always asked first, even if the
+ * founder alert follows moments later — which is correct, since the alert is
+ * about a real risk either way. It just may no longer claim they ignored us.
  */
 async function sweepArrivalCheck() {
   const now = Date.now();
@@ -724,7 +758,7 @@ async function sweepArrivalCheck() {
     .not("coach_id", "is", null)
     .is("coach_arrived_at", null)
     .lte("starts_at", new Date(now).toISOString())
-    .gt("starts_at", new Date(now - 10 * 60000).toISOString())
+    .gt("starts_at", new Date(now - 70 * 60000).toISOString())
     .limit(100);
 
   for (const s of await withValidCoaches(sessions ?? [])) {
@@ -837,19 +871,26 @@ async function escalateToFounders(
   s: { id: string; starts_at: string; coach_id: string; classes: unknown },
   body: (coachName: string, classTitle: string, when: string) => string
 ) {
-  const { data: done } = await supabase
-    .from("notifications")
-    .select("id")
-    .eq("type", type)
-    .eq("data->>session_id", s.id)
-    .limit(1);
-  if (done?.length) return;
-
+  // Once per (founder, session), not once per session. The old check asked
+  // whether ANYONE had been told and returned if so, which meant a founder
+  // added after an escalation fired never heard about that session again — and
+  // a session that went back to 'scheduled' could never escalate a second time.
+  // Deduping per recipient keeps the "fires once" promise each founder actually
+  // cares about while letting a new one catch up.
   const { data: founders } = await supabase
     .from("profiles")
     .select("id")
     .eq("role", "founder");
   if (!founders?.length) return;
+
+  const { data: already } = await supabase
+    .from("notifications")
+    .select("user_id")
+    .eq("type", type)
+    .eq("data->>session_id", s.id);
+  const told = new Set((already ?? []).map((n) => n.user_id));
+  const targets = founders.filter((f) => !told.has(f.id));
+  if (!targets.length) return;
 
   const { data: coach } = await supabase
     .from("profiles")
@@ -861,7 +902,7 @@ async function escalateToFounders(
   const text = body(coachName, titleOf(s.classes), when) + (coach?.phone ? ` (${coach.phone})` : "");
 
   await supabase.from("notifications").insert(
-    founders.map((f) => ({
+    targets.map((f) => ({
       user_id: f.id,
       type,
       title,

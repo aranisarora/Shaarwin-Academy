@@ -37,6 +37,16 @@ export type NotArrivedFacts = {
  *
  * Every one of these arrives AFTER whatever the coach's own action already
  * sent, so none of them may contradict it.
+ *
+ * Every fact here is about ONE SESSION, so every sentence must be too. The
+ * third branch used to end "never responded at all today", which is a claim
+ * about the whole day made from a single session's `coach_confirmed_at`. On
+ * 10 Aug it told three founders that Sunil Hatti had "never responded at all
+ * today — likely a no-show" about a 7pm class, eleven hours after he answered
+ * the 8:50am one on two channels; fifty minutes later the same system
+ * congratulated him for wrapping that 7pm session up. Same defect shape as the
+ * one migration 0071 fixed for reported lateness — a true row, a false
+ * sentence — just scoped by day instead of by state.
  */
 export function notArrivedBody(f: NotArrivedFacts): string {
   if (f.lateAtClock) {
@@ -53,7 +63,7 @@ export function notArrivedBody(f: NotArrivedFacts): string {
     );
   }
   return (
-    `${f.classTitle} (${f.when}) is 10+ minutes in and ${f.coachName} never ` +
-    `responded at all today — likely a no-show, act now.`
+    `${f.classTitle} (${f.when}) is 10+ minutes in and ${f.coachName} hasn't ` +
+    `answered anything about it — likely a no-show, act now.`
   );
 }

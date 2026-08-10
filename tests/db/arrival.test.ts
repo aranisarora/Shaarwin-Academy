@@ -13,14 +13,23 @@ import {
 import {
   expectNotification,
   expectNoNotification,
+  expectNotificationCount,
 } from "../../e2e/lib/notifications";
 
 describe("arrival flow (migration 0039)", () => {
-  async function seatedSession() {
+  // Ninety minutes out, not three hours — the only window that satisfies both
+  // ends of this test. Migration 0079 accepts an arrival within ±2h of the
+  // start (production had one stamped 154 minutes after a session began, and
+  // another stamped on a cancelled one — a push banner outlives the class it
+  // describes), while book_session refuses anything inside
+  // booking_cutoff_minutes, which is 60. So: later than now+60min, sooner than
+  // now+2h. A test that marked arrival three hours early was exercising
+  // something the system should never have allowed.
+  async function seatedSession(startsAt = hoursFromNow(1.5)) {
     const coach = await createCoach();
     const parent = await createClient({ children: 1 });
     const session = await createGroupSession({
-      startsAt: hoursFromNow(3),
+      startsAt,
       coachId: coach.id,
     });
     const booking = await bookSession({
@@ -198,6 +207,173 @@ describe("arrival flow (migration 0039)", () => {
     // The founder's escalation quotes this time back at them, so it has to be
     // when the coach FIRST said it, not when they last repeated it.
     expect(second!.coach_late_at).toBe(first!.coach_late_at);
+  });
+
+  // ── Migration 0079 ────────────────────────────────────────────────────────
+  // The timestamp was idempotent; the notification INSERT under it was not, so
+  // a second "I've arrived" wrote a second message to every booked parent while
+  // correctly leaving the timestamp alone. Five families received the same
+  // "Coach has arrived" twice before this was found.
+  //
+  // The trigger is not a fumbled double-tap. The geofenced auto-arrival fires
+  // from a GPS callback while the manual button is still on screen, and the
+  // auto branch defers its parent ping by two minutes so Undo can beat it — so
+  // the pair ALWAYS lands in different delivery batches, which is exactly where
+  // the notify worker's per-batch dedupe cannot see it. Push adds a third way
+  // to answer the same question, on every device at once.
+
+  it("tells the parents once, however many times the coach says they arrived", async () => {
+    const db = admin();
+    const { coach, parent, session } = await seatedSession();
+
+    // The real race: auto (deferred 2 min) and a tap (immediate), as the coach
+    // screen fires them.
+    await coachMarkArrival({
+      coachEmail: coach.email,
+      sessionId: session.sessionId,
+      source: "auto",
+      distanceM: 42,
+    });
+    await coachMarkArrival({
+      coachEmail: coach.email,
+      sessionId: session.sessionId,
+      source: "tap",
+    });
+    await coachMarkArrival({
+      coachEmail: coach.email,
+      sessionId: session.sessionId,
+      source: "wa",
+    });
+
+    await expectNotificationCount(
+      db,
+      { userId: parent.id, type: "coach_arrived", dataContains: { session_id: session.sessionId } },
+      1
+    );
+
+    // First writer wins the whole row, not just the clock.
+    const { data: row } = await db
+      .from("class_sessions")
+      .select("coach_arrival_source, coach_arrival_distance_m")
+      .eq("id", session.sessionId)
+      .single();
+    expect(row!.coach_arrival_source).toBe("auto");
+    expect(row!.coach_arrival_distance_m).toBe(42);
+  });
+
+  it("tells the parents and founders once, however many times the coach reports lateness", async () => {
+    const db = admin();
+    const { coach, parent, session } = await seatedSession();
+
+    await coachMarkArrival({ coachEmail: coach.email, sessionId: session.sessionId, late: true });
+    await coachMarkArrival({ coachEmail: coach.email, sessionId: session.sessionId, late: true });
+
+    await expectNotificationCount(
+      db,
+      { userId: parent.id, type: "coach_late", dataContains: { session_id: session.sessionId } },
+      1
+    );
+    await expectNotificationCount(
+      db,
+      { userId: SEED.founder, type: "coach_late", dataContains: { session_id: session.sessionId } },
+      1
+    );
+  });
+
+  it("still notifies when an undo is followed by a real arrival", async () => {
+    const db = admin();
+    const { coach, parent, session } = await seatedSession();
+
+    await coachMarkArrival({ coachEmail: coach.email, sessionId: session.sessionId, source: "tap" });
+    await coachUndoArrival({ coachEmail: coach.email, sessionId: session.sessionId });
+    await coachMarkArrival({ coachEmail: coach.email, sessionId: session.sessionId, source: "tap" });
+
+    // Undo clears the stamp, so the next arrival is a genuine transition and
+    // has to reach the parents — "notify once" must not become "notify never".
+    await expectNotification(db, {
+      userId: parent.id,
+      type: "coach_arrived",
+      dataContains: { session_id: session.sessionId },
+    });
+  });
+
+  it("refuses an arrival on a cancelled session", async () => {
+    const db = admin();
+    const { coach, parent, session } = await seatedSession();
+    await db.from("class_sessions").update({ status: "cancelled" }).eq("id", session.sessionId);
+
+    await expect(
+      coachMarkArrival({ coachEmail: coach.email, sessionId: session.sessionId, source: "tap" })
+    ).rejects.toThrow(/session_cancelled/);
+
+    await expectNoNotification(db, { userId: parent.id, type: "coach_arrived" });
+  });
+
+  it("refuses an arrival hours after the session, which is what a stale push tap is", async () => {
+    const db = admin();
+    const { coach, parent, session } = await seatedSession();
+
+    // Book it first, then move it into the past — book_session won't touch a
+    // session inside the cutoff, and this test is about the arrival guard, not
+    // the booking one. Three hours ago: the class is long over, but its push
+    // banner is still sitting in the tray waiting to be tapped.
+    await db
+      .from("class_sessions")
+      .update({
+        starts_at: hoursFromNow(-3).toISOString(),
+        ends_at: hoursFromNow(-2).toISOString(),
+      })
+      .eq("id", session.sessionId);
+
+    await expect(
+      coachMarkArrival({ coachEmail: coach.email, sessionId: session.sessionId, source: "tap" })
+    ).rejects.toThrow(/outside_arrival_window/);
+
+    await expectNoNotification(db, { userId: parent.id, type: "coach_arrived" });
+  });
+
+  it("stands the founders down when the arrival lands after they were told to chase", async () => {
+    const db = admin();
+    const { coach, session } = await seatedSession();
+
+    // The escalation the notify worker fires at start+10.
+    await db.from("notifications").insert({
+      user_id: SEED.founder,
+      type: "ops_coach_not_arrived",
+      title: "Coach not marked arrived",
+      body: "…hasn't marked arrival 10+ minutes in — call them now.",
+      data: { session_id: session.sessionId, url: "/admin/schedule" },
+    });
+
+    await coachMarkArrival({ coachEmail: coach.email, sessionId: session.sessionId, source: "wa" });
+
+    // Ramesh Simpi, 10 Aug: founders were told at 06:30:03 to call him and his
+    // arrival landed at 06:32:13. Nothing withdrew the instruction, so he was
+    // chased for a class he had just reported arriving at.
+    const standDown = await expectNotification(db, {
+      userId: SEED.founder,
+      type: "ops_coach_arrived_late",
+      dataContains: { session_id: session.sessionId },
+    });
+    expect(String(standDown.body)).toContain("no need to chase");
+  });
+
+  it("does not stand down a founder who was never alerted", async () => {
+    const db = admin();
+    const { coach, session } = await seatedSession();
+
+    await coachMarkArrival({ coachEmail: coach.email, sessionId: session.sessionId, source: "tap" });
+
+    // No escalation went out, so there is nothing to withdraw — and a "no need
+    // to chase" for a chase that never happened is just another interruption.
+    // Scoped to THIS session: the suite shares one database with no per-test
+    // reset, so an unscoped assertion would catch the row the previous test
+    // legitimately created.
+    await expectNoNotification(db, {
+      userId: SEED.founder,
+      type: "ops_coach_arrived_late",
+      dataContains: { session_id: session.sessionId },
+    });
   });
 
   it("undo removes the still-pending parent arrival ping", async () => {

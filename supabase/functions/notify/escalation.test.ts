@@ -51,10 +51,23 @@ describe("notArrivedBody", () => {
     expect(body).not.toContain("running late");
   });
 
-  it("assumes a no-show when the coach has said nothing at all", () => {
+  it("assumes a no-show when the coach has said nothing about THIS session", () => {
     const body = notArrivedBody(facts());
-    expect(body).toContain("never responded at all today");
+    expect(body).toContain("hasn't answered anything about it");
     expect(body).toContain("likely a no-show");
+  });
+
+  // Every fact this function gets describes ONE session, so no sentence may
+  // widen into a claim about the coach's day. On 10 Aug the silent branch told
+  // three founders that Sunil Hatti had "never responded at all today" about a
+  // 7pm class — eleven hours after he answered the 8:50am one on two channels,
+  // and fifty minutes before the system congratulated him for finishing the
+  // 7pm one. Same shape as the lateness bug above: a true row, a false
+  // sentence.
+  it("never makes a claim about the whole day from one session's silence", () => {
+    for (const f of [facts(), facts({ confirmed: true }), facts({ lateAtClock: "6:32 pm" })]) {
+      expect(notArrivedBody(f)).not.toContain("today");
+    }
   });
 
   it("names the coach, the class and the time in every case", () => {
