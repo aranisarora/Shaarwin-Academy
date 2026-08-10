@@ -4,6 +4,7 @@ import { ServiceWorkerRegistrar } from "@/components/app/ServiceWorkerRegistrar"
 import { RealtimeRefresh } from "@/components/app/RealtimeRefresh";
 import { InstallPrompt } from "@/components/app/InstallPrompt";
 import { PushPrompt } from "@/components/app/PushPrompt";
+import { LocationPrompt } from "@/components/app/LocationPrompt";
 import { CoachWrapUpPrompt } from "@/components/app/CoachWrapUpPrompt";
 import { PreviewBanner } from "@/components/app/PreviewBanner";
 import { getCoachPreview } from "@/lib/coach-preview";
@@ -46,7 +47,12 @@ export default function CoachLayout({ children }: { children: React.ReactNode })
       <RealtimeRefresh tables={["bookings", "class_sessions"]} />
       {children}
       <InstallPrompt />
-      <PushPrompt />
+      {/* One permission dialog at a time, and push goes first — turn
+          notifications on, then be told what they will be about. The location
+          ask appears the moment push stops asking, which for a coach who taps
+          "Turn on notifications" is immediately. Coaches only: this is the one
+          shell where an arrival exists to be marked. */}
+      <PushPrompt thenAsk={<LocationPrompt />} />
       <CoachWrapUpPrompt />
     </>
   );

@@ -3,19 +3,19 @@
 // Two-step arrival stepper on the coach's session page — one question at a time.
 // Step 1 "Coming?" is always available in the window; step 2 "Arrived" unlocks
 // an hour before start. Marking arrival implies coming (mirrors the RPC). When
-// the venue has coordinates, opening the page inside the window requests GPS
-// once and auto-marks arrival within 150 m, with an Undo that beats the delayed
-// parent notification. No emojis — icons + design tokens only.
+// the venue has coordinates and the coach has already granted location, opening
+// the page inside the window takes one fix and auto-marks arrival within the
+// fence, with an Undo that beats the delayed parent notification. It no longer
+// asks for the permission from here — <LocationPrompt /> does that, from a tap.
+// No emojis — icons + design tokens only.
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useState, useTransition } from "react";
 import { Button } from "@/components/ui/Button";
 import { CheckIcon, LockIcon, MapPinIcon } from "@/components/ui/icons";
-import { ComingAction, ArriveAction } from "@/components/app/ArrivalActions";
-import { markArrived, undoArrival } from "@/app/coach/session/[id]/actions";
+import { ComingAction, ArriveAction, useAutoArrival } from "@/components/app/ArrivalActions";
+import { undoArrival } from "@/app/coach/session/[id]/actions";
 import { formatClock, nowMs } from "@/lib/academy-time";
-import { haversineMeters } from "@/lib/geo";
 
-const GEOFENCE_M = 150;
 const UNDO_WINDOW_MS = 10 * 60000;
 
 export function SessionArrival({
@@ -43,7 +43,6 @@ export function SessionArrival({
   const [lateMsg, setLateMsg] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
-  const autoTried = useRef(false);
 
   const startMs = new Date(startsAt).getTime();
   const unlockMs = startMs - 60 * 60000;
@@ -54,37 +53,26 @@ export function SessionArrival({
   const comingDone = confirmedAt ?? arrivedAt; // arrived implies coming
   const canUndo = arrivedAt != null && nowMs() - new Date(arrivedAt).getTime() < UNDO_WINDOW_MS;
 
-  // Geofenced auto-arrival: once, on open, request a single GPS fix and mark
-  // arrival automatically within 150 m. Parents are notified on a 2-minute delay
+  // Geofenced auto-arrival, shared with the coach-home sheet so the two can't
+  // disagree about how close counts. Parents are notified on a 2-minute delay
   // (server-side) so Undo beats delivery.
-  useEffect(() => {
-    if (autoTried.current || !open || arrivedAt) return;
-    if (venueLat == null || venueLng == null) return;
-    if (typeof navigator === "undefined" || !navigator.geolocation) return;
-    autoTried.current = true;
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        const d = Math.round(
-          haversineMeters(pos.coords.latitude, pos.coords.longitude, venueLat, venueLng)
-        );
-        if (d > GEOFENCE_M) return; // not at the venue — leave the manual button
-        const optimistic = new Date().toISOString();
-        setArrivedAt(optimistic);
-        setArrivedAuto(true);
-        setConfirmedAt((c) => c ?? optimistic);
-        startTransition(async () => {
-          const r = await markArrived(sessionId, { source: "auto", distanceM: d });
-          if (!r.ok) {
-            setArrivedAt((cur) => (cur === optimistic ? null : cur));
-            setArrivedAuto(false);
-            setMessage(r.error ?? "Couldn't send. Try again.");
-          }
-        });
-      },
-      () => {}, // denied / unavailable — do nothing, manual stays
-      { enableHighAccuracy: true, timeout: 10000 }
-    );
-  }, [open, arrivedAt, venueLat, venueLng, sessionId]);
+  const autoPending = useAutoArrival({
+    sessionId,
+    venueLat,
+    venueLng,
+    active: open && !arrivedAt,
+    onArrived: (iso) => {
+      setArrivedAt(iso);
+      setArrivedAuto(true);
+      setConfirmedAt((c) => c ?? iso);
+    },
+    onFailed: (iso, msg) => {
+      setArrivedAt((cur) => (cur === iso ? null : cur));
+      setArrivedAuto(false);
+      setMessage(msg);
+    },
+  });
+  const busy = pending || autoPending;
 
   function onUndo() {
     setMessage(null);
@@ -138,7 +126,7 @@ export function SessionArrival({
                 </p>
               </div>
               {canUndo && (
-                <Button variant="ghost" disabled={pending} onClick={onUndo} className="w-full sm:w-auto">
+                <Button variant="ghost" disabled={busy} onClick={onUndo} className="w-full sm:w-auto">
                   Undo
                 </Button>
               )}
@@ -150,7 +138,7 @@ export function SessionArrival({
                 <p className="font-medium">Arrived at {formatClock(arrivedAt)} · parents notified</p>
               </div>
               {canUndo && (
-                <Button variant="ghost" disabled={pending} onClick={onUndo} className="w-full sm:w-auto">
+                <Button variant="ghost" disabled={busy} onClick={onUndo} className="w-full sm:w-auto">
                   Undo
                 </Button>
               )}
