@@ -2,6 +2,7 @@ import type { Viewport } from "next";
 import { RealtimeRefresh } from "@/components/app/RealtimeRefresh";
 import { ServiceWorkerRegistrar } from "@/components/app/ServiceWorkerRegistrar";
 import { InstallPrompt } from "@/components/app/InstallPrompt";
+import { PushPrompt } from "@/components/app/PushPrompt";
 
 // Everything below here is the ivory studio shell, so Android should tint the
 // address bar to match rather than to the ink the marketing site asks for. Only
@@ -16,6 +17,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
       <RealtimeRefresh tables={["class_sessions", "coach_assignments", "bookings"]} />
       {children}
       <InstallPrompt />
+      <PushPrompt />
     </>
   );
 }
