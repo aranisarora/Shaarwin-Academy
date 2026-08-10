@@ -199,6 +199,16 @@ const markArrival: WaTool = {
       if (error.message.includes("not_your_session")) {
         return fail("That session isn't on this coach's schedule.");
       }
+      // Migration 0079's guards. Named so the model can explain the refusal
+      // instead of inventing a reason for a bare "couldn't send that".
+      if (error.message.includes("session_cancelled")) {
+        return fail("That session was cancelled, so there's no arrival to record.");
+      }
+      if (error.message.includes("outside_arrival_window")) {
+        return fail(
+          "That's more than two hours from the session's start time — arrival can only be marked around it. Check they picked the right session."
+        );
+      }
       return fail("Couldn't send that.");
     }
     // What the RPC actually does, not what would be nice to say. It QUEUES

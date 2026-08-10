@@ -41,6 +41,34 @@ type Body = {
   };
 };
 
+/**
+ * A tray button that fails needs to say WHY, because the two new guards from
+ * migration 0079 are the ones a stale notification hits — and a notification is
+ * exactly the thing that outlives the session it describes. An Android banner
+ * sits there until it's dismissed, so yesterday's "Have you reached?" is still
+ * tappable this morning.
+ *
+ * `ok: true` with an explaining message rather than an error: the service
+ * worker only shows `json.message`, and falls through to opening the app on
+ * anything else. Telling the coach their session was cancelled is a better
+ * outcome than silently deep-linking them into it.
+ */
+function arrivalError(message: string) {
+  if (message.includes("session_cancelled")) {
+    return NextResponse.json({ ok: true, message: "That session was cancelled — nothing to mark." });
+  }
+  if (message.includes("outside_arrival_window")) {
+    return NextResponse.json({
+      ok: true,
+      message: "That's outside the arrival window — this notification is probably an old one.",
+    });
+  }
+  if (message.includes("not_your_session")) {
+    return NextResponse.json({ ok: true, message: "That session isn't on your schedule any more." });
+  }
+  return NextResponse.json({ error: "rpc_failed" }, { status: 400 });
+}
+
 export async function POST(request: Request) {
   const supabase = await createClient();
   const {
@@ -112,7 +140,7 @@ export async function POST(request: Request) {
         p_late: false,
         p_source: "tap",
       });
-      if (error) return NextResponse.json({ error: "rpc_failed" }, { status: 400 });
+      if (error) return arrivalError(error.message);
       revalidatePath(`/coach/session/${sessionId}`);
       return NextResponse.json({
         ok: true,
@@ -126,7 +154,7 @@ export async function POST(request: Request) {
         p_late: true,
         p_source: "tap",
       });
-      if (error) return NextResponse.json({ error: "rpc_failed" }, { status: 400 });
+      if (error) return arrivalError(error.message);
       revalidatePath(`/coach/session/${sessionId}`);
       return NextResponse.json({
         ok: true,

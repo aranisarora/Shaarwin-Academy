@@ -127,6 +127,10 @@ export const NOTIFICATION_TYPES: Record<string, NotificationRule> = {
   // ── Founder: act now ──────────────────────────────────────────────────────
   ops_coach_unconfirmed: { who: "founder", answer: true, mute: false, defer: false },
   ops_coach_not_arrived: { who: "founder", answer: true, mute: false, defer: false },
+  // The withdrawal of the line above (migration 0079), sent when the arrival
+  // lands after the founders were told to chase. Travels exactly as the alarm
+  // did — WhatsApp took the instruction out, so WhatsApp takes it back.
+  ops_coach_arrived_late: { who: "founder", answer: true, mute: false, defer: false },
   signup_request: { who: "founder", answer: true, mute: false, defer: false, critical: true },
   founder_morning_brief: { who: "founder", answer: true, mute: false, defer: false },
   ops_daily_digest: { who: "founder", answer: true, mute: false, defer: true },

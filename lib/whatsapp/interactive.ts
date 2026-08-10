@@ -276,11 +276,18 @@ async function handleCoachReply(opts: {
   if (!action) return null;
 
   const group = AFTER_GROUP.has(action) ? "after" : "before";
-  const sessionId = await resolveSession(admin, supabase, profile.id, group, opts.originalSid);
-  if (!sessionId) {
+  const pick = await resolveSession(admin, supabase, profile.id, group, opts.originalSid);
+  if (pick.kind === "ambiguous") {
+    // Naming both is the whole point — "which one?" on its own asks the coach
+    // to remember their own timetable while they are standing in a hall.
+    const list = pick.options.map((o) => `${o.title} (${formatClock(o.at)})`).join(" or ");
+    return `Happy to mark that — you've got two close together, so which one? ${list}`;
+  }
+  if (pick.kind === "none") {
     if (loose && !opts.originalSid) return null;
     return "Thanks! I couldn't tell which session that was for though — which class did you mean? You can also update it in the app.";
   }
+  const sessionId = pick.id;
 
   const first = (profile.full_name ?? "").trim().split(/\s+/)[0] || "there";
   const sessionLink = `${appUrl()}/coach/session/${sessionId}`;
@@ -956,14 +963,48 @@ async function noteBySidAnyUser(
 function errorReply(message: string): string {
   if (message.includes("not_your_session")) return "That session isn't on your schedule anymore.";
   if (message.includes("session_not_scheduled")) return "That session is no longer scheduled.";
+  // Both from migration 0079. Say which it is — "that didn't go through" on a
+  // cancelled class reads as a glitch and invites a retry that can't work.
+  if (message.includes("session_cancelled")) return "That session was cancelled, so there's nothing to mark.";
+  if (message.includes("outside_arrival_window")) {
+    return "That's outside the window for marking arrival — if it's the wrong session, tell me which class you mean.";
+  }
   return "Sorry, that didn't go through — please try again in the app.";
 }
+
+/**
+ * How a coach's reply is matched to a session.
+ *
+ * `ambiguous` exists because guessing has a cost the coach pays: marking
+ * arrival on the wrong session leaves the right one unmarked, so it escalates
+ * to the founder while the coach believes they answered.
+ */
+type SessionPick =
+  | { kind: "one"; id: string }
+  | { kind: "ambiguous"; options: { id: string; title: string; at: string }[] }
+  | { kind: "none" };
+
+/** Two candidates this close in |distance from now| are a coin toss, not a pick. */
+const TIE_MS = 15 * 60000;
 
 /**
  * Which session does a coach tap refer to? First choice is exact: the outbound
  * interactive message recorded its Twilio SID on the source notification, and
  * WhatsApp echoes it back as OriginalRepliedMessageSid. Otherwise fall back to
  * the coach's nearest session for the button's phase (before/after class).
+ *
+ * The fallback runs whenever the SID is missing — which is every time a coach
+ * TYPES "arrived" rather than swipe-replying, so it is the common path and not
+ * the rare one. It used to take the nearest session unconditionally, breaking
+ * exact ties toward the earlier one on a strict `<`. Back-to-back sessions an
+ * hour apart are routine here (Keerthana and Sunil Hatti have such pairs on
+ * most days), and halfway between two of them the "nearest" is arbitrary from
+ * the coach's point of view. So when the top two are within TIE_MS of each
+ * other we ask, the same way handleCoverClaim already asks rather than commit
+ * a coach to being somewhere.
+ *
+ * Push is immune to all of this — every banner carries its own session_id — so
+ * this only has to hold the line for WhatsApp.
  */
 async function resolveSession(
   admin: SupabaseClient<Database>,
@@ -971,7 +1012,7 @@ async function resolveSession(
   coachId: string,
   group: "before" | "after",
   originalSid: string
-): Promise<string | null> {
+): Promise<SessionPick> {
   if (originalSid) {
     const { data } = await admin
       .from("notifications")
@@ -982,19 +1023,37 @@ async function resolveSession(
       .limit(1)
       .maybeSingle();
     const sid = (data?.data as { session_id?: string } | undefined)?.session_id;
-    if (sid) return sid;
+    if (sid) return { kind: "one", id: sid };
   }
 
   if (group === "before") {
     const { data } = await supabase
       .from("class_sessions")
-      .select("id,starts_at")
+      .select("id,starts_at,classes!inner(title)")
       .eq("coach_id", coachId)
       .eq("status", "scheduled")
       .gte("starts_at", new Date(Date.now() - 45 * 60000).toISOString())
       .lte("starts_at", new Date(Date.now() + 120 * 60000).toISOString())
       .order("starts_at", { ascending: true });
-    return closestToNow((data ?? []).map((r) => ({ id: r.id, at: r.starts_at })));
+
+    const now = Date.now();
+    const ranked = (data ?? [])
+      .map((r) => {
+        const c = r.classes as { title?: string } | { title?: string }[] | null;
+        return {
+          id: r.id as string,
+          at: r.starts_at as string,
+          title: (Array.isArray(c) ? c[0]?.title : c?.title) ?? "your session",
+          diff: Math.abs(new Date(r.starts_at as string).getTime() - now),
+        };
+      })
+      .sort((a, b) => a.diff - b.diff);
+
+    if (!ranked.length) return { kind: "none" };
+    if (ranked.length > 1 && ranked[1].diff - ranked[0].diff <= TIE_MS) {
+      return { kind: "ambiguous", options: ranked.slice(0, 3) };
+    }
+    return { kind: "one", id: ranked[0].id };
   }
 
   const { data } = await supabase
@@ -1006,20 +1065,5 @@ async function resolveSession(
     .lte("ends_at", new Date(Date.now() + 30 * 60000).toISOString())
     .order("ends_at", { ascending: false })
     .limit(1);
-  return data?.[0]?.id ?? null;
-}
-
-function closestToNow(rows: { id: string; at: string }[]): string | null {
-  if (!rows.length) return null;
-  const now = Date.now();
-  let best = rows[0];
-  let bestDiff = Infinity;
-  for (const r of rows) {
-    const diff = Math.abs(new Date(r.at).getTime() - now);
-    if (diff < bestDiff) {
-      bestDiff = diff;
-      best = r;
-    }
-  }
-  return best.id;
+  return data?.[0]?.id ? { kind: "one", id: data[0].id as string } : { kind: "none" };
 }

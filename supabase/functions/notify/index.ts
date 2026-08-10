@@ -263,6 +263,13 @@ const TYPES: Record<string, NotificationRule> = {
   // ── Founder: act now ──────────────────────────────────────────────────────
   ops_coach_unconfirmed: { who: "founder", answer: true,  mute: false,      defer: false },
   ops_coach_not_arrived: { who: "founder", answer: true,  mute: false,      defer: false },
+  // The withdrawal of the line above (migration 0079), sent when the arrival
+  // lands after the founders were told to chase — on 10 Aug that was seventy
+  // seconds after their phones buzzed, and nothing took it back. It has to
+  // travel exactly as the alarm did: a founder told on WhatsApp to call a coach
+  // now must learn on WhatsApp that they needn't, so `answer` matches the row
+  // above rather than being reasoned about separately.
+  ops_coach_arrived_late: { who: "founder", answer: true, mute: false,      defer: false },
   signup_request:        { who: "founder", answer: true,  mute: false,      defer: false, critical: true },
   // Same 07:00 exception as coach_day_ahead.
   founder_morning_brief: { who: "founder", answer: true,  mute: false,      defer: false },
@@ -769,11 +776,26 @@ async function sweepCoachConfirmNudge() {
 }
 
 /**
- * At start time (window [now-10min, now]) — if the coach hasn't marked arrival,
- * ask ONE thing: "Have you reached?" with I've arrived / Running late buttons.
- * Sent only once per (coach, session); arrival being marked by any surface
- * short-circuits it via the coach_arrived_at filter. Plain text fallback until
- * the template is provisioned.
+ * At start time — if the coach hasn't marked arrival, ask ONE thing: "Have you
+ * reached?" with I've arrived / Running late buttons. Sent only once per
+ * (coach, session); arrival being marked by any surface short-circuits it via
+ * the coach_arrived_at filter. Plain text fallback until the template is
+ * provisioned.
+ *
+ * The window is 70 minutes back, not 10, and it matches sweepFounderEscalations
+ * deliberately. Every other rung on this ladder is already built to survive a
+ * skipped tick — sweepBeforeClass sweeps a whole hour and says so — but this
+ * one swept [now-10min, now] while the escalation that punishes an unanswered
+ * arrival looks back across [now-70min, now-10min]. Any worker gap longer than
+ * ten minutes therefore dropped the QUESTION and still delivered the
+ * PUNISHMENT: the coach was never asked whether they had arrived, and the
+ * founders were told they hadn't answered.
+ *
+ * Matching the two windows closes it by construction, because this sweep runs
+ * before the escalation inside the same invocation (see the call order in the
+ * handler). After an outage the coach is always asked first, even if the
+ * founder alert follows moments later — which is correct, since the alert is
+ * about a real risk either way. It just may no longer claim they ignored us.
  */
 async function sweepArrivalCheck() {
   const now = Date.now();
@@ -786,7 +808,7 @@ async function sweepArrivalCheck() {
     .not("coach_id", "is", null)
     .is("coach_arrived_at", null)
     .lte("starts_at", new Date(now).toISOString())
-    .gt("starts_at", new Date(now - 10 * 60000).toISOString())
+    .gt("starts_at", new Date(now - 70 * 60000).toISOString())
     .limit(100);
 
   for (const s of await withValidCoaches(sessions ?? [])) {
@@ -899,19 +921,26 @@ async function escalateToFounders(
   s: { id: string; starts_at: string; coach_id: string; classes: unknown },
   body: (coachName: string, classTitle: string, when: string) => string
 ) {
-  const { data: done } = await supabase
-    .from("notifications")
-    .select("id")
-    .eq("type", type)
-    .eq("data->>session_id", s.id)
-    .limit(1);
-  if (done?.length) return;
-
+  // Once per (founder, session), not once per session. The old check asked
+  // whether ANYONE had been told and returned if so, which meant a founder
+  // added after an escalation fired never heard about that session again — and
+  // a session that went back to 'scheduled' could never escalate a second time.
+  // Deduping per recipient keeps the "fires once" promise each founder actually
+  // cares about while letting a new one catch up.
   const { data: founders } = await supabase
     .from("profiles")
     .select("id")
     .eq("role", "founder");
   if (!founders?.length) return;
+
+  const { data: already } = await supabase
+    .from("notifications")
+    .select("user_id")
+    .eq("type", type)
+    .eq("data->>session_id", s.id);
+  const told = new Set((already ?? []).map((n) => n.user_id));
+  const targets = founders.filter((f) => !told.has(f.id));
+  if (!targets.length) return;
 
   const { data: coach } = await supabase
     .from("profiles")
@@ -923,7 +952,7 @@ async function escalateToFounders(
   const text = body(coachName, titleOf(s.classes), when) + (coach?.phone ? ` (${coach.phone})` : "");
 
   await supabase.from("notifications").insert(
-    founders.map((f) => ({
+    targets.map((f) => ({
       user_id: f.id,
       type,
       title,

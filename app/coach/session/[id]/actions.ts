@@ -258,9 +258,26 @@ export async function markArrived(
     // Omitted rather than passed as null — the SQL argument defaults to NULL.
     p_distance_m: opts?.distanceM ?? undefined,
   });
-  if (error) return { ok: false, error: "Couldn't send. Try again." };
+  if (error) return { ok: false, error: arrivalError(error.message) };
   revalidatePath(`/coach/session/${sessionId}`);
   return { ok: true };
+}
+
+/**
+ * The guards migration 0079 put on coach_mark_arrival. "Try again" is the wrong
+ * thing to tell someone whose session was cancelled — it's not a transient
+ * failure and retrying cannot fix it.
+ *
+ * This screen gates itself to [start-60min, ends_at] already (SessionArrival),
+ * so a coach only reaches the window error via a page left open a long time —
+ * which is exactly when saying so is useful.
+ */
+function arrivalError(message: string): string {
+  if (message.includes("session_cancelled")) return "That session was cancelled.";
+  if (message.includes("outside_arrival_window")) {
+    return "The arrival window for this session has passed — refresh to see where things stand.";
+  }
+  return "Couldn't send. Try again.";
 }
 
 export async function undoArrival(sessionId: string): Promise<Result> {
@@ -299,7 +316,7 @@ export async function markRunningLate(sessionId: string): Promise<Result> {
     p_late: true,
     p_source: "tap",
   });
-  if (error) return { ok: false, error: "Couldn't send. Try again." };
+  if (error) return { ok: false, error: arrivalError(error.message) };
   // Reporting lateness now stamps coach_late_at and coach_confirmed_at
   // (migration 0071), so this screen has something to re-render — it didn't
   // before, which is why it was the one arrival action that never revalidated.

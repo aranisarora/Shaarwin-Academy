@@ -4079,6 +4079,7 @@ declare
   v_coach   uuid;
   v_starts  timestamptz;
   v_class   uuid;
+  v_status  session_status;
   v_name    text;
   v_location text;
   v_time    text;
@@ -4086,13 +4087,27 @@ declare
   v_title   text;
   v_body    text;
   v_arrived timestamptz;
+  v_won     boolean;
 begin
-  select coach_id, starts_at, class_id
-    into v_coach, v_starts, v_class
+  select coach_id, starts_at, class_id, status
+    into v_coach, v_starts, v_class, v_status
     from class_sessions where id = p_session;
 
   if v_coach is null or v_coach <> auth.uid() then
     raise exception 'not_your_session';
+  end if;
+
+  -- A cancelled class has no arrival to report (0079). Distinct from the window
+  -- error because the callers can say something useful about each.
+  if v_status = 'cancelled' then
+    raise exception 'session_cancelled';
+  end if;
+
+  -- Outside a plausible travel window this is a stale tap, not an arrival — a
+  -- push banner lives in the tray until dismissed, so yesterday's "Have you
+  -- reached?" is still tappable this morning (0079).
+  if now() < v_starts - interval '2 hours' or now() > v_starts + interval '2 hours' then
+    raise exception 'outside_arrival_window';
   end if;
 
   select split_part(coalesce(nullif(trim(full_name), ''), 'Your coach'), ' ', 1)
@@ -4108,12 +4123,16 @@ begin
     -- stops the founder escalation calling this coach silent, and stops the
     -- confirm ladder chasing someone who has already answered.
     -- coach_arrived_at is deliberately untouched: they are not there yet, and
-    -- the start+10 escalation still needs to fire if they never turn up. It
-    -- just has to say something true when it does.
+    -- the start+10 escalation still needs to fire if they never turn up.
+    --
+    -- `where coach_late_at is null` is the idempotence (0079): a second report
+    -- of the same lateness changes nothing and tells nobody.
     update class_sessions
-       set coach_late_at      = coalesce(coach_late_at, now()),
+       set coach_late_at      = now(),
            coach_confirmed_at = coalesce(coach_confirmed_at, now())
-     where id = p_session;
+     where id = p_session
+       and coach_late_at is null;
+    v_won := found;
     v_type  := 'coach_late';
     v_title := 'Coach running late';
     v_body  := 'Coach ' || v_name || ' is running a few minutes late for the '
@@ -4122,16 +4141,27 @@ begin
     -- Arrived implies coming: also stamp confirm + provenance so a coach who
     -- only ever taps "arrived" is never nagged or escalated as unconfirmed.
     update class_sessions
-       set coach_arrived_at        = coalesce(coach_arrived_at, now()),
+       set coach_arrived_at        = now(),
            coach_confirmed_at       = coalesce(coach_confirmed_at, now()),
-           coach_arrival_source     = coalesce(coach_arrival_source, p_source),
-           coach_arrival_distance_m = coalesce(coach_arrival_distance_m, p_distance_m)
+           coach_arrival_source     = p_source,
+           coach_arrival_distance_m = p_distance_m
      where id = p_session
+       and coach_arrived_at is null
      returning coach_arrived_at into v_arrived;
+    v_won := found;
     v_type  := 'coach_arrived';
     v_title := 'Coach has arrived';
     v_body  := 'Coach ' || v_name || ' is at ' || v_location
                || ' for the ' || v_time || ' session.';
+  end if;
+
+  -- Somebody else already recorded this. Report the state honestly and send
+  -- nothing — the first caller's messages are already on their way. This is
+  -- what stops the geofenced auto-arrival and the coach's own tap writing the
+  -- booked parents two identical messages (0079).
+  if not v_won then
+    select coach_arrived_at into v_arrived from class_sessions where id = p_session;
+    return v_arrived;
   end if;
 
   -- Booked clients (parents) are always told — arrived or late both matter to
@@ -4155,6 +4185,18 @@ begin
     select p.id, v_type, v_title, v_body,
            jsonb_build_object('session_id', p_session, 'url', '/admin/schedule')
       from profiles p where p.role = 'founder';
+  else
+    -- Close the loop on an escalation this arrival has just made untrue (0079).
+    -- Only the founders who were actually told, and only once — a second
+    -- arrival never wins the transition above, so it cannot reach here.
+    insert into notifications (user_id, type, title, body, data)
+    select n.user_id, 'ops_coach_arrived_late', 'Coach has now arrived',
+           'Coach ' || v_name || ' has arrived at ' || v_location
+             || ' for the ' || v_time || ' session — no need to chase.',
+           jsonb_build_object('session_id', p_session, 'url', '/admin/schedule')
+      from notifications n
+     where n.type = 'ops_coach_not_arrived'
+       and n.data->>'session_id' = p_session::text;
   end if;
 
   return v_arrived;
