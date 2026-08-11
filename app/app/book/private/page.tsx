@@ -37,7 +37,7 @@ async function Wizard({ searchParams }: { searchParams: SearchParams }) {
     supabase
       .from("venues")
       .select("id,name,unit,lat,lng")
-      .eq("active", true)
+      .eq("is_public", true)
       .eq("is_school", false),
   ]);
 

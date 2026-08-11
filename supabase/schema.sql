@@ -469,7 +469,13 @@ create table public.venues (
   notes text,
   photo_url text,
   address_details jsonb,
-  active boolean default true not null,
+  -- Offered to clients: listed on the public website AND pickable when booking
+  -- (0081, renamed from `active`). Both halves, which is why it is not called
+  -- `bookable`. False for the campuses — a school is not somewhere a member of
+  -- the public turns up. It is NOT a visibility flag for staff: coaches and
+  -- school accounts reach the venues that concern them through their own
+  -- policies (0079, 0080), which is the bug the old name caused.
+  is_public boolean default true not null,
   -- Said by the founder in the venue editor, never inferred from the classes
   -- that happen to run here (migration 0059). Drives the Schools tab, and keeps
   -- the campus out of every client-facing venue list.
@@ -5496,13 +5502,15 @@ CREATE POLICY "own subscriptions" ON public.subscriptions AS PERMISSIVE FOR SELE
 CREATE POLICY "founder all school admins" ON public.school_admins AS PERMISSIVE FOR ALL TO public USING (( SELECT is_founder() AS is_founder));
 CREATE POLICY "school reads own link" ON public.school_admins AS PERMISSIVE FOR SELECT TO public USING ((user_id = ( SELECT auth.uid() AS uid)));
 CREATE POLICY "founder writes venues" ON public.venues AS PERMISSIVE FOR ALL TO public USING (( SELECT is_founder() AS is_founder));
--- `active` is a booking flag, not a visibility one: it decides what a client can
--- book. The schools are all inactive for that reason, which is why the coach
--- policy below has to exist — without it PostgREST handed a coach a NULL venue
--- for every school session, taking the campus name and the geofence with it
--- (0079).
-CREATE POLICY "public reads active venues" ON public.venues AS PERMISSIVE FOR SELECT TO public USING (((active = true) OR ( SELECT is_founder() AS is_founder)));
+-- `is_public` says who a venue is *offered* to, not who may read it. The schools
+-- are not public, which is why the two policies below have to exist — without
+-- them PostgREST handed a coach a NULL venue for every school session, taking
+-- the campus name and the geofence with it (0079), and a school account could
+-- not read its own campus (0080). Renamed from `active` in 0081 precisely so
+-- the next person does not read this as "the row is live".
+CREATE POLICY "public reads public venues" ON public.venues AS PERMISSIVE FOR SELECT TO public USING (((is_public = true) OR ( SELECT is_founder() AS is_founder)));
 CREATE POLICY "coach reads rostered venues" ON public.venues AS PERMISSIVE FOR SELECT TO public USING (((( SELECT is_coach() AS is_coach)) AND coach_is_rostered_at(id)));
+CREATE POLICY "school reads own campus" ON public.venues AS PERMISSIVE FOR SELECT TO public USING ((id IN ( SELECT school_admin_venues() AS school_admin_venues)));
 -- There is no wa_* policy, and that absence is deliberate. The one that existed
 -- read wa_links, which 0074 dropped: profiles.phone is the binding now, and it
 -- is covered by the profiles policies. wa_messages and wa_inbound_seen keep RLS

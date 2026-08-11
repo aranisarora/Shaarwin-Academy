@@ -127,7 +127,7 @@ export const getVenues = unstable_cache(
     const { data } = await supabase
       .from("venues")
       .select("id,name,unit,address,postcode,lat,lng,photo_url")
-      .eq("active", true)
+      .eq("is_public", true)
       // A school campus is not a place a member of the public can turn up to.
       // This used to depend on the founder remembering to hide it by hand.
       .eq("is_school", false)

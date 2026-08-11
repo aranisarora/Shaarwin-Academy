@@ -154,7 +154,8 @@ export type Venue = {
   /** Which part of a complex this is ("Villas", "Apartments"). Null when the
    *  venue is the whole place. Always render via venueDisplayName. */
   unit: string | null;
-  active: boolean;
+  /** Offered to clients: listed on the website and pickable when booking (0081). */
+  is_public: boolean;
   address: string;
   postcode: string;
   lat: number;

@@ -107,7 +107,7 @@ describe("toolsForRole", () => {
       set_coach_active: "coach_ids",
       block_client: "client_ids",
       archive_client: "client_ids",
-      set_venue_active: "venue_ids",
+      set_venue_public: "venue_ids",
       notify: "user_ids",
     };
     const founder = toolsForRole("founder");

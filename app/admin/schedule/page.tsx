@@ -88,7 +88,7 @@ async function Schedule({ searchParams }: { searchParams: SearchParams }) {
       )
       .eq("class_type", "group")
       .order("title"),
-    supabase.from("venues").select("id,name,unit,active,address,postcode,lat,lng,address_details").order("name"),
+    supabase.from("venues").select("id,name,unit,is_public,address,postcode,lat,lng,address_details").order("name"),
     supabase
       .from("profiles")
       .select("id,full_name,players(id,full_name)")

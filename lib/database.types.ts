@@ -1829,11 +1829,11 @@ export type Database = {
       }
       venues: {
         Row: {
-          active: boolean
           address: string
           address_details: Json | null
           created_at: string
           id: string
+          is_public: boolean
           is_school: boolean
           lat: number
           lng: number
@@ -1844,11 +1844,11 @@ export type Database = {
           postcode: string
         }
         Insert: {
-          active?: boolean
           address: string
           address_details?: Json | null
           created_at?: string
           id?: string
+          is_public?: boolean
           is_school?: boolean
           lat: number
           lng: number
@@ -1859,11 +1859,11 @@ export type Database = {
           postcode: string
         }
         Update: {
-          active?: boolean
           address?: string
           address_details?: Json | null
           created_at?: string
           id?: string
+          is_public?: boolean
           is_school?: boolean
           lat?: number
           lng?: number
