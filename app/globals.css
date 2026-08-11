@@ -62,6 +62,23 @@
   --text-2: var(--slate);
   --line: var(--line-l);
 
+  /* A card's outcome wash, mixed once per mood rather than at the point of use.
+   *
+   * The same tint cannot serve both grounds: 9% of green over paper is a card
+   * you can read at arm's length, and 9% of the same green over ink is
+   * invisible — a dark surface needs roughly twice the pigment to move the same
+   * perceptual distance. The obvious way to say that is one rule with the
+   * percentage in a variable, and it does not work: Lightning CSS cannot parse
+   * a `var()` in `color-mix()`'s percentage slot, and rather than leaving the
+   * declaration alone it drops the mix entirely — `--card-bg: var(--ok)`, a
+   * fully saturated green card, silently, at build time only. So the percentage
+   * stays a literal and the whole mix is the token. Tuned by eye against
+   * `/styleguide`, which draws every state in both moods side by side. */
+  --card-ok-bg: color-mix(in srgb, var(--ok) 9%, var(--surface-2));
+  --card-ok-bg-hover: color-mix(in srgb, var(--ok) 15%, var(--surface-2));
+  --card-owed-bg: color-mix(in srgb, var(--err) 9%, var(--surface-2));
+  --card-owed-bg-hover: color-mix(in srgb, var(--err) 15%, var(--surface-2));
+
   /* The Studio shell's top bar, as a variable rather than a `top-14` copied into
    * every surface that has to sit under it. The admin week pager sticks here;
    * when the bar changes height it follows. */
@@ -78,6 +95,12 @@
   --priv: #b18ad4;
   --school: #58bcd1;
   --ok-ink: #6cc48d;
+  /* Twice the studio's, for the same reason as the three above: a tint that
+   * reads as a whisper on paper does not register at all on ink. */
+  --card-ok-bg: color-mix(in srgb, var(--ok) 18%, var(--surface-2));
+  --card-ok-bg-hover: color-mix(in srgb, var(--ok) 26%, var(--surface-2));
+  --card-owed-bg: color-mix(in srgb, var(--err) 18%, var(--surface-2));
+  --card-owed-bg-hover: color-mix(in srgb, var(--err) 26%, var(--surface-2));
   background: var(--surface);
   color: var(--text);
 }
@@ -88,6 +111,10 @@
   --text: var(--ink);
   --text-2: var(--slate);
   --line: var(--line-l);
+  --card-ok-bg: color-mix(in srgb, var(--ok) 9%, var(--surface-2));
+  --card-ok-bg-hover: color-mix(in srgb, var(--ok) 15%, var(--surface-2));
+  --card-owed-bg: color-mix(in srgb, var(--err) 9%, var(--surface-2));
+  --card-owed-bg-hover: color-mix(in srgb, var(--err) 15%, var(--surface-2));
   background: var(--surface);
   color: var(--text);
 }
@@ -474,6 +501,47 @@ body {
   --card-bg: color-mix(in srgb, var(--ember) 12%, var(--surface-2));
 }
 
+/* Did this class go right? — the outcome wash.
+ *
+ * The schedule's job on a phone is triage, and triage wants ONE pre-attentive
+ * channel that answers "is this card my problem?" before any word on it is
+ * read. The chips answer it precisely but you have to read them; the border
+ * cannot answer it at all without fighting the plum/teal kind rail for the same
+ * edge. A wash is the only channel left that is whole-card, cheap at arm's
+ * length, and not already spoken for.
+ *
+ * Deliberately faint — see `--card-ok-bg` at the top of the file, which is
+ * mixed per mood because the strength that reads as a whisper on paper is
+ * invisible on ink. This runs on EVERY session in the week, not on an
+ * exception, so it has to survive being the background of the screen rather
+ * than an alarm on it. Loud enough and the week becomes a barcode; this sits
+ * just above "did the light change?".
+ *
+ * The ink is not touched. Both washes have to work under the grey text of a
+ * finished card and under full-strength text on an upcoming one, and both have
+ * to leave the ✓/✗ chips legible on top — which is why the colour goes into the
+ * surface and nothing else. Green is not a synonym for "over": a class that
+ * has not happened yet and has a coach on it is fine, and says so.
+ *
+ * `--card-bg` has exactly one winner and JS picks it (see `stateTone` in
+ * ClassCard.tsx), so these never race `.card-live` or `.card-picked` on source
+ * order the way the border colours used to. */
+.card-ok {
+  --card-bg: var(--card-ok-bg);
+}
+
+.card-ok.card-hover:hover {
+  --card-bg: var(--card-ok-bg-hover);
+}
+
+.card-owed {
+  --card-bg: var(--card-owed-bg);
+}
+
+.card-owed.card-hover:hover {
+  --card-bg: var(--card-owed-bg-hover);
+}
+
 /* Live, right now — the surface, not the edge.
  *
  * This used to be an ember border AND an outset ember ring, which stacked two
@@ -511,13 +579,16 @@ body {
  * striped in two colours of panel, and the founder was reading the stripes
  * before he read a single word on any card.
  *
- * So the card stays a card. It keeps the same surface as every other row, and
- * only its INK goes quiet: the title drops from primary to secondary text, the
- * secondary lines were already there, and the edge softens. Nothing is
- * multiplied, so anything that sets its own colour keeps it at full strength —
- * which is exactly what makes this work. The red chips on a class that never
- * got closed out are then the only saturated thing left in a grey day, and they
- * are what he is scanning for.
+ * So the card stays a card, and only its INK goes quiet: the title drops from
+ * primary to secondary text, the secondary lines were already there, and the
+ * edge softens. Nothing is multiplied, so anything that sets its own colour
+ * keeps it at full strength — which is exactly what makes this work. The red
+ * chips on a class that never got closed out are the only saturated thing left
+ * in a grey day, and they are what he is scanning for.
+ *
+ * Note this touches NO surface at all, which is what lets it compose with the
+ * outcome wash above: "over" and "went wrong" are two independent facts, and a
+ * finished class that owes a register has to be able to say both at once.
  *
  * The kind rail stays at full strength for the same reason it always did: a
  * finished private is still a private. Identity does not expire, and muting it
