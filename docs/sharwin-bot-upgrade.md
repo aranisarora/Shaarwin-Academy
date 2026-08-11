@@ -1,10 +1,88 @@
 # Sharwin bot upgrade — day-to-day, on Meta Cloud API
 
-> **Status:** scoped, pre-build. Branched from `docs/academy-manager-vision.md` — this doc takes the vision's day-to-day ideas and applies them to the **live Sharwin bot**. It is Sharwin-specific and deliberately narrow.
+> **Status:** §3 and §2 built, §4.2 built, §4.1 and §5 not started. See the execution log directly below before continuing — two of the plan's assumptions were wrong, and a live bug turned up that nothing in the plan predicted.
 >
 > **Workflow:** built on the `sharwin-bot-upgrade` branch. No PR — the branch is the workspace.
 >
 > **Hard scope lines:** no onboarding of any kind (every family is already onboarded), **no money changes** (Razorpay memberships and private minutes stay exactly as they are), no app changes (the app stays frozen), no platform concerns (tenancy, fleet, recipes — that's the other project).
+
+---
+
+## 0. Execution log — read this first
+
+**2026-08-12.** Commits `ca2b1b1` (brain), `1915f5b` (bursts), `3b64406` (transport +
+delivery). Nothing was applied to production: migrations `0085`–`0087` exist as files
+only, and no edge function was deployed. Verified locally against Docker Supabase —
+`npm run db:reset` clean, `npm run test:db` 234 green, `npm test` 442 green,
+`npm run build` clean.
+
+### What shipped
+
+| Plan | State | Notes |
+| --- | --- | --- |
+| §3.1 resolver | **done** | New `resolve` tool: one ranked, typed lookup across players, accounts, coaches, classes, venues. Tokenised, so "abhay" and "gupta abhay" both reach Abhay Gupta. |
+| §3.2 working memory | **done** | `wa_entity_memory` (0085), harvested from tool *results* and injected each turn. |
+| §3.3 joins | **done** | `player_name` on sessions/bookings/both series tables and on `clients`. Filters get their own role list. |
+| §3.4 bursts | **done** | Claim row is the queue; `wa_chat_locks` (0086) serialises; writes yield to unread input. |
+| §2 transport | **built, dormant** | `transport.ts` seam + `cloud-api.ts`. `WHATSAPP_TRANSPORT` defaults to twilio. |
+| §4.2 delivery proof | **built, half-fed** | `wa_delivery` (0087), monotonic. Digest line + worker wiring still to do. |
+| §4.1 feedback after class | **not started** | Needs the notify worker, which is a separate Deno deploy. |
+| §5 founder menus | **not started** | Depends on Cloud API list pickers being live. |
+
+### Where the plan was wrong
+
+1. **§3.3 overstated the work.** `find` already traversed relationships — the registry
+   has had embeds and `!inner` promotion all along. The real gap was that no filter let
+   you *start* from a name: answering "what did Aarav have today" meant looking the
+   player up, carrying the id across, and querying again, and the middle step is exactly
+   where the bot guessed the wrong table. Four filters fixed it, not a new engine.
+
+2. **§3.2 named lint as the cause; it is only half.** Lint stripping uuids is one rule.
+   The other is that `loadHistory` rebuilds the model's whole context from the *stored
+   text* and tool calls are never persisted. Either rule alone is harmless. The fix
+   changes neither — it moves the referents somewhere lint does not reach.
+
+3. **A live bug the plan never mentions.** Migration `0081` renamed `venues.active` to
+   `is_public`, and the `find` registry kept the old name — in the venues entity *and* in
+   the venue embed that `classes` pulls in **by default**. So `find` on venues and on
+   classes was failing outright, for every staff role, with a PostgREST error. Fixed. The
+   same stale rename had also been breaking `npm run db:reset` since 0081, which is why
+   nobody had caught it: the harness that would have failed loudly could not start.
+
+### Deliberate omissions, with reasons
+
+- **`deliveries.notification_id` is a column but not a filter.** Only the notify worker
+  can populate it and that worker has not shipped this change. A filter over an
+  always-null column answers "none" to every question — the exact failure mode this
+  registry keeps being repaired for.
+- **No `coach_name` filter on sessions.** `profiles` is owner-scoped, so
+  `coaches!inner(profiles!inner(full_name))` resolves to null for a coach or client and
+  the `!inner` then drops *every* row. Filters that read through an owner-scoped table
+  now carry their own `roles` list rather than silently answering nothing.
+- **`isReadOnlyTool` defaults unknown tools to WRITE.** There are 68 and more each
+  month. Mistaking a write for a read cancels a session someone just retracted;
+  mistaking a read for a write costs one indexed query.
+
+### Still founder-manual — none of it blocks the build
+
+1. **Apply `0085`, `0086`, `0087`** to production by executing the SQL directly (Studio
+   or a `pg` script — `supabase db push` is a no-op here by design). Until then the bot
+   runs exactly as before: memory, coalescing and delivery all degrade to the old
+   behaviour rather than erroring.
+2. **Cloud API go-live**, in this order and not before: create the test WABA, re-create
+   and get the templates approved, set `WHATSAPP_CLOUD_TOKEN`,
+   `WHATSAPP_CLOUD_PHONE_NUMBER_ID`, `WHATSAPP_CLOUD_APP_SECRET`,
+   `WHATSAPP_CLOUD_VERIFY_TOKEN`, point the test number's webhook at
+   `/api/whatsapp`, and only then set `WHATSAPP_TRANSPORT=cloud`. Twilio stays warm.
+3. **`supabase functions deploy notify`** whenever the worker is next touched — it has
+   no autodeploy and has silently drifted twice.
+
+### Next, in order
+
+1. Feed `wa_delivery` from the notify worker (`data.twilio_sid` is already recorded per
+   send) and add the digest line — `deliveryLine()` is written and tested, unused.
+2. §4.1 feedback after class.
+3. §5 founder menus, once Cloud API list pickers are live.
 
 ---
 
