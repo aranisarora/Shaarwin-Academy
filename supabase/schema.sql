@@ -504,6 +504,27 @@ create table public.wa_inbound_seen (
   created_at timestamptz default now() not null
 );
 
+-- The assistant's working memory (0085). Everything it carries between turns
+-- used to live in the visible transcript above — and lintReply rewrites every
+-- uuid there to "that one" before it is stored, because a founder must never be
+-- shown one. The two rules compose into amnesia: an id resolved in one turn is
+-- gone by the next, so "she" and "cancel it" get re-guessed from prose. This is
+-- where the referents live instead.
+create table public.wa_entity_memory (
+  phone text not null,
+  -- player | client | coach | class | session | venue | booking. Text, not an
+  -- enum: the harvester learns kinds as tools are added, and a new one must
+  -- never fail an INSERT whose only job is to remember something.
+  kind text not null,
+  entity_id uuid not null,
+  label text not null,
+  detail text,
+  -- Bumped on every re-mention, so recency is by USE, not by first sight.
+  last_seen_at timestamptz default now() not null,
+  mentions integer default 1 not null,
+  created_at timestamptz default now() not null
+);
+
 create table public.webhook_events (
   id uuid default gen_random_uuid() not null,
   stripe_event_id text,
@@ -625,6 +646,7 @@ ALTER TABLE public.wa_messages ADD CONSTRAINT wa_messages_pkey PRIMARY KEY (id);
 ALTER TABLE public.wa_messages ADD CONSTRAINT wa_messages_seq_key UNIQUE (seq);
 ALTER TABLE public.wa_messages ADD CONSTRAINT wa_messages_role_check CHECK ((role = ANY (ARRAY['user'::text, 'assistant'::text])));
 ALTER TABLE public.wa_inbound_seen ADD CONSTRAINT wa_inbound_seen_pkey PRIMARY KEY (message_sid);
+ALTER TABLE public.wa_entity_memory ADD CONSTRAINT wa_entity_memory_pkey PRIMARY KEY (phone, kind, entity_id);
 ALTER TABLE public.webhook_events ADD CONSTRAINT webhook_events_event_id_key UNIQUE (event_id);
 ALTER TABLE public.webhook_events ADD CONSTRAINT webhook_events_stripe_event_id_key UNIQUE (stripe_event_id);
 ALTER TABLE public.webhook_events ADD CONSTRAINT webhook_events_pkey PRIMARY KEY (id);
@@ -660,6 +682,7 @@ CREATE UNIQUE INDEX profiles_phone_key ON public.profiles USING btree (phone) WH
 CREATE INDEX wa_messages_phone_idx ON public.wa_messages USING btree (phone, created_at DESC);
 CREATE INDEX wa_messages_phone_seq_idx ON public.wa_messages USING btree (phone, seq DESC);
 CREATE INDEX wa_inbound_seen_created_at_idx ON public.wa_inbound_seen USING btree (created_at);
+CREATE INDEX wa_entity_memory_phone_seen_idx ON public.wa_entity_memory USING btree (phone, last_seen_at DESC);
 CREATE INDEX bookings_player_id_idx ON public.bookings USING btree (player_id);
 CREATE INDEX notifications_user_id_idx ON public.notifications USING btree (user_id);
 CREATE INDEX notifications_failed_idx ON public.notifications USING btree (created_at DESC) WHERE (status = 'failed'::notification_status);
@@ -5393,6 +5416,17 @@ as $$
   delete from public.wa_inbound_seen where created_at < now() - interval '1 day';
 $$;
 
+-- A chat quiet for a month has no referents worth keeping, and an id that stale
+-- is likelier to be wrong than useful.
+create or replace function public.prune_wa_entity_memory()
+returns void
+language sql
+security definer
+set search_path = public
+as $$
+  delete from public.wa_entity_memory where last_seen_at < now() - interval '30 days';
+$$;
+
 -- Every write to a push_subscriptions row comes from a browser that is open
 -- right now, so "when was this row last written" and "when was this device last
 -- alive" are the same fact. Stamped here rather than by each caller, so a
@@ -5473,6 +5507,7 @@ alter table public.subscriptions enable row level security;
 alter table public.venues enable row level security;
 alter table public.wa_messages enable row level security;
 alter table public.wa_inbound_seen enable row level security;
+alter table public.wa_entity_memory enable row level security;
 alter table public.webhook_events enable row level security;
 
 -- ── Policies ─────────────────────────────────────────────────────────────────
@@ -5553,9 +5588,10 @@ CREATE POLICY "coach reads rostered venues" ON public.venues AS PERMISSIVE FOR S
 CREATE POLICY "school reads own campus" ON public.venues AS PERMISSIVE FOR SELECT TO public USING ((id IN ( SELECT school_admin_venues() AS school_admin_venues)));
 -- There is no wa_* policy, and that absence is deliberate. The one that existed
 -- read wa_links, which 0074 dropped: profiles.phone is the binding now, and it
--- is covered by the profiles policies. wa_messages and wa_inbound_seen keep RLS
--- on with no policy at all — service-role only, so the chat transcript stays
--- out of the chat's own reach.
+-- is covered by the profiles policies. wa_messages, wa_inbound_seen and
+-- wa_entity_memory keep RLS on with no policy at all — service-role only, so
+-- the chat transcript and the ids the assistant resolved from it stay out of
+-- the chat's own reach.
 CREATE POLICY "founder reads webhook events" ON public.webhook_events AS PERMISSIVE FOR SELECT TO public USING (( SELECT is_founder() AS is_founder));
 CREATE POLICY "staff reads categories" ON public.skill_categories AS PERMISSIVE FOR SELECT TO public USING ((( SELECT is_coach() AS is_coach) OR ( SELECT is_founder() AS is_founder)));
 CREATE POLICY "founder manages categories" ON public.skill_categories AS PERMISSIVE FOR ALL TO public USING (( SELECT is_founder() AS is_founder)) WITH CHECK (( SELECT is_founder() AS is_founder));

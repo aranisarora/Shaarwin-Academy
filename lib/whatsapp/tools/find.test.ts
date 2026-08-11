@@ -3,7 +3,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/database.types";
 import type { Profile } from "@/lib/auth";
 import { findTool } from "./find";
-import { ENTITIES, type FilterDef, type Role } from "./find-registry";
+import { ENTITIES, filterAllowed, type FilterDef, type Role } from "./find-registry";
 import type { Operator } from "./query-core";
 import type { ToolContext } from "./types";
 
@@ -264,11 +264,17 @@ describe("find — the column allow-list", () => {
         const { calls } = await run(role, {
           entity,
           include: Object.keys(def.includes),
-          where: Object.entries(def.filters).map(([field, f]) => ({
-            field,
-            op: f.ops?.[0] ?? "eq",
-            value: sampleValue(f),
-          })),
+          // Only the filters this role may use. A filter that traverses an
+          // owner-scoped table is gated to the roles that can read through it,
+          // and asking for one you can't have is refused outright — which would
+          // abort a sweep that is really about the SELECT.
+          where: Object.entries(def.filters)
+            .filter(([, f]) => filterAllowed(f, role))
+            .map(([field, f]) => ({
+              field,
+              op: f.ops?.[0] ?? "eq",
+              value: sampleValue(f),
+            })),
         });
         expect(calls.length, `${entity} as ${role} was rejected`).toBeGreaterThan(0);
         const select = calls[0].select;
@@ -472,18 +478,99 @@ describe("find — normalizing the value before it queries", () => {
     expect(calls).toHaveLength(0);
   });
 
-  it("matches loose text loosely when no op was given, and obeys one that was", async () => {
+  it("matches loose text loosely when no op was given", async () => {
     const implied = await run("founder", {
       entity: "sessions",
       where: [{ field: "venue", value: "plaza" }],
     });
     expect(implied.calls[0].ops).toContain('ilike("classes.venues.name","%plaza%")');
+  });
 
-    const explicit = await run("founder", {
-      entity: "plans",
-      where: [{ field: "name", op: "eq", value: "Group — 1x/week" }],
+  /**
+   * 11 August: "Abhay" came back empty while "Abhay Gupta" was on the books.
+   * The loose DEFAULT was already shipped, so the only thing that explains the
+   * split is the model passing op:"eq" itself — and an explicit op beat the
+   * default. A loose field now coerces eq to ilike: nothing is lost, because an
+   * exact match is a strict subset of %exact%, and the partial name a person
+   * actually types starts working.
+   */
+  it("coerces an explicit eq to a loose match on a loose field", async () => {
+    const { calls } = await run("founder", {
+      entity: "clients",
+      where: [{ field: "full_name", op: "eq", value: "Abhay" }],
     });
-    expect(explicit.calls[0].ops).toContain('eq("name","Group — 1x/week")');
+    expect(calls[0].ops).toContain('ilike("full_name","%Abhay%")');
+    expect(calls[0].ops.join(" ")).not.toContain('eq("full_name"');
+  });
+
+  it("leaves eq alone on a field that is not loose", async () => {
+    const { calls } = await run("founder", {
+      entity: "sessions",
+      where: [{ field: "status", op: "eq", value: "scheduled" }],
+    });
+    expect(calls[0].ops).toContain('eq("status","scheduled")');
+  });
+});
+
+/**
+ * The multi-hop questions. Each of these used to be a chain — look the name up
+ * in one entity, carry the id across, query the next — and the middle step is
+ * where the bot guessed the wrong table and answered "I can't find a client
+ * named Aarav" about a child.
+ */
+describe("find — resolving a name in one hop", () => {
+  it("finds a player's sessions by the player's name", async () => {
+    const { out, calls } = await run("founder", {
+      entity: "sessions",
+      where: [{ field: "player_name", value: "Aarav" }],
+    });
+    expect(out.ok).toBe(true);
+    expect(calls[0].ops).toContain('ilike("bookings.players.full_name","%Aarav%")');
+    // Without !inner the embed filters the embedded rows and leaves every
+    // parent session in place — the filter would read as applied and not be.
+    expect(calls[0].select).toContain("bookings!inner");
+    expect(calls[0].select).toContain("players!inner");
+  });
+
+  it("finds a player's bookings by the player's name", async () => {
+    const { out, calls } = await run("founder", {
+      entity: "bookings",
+      where: [{ field: "player_name", value: "Myrah" }],
+    });
+    expect(out.ok).toBe(true);
+    expect(calls[0].ops).toContain('ilike("players.full_name","%Myrah%")');
+    expect(calls[0].select).toContain("players!inner");
+  });
+
+  it("finds the account a child belongs to", async () => {
+    const { out, calls } = await run("founder", {
+      entity: "clients",
+      where: [{ field: "player_name", value: "Aarav" }],
+    });
+    expect(out.ok).toBe(true);
+    expect(calls[0].ops).toContain('ilike("players.full_name","%Aarav%")');
+  });
+
+  /**
+   * The gate that makes these safe to add at all. `profiles` is owner-scoped,
+   * so `profiles!inner(full_name)` is null for a coach and the !inner drops
+   * every booking on their own roster — "none" to a question with an answer.
+   */
+  it("refuses a filter that reads through a table the role can't see", async () => {
+    const { out, calls } = await run("coach", {
+      entity: "bookings",
+      where: [{ field: "client_name", value: "Meera" }],
+    });
+    expect(out.ok).toBe(false);
+    expect(out.error).toContain("isn't available to you");
+    expect(calls).toHaveLength(0);
+  });
+
+  it("does not advertise a gated filter to the role that can't use it", () => {
+    const coachTool = findTool("coach");
+    const founderTool = findTool("founder");
+    expect(founderTool.description).toContain("client_name");
+    expect(coachTool.description).not.toContain("client_name");
   });
 });
 

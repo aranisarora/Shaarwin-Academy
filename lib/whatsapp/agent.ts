@@ -10,6 +10,7 @@ import { appBaseUrl } from "@/lib/app-url";
 import { getVertexToken, vertexUrl } from "@/lib/vertex";
 import { toolsForRole, type ToolContext, type WaTool } from "./tools";
 import { lintReply, usedMessagingTool } from "./lint";
+import { harvest, harvestResolved, recall, remember, renderMemory, type Remembered } from "./memory";
 
 const MAX_TOOL_ROUNDS = 12;
 const HISTORY_MESSAGES = 24;
@@ -76,6 +77,14 @@ ${role === "guest" ? "" : `- LOOKING THINGS UP: \`find\` answers questions no sp
 - You cannot see inside the system. You don't know why a lookup missed, whether someone's phone is on, or what any background job is doing. NEVER explain a failure by guessing at a mechanism — no "a slight delay", no "the format may be sensitive". Say what you looked for and what came back.
 - If you got something wrong, say what was actually true, in one line. Don't quietly contradict what you said a turn ago, and don't apologise at length.
 
+NAMES: RESOLVE, NEVER GUESS.
+- A name is not a table. "Aarav" can be a child, a parent, a coach, a class or a venue, and you cannot tell which by looking at it.${role === "guest" ? "" : " So when a name comes up and you don't already hold its id, call `resolve` — it searches every kind at once and tells you what the word actually is."}
+- REPORTING THE FAILURE OF A GUESS IS BANNED. "I can't find a client named Aarav" — said about a boy who trains twice a week — is not an answer, it is you announcing that you looked in one place. If a name resolves to anything at all, either answer the question that was asked or ask which one they meant.
+- Two matches is a question, not a dead end: name them by what tells them apart ("Aarav — Meera's child" / "Aarav — the Saturday Advanced group") and let them pick.
+- Only when NOTHING of any kind matches do you say so — and then say you searched people, classes and venues, and ask for a spelling.
+
+REFERRING BACK. A "Working memory" block on the latest message lists what has already been identified in this conversation, with the ids. When someone says "her", "that one", "the same class" or "cancel it", take the referent from there — don't re-run the lookup and don't ask them to repeat a name they already gave you. Those ids are for your tool calls only; never put one in a message.
+
 NOTHING FOUND IS NOT THE SAME AS DOESN'T EXIST — three different answers, never collapsed into one:
 - An empty result means nothing matched THE LOOKUP YOU RAN. Say what you searched ("no client with that number") and offer another way in — a name, a wider date range, a different spelling.
 - If something is out of your reach, say you can't see it, not that there is none. "I can't read other people's notes" is honest; "there are no notes" is a claim you have no way to check.
@@ -99,12 +108,16 @@ Guardrails:
  * cacheable prefix (staticSystem + tools) stays byte-identical across messages
  * and across users of the same role.
  */
-function dynamicContext(profile: Profile | null): string {
+function dynamicContext(profile: Profile | null, memory: readonly Remembered[] = []): string {
   const now = formatFullDateTime(new Date());
   const who = profile
     ? ` You are talking to ${profile.full_name?.trim() || "a new member whose name isn't saved yet"}.`
     : "";
-  return `(Context — right now it is ${now} IST.${who})`;
+  // The working-memory block rides here, on the user's turn, for the same
+  // reason the clock does: it changes every message, and putting it in the
+  // system instruction would break the cacheable prefix for every user.
+  const block = renderMemory(memory);
+  return `(Context — right now it is ${now} IST.${who})${block ? `\n${block}` : ""}`;
 }
 
 /** Gemini rejects OBJECT schemas with empty properties — omit parameters then. */
@@ -288,7 +301,14 @@ export async function runAgent(opts: {
   const system = staticSystem(role);
   const cfg = modelConfigFor(role);
 
-  const history = await loadHistory(admin, phone);
+  // History is the visible transcript; memory is the referents behind it. Both
+  // are needed, and only together: the transcript says what was discussed, and
+  // the memory says which rows it was about — the half lint has to strip out of
+  // anything a person can see.
+  const [history, memory] = await Promise.all([
+    loadHistory(admin, phone),
+    recall(admin, phone),
+  ]);
   const messages: ApiMessage[] = [...history];
   // The clock and who-you're-talking-to ride on the user's turn (tail of the
   // conversation), never in the system instruction — see staticSystem. Only the
@@ -301,7 +321,7 @@ export async function runAgent(opts: {
   // — "create a group class …\nHi!" — and got executed again with a fresh
   // clock. loadHistory now guarantees no trailing user turn, and this pushes
   // unconditionally so the two can never be welded together again.
-  const contextualText = `${dynamicContext(profile)}\n${userText}`;
+  const contextualText = `${dynamicContext(profile, memory)}\n${userText}`;
   messages.push({ role: "user", parts: [{ text: contextualText }] });
 
   // Kept across rounds, never overwritten with nothing. This used to be a plain
@@ -314,6 +334,8 @@ export async function runAgent(opts: {
   /** Every tool called this turn — the linter needs to know whether a
    *  messaging tool ran before it polices "sent"/"notified" language. */
   const usedTools: string[] = [];
+  /** Entities this turn resolved, on their way to wa_entity_memory. */
+  const resolved: Remembered[] = [];
   for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
     rounds = round + 1;
     const parts = await callGemini(system, messages, tools, cfg);
@@ -349,6 +371,18 @@ export async function runAgent(opts: {
         response = JSON.parse(output.slice(0, 30000)) as Record<string, unknown>;
       } catch {
         response = { output: output.slice(0, 30000) };
+      }
+      // Harvest BEFORE the result is handed to the model, from the structured
+      // JSON rather than the prose written about it. This is the only place in
+      // the turn where ids and the names that go with them exist side by side —
+      // by the time it reaches the reply, lint has already taken the ids out.
+      try {
+        const found =
+          call.functionCall.name === "resolve" ? harvestResolved(response) : harvest(response);
+        resolved.push(...found);
+      } catch (err) {
+        // A memory that can't be taken is not a reason to lose a reply.
+        console.warn("wa: entity harvest failed", call.functionCall.name, err);
       }
       results.push({ functionResponse: { name: call.functionCall.name, response } });
     }
@@ -399,6 +433,9 @@ export async function runAgent(opts: {
     { phone, role: "user", content: userText.slice(0, 4000) },
     { phone, role: "assistant", content: reply.slice(0, 4000) },
   ]);
+  // After the transcript, and never in front of it: the reply is what the person
+  // is waiting for, and remembering is bookkeeping for the next turn.
+  await remember(admin, phone, resolved);
 
   return reply;
 }

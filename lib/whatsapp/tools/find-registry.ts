@@ -77,6 +77,19 @@ export type FilterDef = {
    * name typed with the wrong capitalisation or a stray space found nothing.
    */
   loose?: boolean;
+  /**
+   * Narrower than the entity's own role list, for filters that traverse an
+   * OWNER-SCOPED table. `profiles` is readable only by its owner, so a filter
+   * spelled `profiles!inner(full_name)` resolves to null for anyone else — and
+   * an !inner embed that resolves to null drops every parent row. The filter
+   * then reports "nothing matched" for a question that has a real answer, which
+   * is the exact failure the `no_match_for` machinery exists to prevent. Gating
+   * the filter to the roles that can actually read through it turns a silent
+   * wrong answer into an honest "that field isn't available to you".
+   *
+   * Defaults to the entity's roles when omitted.
+   */
+  roles?: readonly Role[];
 } & Normalizable;
 
 /**
@@ -234,6 +247,27 @@ export const ENTITIES: Record<string, EntityDef> = {
         requires: "classes!inner(title,is_school)",
         description: "true for school-programme classes",
       },
+      // The two-hop filters. "What did Aarav have today" is player → bookings →
+      // sessions, and without these it was three calls with a name-to-id guess
+      // in the middle — the chain that answered "I can't find a client named
+      // Aarav" on 11 August, because the middle step guessed the wrong table.
+      player_name: {
+        path: "bookings.players.full_name",
+        requires: "bookings!inner(id,status,player_id,players!inner(id,full_name))",
+        description:
+          "Sessions a player is booked into, BY NAME — matched loosely. One call instead of looking the player up first.",
+        loose: true,
+      },
+      player_id: {
+        path: "bookings.player_id",
+        requires: "bookings!inner(id,status,player_id)",
+        description: "Sessions this player is booked into",
+      },
+      // NB there is deliberately no coach_name here. `profiles` is owner-scoped,
+      // so `coaches!inner(profiles!inner(full_name))` resolves to null for a
+      // coach or a client and the !inner then drops EVERY row — a filter that
+      // answers "none" to a question with a real answer. Look the coach up in
+      // the `coaches` entity (which has full_name) and filter by coach_id.
     },
     order: { path: "starts_at", ascending: true },
     groupable: [
@@ -260,7 +294,7 @@ export const ENTITIES: Record<string, EntityDef> = {
     columns:
       "id,class_type,is_school,title,description,skill_level,capacity,duration_minutes,venue_id,recurrence_rule,starts_on,ends_on,active,location_label",
     includes: {
-      venue: "venues(id,name,unit,address,postcode,active)",
+      venue: "venues(id,name,unit,address,postcode,is_public)",
       sessions: "class_sessions(id,starts_at,status,coach_id)",
     },
     defaultIncludes: ["venue"],
@@ -350,6 +384,31 @@ export const ENTITIES: Record<string, EntityDef> = {
         ops: DATE_OPS,
         ...FROM_IST,
       },
+      // The hop that ends the name-to-id guessing game: ask for a child's
+      // bookings by the child's name, in one call. "What classes did Aarav have
+      // today" is player_name + from + to, and no step of it has to decide
+      // whether Aarav is a player or an account holder.
+      player_name: {
+        path: "players.full_name",
+        requires: "players!inner(id,full_name)",
+        description: "Player name, matched loosely — no need to look the player up first",
+        loose: true,
+      },
+      client_name: {
+        path: "profiles.full_name",
+        requires: "profiles!inner(id,full_name)",
+        description: "Account holder's name, matched loosely",
+        loose: true,
+        // profiles is owner-scoped: for a coach this embed is null and !inner
+        // would drop every booking on their own roster.
+        roles: FOUNDER,
+      },
+      venue: {
+        path: "class_sessions.classes.venues.name",
+        requires: "class_sessions!inner(id,classes!inner(title,venues!inner(id,name)))",
+        description: "Venue of the booked session, matched loosely",
+        loose: true,
+      },
     },
     order: { path: "booked_at", ascending: false },
     groupable: [
@@ -401,6 +460,12 @@ export const ENTITIES: Record<string, EntityDef> = {
         path: "classes.venues.name",
         requires: "classes!inner(title,venues!inner(id,name))",
         description: "Venue name, matched loosely",
+        loose: true,
+      },
+      player_name: {
+        path: "players.full_name",
+        requires: "players!inner(id,full_name)",
+        description: "Player name, matched loosely — 'is Myrah still enrolled' in one call",
         loose: true,
       },
       created_at: {
@@ -455,6 +520,12 @@ export const ENTITIES: Record<string, EntityDef> = {
       },
       start_time: { path: "start_time", description: "HH:MM:SS, IST" },
       venue_id: { path: "venue_id", description: "Venue id, when the slot is at a venue" },
+      player_name: {
+        path: "players.full_name",
+        requires: "players!inner(id,full_name)",
+        description: "Player name, matched loosely",
+        loose: true,
+      },
       created_at: {
         path: "created_at",
         description: "When the series was set up",
@@ -522,6 +593,15 @@ export const ENTITIES: Record<string, EntityDef> = {
         values: ["client", "coach", "founder", "school"],
       },
       full_name: { path: "full_name", description: "Name, matched loosely", loose: true },
+      // "Which client is Aarav?" when Aarav is a child, not an account holder —
+      // the question that came back as "I can't find a client named Aarav".
+      player_name: {
+        path: "players.full_name",
+        requires: "players!inner(id,full_name)",
+        description:
+          "The account a PLAYER of this name belongs to, matched loosely — use when a name might be a child rather than the account holder",
+        loose: true,
+      },
       email: { path: "email", description: "Email, matched loosely", loose: true },
       phone: { path: "phone", description: "Phone number, however it was written", ...PHONE },
       has_phone: {
@@ -559,7 +639,7 @@ export const ENTITIES: Record<string, EntityDef> = {
     // base_address / base_lat / base_lng withheld — a coach's home address.
     columns: "id,bio,quote,credentials,photo_url,active,max_teachable_level,created_at",
     includes: {
-      profile: "profiles(id,full_name,phone)",
+      profile: "profiles(id,full_name,phone)",
       sessions: "class_sessions(id,starts_at,status)",
     },
     defaultIncludes: ["profile"],
@@ -592,18 +672,27 @@ export const ENTITIES: Record<string, EntityDef> = {
     // straight past that; the venue they actually need rides on their session.
     roles: STAFF,
     // notes withheld — free text, and the table is readable by anon.
-    columns: "id,name,unit,address,postcode,lat,lng,active,is_school,created_at",
+    columns: "id,name,unit,address,postcode,lat,lng,is_public,is_school,created_at",
     includes: { classes: "classes(id,title,active,class_type)" },
     defaultIncludes: [],
     filters: {
       id: { path: "id", description: "Venue id", ops: ["eq", "in", "not_in"] },
       name: { path: "name", description: "Venue name, matched loosely", loose: true },
-      active: { path: "active", description: "true for venues in use" },
+      // Migration 0081 renamed this column `active` → `is_public`, and both the
+      // filter and the select list above kept the old name — so every `find`
+      // on venues, and every `find` on classes (which embeds the venue by
+      // DEFAULT), was failing outright with "column venues.active does not
+      // exist". Two of the most-asked entities answered nothing at all.
+      is_public: {
+        path: "is_public",
+        description:
+          "true for venues offered to clients (listed publicly and pickable when booking). School campuses are false — they are in use, just not public.",
+      },
       is_school: { path: "is_school", description: "true for school sites" },
       postcode: { path: "postcode", description: "Postcode", loose: true },
     },
     order: { path: "name", ascending: true },
-    groupable: ["active", "is_school"],
+    groupable: ["is_public", "is_school"],
   },
 
   // ── Money ────────────────────────────────────────────────────────────────
@@ -972,6 +1061,18 @@ export const ENTITIES: Record<string, EntityDef> = {
 
 export type EntityName = keyof typeof ENTITIES;
 
+/** Can this role use this filter? Filters without their own list inherit the entity's. */
+export function filterAllowed(def: FilterDef, role: Role): boolean {
+  return !def.roles || def.roles.includes(role);
+}
+
+/** The filter names a role may actually use on an entity. */
+export function filtersForRole(def: EntityDef, role: Role): string[] {
+  return Object.entries(def.filters)
+    .filter(([, f]) => filterAllowed(f, role))
+    .map(([name]) => name);
+}
+
 export function entitiesForRole(role: Role): string[] {
   return Object.entries(ENTITIES)
     .filter(([, def]) => def.roles.includes(role))
@@ -988,7 +1089,9 @@ export function describeEntities(role: Role): string {
   return Object.entries(ENTITIES)
     .filter(([, def]) => def.roles.includes(role))
     .map(([name, def]) => {
-      const filters = Object.keys(def.filters).join(", ");
+      // Only the filters this role can use — advertising one it can't is how a
+      // question gets answered "none" instead of "not available to you".
+      const filters = filtersForRole(def, role).join(", ");
       // Include names have to be listed: an unknown one is a hard error (it
       // would otherwise drop the defaults too), and several read like filter
       // names without being them — `venue` filters sessions, but the include

@@ -1875,6 +1875,39 @@ export type Database = {
         }
         Relationships: []
       }
+      wa_entity_memory: {
+        Row: {
+          created_at: string
+          detail: string | null
+          entity_id: string
+          kind: string
+          label: string
+          last_seen_at: string
+          mentions: number
+          phone: string
+        }
+        Insert: {
+          created_at?: string
+          detail?: string | null
+          entity_id: string
+          kind: string
+          label: string
+          last_seen_at?: string
+          mentions?: number
+          phone: string
+        }
+        Update: {
+          created_at?: string
+          detail?: string | null
+          entity_id?: string
+          kind?: string
+          label?: string
+          last_seen_at?: string
+          mentions?: number
+          phone?: string
+        }
+        Relationships: []
+      }
       wa_inbound_seen: {
         Row: {
           created_at: string
@@ -2281,6 +2314,7 @@ export type Database = {
           sessions_per_week: number
         }[]
       }
+      prune_wa_entity_memory: { Args: never; Returns: undefined }
       prune_wa_inbound_seen: { Args: never; Returns: undefined }
       purge_pending_session_reminders: {
         Args: { p_class_ids: string[] }

@@ -13,6 +13,7 @@ import { clientTools } from "./client";
 import { coachTools } from "./coach";
 import { founderTools } from "./founder";
 import { findTool } from "./find";
+import { resolveTool } from "./resolve";
 import type { WaTool } from "./types";
 
 export type { ToolContext, WaTool } from "./types";
@@ -20,11 +21,11 @@ export type { ToolContext, WaTool } from "./types";
 export function toolsForRole(role: "guest" | "client" | "coach" | "founder"): WaTool[] {
   switch (role) {
     case "client":
-      return [...clientTools, findTool("client"), academyInfo];
+      return [...clientTools, findTool("client"), resolveTool("client"), academyInfo];
     case "coach":
-      return [...coachTools, findTool("coach"), academyInfo];
+      return [...coachTools, findTool("coach"), resolveTool("coach"), academyInfo];
     case "founder":
-      return [...founderTools, findTool("founder"), academyInfo];
+      return [...founderTools, findTool("founder"), resolveTool("founder"), academyInfo];
     default:
       return guestTools;
   }

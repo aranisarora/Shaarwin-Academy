@@ -35,6 +35,8 @@ import {
 import {
   ENTITIES,
   describeEntities,
+  filterAllowed,
+  filtersForRole,
   type EntityDef,
   type Role,
   type TableName,
@@ -64,7 +66,8 @@ type ParsedFilter = Filter & { name: string; asked: unknown };
 
 function parseFilters(
   def: EntityDef,
-  raw: unknown
+  raw: unknown,
+  role: Role
 ): { filters: ParsedFilter[] } | { error: string } {
   if (raw == null) return { filters: [] };
   if (!Array.isArray(raw)) return { error: "`where` must be an array of {field, op, value}." };
@@ -79,11 +82,19 @@ function parseFilters(
     // hasOwn, not truthiness: `filters["constructor"]` finds Object.prototype's
     // and sails through the allow-list with an undefined column path.
     const def_ = Object.hasOwn(def.filters, name) ? def.filters[name] : undefined;
+    const available = filtersForRole(def, role).join(", ");
     if (!def_) {
       // Loud, not silent. A dropped filter returns every row as though it had
       // applied, which reads to the founder as a confident wrong answer.
+      return { error: `Unknown field "${name}". Available: ${available}.` };
+    }
+    // A filter that traverses an owner-scoped table can't just be run for
+    // whoever asks: the !inner embed resolves to null and silently drops every
+    // row, so the answer is "none" to a question that has one. Refuse it in
+    // words instead — the model can then pick a filter that does work.
+    if (!filterAllowed(def_, role)) {
       return {
-        error: `Unknown field "${name}". Available: ${Object.keys(def.filters).join(", ")}.`,
+        error: `Field "${name}" isn't available to you — it reads data your account can't see. Available: ${available}.`,
       };
     }
 
@@ -91,7 +102,17 @@ function parseFilters(
     // "matched loosely" but the default was eq, so a name typed with a stray
     // space or the wrong capitalisation matched nothing unless the model
     // remembered to ask for the loose op itself.
-    const op = (String(item.op ?? "").trim() || (def_.loose ? "ilike" : "eq")) as Operator;
+    //
+    // The default was not enough. On 11 August "Abhay" returned nothing while
+    // "Abhay Gupta" existed, because the model had passed op:"eq" explicitly and
+    // an explicit op beats a default — the loose match only ever ran when the
+    // model chose not to express an opinion. So on a loose field `eq` is now
+    // COERCED to ilike rather than honoured. Nothing is lost: an exact match is
+    // a strict subset of `%exact%`, so every row eq would have returned still
+    // comes back, and the partial name a person actually types comes back too.
+    const asked = String(item.op ?? "").trim();
+    const coerceLoose = def_.loose && asked === "eq";
+    const op = (coerceLoose ? "ilike" : asked || (def_.loose ? "ilike" : "eq")) as Operator;
     if (!(OPERATORS as readonly string[]).includes(op)) {
       return { error: `Unknown op "${op}". Available: ${OPERATORS.join(", ")}.` };
     }
@@ -268,7 +289,7 @@ async function runFind(
     return fail(`Unknown entity "${entityName}". Available: ${available.join(", ")}.`);
   }
 
-  const parsed = parseFilters(def, input.where);
+  const parsed = parseFilters(def, input.where, role);
   if ("error" in parsed) return fail(parsed.error);
   const { filters } = parsed;
 
