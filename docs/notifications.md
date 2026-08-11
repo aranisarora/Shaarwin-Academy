@@ -197,7 +197,7 @@ just appears in their notifications list. **Mute** is which toggle silences it.
 | Message | When | Channel | Mute | Held |
 | --- | --- | --- | --- | --- |
 | `ops_coach_unconfirmed` | T−10, coach fully silent | WA + push | **No** | — |
-| `ops_coach_not_arrived` | Start+10, nobody marked arrival | WA + push | **No** | — |
+| `ops_coach_not_arrived` | Start+10, nobody marked arrival · *not if T−10 already warned and nothing changed* | WA + push | **No** | — |
 | `signup_request` | Someone applies · *Approve / Deny* | WA + push | **No — overrides STOP** | — |
 | `founder_morning_brief` | 07:00 IST | WA + push | **No** | — (never held) |
 | `ops_daily_digest` | 21:00 IST | WA + push | **No** | Held |
@@ -217,17 +217,43 @@ Rendered at `/admin/notifications`, never delivered on any channel:
 `ops_credit_used` · `ops_coach_change` · `ops_cover_claimed` ·
 `ops_session_coach_invalid`
 
-#### What `ops_coach_not_arrived` actually says
+#### What the two coach escalations actually say
 
-It picks one of **three** sentences, ordered by how much the coach has told us,
-because that is what decides whether the founder should pick up the phone
-(`supabase/functions/notify/escalation.ts`, pinned by `escalation.test.ts`):
+Every word of both lives in `supabase/functions/notify/escalation.ts` as a pure
+function of one facts object, pinned by `escalation.test.ts` — the defects here
+are invisible in the data and only show up in the sentence.
+
+**The title names the coach.** *"Ravi hasn't confirmed"*, *"Ravi hasn't marked
+arrived"* — and nothing else. Twenty rows titled "Coach hasn't confirmed" are
+one indistinguishable wall on a banner and in the feed; the name is the part
+that varies, and a push title truncates around 40–50 characters, so the class
+and the venue stay in the body. A profile carrying no `full_name` falls back to
+*"Coach hasn't confirmed"* — never a bare space, never "undefined".
+
+**The body says which class, where, and from when to when.**
+
+> Ravi still hasn't confirmed they're coming to Junior Batch (MCF Court,
+> 6:30-7:30 pm) — it starts in ~10 min. A nudge or a backup plan may be worth
+> it. (+91…)
+
+Three Junior batches run on a Tuesday, and the founder decides whether to drive
+across town from the banner alone. The venue is `classes.location_label`, the
+one resolver that covers both a curated venue and a private's address (§5);
+when it is empty the sentence says **"location TBC"** rather than dropping the
+clause, so *"we didn't tell you"* is never mistaken for *"there is nothing to
+tell"*. The window collapses to one am/pm when both ends share it and keeps both
+when they don't (`11:30 am-12:30 pm`) — collapsing there would move the class by
+twelve hours. The coach's phone number is appended last.
+
+`ops_coach_not_arrived` picks one of **three** sentences, ordered by how much the
+coach has told us, because that is what decides whether the founder should pick
+up the phone:
 
 | Session state | What the founder is told | Action implied |
 | --- | --- | --- |
 | `coach_late_at` set | "said at 6:32 pm they were running late … worth a check" | watch |
 | `coach_confirmed_at` set, no lateness | "confirmed they were coming … call them now" | call |
-| neither | "never responded at all today — likely a no-show" | act |
+| neither | "hasn't answered anything about it — likely a no-show" | act |
 
 The first row is why `class_sessions.coach_late_at` exists (migration `0071`).
 Before it, `coach_mark_arrival(p_late => true)` sent the "running late"
@@ -239,6 +265,51 @@ stamps `coach_confirmed_at` (late implies coming), which stops the T−30 nudge
 and the T−10 escalation chasing someone who has already answered.
 `coach_arrived_at` stays NULL — they are not there yet, and start+10 must still
 fire if they never turn up.
+
+#### One alert per session, not two
+
+A coach who answers nothing at all satisfies T−10 *and* start+10, so a single
+silent coach buzzed the founder twice — and the second buzz carried no fact the
+first didn't, because nothing about the coach had changed in the twenty minutes
+between them.
+
+**The rule, in `sweepFounderEscalations`:** before sending
+`ops_coach_not_arrived`, skip any founder who already holds an
+`ops_coach_unconfirmed` row for **this session** *and* whose picture of the coach
+is unchanged — still no `coach_confirmed_at`, still no `coach_late_at`. The
+warning they already have still tells the truth and already points at the
+session.
+
+It is deliberately narrow:
+
+- A coach who has **since confirmed or reported lateness** gets through. "He
+  promised and then vanished" is a different problem from "he never answered",
+  and it is worth the second interrupt.
+- The suppression is **per recipient**, exactly like the per-type dedupe beside
+  it, so a founder added after the T−10 warning — or a session that only went
+  bad after T−10 — still gets the start+10 alert.
+
+The existing dedupe cannot cover this: it is per (founder, session, **type**),
+and this is a cross-type veto, so it needs its own query
+(`foundersToldAbout()`).
+
+#### Both deep-link to the session
+
+`data.url` is `/admin/schedule?date=<YYYY-MM-DD>&session=<session id>`, which
+opens the right week and expands the right card. It used to be a bare
+`/admin/schedule`, which dropped the founder on the current week with no idea
+which of the day's cards to open — the opposite of what an alert is for.
+
+`<date>` is the **academy wall date** (`Asia/Kolkata`) of `starts_at`, via
+`istDay()`. A UTC date would be a day — and therefore possibly a week — off for
+a 12:30am IST session, which is exactly the kind of session most likely to have
+a silent coach.
+
+The row also carries `session_id`, `coach_id`, `class_title`, `location_str`,
+`starts_str` and `ends_str` in `data`, so a push or WhatsApp renderer never has
+to re-query the session to say where and when. `location_str` holds the rendered
+phrase (including `"location TBC"`), not the raw label: an empty template
+variable is a rejected WhatsApp send.
 
 ### The five with no producer
 

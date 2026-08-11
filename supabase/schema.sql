@@ -4116,6 +4116,7 @@ declare
   v_type    text;
   v_title   text;
   v_body    text;
+  v_url     text;
   v_arrived timestamptz;
   v_won     boolean;
 begin
@@ -4147,6 +4148,15 @@ begin
   v_location := coalesce(class_location_label(v_class), 'the venue');
 
   v_time := to_char(v_starts at time zone 'Asia/Kolkata', 'FMHH12:MI AM');
+
+  -- The founder's link into the session itself, not into "this week" (0082).
+  -- The ACADEMY wall date, never the UTC one: a 12:30am IST session falls on the
+  -- previous UTC day, and ?date= is what decides which week the schedule opens
+  -- on — so the late-night sessions most likely to be in trouble are exactly the
+  -- ones a UTC date would land a week away from.
+  v_url := '/admin/schedule?date='
+           || to_char(v_starts at time zone 'Asia/Kolkata', 'YYYY-MM-DD')
+           || '&session=' || p_session::text;
 
   if p_late then
     -- Late implies coming, exactly as arrived does. Recording BOTH is what
@@ -4214,20 +4224,41 @@ begin
   if p_late then
     insert into notifications (user_id, type, title, body, data)
     select p.id, v_type, v_title, v_body,
-           jsonb_build_object('session_id', p_session, 'url', '/admin/schedule')
+           jsonb_build_object('session_id', p_session, 'url', v_url)
       from profiles p where p.role = 'founder';
   else
     -- Close the loop on an escalation this arrival has just made untrue (0079).
     -- Only the founders who were actually told, and only once — a second
     -- arrival never wins the transition above, so it cannot reach here.
+    --
+    -- EITHER alert counts, because either may be the only one they were sent
+    -- (0082). The notify worker no longer escalates a silent coach twice: when
+    -- the T-10 "hasn't confirmed" warning has already gone out and nothing about
+    -- the coach has changed since, the start+10 "hasn't marked arrived" is
+    -- suppressed. Matching only on the latter therefore left the founder holding
+    -- a live warning about a coach who had since walked in — 0079's own bug,
+    -- reintroduced from the other end.
+    --
+    -- The 10-minute bound is load-bearing, not tidiness. ops_coach_unconfirmed
+    -- sent 705 times in 30 days and most of those coaches simply turn up without
+    -- ever tapping confirm; standing all of them down would answer "stop sending
+    -- me two notifications" with several hundred more. Bounded here it withdraws
+    -- exactly the escalations the suppression swallowed.
+    --
+    -- `distinct` because a founder can hold both rows for one session — added
+    -- after the warning, so their start+10 escalation was never suppressed.
     insert into notifications (user_id, type, title, body, data)
-    select n.user_id, 'ops_coach_arrived_late', 'Coach has now arrived',
+    select distinct n.user_id, 'ops_coach_arrived_late', 'Coach has now arrived',
            'Coach ' || v_name || ' has arrived at ' || v_location
              || ' for the ' || v_time || ' session — no need to chase.',
-           jsonb_build_object('session_id', p_session, 'url', '/admin/schedule')
+           jsonb_build_object('session_id', p_session, 'url', v_url)
       from notifications n
-     where n.type = 'ops_coach_not_arrived'
-       and n.data->>'session_id' = p_session::text;
+     where n.data->>'session_id' = p_session::text
+       and (
+         n.type = 'ops_coach_not_arrived'
+         or (n.type = 'ops_coach_unconfirmed'
+             and now() > v_starts + interval '10 minutes')
+       );
   end if;
 
   return v_arrived;

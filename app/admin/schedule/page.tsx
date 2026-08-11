@@ -20,7 +20,11 @@ import type {
 import { asAddressDetails, fromDetails, type StructuredAddress } from "@/lib/address";
 import { withVenueAddress } from "@/lib/venue-display";
 import { modalTimeByClass } from "@/lib/session-deviation";
-import { fetchFollowThrough, NO_FOLLOW_THROUGH } from "@/lib/session-followthrough";
+import {
+  fetchFollowThrough,
+  sessionClientIds,
+  NO_FOLLOW_THROUGH,
+} from "@/lib/session-followthrough";
 
 export const metadata: Metadata = { title: "Schedule" };
 
@@ -205,6 +209,7 @@ async function Schedule({ searchParams }: { searchParams: SearchParams }) {
       privatePlayerName:
         (priv?.players as unknown as { full_name: string } | null)?.full_name ?? null,
       privateClientId: priv?.client_id ?? null,
+      clientIds: sessionClientIds(owed, priv?.client_id ?? null),
       address,
       classId: cls.id,
       classActive: cls.active,

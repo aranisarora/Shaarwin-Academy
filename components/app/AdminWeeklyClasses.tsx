@@ -41,6 +41,24 @@ import {
   type Venue,
 } from "./admin-calendar-types";
 
+/** Does a row that only knows its coach by NAME answer to the chosen coach ids?
+ *
+ *  Two things this settles that a bare `includes` would not. An empty list is
+ *  "no filter", so everything passes. And a name the coaches list cannot resolve
+ *  matches NOTHING — not even "No coach yet", which is the bucket for a slot
+ *  nobody is staffing; a card printing a coach's name has no business in it.
+ */
+function coachMatches(
+  coachName: string | null,
+  chosen: string[],
+  idByName: Map<string, string>
+): boolean {
+  if (chosen.length === 0) return true;
+  if (!coachName) return chosen.includes("none");
+  const id = idByName.get(coachName);
+  return id !== undefined && chosen.includes(id);
+}
+
 export function AdminWeeklyClasses({
   classes,
   privateSeries = [],
@@ -65,7 +83,7 @@ export function AdminWeeklyClasses({
   venues: Venue[];
   clients: ClientOption[];
   invites: InviteOption[];
-  /** Coach / location / type, shared with This week. */
+  /** Coach / location / type / client, shared with This week. */
   filters: ScheduleFilters;
   /** Which venue cards are open, held above so it survives the view switch. */
   venueCards: OpenMap;
@@ -156,33 +174,43 @@ export function AdminWeeklyClasses({
     });
   }
 
-  // Filters — location (venue), day and status. Options are drawn from the
-  // classes that actually exist so we never show an empty bucket.
-  //
-  // Status starts at "all", not "active". It used to hide the ended and paused
-  // ones, which sounds tidy until you follow what the founder actually does:
-  // he ends a class, the class vanishes from the list, and the thing he now
-  // wants to delete is somewhere he has to guess at — and "Select all 38" was
-  // quietly only the active 38, so a timetable clear-out left the ended ones
-  // behind. The cards already grey themselves out and say "Ended" or "Paused",
-  // so nothing is lost by showing them, and Active is one tap away.
-  // Coach, location and type are the SAME three questions This week asks, in the
-  // same order and the same words. They used to be different sets — this view
-  // had location/day/status, that one had coach/venue/type — so the one axis
-  // both actually shared was called "location" here and "venue" there, and two
-  // perfectly good questions ("what does Ravi teach every week?", "show me just
-  // the privates") could not be asked here at all.
+  // Filters — coach, location, type, client, then status. The first four are the
+  // SAME four questions This week asks, in the same order and the same words,
+  // and they come from above so flipping the switch keeps the answers. They used
+  // to be different sets — this view had location/day/status, that one had
+  // coach/venue/type — so the one axis both actually shared was called
+  // "location" here and "venue" there, and two perfectly good questions ("what
+  // does Ravi teach every week?", "show me just the privates") could not be
+  // asked here at all.
   //
   // Status is the one extra, and it earns it: paused and ended are states only a
-  // repeating class can be in. Day is gone, for exactly the reason This week
-  // never had it — every card already sits under a day heading. Four chips is
-  // also the ceiling: this row held five once and only 3.3 were ever painted, so
-  // the founder never discovered the last one.
-  // Coach, location and type come from above — they are the same three
-  // questions This week asks, and flipping the switch used to discard them.
-  // Status stays local because only a repeating class can be paused or ended.
-  const { coach: coachFilter, venue: venueFilter, type: typeFilter } = filters;
-  const [statusFilter, setStatusFilter] = useState("all");
+  // repeating class can be in, which is also why it stays local to this file.
+  // Day is gone, for exactly the reason This week never had it — every card
+  // already sits under a day heading.
+  //
+  // ALL FIVE take several answers at once, status included: "paused and ended"
+  // is one question — everything he has stopped running — and one answer per
+  // chip made him ask it twice and hold the two lists in his head. Empty means
+  // no filter, everywhere, so none of them starts narrowed to anything.
+  //
+  // Five chips fit because the row scrolls sideways under a faded edge now. It
+  // held five once while it still wrapped, and only 3.3 of them were ever
+  // painted, so the founder never discovered the last one.
+  //
+  // Status in particular does NOT start on Active. It used to hide the ended and
+  // paused ones, which sounds tidy until you follow what the founder actually
+  // does: he ends a class, the class vanishes from the list, and the thing he
+  // now wants to delete is somewhere he has to guess at — and "Select all 38"
+  // was quietly only the active 38, so a timetable clear-out left the ended ones
+  // behind. The cards already grey themselves out and say "Ended" or "Paused",
+  // so nothing is lost by showing them, and Active is one tap away.
+  const {
+    coach: coachFilter,
+    venue: venueFilter,
+    type: typeFilter,
+    client: clientFilter,
+  } = filters;
+  const [statusFilter, setStatusFilter] = useState<string[]>([]);
 
   // Location options are drawn from both classes and private series so a
   // location that only hosts a private slot still appears in the filter.
@@ -194,21 +222,37 @@ export function AdminWeeklyClasses({
           ...privateSeries.map((p) => p.venueName),
           // Whatever is filtered on stays listed even if nothing here matches
           // it — the filters are shared with This week now, so a location
-          // chosen over there must still name itself over here.
-          ...(venueFilter !== "all" ? [venueFilter] : []),
+          // chosen over there must still name itself over here. Every chosen
+          // location, not just one: a value with no option to name it prints as
+          // its own raw string in the chip summary, which for the "no location"
+          // bucket is the empty string.
+          ...venueFilter,
         ]),
       ].sort((a, b) => a.localeCompare(b)),
     [classes, privateSeries, venueFilter]
   );
 
+  // Every client the academy has, not only the ones with something on this
+  // list. Narrowing to a family and finding the Timetable empty is a real
+  // answer ("they're only in the Sunday one-off"), and building the options
+  // from the visible rows instead would delete the chip's own value the moment
+  // it started filtering — leaving it lit in ember reading "All clients".
+  const clientOptions = useMemo(
+    () =>
+      clients
+        .map((c) => ({ value: c.id, label: c.name || "Unnamed client" }))
+        .sort((a, b) => a.label.localeCompare(b.label)),
+    [clients]
+  );
+
   // Matched by name, not id: a class carries its next session's coach name and a
   // private series carries its preferred coach's name, and neither carries an id
   // the other also has. The name is the only key both rows share.
-  // The filter now carries a coach ID, exactly as This week's does — one chip
-  // drives both views, so both must speak the same value. A class row only
-  // carries its coach's NAME (the timetable query resolves it and never brings
-  // the id along), so the name is mapped back here rather than the filter being
-  // allowed to mean two different things on two halves of one switch.
+  // The filter carries coach IDs, exactly as This week's does — one chip drives
+  // both views, so both must speak the same values. A class row only carries its
+  // coach's NAME (the timetable query resolves it and never brings the id
+  // along), so the name is mapped back here rather than the filter being allowed
+  // to mean two different things on two halves of one switch.
   const coachIdByName = useMemo(() => {
     const m = new Map<string, string>();
     for (const c of coaches) m.set(c.name, c.id);
@@ -218,48 +262,59 @@ export function AdminWeeklyClasses({
   const filteredClasses = useMemo(
     () =>
       classes.filter((c) => {
-        if (coachFilter === "none" && c.coachName) return false;
-        if (
-          coachFilter !== "all" &&
-          coachFilter !== "none" &&
-          (c.coachName ? coachIdByName.get(c.coachName) : null) !== coachFilter
-        )
+        if (!coachMatches(c.coachName, coachFilter, coachIdByName)) return false;
+        if (venueFilter.length > 0 && !venueFilter.includes(c.venueName ?? "")) return false;
+        // A repeating group class is never a private, so asking for privates
+        // alone empties this half of the list on purpose — the standing slots
+        // below are the whole answer to that question.
+        if (typeFilter.length > 0 && !typeFilter.includes(c.isSchool ? "school" : "group"))
           return false;
-        if (venueFilter !== "all" && (c.venueName ?? "") !== venueFilter) return false;
-        if (typeFilter === "group" && c.isSchool) return false;
-        if (typeFilter === "school" && !c.isSchool) return false;
-        if (typeFilter === "private") return false;
-        if (statusFilter === "active" && !c.active) return false;
-        if (statusFilter === "paused" && (c.active || c.endsOn)) return false;
-        if (statusFilter === "ended" && (c.active || !c.endsOn)) return false;
+        // Ended and paused are both "not active" and only the end date tells
+        // them apart, which is why this is read once rather than asked as three
+        // separate conditions that can drift out of agreement.
+        const status = c.active ? "active" : c.endsOn ? "ended" : "paused";
+        if (statusFilter.length > 0 && !statusFilter.includes(status)) return false;
+        // A group class is a family's when any of the regulars on its next
+        // session is theirs. That roster is the only connection this row has to
+        // a client, so a class with an empty one drops out of every client
+        // filter — which is right: nobody has told us they are in it.
+        if (clientFilter.length > 0 && !c.clientIds.some((id) => clientFilter.includes(id)))
+          return false;
         return true;
       }),
-    [classes, coachIdByName, coachFilter, venueFilter, typeFilter, statusFilter]
+    [classes, coachIdByName, coachFilter, venueFilter, typeFilter, statusFilter, clientFilter]
   );
 
-  // Private series are always active (the page only queries active ones), so
-  // they show under "active"/"all" and drop out of the "paused"/"ended" views.
   const filteredPrivates = useMemo(
     () =>
       privateSeries.filter((p) => {
-        if (coachFilter === "none" && p.coachName) return false;
-        if (
-          coachFilter !== "all" &&
-          coachFilter !== "none" &&
-          (p.coachName ? coachIdByName.get(p.coachName) : null) !== coachFilter
-        )
+        if (!coachMatches(p.coachName, coachFilter, coachIdByName)) return false;
+        if (venueFilter.length > 0 && !venueFilter.includes(p.venueName)) return false;
+        if (typeFilter.length > 0 && !typeFilter.includes("private")) return false;
+        // Private series are always active — the page only queries active ones —
+        // so asking for paused or ended alone is asking for a state no row on
+        // this half of the list can be in.
+        if (statusFilter.length > 0 && !statusFilter.includes("active")) return false;
+        // An open slot with no family on it yet has no client to match, so it
+        // falls out the moment he narrows to one.
+        if (clientFilter.length > 0 && (!p.clientId || !clientFilter.includes(p.clientId)))
           return false;
-        if (venueFilter !== "all" && p.venueName !== venueFilter) return false;
-        if (typeFilter === "group" || typeFilter === "school") return false;
-        if (statusFilter === "paused" || statusFilter === "ended") return false;
         return true;
       }),
-    [privateSeries, coachIdByName, coachFilter, venueFilter, typeFilter, statusFilter]
+    [
+      privateSeries,
+      coachIdByName,
+      coachFilter,
+      venueFilter,
+      typeFilter,
+      statusFilter,
+      clientFilter,
+    ]
   );
 
   // "Select all" means everything the filters are currently showing — so
-  // narrowing to one venue or one day makes it a targeted clear, and leaving the
-  // filters wide (status: all) makes it the full reset of this screen. It now
+  // narrowing to two locations, or to one family, makes it a targeted clear, and
+  // leaving every chip empty makes it the full reset of this screen. It now
   // covers the weekly private slots as well: leaving them out made "Select all
   // 47" a promise the screen did not keep.
   const filteredIds = useMemo(() => filteredClasses.map((c) => c.id), [filteredClasses]);
@@ -359,11 +414,11 @@ export function AdminWeeklyClasses({
   //
   // This stores what is OPEN, not what has been "flipped from the default".
   // The old flag was read as `i === 0 ? !flipped : flipped`, so its meaning
-  // inverted with the venue's position: filter down to a day only one venue
-  // runs on and the venue he had just opened rendered closed, showing an empty
-  // group that reads as "nothing on that day". Position now only supplies the
-  // default for a venue he has never touched, re-evaluated on every filter
-  // change rather than frozen at mount.
+  // inverted with the venue's position: narrow to a coach only one venue books
+  // and the venue he had just opened rendered closed, showing an empty group
+  // that reads as "nothing there". Position now only supplies the default for a
+  // venue he has never touched, re-evaluated on every filter change rather than
+  // frozen at mount.
   //
   // Everything starts OPEN, which is the same promise This week makes about its
   // days. It used to open only the first venue, so the two views of one tab
@@ -376,20 +431,24 @@ export function AdminWeeklyClasses({
   const openMap = venueCards.map;
   const toggleVenue = venueCards.toggle;
 
-  // Same three as This week, same order, same words — then the one extra that
+  // Same four as This week, same order, same words — then the one extra that
   // only makes sense here. Every inactive chip reads "All …"; this row used to
   // say "Any day" and "Any status" beside "All locations", which is two
   // grammars for one idea.
+  //
+  // None of them lists an "All …" option of its own: FilterBar renders that row
+  // itself, from `label`, and clearing is what it does. Handed in as a real
+  // option it would be tickable alongside three coaches, and the chip would have
+  // to answer "all, and these three?".
   const filterDefs: FilterDef[] = [
     {
       key: "coach",
       aria: "Filter by coach",
       label: "All coaches",
-      value: coachFilter,
-      defaultValue: "all",
+      mode: "multi",
+      values: coachFilter,
       onChange: filters.setCoach,
       options: [
-        { value: "all", label: "All coaches" },
         { value: "none", label: "No coach yet" },
         ...coaches.map((c) => ({ value: c.id, label: c.name })),
       ],
@@ -398,37 +457,45 @@ export function AdminWeeklyClasses({
       key: "venue",
       aria: "Filter by location",
       label: "All locations",
-      value: venueFilter,
-      defaultValue: "all",
+      mode: "multi",
+      values: venueFilter,
       onChange: filters.setVenue,
-      options: [
-        { value: "all", label: "All locations" },
-        ...venueOptions.map((v) => ({ value: v, label: v || "No location" })),
-      ],
+      options: venueOptions.map((v) => ({ value: v, label: v || "No location" })),
     },
     {
       key: "type",
       aria: "Filter by class type",
       label: "All types",
-      value: typeFilter,
-      defaultValue: "all",
+      mode: "multi",
+      values: typeFilter,
       onChange: filters.setType,
       options: [
-        { value: "all", label: "All class types" },
         { value: "group", label: "Group" },
         { value: "private", label: "Private" },
         { value: "school", label: "School" },
       ],
     },
     {
+      // "Which of this is the Sharma family's?" — a question the Timetable could
+      // not answer at all until a class started carrying the regulars on its
+      // next session. It reaches group classes and standing private slots alike,
+      // so the answer is the family's whole week here, not just their privates.
+      key: "client",
+      aria: "Filter by client",
+      label: "All clients",
+      mode: "multi",
+      values: clientFilter,
+      onChange: filters.setClient,
+      options: clientOptions,
+    },
+    {
       key: "status",
       aria: "Filter by status",
       label: "All statuses",
-      value: statusFilter,
-      defaultValue: "all",
+      mode: "multi",
+      values: statusFilter,
       onChange: setStatusFilter,
       options: [
-        { value: "all", label: "All statuses" },
         { value: "active", label: "Active" },
         { value: "paused", label: "Paused" },
         { value: "ended", label: "Ended" },
@@ -499,8 +566,8 @@ export function AdminWeeklyClasses({
       {venueGroups.map((group) => {
         const key = group.venue || "no-venue";
         // Open unless he has closed it. Position no longer decides anything —
-        // it used to, and filtering down to a day only one venue ran on could
-        // render the venue he had just opened as closed.
+        // it used to, and narrowing until only one venue had rows could render
+        // the venue he had just opened as closed.
         const open = openMap[key] ?? true;
         const groupIds = group.days.flatMap((d) => d.rows.map((c) => c.id));
         const groupSeriesIds = group.days.flatMap((d) => d.privates.map((p) => p.id));
@@ -755,8 +822,9 @@ export function AdminWeeklyClasses({
                     {filteredTotal} {filteredTotal === 1 ? "class is" : "classes are"} showing.
                   </>
                 )}{" "}
-                Narrow with the filters first to clear one location or one day. You see what
-                each one costs before anything happens, and you can unpick any of them.
+                Narrow with the filters first to clear one location, or everything a coach
+                has ended. You see what each one costs before anything happens, and you can
+                unpick any of them.
                 {/* Say what it does NOT reach, rather than leaving him to find
                     out from a list that still has things on it. */}
                 {oneOffCount > 0 && (
