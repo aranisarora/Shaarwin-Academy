@@ -47,11 +47,18 @@
 // so any combination of them is drawable and none can eat another:
 //   • plum/teal left rail = a private / a school's class ┐ identity, additive,
 //   • the glyph on line 3 = the same fact, in a shape    ┘ never a status
-//   • warm ember surface  = live right now
+//   • faint green surface = nothing to do here            ┐ the outcome, on
+//   • faint red surface   = something is owed on this one ┘ every session
+//   • warm ember surface  = live right now — outranks the outcome
 //   • red border          = no coach yet, and nothing else
 //   • ember ring + wash   = you have picked this one
 //   • grey ink            = out of play — over, called off, ended, paused
 //   • the badge row       = arrival, attendance, assessments — what is owed
+//
+// The four surfaces are one channel with one winner, decided in `stateTone`
+// rather than by the order Tailwind writes them. Grey ink is a separate channel
+// and composes with any of them: a finished class that owes a register is grey
+// words on a faint red card, which is the pair of facts the founder wants.
 
 import Link from "next/link";
 import { Badge } from "@/components/ui/Badge";
@@ -246,20 +253,38 @@ function stateTone({
   alert = false,
   live = false,
   picked = false,
+  outcome,
 }: {
   dim?: boolean;
   alert?: boolean;
   live?: boolean;
   picked?: boolean;
+  /** Is this card anybody's problem? Paints the surface when nothing more
+   *  urgent is claiming it. Omitted where the question does not apply. */
+  outcome?: "ok" | "owed";
 }): string {
   // What he is doing right now beats what the card is. A picked card that also
   // needs a coach loses its red border, but not the red "No coach yet" on the
   // card itself — the sentence survives, and it was always the clearer signal.
   if (picked) return "card-picked border-ember [--state-ring:0_0_0_2px_var(--ember)]";
-  // The surface says live; the border is left to whatever else is true of the
-  // card. `live` and `dim` cannot both hold — a session is either running or
-  // finished — so the wash only ever meets `alert` or nothing.
-  const surface = live ? "card-live " : "";
+  // ONE PROPERTY, ONE WINNER, CHOSEN HERE. All four of these paint `--card-bg`,
+  // so if two were ever emitted together the winner would be decided by the
+  // order Tailwind happened to write them — which is exactly the bug the kind
+  // rail was moved out of `border-color` to escape. The ladder is picked (what
+  // he is doing) → live (what the clock says) → the outcome (what the class
+  // owes), and it is resolved before a class name is written.
+  //
+  // Live outranking the outcome is not a demotion of the outcome: a class
+  // happening right now is a different kind of urgent, there are only ever one
+  // or two of them, and the one thing that could be genuinely wrong with a live
+  // class — nobody rostered on it — still takes the red border below.
+  const surface = live
+    ? "card-live "
+    : outcome === "owed"
+      ? "card-owed "
+      : outcome === "ok"
+        ? "card-ok "
+        : "";
   // Out of play beats "no coach": a finished session does not need one, and
   // shouting red at the founder about a class that is over is noise he has to
   // learn to ignore — which then costs him the reds that are real.
@@ -352,6 +377,21 @@ export function SessionCard({
   // with reads as one flat grey block, and the two red chips left on it are the
   // only colour on screen. The exception cost more than it bought — it meant
   // "finished" looked like two different states depending on paperwork.
+  // IS THIS CARD HIS PROBLEM — the one question the week is scanned for, asked
+  // of every session and answered in a colour before a word is read.
+  //
+  // "Wrong" is deliberately wider than the follow-through counts: a class with
+  // nobody rostered on it is the most broken card the app can draw and owes
+  // nothing at all, so keying the wash on `issues.any` alone would have painted
+  // it green. Green is a claim that there is nothing to do here, and it has to
+  // be true of everything, not just of the paperwork.
+  //
+  // A coach who turned up late is NOT wrong for this purpose, deliberately.
+  // Nothing can be done about it now, so a red card would sit in the week for
+  // ever advertising a job that does not exist. It is still said on the card —
+  // in the "! Arrived 12 min late" chip — and in the sheet, next to the clock.
+  const issues = off ? null : sessionIssues(session);
+  const wrong = !off && (!session.coachId || issues!.any);
   const tone = `${stateTone({
     dim: off || status === "completed",
     // A class with nobody to teach it, and nothing else. Everything the session
@@ -359,6 +399,10 @@ export function SessionCard({
     // and of what without touching the edge the kind rail lives on.
     alert: !off && !session.coachId,
     live: !off && status === "in_progress",
+    // A cancelled class is neither good news nor a job — it is information, and
+    // washing it either colour would be the card having an opinion about a
+    // class that did not happen.
+    outcome: off ? undefined : wrong ? "owed" : "ok",
   })} ${kindRail(session)}`;
   const inner = (
     <>
