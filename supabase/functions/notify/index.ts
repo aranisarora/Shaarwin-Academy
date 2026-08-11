@@ -23,7 +23,14 @@ import * as webpush from "jsr:@negrel/webpush@0.5";
 // see digest.test.ts. (The TYPES duplication further down is a different case:
 // that one is shared with lib/, across the Deno/Next boundary.)
 import { summariseDay, type DayReportRow, type UnreachableRow } from "./digest.ts";
-import { notArrivedBody } from "./escalation.ts";
+import {
+  locationPhrase,
+  notArrivedBody,
+  notArrivedTitle,
+  unconfirmedBody,
+  unconfirmedTitle,
+  type EscalationFacts,
+} from "./escalation.ts";
 
 const supabase = createClient(
   Deno.env.get("SUPABASE_URL")!,
@@ -847,14 +854,18 @@ async function sweepArrivalCheck() {
  * The T-30 nudge (sweepCoachConfirmNudge) targets the coach, not the founder.
  * The immediate "running late" ping is pushed by coach_mark_arrival itself —
  * (b) is the follow-up for when that lateness turns into an absence, so it must
- * never contradict the ping the founder already has. Fires once per session.
+ * never contradict the ping the founder already has.
+ *
+ * One alert per founder per session across BOTH of these, not one per story: a
+ * coach who answers nothing satisfies (a) and then (b), and the founder asked
+ * to stop being told the same thing twice. The suppression sits at (b).
  */
 async function sweepFounderEscalations() {
   const now = Date.now();
 
   const { data: unconfirmed } = await supabase
     .from("class_sessions")
-    .select("id,starts_at,coach_id,classes!inner(title)")
+    .select(`id,starts_at,ends_at,coach_id,classes!inner(${CLASS_LOCATION_SELECT})`)
     .eq("status", "scheduled")
     .not("coach_id", "is", null)
     .is("coach_confirmed_at", null)
@@ -863,13 +874,7 @@ async function sweepFounderEscalations() {
     .lt("starts_at", new Date(now + 10 * 60000).toISOString())
     .limit(50);
   for (const s of await withValidCoaches(unconfirmed ?? [])) {
-    await escalateToFounders(
-      "ops_coach_unconfirmed",
-      "Coach hasn't confirmed",
-      s,
-      (name, title, when) =>
-        `${name} still hasn't confirmed they're coming to ${title} (${when}) — it starts in ~10 min. A nudge or a backup plan may be worth it.`
-    );
+    await escalateToFounders("ops_coach_unconfirmed", s, unconfirmedTitle, unconfirmedBody);
   }
 
   // Bounded to the last hour so we never backfill old sessions. 10-minute
@@ -889,7 +894,9 @@ async function sweepFounderEscalations() {
   // buzzed with "Coach X is running a few minutes late". (Migration 0071.)
   const { data: notArrived } = await supabase
     .from("class_sessions")
-    .select("id,starts_at,coach_id,coach_confirmed_at,coach_late_at,classes!inner(title)")
+    .select(
+      `id,starts_at,ends_at,coach_id,coach_confirmed_at,coach_late_at,classes!inner(${CLASS_LOCATION_SELECT})`
+    )
     .eq("status", "scheduled")
     .not("coach_id", "is", null)
     .is("coach_arrived_at", null)
@@ -899,27 +906,68 @@ async function sweepFounderEscalations() {
   for (const s of await withValidCoaches(notArrived ?? [])) {
     const lateAt = s.coach_late_at as string | null;
     const confirmed = !!s.coach_confirmed_at;
+
+    // One buzz per session per founder, across BOTH stories. A coach who
+    // answers nothing trips the T-10 warning and then this one, so the founder
+    // got two alerts about a single silent coach — and the second carried no
+    // fact the first didn't, since nothing about the coach had changed in the
+    // twenty minutes between them.
+    //
+    // Suppressed only while that is still true. A coach who has since confirmed
+    // or reported running late has told us something new, and "he promised and
+    // then vanished" is a different problem from "he never answered" — it is
+    // worth the interrupt even though the founder already holds a warning about
+    // this session. Per recipient, exactly like the dedupe in
+    // escalateToFounders, so a founder added after the T-10 warning still hears
+    // about the no-show.
+    const warned =
+      !confirmed && !lateAt
+        ? await foundersToldAbout("ops_coach_unconfirmed", s.id)
+        : new Set<string>();
+
     await escalateToFounders(
       "ops_coach_not_arrived",
-      "Coach not marked arrived",
       s,
-      (name, title, when) =>
-        notArrivedBody({
-          coachName: name,
-          classTitle: title,
-          when,
-          confirmed,
-          lateAtClock: lateAt ? fmtClock(lateAt) : null,
-        })
+      notArrivedTitle,
+      (f) =>
+        notArrivedBody({ ...f, confirmed, lateAtClock: lateAt ? fmtClock(lateAt) : null }),
+      warned
     );
   }
 }
 
+/** Founder ids who already hold a notification of `type` about this session. */
+async function foundersToldAbout(type: string, sessionId: string): Promise<Set<string>> {
+  const { data } = await supabase
+    .from("notifications")
+    .select("user_id")
+    .eq("type", type)
+    .eq("data->>session_id", sessionId);
+  return new Set((data ?? []).map((n) => n.user_id as string));
+}
+
+/**
+ * `title` and `body` are both builders over the same facts because the title
+ * now names the coach, and the coach's name is only known in here — resolving
+ * it twice, once per string, is how the title and the body drift into naming
+ * the same person two different ways.
+ *
+ * `suppress` is a cross-type veto the caller computes: the per-type dedupe
+ * below cannot see that this founder already has a DIFFERENT alert about this
+ * session.
+ */
 async function escalateToFounders(
   type: string,
-  title: string,
-  s: { id: string; starts_at: string; coach_id: string; classes: unknown },
-  body: (coachName: string, classTitle: string, when: string) => string
+  s: {
+    id: string;
+    starts_at: string;
+    ends_at: string;
+    coach_id: string;
+    classes: unknown;
+  },
+  title: (f: EscalationFacts) => string,
+  body: (f: EscalationFacts) => string,
+  suppress: ReadonlySet<string> = new Set()
 ) {
   // Once per (founder, session), not once per session. The old check asked
   // whether ANYONE had been told and returned if so, which meant a founder
@@ -933,13 +981,8 @@ async function escalateToFounders(
     .eq("role", "founder");
   if (!founders?.length) return;
 
-  const { data: already } = await supabase
-    .from("notifications")
-    .select("user_id")
-    .eq("type", type)
-    .eq("data->>session_id", s.id);
-  const told = new Set((already ?? []).map((n) => n.user_id));
-  const targets = founders.filter((f) => !told.has(f.id));
+  const told = await foundersToldAbout(type, s.id);
+  const targets = founders.filter((f) => !told.has(f.id) && !suppress.has(f.id));
   if (!targets.length) return;
 
   const { data: coach } = await supabase
@@ -947,17 +990,47 @@ async function escalateToFounders(
     .select("full_name,phone")
     .eq("id", s.coach_id)
     .maybeSingle();
-  const coachName = (coach?.full_name ?? "The coach").trim() || "The coach";
-  const when = fmtDayClock(s.starts_at);
-  const text = body(coachName, titleOf(s.classes), when) + (coach?.phone ? ` (${coach.phone})` : "");
+
+  // titleOf, not locationOf's title: its "your class" default is written for a
+  // coach reading about their own session, and the founder is reading about
+  // someone else's.
+  const facts: EscalationFacts = {
+    coachName: (coach?.full_name ?? "").trim(),
+    classTitle: titleOf(s.classes),
+    location: locationOf(s.classes).location,
+    startsClock: fmtClock(s.starts_at),
+    endsClock: fmtClock(s.ends_at),
+  };
+  const text = body(facts) + (coach?.phone ? ` (${coach.phone})` : "");
+
+  // The academy's wall date, never the UTC one. A 12:30am IST session falls on
+  // the previous UTC day, and ?date= is what decides which week the schedule
+  // opens on — so slicing an ISO string here would land the founder a week off
+  // for precisely the late-night sessions most likely to be in trouble.
+  const wallDate = istDay(new Date(s.starts_at)).istDate;
 
   await supabase.from("notifications").insert(
     targets.map((f) => ({
       user_id: f.id,
       type,
-      title,
+      title: title(facts),
       body: text,
-      data: { session_id: s.id, coach_id: s.coach_id, url: "/admin/schedule" },
+      data: {
+        session_id: s.id,
+        coach_id: s.coach_id,
+        class_title: facts.classTitle,
+        // The rendered phrase, not the raw label: an empty template variable is
+        // a rejected WhatsApp send, and every other surface should say
+        // "location TBC" in the same words the body does.
+        location_str: locationPhrase(facts.location),
+        starts_str: facts.startsClock,
+        ends_str: facts.endsClock,
+        // Straight to the card, not to "this week". /admin/schedule opens on
+        // whatever week ?date= names and expands the session in ?session=, so
+        // the founder is one tap from the coach's number instead of hunting a
+        // grid for whichever of three Tuesday batches this was.
+        url: `/admin/schedule?date=${wallDate}&session=${s.id}`,
+      },
     }))
   );
 }
@@ -1538,18 +1611,6 @@ async function firstNameOf(userId: string): Promise<string> {
 
 function fmtClock(iso: string): string {
   return new Intl.DateTimeFormat("en-GB", {
-    hour: "numeric",
-    minute: "2-digit",
-    hour12: true,
-    timeZone: IST,
-  }).format(new Date(iso));
-}
-
-function fmtDayClock(iso: string): string {
-  return new Intl.DateTimeFormat("en-GB", {
-    weekday: "short",
-    day: "numeric",
-    month: "short",
     hour: "numeric",
     minute: "2-digit",
     hour12: true,

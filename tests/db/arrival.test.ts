@@ -376,6 +376,72 @@ describe("arrival flow (migration 0039)", () => {
     });
   });
 
+  it("stands the founders down when the T-10 warning was the only alert they got", async () => {
+    const db = admin();
+    const { coach, session } = await seatedSession();
+
+    // Book first, then move the class into the past — book_session refuses
+    // anything inside the 60-minute cutoff, and this case only exists once the
+    // class is 10+ minutes old. Same manoeuvre as the stale-tap test above.
+    await db
+      .from("class_sessions")
+      .update({
+        starts_at: hoursFromNow(-0.5).toISOString(),
+        ends_at: hoursFromNow(0.5).toISOString(),
+      })
+      .eq("id", session.sessionId);
+
+    // ONE row, and it is the T-10 warning rather than the start+10 escalation.
+    // That combination is the whole point of 0082: the notify worker now drops
+    // the second alert when the coach has said nothing between the two, so for
+    // a silent no-show this is the only thing the founder was ever sent. Match
+    // on ops_coach_not_arrived alone and there is nothing here to withdraw.
+    await db.from("notifications").insert({
+      user_id: SEED.founder,
+      type: "ops_coach_unconfirmed",
+      title: "Augustine hasn't confirmed",
+      body: "…still hasn't confirmed they're coming… — it starts in ~10 min.",
+      data: { session_id: session.sessionId, url: "/admin/schedule" },
+    });
+
+    await coachMarkArrival({ coachEmail: coach.email, sessionId: session.sessionId, source: "tap" });
+
+    const standDown = await expectNotification(db, {
+      userId: SEED.founder,
+      type: "ops_coach_arrived_late",
+      dataContains: { session_id: session.sessionId },
+    });
+    expect(String(standDown.body)).toContain("no need to chase");
+    // And it opens the session, not the week it sits in (0082).
+    expect(String(standDown.data.url)).toContain(`session=${session.sessionId}`);
+  });
+
+  it("does not stand down a warning about a coach who then turns up on time", async () => {
+    const db = admin();
+    const { coach, session } = await seatedSession();
+
+    // The class has not started, so this arrival is exactly the case the
+    // 10-minute bound exists for. ops_coach_unconfirmed sent 705 times in 30
+    // days and most of those coaches simply never tap confirm and then walk in;
+    // standing every one of them down would answer a complaint about two
+    // notifications with several hundred more.
+    await db.from("notifications").insert({
+      user_id: SEED.founder,
+      type: "ops_coach_unconfirmed",
+      title: "Augustine hasn't confirmed",
+      body: "…still hasn't confirmed they're coming… — it starts in ~10 min.",
+      data: { session_id: session.sessionId, url: "/admin/schedule" },
+    });
+
+    await coachMarkArrival({ coachEmail: coach.email, sessionId: session.sessionId, source: "tap" });
+
+    await expectNoNotification(db, {
+      userId: SEED.founder,
+      type: "ops_coach_arrived_late",
+      dataContains: { session_id: session.sessionId },
+    });
+  });
+
   it("undo removes the still-pending parent arrival ping", async () => {
     const db = admin();
     const { coach, parent, session } = await seatedSession();
