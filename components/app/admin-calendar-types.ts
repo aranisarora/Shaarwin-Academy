@@ -18,6 +18,12 @@ export type SessionRow = {
   coachArrivedAt: string | null;
   coachArrivalSource: string | null; // 'auto' | 'tap' | 'wa' — how arrival was marked
   coachArrivalDistanceM: number | null; // metres from the venue at arrival, if known
+  // What the session is still waiting on after it ran. Same definitions the
+  // database chases coaches with — see lib/session-followthrough.ts. Both are 0
+  // for a session with nothing booked against it, which is the honest answer:
+  // a school class registered in the hall has no online roster to keep.
+  rosterUnmarked: number; // bookings still on 'confirmed' — register never kept
+  assessPending: number; // attended players with no assessment for this session
   title: string;
   capacity: number; // effective for this session (override ?? class default)
   isPrivate: boolean;

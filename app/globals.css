@@ -4,8 +4,15 @@
 /*
  * Semantic colour contract (enforced by convention — keep it true):
  *   • --err  (red)   = "you must act now". Unassigned sessions, payment
- *                      overdue, destructive confirms. Nothing else, ever —
- *                      an all-clear screen shows no red.
+ *                      overdue, destructive confirms, and a class that ran and
+ *                      was never closed out — no arrival, no register, no
+ *                      assessments. Nothing else, ever: an all-clear screen
+ *                      shows no red, and that is what makes a red one mean
+ *                      something. Note that "most of the week is red" is not a
+ *                      reason to soften this. If the academy is not closing its
+ *                      classes out, the founder's screen is supposed to say so
+ *                      until it is; the red comes down by fixing the work, not
+ *                      by restyling the warning.
  *   • --ember        = brand + emphasis: live-now ring, primary buttons,
  *                      active tab. Never means "error", and never means
  *                      "this class is of type X".
@@ -489,6 +496,33 @@ body {
 
 .card-live.card-hover:hover {
   --card-bg: color-mix(in srgb, var(--ember) 15%, var(--surface-2));
+}
+
+/* Out of play — recessed, not faded.
+ *
+ * This was `opacity: .75`, which had two problems and solved one thing badly.
+ * Opacity multiplies every text colour on the card at once, so a finished
+ * card's words landed near 3.6:1 — under AA — and the floor could not be pushed
+ * lower without making them worse. And 25% of fade is a weak signal on paper:
+ * a finished session and an upcoming one differed by almost nothing, which on
+ * the desktop lanes was the ONLY difference between them, because the sink to
+ * the bottom of the day only happens in the phone's day-first grouping.
+ *
+ * A card that is over stops being a raised object instead. It takes the page's
+ * own ground (`--surface`, which is the darker of the two in both moods by
+ * design, so this needs no per-mood value), softens its edge, and drops its
+ * title from primary to secondary text. Nothing is multiplied, so every colour
+ * on it is a real token at full strength — the arrival chip included, which is
+ * now the only thing a finished card says.
+ *
+ * The kind rail stays at full strength on purpose: a finished private is still
+ * a private. Identity does not expire, and muting it here would be the state
+ * layer reaching into the identity channel, which is the one thing the card is
+ * built not to allow. */
+.card-done {
+  --card-bg: var(--surface);
+  border-color: color-mix(in srgb, var(--line) 55%, transparent);
+  color: var(--text-2);
 }
 
 /* The live dot breathes. Motion is the one pre-attentive channel these cards

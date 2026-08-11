@@ -40,10 +40,11 @@
 //   • plum/teal left rail = a private / a school's class ┐ identity, additive,
 //   • the glyph on line 3 = the same fact, in a shape    ┘ never a status
 //   • warm ember surface  = live right now
-//   • red border          = needs you to act (no coach yet)
+//   • red border          = needs you to act (no coach yet, or a class that
+//                           ran and was never closed out)
 //   • ember ring + wash   = you have picked this one
-//   • dimmed              = out of play
-//   • the badge row       = did the coach arrive, and when
+//   • recessed + grey title = settled — over AND closed out, nothing owed
+//   • the badge row       = arrival, the register, the assessments
 
 import Link from "next/link";
 import { Badge } from "@/components/ui/Badge";
@@ -84,18 +85,62 @@ function slotLine(weekday: string, time: string, duration: number): string {
  * THE BADGE ROW IS FOR WHAT THE CLOCK CANNOT TELL HIM. It used to lead with
  * "✓ Completed", which is a restatement of three things the card already says:
  * it is dimmed, it sits in a list ordered by time, and its finish time is
- * printed on line 2. Meanwhile the coach's arrival — the only fact here that
- * exists nowhere else on the screen, and the whole point of the geofence — was
- * hidden the moment `ends_at` passed, so a finished day showed a column of
- * identical grey COMPLETED pills and no way to tell which coaches turned up.
- * Dropping the completed badge and keeping the arrival one is strictly less
- * clutter and strictly more information.
+ * printed on line 2. What the founder cannot work out from any of that is
+ * whether the class was actually closed out — and a class is not closed out
+ * until three things happened: the coach marked that they arrived, marked who
+ * turned up, and rated the players who did.
  *
- * "Not marked", not "Absent", and deliberately not red. The app does not know
- * the coach was missing — only that nobody recorded an arrival, which is
- * usually a coach who never tapped. Most sessions are in that state today, so
- * red here would put an alarm on two thirds of the week and cost him the reds
- * that are real. It is an absence, and it is written like one. */
+ * ALL THREE ARE RED WHEN THEY ARE MISSING, and that is the point rather than an
+ * oversight. The first version of this row wrote a missing arrival as a grey
+ * "Not marked", reasoning that two thirds of sessions are in that state and red
+ * on two thirds of the week would be noise. That gets it exactly backwards: the
+ * two thirds IS the finding. A gap this widespread is precisely what the
+ * founder needs shoved in front of him, because the number only comes down if
+ * somebody is chasing it, and nobody chases a grey footnote. If the week goes
+ * quiet later, that is the system working, not the warning being wrong.
+ *
+ * Order is the order the work actually happens in, which is also the order it
+ * unblocks: arrival, then the register, then assessments. Assessments cannot
+ * even be owed until the register is kept — an unmarked roster has no attended
+ * bookings — so "Assess 5" appearing after "Register 8" is cleared is the true
+ * sequence and not a second alarm. See lib/session-followthrough.ts.
+ *
+ * The counts are on the badges because "Register 8" and "Register 1" are
+ * different sizes of problem and the founder is triaging a week, not a card. */
+type TimeStatus = ReturnType<typeof sessionTimeStatus>;
+
+/**
+ * What this session is still waiting on, as the card reads it.
+ *
+ * One function because the badge row and the card's border are two views of the
+ * same judgement, and a card whose chips say "Register 8" while its border says
+ * everything is fine is worse than either signal alone. Cancelled sessions
+ * never reach here: nothing is owed on a class that did not happen.
+ */
+function outstanding(session: SessionRow, status: TimeStatus) {
+  // A session nobody is rostered on has nobody to arrive: the empty coach slot
+  // is the story on that card, and the type line already tells it in red.
+  const arrivedAt = session.coachId ? session.coachArrivedAt : null;
+  // Silent until it has actually started. A "no arrival" pill on every future
+  // class in the week would be a report of nothing, on the cards that have the
+  // least to say — and the founder would learn to read past the whole row.
+  const noArrival = session.coachId != null && !arrivedAt && status !== "upcoming";
+  // The register and the assessments are only owed once the class is over. A
+  // coach marking a register mid-class is normal and being half-done at 4pm is
+  // not a failure, so chasing it while the whistle is still going would train
+  // him to ignore the one row that matters at 6pm.
+  const done = status === "completed";
+  const register = done ? session.rosterUnmarked : 0;
+  const assess = done ? session.assessPending : 0;
+  return {
+    arrivedAt,
+    noArrival,
+    register,
+    assess,
+    any: noArrival || register > 0 || assess > 0,
+  };
+}
+
 function SessionBadges({ session }: { session: SessionRow }) {
   // Neutral, not red. A class that was called off is information; red is
   // reserved for the things still waiting on him to do something about them.
@@ -108,14 +153,8 @@ function SessionBadges({ session }: { session: SessionRow }) {
   }
   const status = sessionTimeStatus(session.starts_at, session.ends_at);
   const live = status === "in_progress";
-  // A session nobody is rostered on has nobody to arrive: the empty coach slot
-  // is the story on that card, and the type line above already tells it in red.
-  const arrivedAt = session.coachId ? session.coachArrivedAt : null;
-  // Silent until it has actually started. A "not marked" pill on every future
-  // class in the week would be a report of nothing, on the cards that have the
-  // least to say — and the founder would learn to read past the whole row.
-  const unmarked = session.coachId != null && !arrivedAt && status !== "upcoming";
-  if (!live && !arrivedAt && !unmarked) return null;
+  const { arrivedAt, noArrival, register, assess } = outstanding(session, status);
+  if (!live && !arrivedAt && !noArrival && !register && !assess) return null;
   return (
     <span className="mt-1.5 inline-flex flex-wrap items-center gap-1.5">
       {/* Four characters, not eleven. "In progress" and the arrival chip could
@@ -131,7 +170,9 @@ function SessionBadges({ session }: { session: SessionRow }) {
         </Badge>
       )}
       {arrivedAt && <Badge tone="ok">✓ Arrived {formatClock(arrivedAt)}</Badge>}
-      {unmarked && <Badge>Not marked</Badge>}
+      {noArrival && <Badge tone="err">✗ No arrival</Badge>}
+      {register > 0 && <Badge tone="err">✗ Register {register}</Badge>}
+      {assess > 0 && <Badge tone="err">✗ Assess {assess}</Badge>}
     </span>
   );
 }
@@ -219,16 +260,19 @@ function stateTone({
   // shouting red at the founder about a class that is over is noise he has to
   // learn to ignore — which then costs him the reds that are real.
   //
-  // 75, not 55. Opacity multiplies every text colour on the card, and the grey
-  // second line — --slate on --paper, 6.9:1 at full strength — came out around
-  // 3.4:1, under AA, on every completed, ended and paused card. 75 keeps the
-  // card visibly out of play and keeps its words legible. The arrival chip is
-  // sized to the same budget: see --ok-ink in globals.css.
+  // This used to be `opacity-75`, chosen as the lowest fade that kept the card's
+  // words above AA. It did not: opacity multiplies every colour at once and the
+  // grey second line still came out near 3.6:1. And a 25% fade is a weak way to
+  // say "this is over" — on the desktop coach lanes it was the ONLY way, since
+  // finished sessions sink to the bottom of the day in the phone's grouping
+  // (lib/group-by-day.ts) and nowhere else. `.card-done` recesses the card into
+  // the page instead: no multiplication, so its text is legible AND it reads as
+  // finished at a glance. See globals.css.
   //
   // The surface itself is no longer named here: `.class-card` paints
-  // `var(--card-bg, var(--surface-2))`, so hover, picked and live can move the
-  // surface without a Tailwind `bg-*` utility racing them for the same property.
-  if (dim) return `${surface}border-line opacity-75`;
+  // `var(--card-bg, var(--surface-2))`, so hover, picked, live and done can move
+  // the surface without a Tailwind `bg-*` utility racing them for the property.
+  if (dim) return `${surface}card-done`;
   if (alert) return `${surface}border-err`;
   return `${surface}border-line`;
 }
@@ -295,9 +339,16 @@ export function SessionCard({
   // came from, which is the difference between "the timetable changed" and
   // "this one week is different" that the schedule used to swallow.
   const moved = off ? null : sessionDeviation(session);
+  // ONLY A CLASS THAT IS ACTUALLY CLOSED OUT GETS TO SINK. Recessing is for
+  // things that are done with, and a finished session still owing a register is
+  // not done with — it is the founder's afternoon. So the two facts drive
+  // opposite treatments from one test: a settled class recedes into the page, an
+  // unsettled one keeps a normal surface and takes the red border. On a scanned
+  // day the leftovers are then the only things standing up.
+  const owed = off ? null : outstanding(session, status);
   const tone = `${stateTone({
-    dim: off || status === "completed",
-    alert: !off && !session.coachId,
+    dim: off || (status === "completed" && !owed?.any),
+    alert: !off && (!session.coachId || !!owed?.any),
     live: !off && status === "in_progress",
   })} ${kindRail(session)}`;
   const inner = (

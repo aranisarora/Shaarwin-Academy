@@ -20,6 +20,7 @@ import type {
 import { asAddressDetails, fromDetails, type StructuredAddress } from "@/lib/address";
 import { withVenueAddress } from "@/lib/venue-display";
 import { modalTimeByClass } from "@/lib/session-deviation";
+import { fetchFollowThrough, NO_FOLLOW_THROUGH } from "@/lib/session-followthrough";
 
 export const metadata: Metadata = { title: "Schedule" };
 
@@ -120,7 +121,10 @@ async function Schedule({ searchParams }: { searchParams: SearchParams }) {
     ),
   ];
 
-  const [{ data: nextSessions }, { data: privProfiles }] = await Promise.all([
+  // Round 2 also carries what each session still owes. It belongs here rather
+  // than in round 1 for the same reason as the other two: it is keyed on the
+  // session ids round 1 returns.
+  const [{ data: nextSessions }, { data: privProfiles }, followThrough] = await Promise.all([
     classIds.length
       ? supabase
           .from("class_sessions")
@@ -136,6 +140,10 @@ async function Schedule({ searchParams }: { searchParams: SearchParams }) {
           .select("id,full_name")
           .in("id", privateClientIds)
       : { data: [] as { id: string; full_name: string }[] },
+    fetchFollowThrough(
+      supabase,
+      (sessions ?? []).map((s) => s.id)
+    ),
   ]);
 
   const nextByClass = new Map<string, string>();
@@ -158,6 +166,7 @@ async function Schedule({ searchParams }: { searchParams: SearchParams }) {
   const rows: SessionRow[] = (sessions ?? []).map((s) => {
     const cls = s.classes;
     const priv = cls.private_class_details;
+    const owed = followThrough.get(s.id) ?? NO_FOLLOW_THROUGH;
     const address: StructuredAddress | null = cls.venues
       ? fromDetails(asAddressDetails(cls.venues.address_details), {
           address: cls.venues.address,
@@ -185,6 +194,8 @@ async function Schedule({ searchParams }: { searchParams: SearchParams }) {
       coachArrivedAt: s.coach_arrived_at,
       coachArrivalSource: s.coach_arrival_source,
       coachArrivalDistanceM: s.coach_arrival_distance_m,
+      rosterUnmarked: owed.rosterUnmarked,
+      assessPending: owed.assessPending,
       title: cls.title,
       capacity: s.capacity_override ?? cls.capacity,
       isPrivate: cls.class_type === "private",

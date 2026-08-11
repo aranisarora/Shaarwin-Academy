@@ -48,6 +48,8 @@ function specimen(over: Partial<SessionRow>): SessionRow {
     coachArrivedAt: null,
     coachArrivalSource: null,
     coachArrivalDistanceM: null,
+    rosterUnmarked: 0,
+    assessPending: 0,
     title: "Session",
     capacity: 8,
     isPrivate: false,
@@ -127,13 +129,38 @@ function CardSpecimens() {
       }),
     },
     {
-      caption: "Finished · nobody marked anything",
+      caption: "Finished · nothing was closed out",
       session: specimen({
         starts_at: at(-240),
         ends_at: at(-180),
         status: "completed",
         isSchool: true,
         venueName: "Neev Academy",
+        rosterUnmarked: 8,
+      }),
+    },
+    {
+      caption: "Finished · arrived, register kept, nobody assessed",
+      session: specimen({
+        starts_at: at(-260),
+        ends_at: at(-200),
+        status: "completed",
+        isSchool: true,
+        venueName: "The School Of Raya",
+        coachArrivedAt: at(-278),
+        assessPending: 5,
+      }),
+    },
+    {
+      caption: "Finished · register half kept",
+      session: specimen({
+        starts_at: at(-330),
+        ends_at: at(-270),
+        status: "completed",
+        venueName: "Prestige Ferns",
+        coachArrivedAt: at(-334),
+        rosterUnmarked: 3,
+        assessPending: 0,
       }),
     },
     {
