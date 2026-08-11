@@ -37,6 +37,13 @@
   --line-d: #26282e;
   --line-l: #e2ddd1;
   --ok: #3f9b63;
+  /* Green as WORDS, not as a fill. --ok is tuned to sit on ink and comes out at
+   * 3.3:1 on paper — under AA at the 11px a badge renders at — and a dimmed card
+   * multiplies that down again. The arrival chip is now the one fact a finished
+   * session still carries, so it has to survive both. Fills and borders keep the
+   * brighter green; only the text darkens, to roughly --slate's contrast so a
+   * dimmed chip is exactly as legible as the coach's name beside it. */
+  --ok-ink: #226b42;
   --err: #d64545;
   --priv: #7a5195;
   --school: #2b7a8c;
@@ -63,6 +70,7 @@
   /* Lifted for the dark mood — the studio values go muddy on ink. */
   --priv: #b18ad4;
   --school: #58bcd1;
+  --ok-ink: #6cc48d;
   background: var(--surface);
   color: var(--text);
 }
@@ -89,6 +97,7 @@
   --color-line-d: var(--line-d);
   --color-line-l: var(--line-l);
   --color-ok: var(--ok);
+  --color-ok-ink: var(--ok-ink);
   --color-err: var(--err);
   --color-priv: var(--priv);
   --color-school: var(--school);
@@ -456,6 +465,53 @@ body {
 .card-picked,
 .card-picked.card-hover:hover {
   --card-bg: color-mix(in srgb, var(--ember) 12%, var(--surface-2));
+}
+
+/* Live, right now — the surface, not the edge.
+ *
+ * This used to be an ember border AND an outset ember ring, which stacked two
+ * ember stripes outside the plum/teal kind rail: three lines of colour deep on
+ * the card's left edge, so the one permanent fact on the card became the hardest
+ * thing on it to read, on exactly the card the founder is looking hardest at.
+ *
+ * A wash is the better signal anyway. It is whole-card rather than 1px, so it
+ * survives a phone at arm's length; it cannot collide with the rail because it
+ * is not an edge at all; and it frees `border-color` for `alert`, so a class
+ * that is live AND has no coach can now be warm and red at once. It used to
+ * lose the red — the app's loudest colour, dropped from its most urgent card.
+ *
+ * Distinct from `.card-picked` on purpose: picked adds a border, a 2px ring and
+ * a tick on every row of the list, and the two never appear on the same screen
+ * (sessions are not selectable; weekly classes are never live). */
+.card-live {
+  --card-bg: color-mix(in srgb, var(--ember) 10%, var(--surface-2));
+}
+
+.card-live.card-hover:hover {
+  --card-bg: color-mix(in srgb, var(--ember) 15%, var(--surface-2));
+}
+
+/* The live dot breathes. Motion is the one pre-attentive channel these cards
+ * were not using, and the only signal on them that costs no colour at all —
+ * which is what pays for taking the ember border away. */
+@keyframes live-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}
+
+.live-dot {
+  animation: live-pulse 2s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .live-dot {
+    animation: none;
+  }
 }
 
 /* Deep-link landing ring — a "needs your attention" row on Today scrolls the

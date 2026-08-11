@@ -24,18 +24,26 @@
 //
 //   IDENTITY AND STATE NEVER SHARE A CSS PROPERTY. They are separate ideas, so
 //   they get separate properties and compose in any order: kind writes an inset
-//   rail, state writes the border, the halo and the wash. When both wanted
+//   rail, state writes the border, the surface and the ring. When both wanted
 //   `border-color` the last utility Tailwind emitted won, and a live private
 //   came out as three ember sides and one plum edge. See `.class-card` in
 //   globals.css for the mechanics, class-type.tsx for the kind signals.
 //
-// Border language, documented once:
-//   • red border          = needs you to act (no coach yet)
+//   THE BADGE ROW IS ONLY FOR WHAT THE CLOCK CANNOT SAY. Whether a session is
+//   over is written three times already — dimmed, ordered by time, finish time
+//   on line 2 — so it is not written a fourth in a pill. What the founder
+//   cannot work out from the screen is whether the coach actually turned up,
+//   and that is what the badge row is now for.
+//
+// Card language, documented once. Each line owns a different piece of the card,
+// so any combination of them is drawable and none can eat another:
 //   • plum/teal left rail = a private / a school's class ┐ identity, additive,
 //   • the glyph on line 3 = the same fact, in a shape    ┘ never a status
-//   • ember halo          = live right now
-//   • ember wash + tick   = you have picked this one
+//   • warm ember surface  = live right now
+//   • red border          = needs you to act (no coach yet)
+//   • ember ring + wash   = you have picked this one
 //   • dimmed              = out of play
+//   • the badge row       = did the coach arrive, and when
 
 import Link from "next/link";
 import { Badge } from "@/components/ui/Badge";
@@ -71,7 +79,23 @@ function slotLine(weekday: string, time: string, duration: number): string {
 }
 
 
-/** Status badges for a session — same order, tones and casing everywhere. */
+/** Status badges for a session — same order, tones and casing everywhere.
+ *
+ * THE BADGE ROW IS FOR WHAT THE CLOCK CANNOT TELL HIM. It used to lead with
+ * "✓ Completed", which is a restatement of three things the card already says:
+ * it is dimmed, it sits in a list ordered by time, and its finish time is
+ * printed on line 2. Meanwhile the coach's arrival — the only fact here that
+ * exists nowhere else on the screen, and the whole point of the geofence — was
+ * hidden the moment `ends_at` passed, so a finished day showed a column of
+ * identical grey COMPLETED pills and no way to tell which coaches turned up.
+ * Dropping the completed badge and keeping the arrival one is strictly less
+ * clutter and strictly more information.
+ *
+ * "Not marked", not "Absent", and deliberately not red. The app does not know
+ * the coach was missing — only that nobody recorded an arrival, which is
+ * usually a coach who never tapped. Most sessions are in that state today, so
+ * red here would put an alarm on two thirds of the week and cost him the reds
+ * that are real. It is an absence, and it is written like one. */
 function SessionBadges({ session }: { session: SessionRow }) {
   // Neutral, not red. A class that was called off is information; red is
   // reserved for the things still waiting on him to do something about them.
@@ -83,16 +107,31 @@ function SessionBadges({ session }: { session: SessionRow }) {
     );
   }
   const status = sessionTimeStatus(session.starts_at, session.ends_at);
-  const show =
-    status !== "upcoming" || (session.coachId != null && session.coachArrivedAt != null);
-  if (!show) return null;
+  const live = status === "in_progress";
+  // A session nobody is rostered on has nobody to arrive: the empty coach slot
+  // is the story on that card, and the type line above already tells it in red.
+  const arrivedAt = session.coachId ? session.coachArrivedAt : null;
+  // Silent until it has actually started. A "not marked" pill on every future
+  // class in the week would be a report of nothing, on the cards that have the
+  // least to say — and the founder would learn to read past the whole row.
+  const unmarked = session.coachId != null && !arrivedAt && status !== "upcoming";
+  if (!live && !arrivedAt && !unmarked) return null;
   return (
-    <span className="mt-1.5 inline-flex flex-wrap gap-1.5">
-      {status === "in_progress" && <Badge tone="ember">● In progress</Badge>}
-      {status === "completed" && <Badge>✓ Completed</Badge>}
-      {status !== "completed" && session.coachId && session.coachArrivedAt && (
-        <Badge tone="ok">✓ Arrived {formatClock(session.coachArrivedAt)}</Badge>
+    <span className="mt-1.5 inline-flex flex-wrap items-center gap-1.5">
+      {/* Four characters, not eleven. "In progress" and the arrival chip could
+          not both fit on one line on a phone, so the two facts that matter most
+          during a class wrapped onto two badge rows. The dot carries the state
+          in motion; the word only has to name it. */}
+      {live && (
+        <Badge tone="ember">
+          <span aria-hidden className="live-dot mr-1 leading-none">
+            ●
+          </span>
+          Live
+        </Badge>
       )}
+      {arrivedAt && <Badge tone="ok">✓ Arrived {formatClock(arrivedAt)}</Badge>}
+      {unmarked && <Badge>Not marked</Badge>}
     </span>
   );
 }
@@ -145,7 +184,15 @@ const cardInteractive = "card-hover";
  * bare ember ring, so a live class the founder had just ticked looked exactly
  * like a live class he had not — and the tick box was the only thing that said
  * which. They are two different kinds of fact (one about the world, one about
- * what he is doing) and now look it: live is a halo, picked is a wash.
+ * what he is doing) and now look it: picked is a ring, live is a wash.
+ *
+ * LIVE IS NO LONGER A RUNG. It is a surface, so it composes with the rest
+ * instead of outranking them, and the ladder below it shrank to the two things
+ * that genuinely contest the border. That fixes two bugs at once: the ember
+ * border used to stack outside the plum/teal kind rail (three colours deep on
+ * the left edge, see `.card-live` in globals.css), and `live` used to swallow
+ * `alert`, so a class that was happening right now with nobody rostered — the
+ * most urgent card the app can draw — lost its red.
  *
  * Identity (the kind rail) is applied by the caller on top and cannot collide:
  * nothing in here writes --kind-rail. */
@@ -164,7 +211,10 @@ function stateTone({
   // needs a coach loses its red border, but not the red "No coach yet" on the
   // card itself — the sentence survives, and it was always the clearer signal.
   if (picked) return "card-picked border-ember [--state-ring:0_0_0_2px_var(--ember)]";
-  if (live) return "border-ember [--state-ring:0_0_0_1px_var(--ember)]";
+  // The surface says live; the border is left to whatever else is true of the
+  // card. `live` and `dim` cannot both hold — a session is either running or
+  // finished — so the wash only ever meets `alert` or nothing.
+  const surface = live ? "card-live " : "";
   // Out of play beats "no coach": a finished session does not need one, and
   // shouting red at the founder about a class that is over is noise he has to
   // learn to ignore — which then costs him the reds that are real.
@@ -172,14 +222,15 @@ function stateTone({
   // 75, not 55. Opacity multiplies every text colour on the card, and the grey
   // second line — --slate on --paper, 6.9:1 at full strength — came out around
   // 3.4:1, under AA, on every completed, ended and paused card. 75 keeps the
-  // card visibly out of play and keeps its words legible.
+  // card visibly out of play and keeps its words legible. The arrival chip is
+  // sized to the same budget: see --ok-ink in globals.css.
   //
   // The surface itself is no longer named here: `.class-card` paints
-  // `var(--card-bg, var(--surface-2))`, so hover and picked can move the surface
-  // without a Tailwind `bg-*` utility racing them for the same property.
-  if (dim) return "border-line opacity-75";
-  if (alert) return "border-err";
-  return "border-line";
+  // `var(--card-bg, var(--surface-2))`, so hover, picked and live can move the
+  // surface without a Tailwind `bg-*` utility racing them for the same property.
+  if (dim) return `${surface}border-line opacity-75`;
+  if (alert) return `${surface}border-err`;
+  return `${surface}border-line`;
 }
 
 // Kept as a name so the "identity is additive" rule still reads at each call
