@@ -28,6 +28,7 @@ const tokens = [
   ["--line-d", "#26282E"],
   ["--line-l", "#E2DDD1"],
   ["--ok", "#3F9B63"],
+  ["--ok-ink", "#226B42"],
   ["--err", "#D64545"],
 ] as const;
 
