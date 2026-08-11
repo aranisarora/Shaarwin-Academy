@@ -1987,6 +1987,24 @@ AS $function$
   where s.coach_id = auth.uid();
 $function$;
 
+-- "Is this one of my venues?" — the question the address, the access notes and
+-- the arrival geofence all ask. Not limited to school venues or to future
+-- sessions on purpose (0079).
+CREATE OR REPLACE FUNCTION public.coach_is_rostered_at(p_venue uuid)
+ RETURNS boolean
+ LANGUAGE sql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+  select exists (
+    select 1
+    from class_sessions s
+    join classes c on c.id = s.class_id
+    where s.coach_id = auth.uid()
+      and c.venue_id = p_venue
+  );
+$function$;
+
 CREATE OR REPLACE FUNCTION public.create_private_series(payload jsonb)
  RETURNS jsonb
  LANGUAGE plpgsql
@@ -5478,7 +5496,13 @@ CREATE POLICY "own subscriptions" ON public.subscriptions AS PERMISSIVE FOR SELE
 CREATE POLICY "founder all school admins" ON public.school_admins AS PERMISSIVE FOR ALL TO public USING (( SELECT is_founder() AS is_founder));
 CREATE POLICY "school reads own link" ON public.school_admins AS PERMISSIVE FOR SELECT TO public USING ((user_id = ( SELECT auth.uid() AS uid)));
 CREATE POLICY "founder writes venues" ON public.venues AS PERMISSIVE FOR ALL TO public USING (( SELECT is_founder() AS is_founder));
+-- `active` is a booking flag, not a visibility one: it decides what a client can
+-- book. The schools are all inactive for that reason, which is why the coach
+-- policy below has to exist — without it PostgREST handed a coach a NULL venue
+-- for every school session, taking the campus name and the geofence with it
+-- (0079).
 CREATE POLICY "public reads active venues" ON public.venues AS PERMISSIVE FOR SELECT TO public USING (((active = true) OR ( SELECT is_founder() AS is_founder)));
+CREATE POLICY "coach reads rostered venues" ON public.venues AS PERMISSIVE FOR SELECT TO public USING (((( SELECT is_coach() AS is_coach)) AND coach_is_rostered_at(id)));
 -- There is no wa_* policy, and that absence is deliberate. The one that existed
 -- read wa_links, which 0074 dropped: profiles.phone is the binding now, and it
 -- is covered by the profiles policies. wa_messages and wa_inbound_seen keep RLS
