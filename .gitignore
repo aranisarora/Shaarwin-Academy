@@ -18,6 +18,9 @@
 /playwright-report/
 /e2e/.auth/
 
+# scripts/shoot-styleguide.mjs output — design-review PNGs, regenerate on demand
+/.screenshots/
+
 # next.js
 /.next/
 /out/
