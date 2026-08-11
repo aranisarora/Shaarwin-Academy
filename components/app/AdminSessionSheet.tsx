@@ -462,11 +462,13 @@ export function AdminSessionSheet({
       else errMsg("Preview unavailable — only founders can view as coach.");
     });
 
-  /** How we know the coach was there, in the brackets after the time: whether
-   *  they tapped it or the geofence caught them, and how far off the venue they
-   *  were when it fired. Built as a list so neither half has to know whether the
-   *  other is present — the two used to be spliced together by a stack of
-   *  ternaries that each had to re-derive whose turn it was to write the "(". */
+  /** How we know the coach was there, in the brackets after the time: which
+   *  door the tap came through, and — on sessions old enough to have one — how
+   *  far off the venue the geofence put them. Nothing has written a distance
+   *  since 0083 removed the fence, so on anything recent this is the source
+   *  alone. Built as a list so neither half has to know whether the other is
+   *  present — the two used to be spliced together by a stack of ternaries that
+   *  each had to re-derive whose turn it was to write the "(". */
   const arrivalNotes: React.ReactNode[] = [];
   if (issues.arrival && session.coachArrivalSource) {
     arrivalNotes.push(arrivalSourceLabel(session.coachArrivalSource));

@@ -52,7 +52,9 @@ describe("a coach reads the venue they are rostered at (0079)", () => {
       .maybeSingle();
 
     expect(data?.id).toBe(campus.venueId);
-    // The geofence needs both of these and got neither.
+    // The geofence needed both of these and got neither. It is gone (0083), but
+    // the directions link the coach taps to *get* to the campus reads the same
+    // two columns through the same policy, so the assertion still has a job.
     expect(data?.lat).not.toBeNull();
     expect(data?.lng).not.toBeNull();
   });

@@ -232,9 +232,11 @@ pref *Coach changes*, no template.
 > *Meet your new coach*
 > Your session has a new coach — say hello at the table.
 
-**`coach_arrived`** — `coach_mark_arrival` (app tap, WhatsApp button, or geofence
-auto). Sent to every `confirmed`/`attended` booking holder. Auto arrivals are
-delayed 2 minutes so Undo beats delivery. Template `client_coach_arrived` (no buttons).
+**`coach_arrived`** — `coach_mark_arrival` (app tap, push-notification button, or
+WhatsApp button; `coach_arrival_source` records which). Sent to every
+`confirmed`/`attended` booking holder, immediately in every case — the two-minute
+hold that let an Undo beat delivery went with the geofence that made an
+unrequested mark possible (0083). Template `client_coach_arrived` (no buttons).
 
 > Good news Priya — Coach Augustine has arrived at La Plazza for the 6:30 PM session.
 
@@ -302,7 +304,7 @@ this renders through the *coach* template.
 Notes worth reviewing:
 
 - T-30 and T-0 are skipped once `coach_confirmed_at` / `coach_arrived_at` is set
-  by any surface (app, bot, geofence).
+  by any surface (app, push notification, bot).
 - Tapping *arrived* also stamps `coach_confirmed_at` — a coach who only ever taps
   "arrived" is never nagged or escalated.
 - The after-class message has no next class → `That's all your classes today —
@@ -1570,10 +1572,12 @@ the responsible adult is present.
 That makes these the highest trust-per-byte messages the academy sends, and it
 explains two otherwise odd design choices:
 
-- **Auto-detected arrivals are delayed two minutes** so a coach's *Undo* beats
-  the outbound message. A false "your coach has arrived" is worse than no message
-  — it's an assurance about a child's safety that turns out to be untrue, so the
-  system deliberately trades timeliness for never being wrong.
+- **A false arrival is worse than a late one.** "Your coach has arrived" is an
+  assurance about a child's safety, so the system would rather be slow than
+  wrong. Auto-detected arrivals were held two minutes for exactly this reason,
+  to let a coach's *Undo* beat the outbound message; 0083 removed both the
+  geofence and the hold, because every remaining source is a deliberate tap and
+  there is no longer a mark to undo.
 - **They're sent per booking-holder**, not per class, because the reassurance is
   personal. A broadcast would read as marketing.
 

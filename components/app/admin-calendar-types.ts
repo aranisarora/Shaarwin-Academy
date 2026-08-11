@@ -16,8 +16,12 @@ export type SessionRow = {
   cancelReason: string | null;
   coachId: string | null;
   coachArrivedAt: string | null;
-  coachArrivalSource: string | null; // 'auto' | 'tap' | 'wa' — how arrival was marked
-  coachArrivalDistanceM: number | null; // metres from the venue at arrival, if known
+  // 'tap' in the app | 'push' on the notification | 'wa' from WhatsApp (0083).
+  // 'auto' is historical: the geofence that wrote it is gone.
+  coachArrivalSource: string | null;
+  // Historical. Metres from the venue when the geofence marked an arrival —
+  // nothing has written it since the fence was removed (0083).
+  coachArrivalDistanceM: number | null;
   // What the session is still waiting on after it ran. Same definitions the
   // database chases coaches with — see lib/session-followthrough.ts. Both are 0
   // for a session with nothing booked against it, which is the honest answer:
@@ -206,11 +210,18 @@ export function weekdayOfDate(date: string): string {
   return ["SU", "MO", "TU", "WE", "TH", "FR", "SA"][new Date(y, m - 1, d).getDay()];
 }
 
-/** How a coach's arrival was captured, for the schedule sheet. */
+/** How a coach's arrival was captured, for the schedule sheet.
+ *
+ * Every value the check constraint allows is named, and anything else is shown
+ * raw rather than folded into "tap". The fall-through used to *be* "tap", which
+ * is how 'push' — added by 0083 for the sole purpose of telling the tray apart
+ * from the app — would have reached this sheet labelled as its opposite. */
 export function arrivalSourceLabel(source: string): string {
   if (source === "auto") return "auto";
   if (source === "wa") return "WhatsApp";
-  return "tap";
+  if (source === "push") return "notification";
+  if (source === "tap") return "tap";
+  return source;
 }
 
 /** Distance to the venue at arrival — "40 m" under a km, else "3.2 km". */
