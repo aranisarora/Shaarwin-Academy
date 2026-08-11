@@ -2127,7 +2127,6 @@ export type Database = {
       coach_has_player: { Args: { p_player: string }; Returns: boolean }
       coach_mark_arrival: {
         Args: {
-          p_distance_m?: number
           p_late?: boolean
           p_session: string
           p_source?: string

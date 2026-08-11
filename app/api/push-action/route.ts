@@ -131,14 +131,17 @@ export async function POST(request: Request) {
       });
     }
     case "coach_arrived": {
-      // p_source is constrained to 'auto' | 'tap' | 'wa', and this *is* a tap —
-      // just one made in the notification tray rather than on the session
-      // screen. Adding a fourth value would mean a migration for a distinction
-      // nothing reads.
+      // 'push', not 'tap'. This used to send 'tap' on the grounds that a tray
+      // tap is still a tap and a fourth source value would be "a migration for
+      // a distinction nothing reads" — but the distinction is now the main
+      // thing we want to read. The geofence that was meant to spare coaches
+      // this tap is gone; whether they answer from the tray or from inside the
+      // app is how we tell whether the notification is carrying its share
+      // (0083).
       const { error } = await supabase.rpc("coach_mark_arrival", {
         p_session: sessionId,
         p_late: false,
-        p_source: "tap",
+        p_source: "push",
       });
       if (error) return arrivalError(error.message);
       revalidatePath(`/coach/session/${sessionId}`);
@@ -148,11 +151,11 @@ export async function POST(request: Request) {
       });
     }
     case "coach_late": {
-      // Same 'tap' reasoning as coach_arrived above — a tray tap is still a tap.
+      // Same 'push' reasoning as coach_arrived above.
       const { error } = await supabase.rpc("coach_mark_arrival", {
         p_session: sessionId,
         p_late: true,
-        p_source: "tap",
+        p_source: "push",
       });
       if (error) return arrivalError(error.message);
       revalidatePath(`/coach/session/${sessionId}`);

@@ -9,9 +9,10 @@
 //
 // What stays out of here: which states are worth asking about, and what the
 // words are. Those are per-permission decisions, they are where the judgement
-// is, and they live in lib/push-prompt.ts and lib/location-prompt.ts as pure
-// functions so they can be tested in `node` (there is no component-test harness
-// in this repo by design).
+// is, and they live in lib/push-prompt.ts as pure functions so they can be
+// tested in `node` (there is no component-test harness in this repo by design).
+// Location was the second such module and is gone with its geofence; push is
+// the only caller now, and this stays split for whatever asks next.
 
 /**
  * How hard we ask. The first ask in a browsing session interrupts; after that it

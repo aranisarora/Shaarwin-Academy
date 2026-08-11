@@ -114,7 +114,13 @@ create table public.class_sessions (
   created_at timestamptz default now() not null,
   coach_arrived_at timestamptz,
   coach_confirmed_at timestamptz,
+  -- Which of the three doors the tap came through: 'tap' in the app, 'push' on
+  -- the notification button, 'wa' from WhatsApp (0083). 'auto' is historical —
+  -- the geofence that wrote it is gone, and one production row still carries it.
   coach_arrival_source text,
+  -- Historical (0083). Metres from the venue when the geofence marked a coach
+  -- arrived. Nothing has written it since the fence was removed; kept so
+  -- founder_day_report and the admin schedule readers keep their shape.
   coach_arrival_distance_m integer,
   coach_late_at timestamptz
 );
@@ -534,7 +540,7 @@ ALTER TABLE public.class_sessions ADD CONSTRAINT class_sessions_pkey PRIMARY KEY
 ALTER TABLE public.class_sessions ADD CONSTRAINT class_sessions_class_id_fkey FOREIGN KEY (class_id) REFERENCES classes(id) ON DELETE CASCADE;
 ALTER TABLE public.class_sessions ADD CONSTRAINT class_sessions_coach_id_fkey FOREIGN KEY (coach_id) REFERENCES coaches(id) ON DELETE SET NULL;
 ALTER TABLE public.class_sessions ADD CONSTRAINT class_sessions_capacity_override_check CHECK ((capacity_override >= 1));
-ALTER TABLE public.class_sessions ADD CONSTRAINT class_sessions_coach_arrival_source_check CHECK ((coach_arrival_source = ANY (ARRAY['auto'::text, 'tap'::text, 'wa'::text])));
+ALTER TABLE public.class_sessions ADD CONSTRAINT class_sessions_coach_arrival_source_check CHECK ((coach_arrival_source = ANY (ARRAY['auto'::text, 'tap'::text, 'wa'::text, 'push'::text])));
 ALTER TABLE public.class_sessions ADD CONSTRAINT session_window CHECK ((starts_at < ends_at));
 ALTER TABLE public.classes ADD CONSTRAINT classes_pkey PRIMARY KEY (id);
 ALTER TABLE public.classes ADD CONSTRAINT classes_created_by_fkey FOREIGN KEY (created_by) REFERENCES profiles(id) ON DELETE SET NULL;
@@ -4093,7 +4099,7 @@ COMMENT ON FUNCTION public.sweep_session_status() IS 'Closes past scheduled sess
 -- made that a writable SECURITY DEFINER function reachable anonymously (0066).
 revoke execute on function public.sweep_session_status() from public, anon, authenticated;
 
-CREATE OR REPLACE FUNCTION public.coach_mark_arrival(p_session uuid, p_late boolean DEFAULT false, p_source text DEFAULT 'tap'::text, p_distance_m integer DEFAULT NULL::integer)
+CREATE OR REPLACE FUNCTION public.coach_mark_arrival(p_session uuid, p_late boolean DEFAULT false, p_source text DEFAULT 'tap'::text)
  RETURNS timestamptz
  LANGUAGE plpgsql
  SECURITY DEFINER
@@ -4165,10 +4171,9 @@ begin
     -- Arrived implies coming: also stamp confirm + provenance so a coach who
     -- only ever taps "arrived" is never nagged or escalated as unconfirmed.
     update class_sessions
-       set coach_arrived_at        = now(),
-           coach_confirmed_at       = coalesce(coach_confirmed_at, now()),
-           coach_arrival_source     = p_source,
-           coach_arrival_distance_m = p_distance_m
+       set coach_arrived_at    = now(),
+           coach_confirmed_at  = coalesce(coach_confirmed_at, now()),
+           coach_arrival_source = p_source
      where id = p_session
        and coach_arrived_at is null
      returning coach_arrived_at into v_arrived;
@@ -4180,23 +4185,25 @@ begin
   end if;
 
   -- Somebody else already recorded this. Report the state honestly and send
-  -- nothing — the first caller's messages are already on their way. This is
-  -- what stops the geofenced auto-arrival and the coach's own tap writing the
-  -- booked parents two identical messages (0079).
+  -- nothing — the first caller's messages are already on their way. With the
+  -- geofence gone this is no longer auto-versus-tap; it is the same coach
+  -- answering twice, from the tray and then in the app, which is exactly what
+  -- three entry points to one question invite (0079, 0083).
   if not v_won then
     select coach_arrived_at into v_arrived from class_sessions where id = p_session;
     return v_arrived;
   end if;
 
   -- Booked clients (parents) are always told — arrived or late both matter to
-  -- them. Auto arrivals delay 2 minutes so an Undo beats delivery; manual and
-  -- WhatsApp taps notify immediately. Data carries coach_name/location/time so
-  -- the notify worker can render the parent WhatsApp without re-querying.
-  insert into notifications (user_id, type, title, body, data, scheduled_for)
+  -- them. Immediately, in every case: the two-minute hold here existed so an
+  -- Undo could beat delivery of an arrival the coach had not asked for, and
+  -- every source left is a deliberate tap (0083). Data carries
+  -- coach_name/location/time so the notify worker can render the parent
+  -- WhatsApp without re-querying.
+  insert into notifications (user_id, type, title, body, data)
   select distinct b.client_id, v_type, v_title, v_body,
          jsonb_build_object('session_id', p_session, 'url', '/app',
-           'coach_name', v_name, 'location_str', v_location, 'time_str', v_time),
-         case when p_source = 'auto' then now() + interval '2 minutes' else now() end
+           'coach_name', v_name, 'location_str', v_location, 'time_str', v_time)
     from bookings b
    where b.session_id = p_session
      and b.status in ('confirmed', 'attended');
