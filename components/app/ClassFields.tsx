@@ -184,7 +184,7 @@ export function ClassDetailFields({
       >
         {venues.map((v) => (
           <option key={v.id} value={v.id}>
-            {v.active ? venueDisplayName(v) : `${venueDisplayName(v)} (hidden)`}
+            {v.is_public ? venueDisplayName(v) : `${venueDisplayName(v)} (hidden)`}
           </option>
         ))}
       </Select>

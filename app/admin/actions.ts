@@ -9,7 +9,6 @@ import {
   grantCompCore,
   saveVenueCore,
   setClassActiveCore,
-  setVenueActiveCore,
   deleteVenueCore,
   type VenueInput,
 } from "@/lib/admin-ops";
@@ -65,16 +64,6 @@ export async function saveVenue(input: VenueInput): Promise<Result> {
   const { supabase, founder } = await requireFounder();
   if (!founder) return { ok: false, error: "Founder only." };
   const result = await saveVenueCore(supabase, founder.id, input);
-  if (!result.ok) return result;
-  revalidatePath("/admin/venues");
-  revalidateTag("venues", "max");
-  return { ok: true };
-}
-
-export async function setVenueActive(venueId: string, active: boolean): Promise<Result> {
-  const { supabase, founder } = await requireFounder();
-  if (!founder) return { ok: false, error: "Founder only." };
-  const result = await setVenueActiveCore(supabase, founder.id, venueId, active);
   if (!result.ok) return result;
   revalidatePath("/admin/venues");
   revalidateTag("venues", "max");

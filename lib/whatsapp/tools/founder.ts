@@ -382,7 +382,7 @@ const listVenues: WaTool = {
   run: async (_input, ctx) => {
     const { data } = await ctx.supabase!
       .from("venues")
-      .select("id,name,address,postcode,active")
+      .select("id,name,address,postcode,is_public")
       .order("name");
     return ok(
       (data ?? []).map((v) => ({
@@ -390,7 +390,7 @@ const listVenues: WaTool = {
         name: v.name,
         address: v.address,
         postcode: v.postcode,
-        active: v.active,
+        is_public: v.is_public,
       }))
     );
   },

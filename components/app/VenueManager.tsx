@@ -36,7 +36,7 @@ import {
   fromDetails,
   type StructuredAddress,
 } from "@/lib/address";
-import { saveVenue, setVenueActive, deleteVenue } from "@/app/admin/actions";
+import { saveVenue, deleteVenue } from "@/app/admin/actions";
 import { BENGALURU } from "@/lib/coverage";
 import { venueDisplayName, venueNeedsUnit } from "@/lib/venue-display";
 
@@ -48,7 +48,7 @@ type Venue = {
   postcode: string;
   lat: number;
   lng: number;
-  active: boolean;
+  is_public: boolean;
   is_school: boolean;
   address_details?: Partial<StructuredAddress> | null;
 };
@@ -58,6 +58,7 @@ type Editing = {
   name: string;
   unit: string;
   isSchool: boolean;
+  isPublic: boolean;
   addr: StructuredAddress;
 };
 
@@ -68,7 +69,7 @@ function VenueCard({ venue, onOpen }: { venue: Venue; onOpen: () => void }) {
     <button
       onClick={onOpen}
       className={`flex h-full w-full flex-col gap-1 rounded-[12px] border border-line bg-surface-2 px-4 py-3 text-left transition-colors hover:border-ember ${
-        venue.active ? "" : "opacity-60"
+        venue.is_public || venue.is_school ? "" : "opacity-60"
       }`}
     >
       <span className="flex w-full items-start justify-between gap-2">
@@ -85,7 +86,10 @@ function VenueCard({ venue, onOpen }: { venue: Venue; onOpen: () => void }) {
               School
             </span>
           )}
-          {!venue.active && <Badge>Hidden</Badge>}
+          {/* A school is never offered to clients, so "not public" is its normal
+              state and a badge saying so on all eleven of them would be noise —
+              only an unusual state earns one. */}
+          {!venue.is_public && !venue.is_school && <Badge>Hidden</Badge>}
         </span>
       </span>
       <span className="line-clamp-2 text-sm text-fg-2">
@@ -140,7 +144,7 @@ export function VenueManager({ venues }: { venues: Venue[] }) {
   function openNew() {
     setMessage(null);
     setSheetError(null);
-    setEditing({ name: "", unit: "", isSchool: false, addr: EMPTY_ADDRESS });
+    setEditing({ name: "", unit: "", isSchool: false, isPublic: true, addr: EMPTY_ADDRESS });
   }
 
   function openEdit(v: Venue) {
@@ -151,6 +155,7 @@ export function VenueManager({ venues }: { venues: Venue[] }) {
       name: v.name,
       unit: v.unit ?? "",
       isSchool: v.is_school,
+      isPublic: v.is_public,
       addr: fromDetails(v.address_details, {
         address: v.address,
         postcode: v.postcode,
@@ -189,6 +194,10 @@ export function VenueManager({ venues }: { venues: Venue[] }) {
         lng: a.lng ?? BENGALURU.lng,
         details: a,
         isSchool: editing.isSchool,
+        // A school is never offered to clients, so the two flags cannot
+        // disagree — the switch is disabled while "is a school" is on, and this
+        // is the same rule applied to what actually gets written.
+        isPublic: editing.isSchool ? false : editing.isPublic,
       });
       if (r.ok) {
         setMessage("Saved.");
@@ -311,6 +320,28 @@ export function VenueManager({ venues }: { venues: Venue[] }) {
               />
             </label>
 
+            {/* Said the same way as the school flag, because it is the same kind
+                of fact: something the founder decides about the place, not a
+                state the app derives. It used to be a "Hide venue" button below
+                the save, which read as an action on a live thing — and that
+                framing is how `active` came to be treated as visibility and
+                ended up hiding campuses from the coaches standing in them. */}
+            <label className="flex items-start justify-between gap-4 rounded-[12px] border border-line p-4">
+              <span className="min-w-0">
+                <span className="block font-medium">Offered to clients</span>
+                <span className="mt-1 block text-sm text-fg-2">
+                  {editing.isSchool
+                    ? "A school is never offered to clients, so this stays off."
+                    : "Listed on the website and pickable when a place gets chosen — yours and the client's. Turn it off for somewhere you only use internally: classes already here keep it, it just stops being offered for new ones."}
+                </span>
+              </span>
+              <Switch
+                checked={!editing.isSchool && editing.isPublic}
+                disabled={editing.isSchool}
+                onChange={(isPublic) => setEditing({ ...editing, isPublic })}
+              />
+            </label>
+
             <AddressForm
               value={editing.addr}
               onChange={(addr) => setEditing({ ...editing, addr })}
@@ -322,39 +353,6 @@ export function VenueManager({ venues }: { venues: Venue[] }) {
             <Button onClick={submit} disabled={pending || needsUnit} className="w-full">
               {pending ? <Spinner /> : "Save venue"}
             </Button>
-
-            {current && (
-              <div className="space-y-2 rounded-[12px] border border-line p-4">
-                <p className="label">Where it shows</p>
-                <p className="text-sm text-fg-2">
-                  {!current.active
-                    ? "Hidden. Classes already here keep it — it just stops being offered for new ones."
-                    : current.is_school
-                      ? "Offered when you set a class up. Clients are never shown a school."
-                      : "Offered wherever a place gets picked — yours and the client's."}
-                </p>
-                {errorAt("visibility")}
-                <Button
-                  variant="ghost"
-                  className="w-full"
-                  disabled={pending}
-                  onClick={() => {
-                    setSheetError(null);
-                    startTransition(async () => {
-                      const r = await setVenueActive(current.id, !current.active);
-                      if (!r.ok) {
-                        setSheetError({
-                          at: "visibility",
-                          text: r.error ?? "Couldn't update the venue.",
-                        });
-                      }
-                    });
-                  }}
-                >
-                  {current.active ? "Hide venue" : "Show venue"}
-                </Button>
-              </div>
-            )}
 
             {editing.id && (
               <>
