@@ -926,6 +926,49 @@ export const ENTITIES: Record<string, EntityDef> = {
     groupable: ["status", "type", "channel_attempted", "user_id", "profiles.full_name"],
   },
 
+  // What became of a message once the carrier had it. `notifications` above
+  // says what was QUEUED and whether the carrier accepted it; this says whether
+  // it reached the handset. Until this existed, "did Meera get the reminder?"
+  // had no honest answer better than "it was queued" — which is why the
+  // assistant is forbidden from saying anything stronger.
+  deliveries: {
+    table: "wa_delivery",
+    description:
+      "Per-message delivery receipts from WhatsApp: queued, sent, delivered, read or failed, with the carrier's reason when it failed. This is how you answer 'did they actually get it' — as opposed to `notifications`, which only knows what was queued.",
+    roles: FOUNDER,
+    columns:
+      "message_id,phone,status,error,notification_id,sent_at,delivered_at,read_at,failed_at,created_at",
+    includes: {},
+    defaultIncludes: [],
+    filters: {
+      phone: {
+        path: "phone",
+        description: "Messages to this number, however it was written",
+        ...PHONE,
+      },
+      status: {
+        path: "status",
+        description:
+          "queued (carrier has it) | sent | delivered (reached the handset) | read | failed",
+        values: ["queued", "sent", "delivered", "read", "failed"],
+      },
+      failed: {
+        path: "error",
+        description: "Use with not_null for messages that came back with a reason",
+        ops: ["is_null", "not_null"],
+      },
+      // notification_id is a real column and deliberately NOT a filter yet:
+      // only the notify worker can populate it, and the worker is a separate
+      // Deno deploy that has not shipped this. A filter over a column that is
+      // always null answers "none" to every question — the precise failure this
+      // registry keeps being fixed for. It goes in when the worker fills it.
+      from: { path: "created_at", description: "At or after", ops: ["gte", "gt"], ...FROM_IST },
+      to: { path: "created_at", description: "At or before", ops: ["lte", "lt"], ...TO_IST },
+    },
+    order: { path: "created_at", ascending: false },
+    groupable: ["status", "phone"],
+  },
+
   // ── Catalogue and credits ────────────────────────────────────────────────
   products: {
     table: "products",

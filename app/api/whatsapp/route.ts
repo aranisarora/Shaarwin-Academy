@@ -1,8 +1,15 @@
-// Twilio WhatsApp webhook. Auth: every request must carry a valid
-// X-Twilio-Signature (HMAC over the exact public URL + params). We ack Twilio
-// immediately with empty TwiML and do the LLM work in after(), replying via
-// the REST API — webhooks that block on an LLM round-trip hit Twilio's 15s
-// timeout.
+// The WhatsApp webhook, for both carriers.
+//
+// Twilio posts form-encoded and signs the URL plus sorted params with SHA-1.
+// Meta's Cloud API posts JSON and signs the RAW body with SHA-256, and performs
+// a GET handshake when the URL is first saved. Both land here, are authenticated
+// by their own rules, and are normalised to the same shape before anything else
+// runs — nothing downstream of handleInbound knows which carrier delivered the
+// message.
+//
+// Either way we ack immediately and do the LLM work in after(): a webhook that
+// blocks on an LLM round trip hits Twilio's 15s timeout, and Meta retries a slow
+// endpoint.
 
 import { after } from "next/server";
 import { runAgent } from "@/lib/whatsapp/agent";
@@ -17,23 +24,50 @@ import { applyOptOut, matchOptOut } from "@/lib/whatsapp/optout";
 import { normalizePhone } from "@/lib/whatsapp/phone";
 import { claimAndQueue, markHandled, runCoalescedTurn } from "@/lib/whatsapp/turn";
 import {
-  sendWhatsApp,
-  stripWhatsappPrefix,
-  twilioConfigured,
-  validateTwilioSignature,
-} from "@/lib/whatsapp/twilio";
+  cloudApiConfigured,
+  parseCloudInbound,
+  parseCloudStatuses,
+  verifyCloudSignature,
+  verifySubscription,
+} from "@/lib/whatsapp/cloud-api";
+import { recordSend, recordStatuses } from "@/lib/whatsapp/delivery";
+import { acknowledge, sendText as sendWhatsApp } from "@/lib/whatsapp/transport";
+import { stripWhatsappPrefix, twilioConfigured, validateTwilioSignature } from "@/lib/whatsapp/twilio";
 
 const EMPTY_TWIML = new Response(
   '<?xml version="1.0" encoding="UTF-8"?><Response></Response>',
   { headers: { "Content-Type": "text/xml" } }
 );
 
+const OK = new Response("ok");
+
 const RATE_LIMIT_PER_MINUTE = 12;
 
+/**
+ * Meta's subscription handshake. It echoes hub.challenge back in plain text
+ * when the verify token matches — and must NOT answer when it doesn't, or
+ * anyone can point their webhook at us.
+ */
+export async function GET(request: Request) {
+  const challenge = verifySubscription(new URL(request.url).searchParams);
+  if (challenge === null) return new Response("forbidden", { status: 403 });
+  return new Response(challenge, { headers: { "content-type": "text/plain" } });
+}
+
 export async function POST(request: Request) {
-  if (!twilioConfigured() || !process.env.GOOGLE_SERVICE_ACCOUNT_JSON) {
+  if (!process.env.GOOGLE_SERVICE_ACCOUNT_JSON) {
     return new Response("not configured", { status: 503 });
   }
+
+  // Meta sends JSON; Twilio sends a form. Route on the content type rather than
+  // on which transport is "live", so a test number can be verified end to end
+  // while the real number is still on Twilio.
+  const contentType = request.headers.get("content-type") ?? "";
+  if (contentType.includes("application/json")) {
+    return handleCloudWebhook(request);
+  }
+
+  if (!twilioConfigured()) return new Response("not configured", { status: 503 });
 
   const form = await request.formData();
   const params: Record<string, string> = {};
@@ -94,6 +128,78 @@ export async function POST(request: Request) {
   });
 
   return EMPTY_TWIML;
+}
+
+/**
+ * Meta's webhook: JSON, signed over the RAW body.
+ *
+ * One request can carry several messages AND a batch of delivery statuses, so
+ * both are drained. The body is read as text and only then parsed — re-encoding
+ * parsed JSON changes whitespace and key order, and the signature stops
+ * matching, which is the standard way this check ends up quietly disabled.
+ */
+async function handleCloudWebhook(request: Request): Promise<Response> {
+  if (!cloudApiConfigured()) return new Response("not configured", { status: 503 });
+
+  const raw = await request.text();
+  if (!verifyCloudSignature(raw, request.headers.get("x-hub-signature-256"))) {
+    console.warn("wa: rejected cloud webhook with bad signature");
+    return new Response("invalid signature", { status: 403 });
+  }
+
+  let payload: unknown;
+  try {
+    payload = JSON.parse(raw);
+  } catch {
+    console.warn("wa: cloud webhook body was not JSON");
+    return OK;
+  }
+
+  const statuses = parseCloudStatuses(payload);
+  const messages = parseCloudInbound(payload);
+
+  after(async () => {
+    // Delivery receipts first and independently: they are the evidence behind
+    // "did Meera get the reminder?", and a message-handling failure must not
+    // take them down with it.
+    if (statuses.length) {
+      try {
+        await recordStatuses(adminClient(), statuses);
+      } catch (err) {
+        console.error("wa: recording delivery statuses failed", err);
+      }
+    }
+
+    for (const message of messages) {
+      const phone = normalizePhone(message.phone);
+      if (!phone) {
+        console.warn("wa: unparseable cloud sender", message.phone);
+        continue;
+      }
+      // Blue ticks and "typing…" before the thinking starts — the plan counts
+      // this as prevention: a visible indicator is the strongest known reducer
+      // of the impatient double-send.
+      await acknowledge(message.messageId);
+      try {
+        await handleInbound(phone, {
+          body: message.text,
+          hasMedia: message.hasMedia,
+          payload: message.buttonPayload,
+          buttonText: message.buttonText,
+          originalSid: message.contextId,
+          messageSid: message.messageId,
+        });
+      } catch (err) {
+        console.error("wa: message handling failed", err);
+        await sendWhatsApp(
+          phone,
+          "Something went wrong on our side — please try that again in a minute."
+        );
+      }
+    }
+  });
+
+  return OK;
 }
 
 /**
@@ -251,7 +357,10 @@ async function handleInbound(
       // whole sentence.
       if (reply === null) return "superseded";
 
-      await sendWhatsApp(phone, reply);
+      const sent = await sendWhatsApp(phone, reply);
+      // Give the delivery receipts a row to land on. Only Cloud API returns an
+      // id and only Cloud API reports back, so this is a no-op on Twilio.
+      if (sent.id) await recordSend(admin, { messageId: sent.id, phone });
       return "answered";
     },
   });

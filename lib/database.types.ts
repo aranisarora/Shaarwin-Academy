@@ -1875,6 +1875,48 @@ export type Database = {
         }
         Relationships: []
       }
+      wa_delivery: {
+        Row: {
+          created_at: string
+          delivered_at: string | null
+          error: string | null
+          failed_at: string | null
+          message_id: string
+          notification_id: string | null
+          phone: string
+          read_at: string | null
+          sent_at: string | null
+          status: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          delivered_at?: string | null
+          error?: string | null
+          failed_at?: string | null
+          message_id: string
+          notification_id?: string | null
+          phone: string
+          read_at?: string | null
+          sent_at?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          delivered_at?: string | null
+          error?: string | null
+          failed_at?: string | null
+          message_id?: string
+          notification_id?: string | null
+          phone?: string
+          read_at?: string | null
+          sent_at?: string | null
+          status?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       wa_entity_memory: {
         Row: {
           created_at: string
@@ -2341,6 +2383,7 @@ export type Database = {
           sessions_per_week: number
         }[]
       }
+      prune_wa_delivery: { Args: never; Returns: undefined }
       prune_wa_entity_memory: { Args: never; Returns: undefined }
       prune_wa_inbound_seen: { Args: never; Returns: undefined }
       wa_claim_chat: {

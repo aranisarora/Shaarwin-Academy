@@ -511,6 +511,31 @@ create table public.wa_inbound_seen (
   handled_at timestamptz
 );
 
+-- Delivery proof (0087). "Did Meera get the reminder?" had no answer: the
+-- system knew what it QUEUED and whether the carrier accepted it, and nothing
+-- after that — which is why the assistant's honesty rules must be so strict
+-- about never upgrading "queued" to "delivered". Meta's Cloud API reports each
+-- transition on the same webhook as inbound messages; they land here.
+create table public.wa_delivery (
+  -- The carrier's own id (Meta's wamid, or Twilio's SM… sid) — the only
+  -- identifier both sides of the conversation share.
+  message_id text not null,
+  phone text not null,
+  -- queued | sent | delivered | read | failed. Text, not an enum: a carrier
+  -- inventing a status must never fail the INSERT recording it.
+  status text default 'queued' not null,
+  error text,
+  -- Nullable and NOT a foreign key on purpose: a receipt must be recordable for
+  -- a message whose notification row has since been pruned.
+  notification_id uuid,
+  sent_at timestamptz,
+  delivered_at timestamptz,
+  read_at timestamptz,
+  failed_at timestamptz,
+  created_at timestamptz default now() not null,
+  updated_at timestamptz default now() not null
+);
+
 -- One agent run per chat at a time (0086). People text in fragments — "cancel
 -- tomorrow" / "actually just move it" / "to 5pm" — and three parallel runs each
 -- see a history without the others, so the first one acts on a sentence the
@@ -667,6 +692,7 @@ ALTER TABLE public.wa_messages ADD CONSTRAINT wa_messages_role_check CHECK ((rol
 ALTER TABLE public.wa_inbound_seen ADD CONSTRAINT wa_inbound_seen_pkey PRIMARY KEY (message_sid);
 ALTER TABLE public.wa_entity_memory ADD CONSTRAINT wa_entity_memory_pkey PRIMARY KEY (phone, kind, entity_id);
 ALTER TABLE public.wa_chat_locks ADD CONSTRAINT wa_chat_locks_pkey PRIMARY KEY (phone);
+ALTER TABLE public.wa_delivery ADD CONSTRAINT wa_delivery_pkey PRIMARY KEY (message_id);
 ALTER TABLE public.webhook_events ADD CONSTRAINT webhook_events_event_id_key UNIQUE (event_id);
 ALTER TABLE public.webhook_events ADD CONSTRAINT webhook_events_stripe_event_id_key UNIQUE (stripe_event_id);
 ALTER TABLE public.webhook_events ADD CONSTRAINT webhook_events_pkey PRIMARY KEY (id);
@@ -704,6 +730,8 @@ CREATE INDEX wa_messages_phone_seq_idx ON public.wa_messages USING btree (phone,
 CREATE INDEX wa_inbound_seen_created_at_idx ON public.wa_inbound_seen USING btree (created_at);
 CREATE INDEX wa_entity_memory_phone_seen_idx ON public.wa_entity_memory USING btree (phone, last_seen_at DESC);
 CREATE INDEX wa_inbound_seen_pending_idx ON public.wa_inbound_seen USING btree (phone, created_at) WHERE (handled_at IS NULL);
+CREATE INDEX wa_delivery_phone_idx ON public.wa_delivery USING btree (phone, created_at DESC);
+CREATE INDEX wa_delivery_failed_idx ON public.wa_delivery USING btree (created_at DESC) WHERE (status = 'failed'::text);
 CREATE INDEX bookings_player_id_idx ON public.bookings USING btree (player_id);
 CREATE INDEX notifications_user_id_idx ON public.notifications USING btree (user_id);
 CREATE INDEX notifications_failed_idx ON public.notifications USING btree (created_at DESC) WHERE (status = 'failed'::notification_status);
@@ -5489,6 +5517,17 @@ as $$
      and (p_run is null or run_id is null or run_id = p_run);
 $$;
 
+-- 90 days is long enough to answer "did they get it" about anything anyone
+-- still remembers asking about.
+create or replace function public.prune_wa_delivery()
+returns void
+language sql
+security definer
+set search_path = public
+as $$
+  delete from public.wa_delivery where created_at < now() - interval '90 days';
+$$;
+
 -- Every write to a push_subscriptions row comes from a browser that is open
 -- right now, so "when was this row last written" and "when was this device last
 -- alive" are the same fact. Stamped here rather than by each caller, so a
@@ -5571,6 +5610,7 @@ alter table public.wa_messages enable row level security;
 alter table public.wa_inbound_seen enable row level security;
 alter table public.wa_entity_memory enable row level security;
 alter table public.wa_chat_locks enable row level security;
+alter table public.wa_delivery enable row level security;
 alter table public.webhook_events enable row level security;
 
 -- ── Policies ─────────────────────────────────────────────────────────────────
@@ -5652,9 +5692,11 @@ CREATE POLICY "school reads own campus" ON public.venues AS PERMISSIVE FOR SELEC
 -- There is no wa_* policy, and that absence is deliberate. The one that existed
 -- read wa_links, which 0074 dropped: profiles.phone is the binding now, and it
 -- is covered by the profiles policies. wa_messages, wa_inbound_seen and
--- wa_entity_memory and wa_chat_locks keep RLS on with no policy at all —
--- service-role only, so the chat transcript, the ids the assistant resolved
--- from it, and the per-chat run lock all stay out of the chat's own reach.
+-- wa_entity_memory, wa_chat_locks and wa_delivery keep RLS on with no policy
+-- at all — service-role only, so the chat transcript, the ids the assistant
+-- resolved from it, the per-chat run lock and the delivery receipts all stay
+-- out of the chat's own reach. The founder reads delivery through `find`, which
+-- runs on the service role behind the registry's own role gate.
 CREATE POLICY "founder reads webhook events" ON public.webhook_events AS PERMISSIVE FOR SELECT TO public USING (( SELECT is_founder() AS is_founder));
 CREATE POLICY "staff reads categories" ON public.skill_categories AS PERMISSIVE FOR SELECT TO public USING ((( SELECT is_coach() AS is_coach) OR ( SELECT is_founder() AS is_founder)));
 CREATE POLICY "founder manages categories" ON public.skill_categories AS PERMISSIVE FOR ALL TO public USING (( SELECT is_founder() AS is_founder)) WITH CHECK (( SELECT is_founder() AS is_founder));
