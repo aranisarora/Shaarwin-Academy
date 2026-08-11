@@ -21,7 +21,7 @@ import {
   setClientBlockedCore,
   setCoachActiveCore,
   setSessionCapacityCore,
-  setVenueActiveCore,
+  setVenuePublicCore,
   topUpSessionsCore,
   updateClientCore,
   updateGroupClassCore,
@@ -1017,22 +1017,22 @@ const saveVenue: WaTool = {
   },
 };
 
-const setVenueActive: WaTool = {
-  name: "set_venue_active",
+const setVenuePublic: WaTool = {
+  name: "set_venue_public",
   description:
-    "Show or hide one venue or several (venue_ids from find or list_venues) — 'deactivate every venue except La Plazza' is one call.",
+    "Show or hide one venue or several on the public website and the booking picker (venue_ids from find or list_venues) — 'hide every venue except La Plazza' is one call. Schools are never public.",
   input_schema: {
     type: "object",
     properties: {
       venue_ids: { type: "array", items: { type: "string" }, description: "One or more venue ids" },
-      active: { type: "boolean" },
+      is_public: { type: "boolean" },
     },
-    required: ["venue_ids", "active"],
+    required: ["venue_ids", "is_public"],
   },
   run: async (input, ctx) =>
     bulkTool(
       input.venue_ids ?? input.venue_id,
-      (id) => setVenueActiveCore(ctx.supabase!, ctx.profile!.id, id, Boolean(input.active)),
+      (id) => setVenuePublicCore(ctx.supabase!, ctx.profile!.id, id, Boolean(input.is_public)),
       { noun: "venue" }
     ),
 };
@@ -1168,7 +1168,7 @@ export const founderAdminTools: WaTool[] = [
   broadcastMessage,
   notify,
   saveVenue,
-  setVenueActive,
+  setVenuePublic,
   deleteVenue,
   getSettings,
   updateSettings,

@@ -1,17 +1,18 @@
-// A school reads its own campus, active or not (migration 0080).
+// A school reads its own campus, public or not (migration 0080).
 //
 // The other half of the hole 0079 closed for coaches. Every campus is
-// `active = false` — a campus is not something a client books — and the only
-// read policy on `venues` was `active = true OR is_founder()`, so a school
-// account could not read the one venue row that is entirely about it.
+// `is_public = false` — a campus is not offered to clients — and the only read
+// policy on `venues` was `is_public = true OR is_founder()` (called `active`
+// then, which is how it came to be read as visibility), so a school account
+// could not read the one venue row that is entirely about it.
 //
 // The symptom hid behind a fallback, which is why it lasted: getCampuses()
 // embeds `venues(name,unit)` off `school_admins` and ends
 // `row.venues?.name ?? "School"`. Unreadable row -> null embed -> every school
 // in production sees its campus called "School".
 //
-// As in 0079's spec, the venue is made inactive explicitly: createSchool()
-// builds an active one, which is why the suite stayed green against this.
+// As in 0079's spec, the venue is made non-public explicitly: createSchool()
+// builds a public one, which is why the suite stayed green against this.
 
 import { describe, it, expect, beforeAll } from "vitest";
 import { admin, asUser } from "../../e2e/lib/supabase";
@@ -33,21 +34,21 @@ beforeAll(async () => {
   // Production's actual state for every campus.
   await admin()
     .from("venues")
-    .update({ active: false })
+    .update({ is_public: false })
     .in("id", [campus.venueId, otherCampus.venueId]);
 
   office = await createSchoolAdmin({ venueId: campus.venueId });
 });
 
 describe("a school reads its own campus (0080)", () => {
-  it("reads its own inactive campus row", async () => {
-    // Precondition: inactive, so the old policy would have hidden it.
+  it("reads its own non-public campus row", async () => {
+    // Precondition: non-public, so the old policy would have hidden it.
     const { data: row } = await admin()
       .from("venues")
-      .select("active")
+      .select("is_public")
       .eq("id", campus.venueId)
       .single();
-    expect(row?.active).toBe(false);
+    expect(row?.is_public).toBe(false);
 
     const db = await asUser(office.email);
     const { data } = await db

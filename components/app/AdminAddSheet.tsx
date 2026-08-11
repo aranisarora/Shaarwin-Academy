@@ -1080,7 +1080,7 @@ export function AdminAddSheet({
               >
                 {venues.map((v) => (
                   <option key={v.id} value={v.id}>
-                    {v.active
+                    {v.is_public
                       ? venueDisplayName(v)
                       : `${venueDisplayName(v)} (hidden)`}
                   </option>

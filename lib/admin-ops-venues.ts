@@ -24,6 +24,15 @@ export type VenueInput = {
    * editing an address can't quietly demote a school.
    */
   isSchool?: boolean;
+  /**
+   * Whether this venue is offered to clients — listed on the public website and
+   * pickable when booking. Both halves; that is why it is not called `bookable`.
+   *
+   * Left out (undefined) the flag is untouched, the same rule as `isSchool` and
+   * for the same reason: a bare address edit from the WhatsApp tool must not
+   * quietly publish a campus.
+   */
+  isPublic?: boolean;
 };
 
 export async function saveVenueCore(
@@ -95,7 +104,27 @@ export async function saveVenueCore(
     // rule for the school flag, for the same reason.
     ...(input.details !== undefined ? { address_details: input.details } : {}),
     ...(input.isSchool !== undefined ? { is_school: input.isSchool } : {}),
+    ...(input.isPublic !== undefined ? { is_public: input.isPublic } : {}),
   };
+
+  // Read the flag before writing, so the audit can still say "this venue left
+  // the website" rather than only "someone edited a venue". The admin UI sets
+  // `is_public` through this form now rather than through its own button, and
+  // folding it in must not cost the distinct signal — taking a venue off the
+  // public site is the one edit here worth finding again later. The same two
+  // actions are written by setVenuePublicCore below, which the WhatsApp founder
+  // tool still calls directly, so the trail reads the same whichever surface
+  // did it.
+  let wasPublic: boolean | null = null;
+  if (input.id && input.isPublic !== undefined) {
+    const { data: before } = await supabase
+      .from("venues")
+      .select("is_public")
+      .eq("id", input.id)
+      .maybeSingle();
+    wasPublic = before?.is_public ?? null;
+  }
+
   const { error } = input.id
     ? await supabase.from("venues").update(row).eq("id", input.id)
     : await supabase.from("venues").insert(row);
@@ -107,20 +136,40 @@ export async function saveVenueCore(
     entity_id: input.id ?? null,
     meta: { name: input.name },
   });
+  if (wasPublic !== null && input.isPublic !== undefined && wasPublic !== input.isPublic) {
+    await supabase.from("audit_log").insert({
+      actor_id: founderId,
+      action: input.isPublic ? "venue.publish" : "venue.hide",
+      entity: "venues",
+      entity_id: input.id ?? null,
+      meta: { name: input.name },
+    });
+  }
   return { ok: true };
 }
 
-export async function setVenueActiveCore(
+/**
+ * Publish or unpublish a venue on its own, without going through the editor.
+ *
+ * The admin screen folds this into the venue form (one Switch beside "This place
+ * is a school"), so the only caller left is the WhatsApp founder tool, where
+ * "take Greenage off the website" is a single instruction and opening a form is
+ * not an option.
+ */
+export async function setVenuePublicCore(
   supabase: SupabaseClient<Database>,
   founderId: string,
   venueId: string,
-  active: boolean
+  isPublic: boolean
 ): Promise<OpResult> {
-  const { error } = await supabase.from("venues").update({ active }).eq("id", venueId);
+  const { error } = await supabase
+    .from("venues")
+    .update({ is_public: isPublic })
+    .eq("id", venueId);
   if (error) return { ok: false, error: "Couldn't update the venue." };
   await supabase.from("audit_log").insert({
     actor_id: founderId,
-    action: active ? "venue.activate" : "venue.hide",
+    action: isPublic ? "venue.publish" : "venue.hide",
     entity: "venues",
     entity_id: venueId,
   });

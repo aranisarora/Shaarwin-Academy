@@ -23,7 +23,7 @@ export const academyInfo: WaTool = {
       ctx.admin
         .from("venues")
         .select("id,name,address,postcode")
-        .eq("active", true)
+        .eq("is_public", true)
         // Never read a school campus out to a stranger asking where we coach.
         .eq("is_school", false),
       getBrowseSessions(ctx.admin, "", 7),

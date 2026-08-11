@@ -554,7 +554,7 @@ than one call per session inside a 2048-token output budget:
 `cancel_sessions`, `cancel_bookings`, `reassign_coach`, `adjust_private_credits`,
 `move_session` (also takes `shift_minutes` for a relative move — "push Tuesday
 back 30 minutes"), `set_session_capacity`, `set_class_active`, `set_coach_active`,
-`set_venue_active`, `block_client`, `archive_client`,
+`set_venue_public`, `block_client`, `archive_client`,
 `remove_availability_windows`, `notify`.
 
 Each still routes through the same `lib/admin-ops` core as the web app, so the
