@@ -215,24 +215,27 @@ describe("arrival flow (migration 0039)", () => {
   // correctly leaving the timestamp alone. Five families received the same
   // "Coach has arrived" twice before this was found.
   //
-  // The trigger is not a fumbled double-tap. The geofenced auto-arrival fires
-  // from a GPS callback while the manual button is still on screen, and the
-  // auto branch defers its parent ping by two minutes so Undo can beat it — so
-  // the pair ALWAYS lands in different delivery batches, which is exactly where
-  // the notify worker's per-batch dedupe cannot see it. Push adds a third way
-  // to answer the same question, on every device at once.
+  // The trigger is not a fumbled double-tap. One question is asked through
+  // three doors at once — the button in the app, the button on the push
+  // notification, and the WhatsApp reply — and a coach who answers the tray on
+  // their phone and then opens the app to check it landed has used two of them
+  // in the ordinary course of things. The geofence used to be a fourth (0083
+  // removed it), and it was the worst of them: it fired from a GPS callback
+  // while the manual button was still on screen.
+  //
+  // Push makes it worse in a way worth stating: the notification arrives on
+  // every subscribed device at once, so the same coach can answer twice from
+  // two phones without ever seeing the first answer.
 
   it("tells the parents once, however many times the coach says they arrived", async () => {
     const db = admin();
     const { coach, parent, session } = await seatedSession();
 
-    // The real race: auto (deferred 2 min) and a tap (immediate), as the coach
-    // screen fires them.
+    // All three doors, in the order a coach realistically reaches them.
     await coachMarkArrival({
       coachEmail: coach.email,
       sessionId: session.sessionId,
-      source: "auto",
-      distanceM: 42,
+      source: "push",
     });
     await coachMarkArrival({
       coachEmail: coach.email,
@@ -251,14 +254,16 @@ describe("arrival flow (migration 0039)", () => {
       1
     );
 
-    // First writer wins the whole row, not just the clock.
+    // First writer wins the whole row, not just the clock — so the source names
+    // the door that actually did the work, which is the number 0083 exists to
+    // collect. A later tap must not overwrite it to 'tap' and make the
+    // notification look unused.
     const { data: row } = await db
       .from("class_sessions")
-      .select("coach_arrival_source, coach_arrival_distance_m")
+      .select("coach_arrival_source")
       .eq("id", session.sessionId)
       .single();
-    expect(row!.coach_arrival_source).toBe("auto");
-    expect(row!.coach_arrival_distance_m).toBe(42);
+    expect(row!.coach_arrival_source).toBe("push");
   });
 
   it("tells the parents and founders once, however many times the coach reports lateness", async () => {

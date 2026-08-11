@@ -564,15 +564,14 @@ export async function coachMarkArrival(args: {
   password?: string;
   sessionId: string;
   late?: boolean;
-  source?: "tap" | "auto" | "wa";
-  distanceM?: number;
+  /** Which door the tap came through. 'auto' is gone with the geofence (0083). */
+  source?: "tap" | "push" | "wa";
 }) {
   const coach = await asUser(args.coachEmail, args.password ?? SEED_PASSWORD);
   const { data, error } = await coach.rpc("coach_mark_arrival", {
     p_session: args.sessionId,
     p_late: args.late ?? false,
     p_source: args.source ?? "tap",
-    p_distance_m: args.distanceM ?? null,
   });
   if (error) throw new Error(`coachMarkArrival: ${error.message}`);
   return data as string | null;
