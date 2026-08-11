@@ -5503,6 +5503,7 @@ CREATE POLICY "founder writes venues" ON public.venues AS PERMISSIVE FOR ALL TO 
 -- (0079).
 CREATE POLICY "public reads active venues" ON public.venues AS PERMISSIVE FOR SELECT TO public USING (((active = true) OR ( SELECT is_founder() AS is_founder)));
 CREATE POLICY "coach reads rostered venues" ON public.venues AS PERMISSIVE FOR SELECT TO public USING (((( SELECT is_coach() AS is_coach)) AND coach_is_rostered_at(id)));
+CREATE POLICY "school reads own campus" ON public.venues AS PERMISSIVE FOR SELECT TO public USING ((id IN ( SELECT school_admin_venues() AS school_admin_venues)));
 -- There is no wa_* policy, and that absence is deliberate. The one that existed
 -- read wa_links, which 0074 dropped: profiles.phone is the binding now, and it
 -- is covered by the profiles policies. wa_messages and wa_inbound_seen keep RLS
