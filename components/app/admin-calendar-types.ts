@@ -39,6 +39,11 @@ export type SessionRow = {
   // For private sessions: the assigned client, or null for an "open" slot held
   // without a client yet. Drives the "unassigned" label and the assign action.
   privateClientId: string | null;
+  // Every client with a live booking on this session, so "what is the Sharma
+  // family in this week?" is answerable on group classes and not just on their
+  // privates. privateClientId is folded in here as well — see sessionClientIds,
+  // which both builders of this row use so they cannot disagree about it.
+  clientIds: string[];
   address: StructuredAddress | null;
   // Class scope — what "every week" edits apply to. Present on group sessions.
   classId: string;
@@ -77,6 +82,11 @@ export type ClassRow = {
   // glance, like reading his WhatsApp groups. bookedCount is players confirmed
   // on that next session; capacity is the class default.
   bookedCount: number;
+  // The families on that next session — the regulars, read off the very rows
+  // bookedCount is counted from. A class the founder's client filter has to be
+  // able to find: "everything the Sharma family is in" means their Tuesday group
+  // as much as their Sunday private.
+  clientIds: string[];
   // The next upcoming session — drives the class sheet's "Regulars" list, the
   // "Open this week's session →" cross-link, and the view-as-coach shortcut.
   nextSessionId: string | null;
@@ -93,6 +103,7 @@ export type PrivateSeriesRow = {
   id: string;
   playerName: string;
   clientName: string; // family / client name, for the sub-line
+  clientId: string | null; // that family's profile id, for the client filter
   weekday: string; // MO..SU (from the series' ISO weekday)
   time: string; // HH:MM IST wall clock
   duration: number;

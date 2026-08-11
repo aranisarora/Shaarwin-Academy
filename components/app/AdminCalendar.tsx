@@ -11,12 +11,22 @@
 // screen untrustworthy enough to need a second one beside it. They do not go
 // back in the main flow, though: they sit behind one quiet line under their own
 // day, because a dead card between two live ones is noise on every normal week
-// bought to gain clarity on the rare bad one.
+// bought to gain clarity on the rare bad one. That fold is the DEFAULT view's
+// noise control and nothing more: filter by status and it comes off, because
+// folding away the very thing he has just asked for by name is not tidying up,
+// it is the screen ignoring him.
 //
-// The filters and the day-open state are NOT held here any more. They are the
-// same three questions the Timetable asks, and a founder who narrows to one
-// coach and flips the switch should still be looking at that coach. See
-// AdminScheduleTabs.
+// The filters and the day-open state are NOT held here any more. Coach,
+// location, type and client are the same four questions the Timetable asks, and
+// a founder who narrows to one coach and flips the switch should still be
+// looking at that coach. See AdminScheduleTabs.
+//
+// The status filter is the one exception, and it lives here. The Timetable's
+// status question is active / paused / ended — whether a class is still
+// something we run at all — which is a different question about different rows
+// from whether one dated session happened. Sharing a chip between the two would
+// leave one control meaning two things depending on which side of the switch
+// the founder was standing on.
 
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/Button";
@@ -31,10 +41,10 @@ import { CardActionMenu } from "./CardActionMenu";
 import { DayHeading } from "./DayHeading";
 import { SessionCard } from "./ClassCard";
 import { groupSessionsByDay } from "@/lib/group-by-day";
-import { formatClock, wallDate } from "@/lib/academy-time";
+import { formatClock, sessionTimeStatus, wallDate } from "@/lib/academy-time";
 import { venueKeyOf } from "@/lib/venue-display";
 import type { OpenMap, ScheduleFilters } from "./AdminScheduleTabs";
-import { KIND_WORD } from "./class-type";
+import { KIND_WORD, classKind } from "./class-type";
 import {
   type ClientOption,
   type Coach,
@@ -55,34 +65,60 @@ const DAY_SCROLL_MARGIN: React.CSSProperties = {
   scrollMarginTop: "calc(var(--header-h) + var(--sticky-h, 10rem) + 0.5rem)",
 };
 
+/** Which of the three status words a session answers to.
+ *
+ *  Deliberately not `s.status` on its own. That column is settled by an HOURLY
+ *  cron (sweep_session_status, migration 0065) while the card greys itself off
+ *  the clock the moment the class ends — so between a 7pm finish and the 8:05
+ *  sweep the row still reads 'scheduled'. Filtering on the raw column there
+ *  would drop a card that is sitting on screen in finished grey, and hand back
+ *  a class that is already over under a chip promising it is still on. He is
+ *  filtering by what he can see, so the filter reads what he can see. */
+function statusOf(s: SessionRow): SessionRow["status"] {
+  if (s.status !== "scheduled") return s.status;
+  return sessionTimeStatus(s.starts_at, s.ends_at) === "completed"
+    ? "completed"
+    : "scheduled";
+}
+
 /** The cancellations for one day, folded into a line. Collapsed by default:
  *  the count is the fact he needs while scanning, the reason the fact he needs
- *  only once he has stopped. */
+ *  only once he has stopped.
+ *
+ *  `fold={false}` lays them out flat with no disclosure at all — see the status
+ *  filter below, where he has asked for the cancelled ones by name and a count
+ *  he has to tap is one step too many. */
 function CancelledLine({
   rows,
   onOpen,
   coachNameOf,
+  fold = true,
 }: {
   rows: SessionRow[];
   onOpen: (s: SessionRow) => void;
   coachNameOf: (s: SessionRow) => string | null;
+  fold?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   return (
     <div className="col-span-full">
-      <button
-        type="button"
-        onClick={() => setOpen((o) => !o)}
-        aria-expanded={open}
-        className="pressable flex min-h-11 w-full items-center gap-1.5 rounded-[8px] px-1 text-left text-sm text-fg-2 hover:text-ember"
-      >
-        <span aria-hidden className={`transition-transform ${open ? "rotate-90" : ""}`}>
-          ›
-        </span>
-        {rows.length} cancelled
-      </button>
-      {open && (
-        <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+      {fold && (
+        <button
+          type="button"
+          onClick={() => setOpen((o) => !o)}
+          aria-expanded={open}
+          className="pressable flex min-h-11 w-full items-center gap-1.5 rounded-[8px] px-1 text-left text-sm text-fg-2 hover:text-ember"
+        >
+          <span aria-hidden className={`transition-transform ${open ? "rotate-90" : ""}`}>
+            ›
+          </span>
+          {rows.length} cancelled
+        </button>
+      )}
+      {(open || !fold) && (
+        <div
+          className={`grid gap-2 sm:grid-cols-2 lg:grid-cols-3 ${fold ? "mt-2" : ""}`}
+        >
           {rows.map((s) => (
             <SessionCard
               key={s.id}
@@ -114,7 +150,7 @@ export function AdminCalendar({
   venues: Venue[];
   clients: ClientOption[];
   invites: InviteOption[];
-  /** Coach / location / type, shared with the Timetable view. */
+  /** Coach / location / type / client, shared with the Timetable view. */
   filters: ScheduleFilters;
   /** Which day cards are open, shared with the week strip above. */
   days: OpenMap;
@@ -135,12 +171,23 @@ export function AdminCalendar({
   const [adding, setAdding] = useState(false);
   const [message, setMessage] = useAutoClearMessage();
 
-  const { coach: coachFilter, venue: venueFilter, type: typeFilter } = filters;
+  const {
+    coach: coachFilter,
+    venue: venueFilter,
+    type: typeFilter,
+    client: clientFilter,
+  } = filters;
+
+  // Held here rather than in ScheduleFilters, and the note at the top of the
+  // file says why: the Timetable's status axis is a different question.
+  const [statusFilter, setStatusFilter] = useState<string[]>([]);
 
   // Drawn from this week's sessions, PLUS whatever is currently filtered on.
   // Without that last part, paging to a week where the chosen hall has nothing
   // dropped its option — so the chip fell back to reading "All locations"
   // while still filtering, in ember, with an ✕. It looked cleared and wasn't.
+  // Now that the filter holds several halls at once, every one of them has to
+  // survive that week, not just the one.
   //
   // Keyed on the venue rather than the full label, so this list and the
   // Timetable's are the same list and one chip can drive both. See venueKeyOf.
@@ -149,30 +196,70 @@ export function AdminCalendar({
       [
         ...new Set([
           ...sessions.map((s) => venueKeyOf(s.venueName)).filter(Boolean),
-          ...(venueFilter !== "all" ? [venueFilter] : []),
+          ...venueFilter,
         ]),
       ].sort((a, b) => a.localeCompare(b)),
     [sessions, venueFilter]
   );
 
+  // Every client the academy has, not the ones with a session this week — the
+  // same reasoning as the venue list above, arrived at from the other side. A
+  // family whose week turns out to be empty would lose its option while still
+  // filtering, leaving a chip that reads "All clients" over a screen with
+  // nothing on it.
+  //
+  // Sorted here as well as in the query, because this is the one list on the
+  // page that runs to hundreds and he opens it already knowing the name he
+  // wants: the fallback below renames the nameless ones, and a row that sorted
+  // by an empty full_name lands somewhere he would never look for it.
+  const clientOptions = useMemo(
+    () =>
+      clients
+        .map((c) => ({ value: c.id, label: c.name || "Unnamed client" }))
+        .sort((a, b) => a.label.localeCompare(b.label)),
+    [clients]
+  );
+
+  // Empty list = no filter on that axis; otherwise the session has to match one
+  // of the chosen values. Several answers at once is the whole point of the
+  // change — "Ravi and Amit are both out on Friday" used to be two passes over
+  // the same week, with the founder holding the first one in his head.
   const filtered = useMemo(
     () =>
       sessions.filter((s) => {
-        if (coachFilter === "none" && s.coachId) return false;
-        if (coachFilter !== "all" && coachFilter !== "none" && s.coachId !== coachFilter)
+        // "none" is a real answer here, not a sentinel meaning "off": picking it
+        // beside Ravi asks for the unassigned sessions AND Ravi's, which is
+        // exactly what somebody rostering a Friday wants in front of him.
+        if (coachFilter.length > 0 && !coachFilter.includes(s.coachId ?? "none"))
           return false;
-        if (venueFilter !== "all" && venueKeyOf(s.venueName) !== venueFilter) return false;
-        if (typeFilter === "group" && (s.isPrivate || s.isSchool)) return false;
-        if (typeFilter === "private" && !s.isPrivate) return false;
-        if (typeFilter === "school" && !s.isSchool) return false;
+        if (venueFilter.length > 0 && !venueFilter.includes(venueKeyOf(s.venueName)))
+          return false;
+        // classKind rather than re-reading isPrivate/isSchool here: it is the
+        // same function the card's glyph and word come from, so the chip and the
+        // cards it filters down to cannot drift apart later.
+        if (typeFilter.length > 0 && !typeFilter.includes(classKind(s))) return false;
+        // ANY of the chosen families, not all of them. A group class the Sharmas
+        // and the Raos are both in belongs in either family's answer.
+        if (
+          clientFilter.length > 0 &&
+          !s.clientIds.some((id) => clientFilter.includes(id))
+        )
+          return false;
+        if (statusFilter.length > 0 && !statusFilter.includes(statusOf(s))) return false;
         return true;
       }),
-    [sessions, coachFilter, venueFilter, typeFilter]
+    [sessions, coachFilter, venueFilter, typeFilter, clientFilter, statusFilter]
   );
 
-  // Everything below reads `live`. A cancelled session needs no coach, so it
-  // raises no alarm, fills no lane, and counts towards nothing that is "on" —
-  // it exists only on its own day's cancelled line.
+  // Asking by status is asking to see them, so the cancelled line stops folding
+  // and the cancelled sessions take their place in the day grids. See the note
+  // at the top of the file.
+  const foldCancelled = statusFilter.length === 0;
+
+  // The coach lanes below read `live`, whether or not the fold is on. A
+  // cancelled session needs no coach, so it raises no alarm, fills no lane, and
+  // counts towards nothing that is "on" — filtering to it changes where it is
+  // drawn, not whose working week it belongs to.
   const live = useMemo(() => filtered.filter((s) => s.status !== "cancelled"), [filtered]);
   const cancelled = useMemo(
     () => filtered.filter((s) => s.status === "cancelled"),
@@ -189,8 +276,15 @@ export function AdminCalendar({
   }, [live, coaches]);
 
   const today = wallDate(new Date().toISOString());
+  // Every axis, or the line under the lanes lies. "No sessions this week: Ravi"
+  // is a fact about the week; under any narrowing at all it would really mean
+  // "none that match", which is not what it says and not what he would read.
   const filtersActive =
-    coachFilter !== "all" || venueFilter !== "all" || typeFilter !== "all";
+    coachFilter.length > 0 ||
+    venueFilter.length > 0 ||
+    typeFilter.length > 0 ||
+    clientFilter.length > 0 ||
+    statusFilter.length > 0;
   const emptyCoaches = filtersActive
     ? []
     : lanes.byCoach.filter(({ rows }) => rows.length === 0).map(({ coach }) => coach);
@@ -209,16 +303,21 @@ export function AdminCalendar({
     setSelected(session);
   };
 
+  // None of these carry an "all" option any more. FilterBar draws that row
+  // itself from `label`, and handing one in as a value would let "All coaches"
+  // be ticked alongside two named ones — a filter claiming both at once.
   const filterDefs: FilterDef[] = [
     {
       key: "coach",
       aria: "Filter by coach",
       label: "All coaches",
-      value: coachFilter,
-      defaultValue: "all",
+      mode: "multi",
+      values: coachFilter,
       onChange: filters.setCoach,
+      // "No coach yet" survives the move and is not the absent "all" in
+      // disguise: it names a set of real sessions, and it combines with the
+      // named coaches like any other choice.
       options: [
-        { value: "all", label: "All coaches" },
         { value: "none", label: "No coach yet" },
         ...coaches.map((c) => ({ value: c.id, label: c.name })),
       ],
@@ -231,20 +330,17 @@ export function AdminCalendar({
       key: "venue",
       aria: "Filter by location",
       label: "All locations",
-      value: venueFilter,
-      defaultValue: "all",
+      mode: "multi",
+      values: venueFilter,
       onChange: filters.setVenue,
-      options: [
-        { value: "all", label: "All locations" },
-        ...venueOptions.map((v) => ({ value: v, label: v })),
-      ],
+      options: venueOptions.map((v) => ({ value: v, label: v })),
     },
     {
       key: "type",
       aria: "Filter by class type",
       label: "All types",
-      value: typeFilter,
-      defaultValue: "all",
+      mode: "multi",
+      values: typeFilter,
       onChange: filters.setType,
       // The app's one set of names for the three kinds — the chips used to say
       // "Group / Private / School" while the cards below them said "Group class
@@ -252,10 +348,41 @@ export function AdminCalendar({
       // Filtering to a word you cannot then find on a card is a small betrayal
       // that costs a scroll every time.
       options: [
-        { value: "all", label: "All class types" },
         { value: "group", label: KIND_WORD.group },
         { value: "private", label: KIND_WORD.private },
         { value: "school", label: KIND_WORD.school },
+      ],
+    },
+    {
+      // The family, not the child. The founder's question is "what is the
+      // Sharma family in this week?" and it is asked of the account that pays,
+      // so one pick catches both children and the group classes as well as the
+      // privates — see SessionRow.clientIds.
+      key: "client",
+      aria: "Filter by client",
+      label: "All clients",
+      mode: "multi",
+      values: clientFilter,
+      onChange: filters.setClient,
+      options: clientOptions,
+    },
+    {
+      key: "status",
+      aria: "Filter by status",
+      label: "All statuses",
+      mode: "multi",
+      values: statusFilter,
+      onChange: setStatusFilter,
+      // He asked for "cancelled, completed, live etc", and two of those three
+      // words are kept exactly. "Live" is not: the card spends that word on the
+      // ember badge for a class happening RIGHT NOW, so a chip reading Live
+      // over forty upcoming sessions would be the same betrayal the type
+      // options above are commented for. "Still on" is what he means by it —
+      // not called off, not yet finished — and no card contradicts it.
+      options: [
+        { value: "scheduled", label: "Still on" },
+        { value: "completed", label: "Completed" },
+        { value: "cancelled", label: "Cancelled" },
       ],
     },
   ];
@@ -323,8 +450,16 @@ export function AdminCalendar({
       {/* ── Phone: day-first, every day open on arrival. ── */}
       <div className="space-y-2 lg:hidden">
         {dayGroups.map((day) => {
-          const dayLive = day.rows.filter((s) => s.status !== "cancelled");
-          const dayOff = day.rows.filter((s) => s.status === "cancelled");
+          // With the fold off, a cancelled session is simply a session: it takes
+          // its place in the day's own order wearing its greyed, struck-through
+          // card, and the count in the header counts it, because that count has
+          // to describe what is on the screen underneath it.
+          const dayOff = foldCancelled
+            ? day.rows.filter((s) => s.status === "cancelled")
+            : [];
+          const dayMain = foldCancelled
+            ? day.rows.filter((s) => s.status !== "cancelled")
+            : day.rows;
           const open = days.map[day.key] ?? true;
           return (
             // The scroll target the week strip aims at.
@@ -334,22 +469,31 @@ export function AdminCalendar({
                 open={open}
                 onToggle={() => days.toggle(day.key, open)}
                 title={<DayHeading label={day.label} isToday={day.isToday} />}
-                meta={`${dayLive.length} class${dayLive.length === 1 ? "" : "es"}`}
+                meta={`${dayMain.length} class${dayMain.length === 1 ? "" : "es"}`}
               >
                 <div className="grid gap-2 p-3">
-                  {dayLive.map((s) => (
+                  {dayMain.map((s) => (
                     <SessionCard
                       key={s.id}
                       session={s}
                       coachName={coachNameOf(s)}
                       onClick={() => openSession(s)}
-                      onLongPress={() => {
-                        setMessage(null);
-                        setHeld(s);
-                      }}
+                      // No hold on a session that is already off — the menu's
+                      // last row is "Cancel…", which on a called-off class
+                      // offers to do the thing that has already been done.
+                      // These only reach this grid when the status filter has
+                      // unfolded them; behind the fold they never had a hold.
+                      onLongPress={
+                        s.status === "cancelled"
+                          ? undefined
+                          : () => {
+                              setMessage(null);
+                              setHeld(s);
+                            }
+                      }
                     />
                   ))}
-                  {dayLive.length === 0 && dayOff.length > 0 && (
+                  {dayMain.length === 0 && dayOff.length > 0 && (
                     <p className="px-1 text-sm text-fg-2">
                       Nothing running — everything on this day was called off.
                     </p>
@@ -403,10 +547,19 @@ export function AdminCalendar({
 
         {/* The lanes are per coach, and a cancellation belongs to no coach's
             working week — so on desktop they gather once here rather than being
-            scattered through seven day sub-headings. */}
+            scattered through seven day sub-headings. That still holds with the
+            fold off: they stay out of the lanes, they just stop being behind a
+            tap. This is the one place the two layouts answer the status filter
+            differently, and it is the lanes that force it — the phone has a day
+            to put them back into and the desktop has only a coach. */}
         {cancelled.length > 0 && (
           <div className="grid">
-            <CancelledLine rows={cancelled} onOpen={openSession} coachNameOf={coachNameOf} />
+            <CancelledLine
+              rows={cancelled}
+              onOpen={openSession}
+              coachNameOf={coachNameOf}
+              fold={foldCancelled}
+            />
           </div>
         )}
       </div>

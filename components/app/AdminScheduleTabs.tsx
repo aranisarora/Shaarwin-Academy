@@ -21,8 +21,8 @@
 //
 // What this component owns, and why it had to move up here:
 //
-//   THE FILTERS. Coach, location and type are the same three questions on both
-//   sides, and each view used to keep its own copy — so the most prominent
+//   THE FILTERS. Coach, location, type and client are the same four questions on
+//   both sides, and each view used to keep its own copy — so the most prominent
 //   control on the page silently threw away "show me only Ravi" every time it
 //   was pressed. If they are two views of one thing, narrowing one narrows both.
 //
@@ -59,14 +59,22 @@ import type {
 
 export type ScheduleView = "week" | "timetable";
 
-/** The three questions both views ask, held once. */
+/** The four questions both views ask, held once.
+ *
+ *  Every one is a LIST, and an empty list means "no filter" — the founder's real
+ *  questions have more than one answer ("Ravi and Amit are both out on Friday",
+ *  "everything the Sharma and Rao families are in"), and a one-value filter made
+ *  him read the same list twice to ask them. `client` is profile ids of the
+ *  paying parents, so it reaches group classes too and not only privates. */
 export type ScheduleFilters = {
-  coach: string;
-  venue: string;
-  type: string;
-  setCoach: (v: string) => void;
-  setVenue: (v: string) => void;
-  setType: (v: string) => void;
+  coach: string[];
+  venue: string[];
+  type: string[];
+  client: string[];
+  setCoach: (v: string[]) => void;
+  setVenue: (v: string[]) => void;
+  setType: (v: string[]) => void;
+  setClient: (v: string[]) => void;
 };
 
 /** Whether each day / venue card is open, held once so the week strip can open
@@ -151,20 +159,58 @@ export function AdminScheduleTabs({
   const [focusDate, setFocusDate] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
 
+  // ── Adopting a navigation the server drove ─────────────────────────────────
+  // The failure this exists to stop: the founder holds a class on the Timetable,
+  // taps "Open this week's session", and stays on the Timetable with no sheet.
+  //
+  // That row router.push()es to /admin/schedule?date=…&session=… — a SOFT
+  // navigation onto the route this component is already mounted on. The server
+  // re-renders and hands down a fresh initialView, initialAnchor, initialSessions
+  // and openSessionId, and every one of them is ignored, because view / anchor /
+  // sessions are useState(initialProp) and useState reads its initial value once,
+  // on the first render, and never again. The code looks correct until you know
+  // that. So the props that say where the SERVER thinks we are become a key, and
+  // a change in that key is adopted.
+  //
+  // Adjusted during render rather than in an effect on purpose: an effect runs
+  // after the commit, so the founder would watch the Timetable paint once more
+  // before the week replaced it.
+  //
+  // Paging weeks does NOT come through here. writeUrl uses history.pushState
+  // precisely so a week costs no server round trip, so none of these four props
+  // move and the popstate handler below stays the only thing driving Back and
+  // Forward. The filters are left alone too — they belong to the founder, not to
+  // the URL, and losing them on arrival is the bug the header comment describes.
+  const navKey = `${initialView}|${initialAnchor}|${openSessionId ?? ""}|${openClassId ?? ""}`;
+  const [adoptedNav, setAdoptedNav] = useState(navKey);
+  if (navKey !== adoptedNav) {
+    setAdoptedNav(navKey);
+    setView(initialView);
+    setAnchor(initialAnchor);
+    // The server has already fetched the new anchor's week and handed it over,
+    // so take it rather than asking for the week we were just given.
+    setSessions(initialSessions);
+    setFocusDate(null);
+  }
+
   // ── Shared across both views ───────────────────────────────────────────────
-  const [coachFilter, setCoachFilter] = useState("all");
-  const [venueFilter, setVenueFilter] = useState("all");
-  const [typeFilter, setTypeFilter] = useState("all");
+  // Empty array = no filter, on all four. See ScheduleFilters.
+  const [coachFilter, setCoachFilter] = useState<string[]>([]);
+  const [venueFilter, setVenueFilter] = useState<string[]>([]);
+  const [typeFilter, setTypeFilter] = useState<string[]>([]);
+  const [clientFilter, setClientFilter] = useState<string[]>([]);
   const filters: ScheduleFilters = useMemo(
     () => ({
       coach: coachFilter,
       venue: venueFilter,
       type: typeFilter,
+      client: clientFilter,
       setCoach: setCoachFilter,
       setVenue: setVenueFilter,
       setType: setTypeFilter,
+      setClient: setClientFilter,
     }),
-    [coachFilter, venueFilter, typeFilter]
+    [coachFilter, venueFilter, typeFilter, clientFilter]
   );
 
   const [openDays, setOpenDays] = useState<Record<string, boolean>>({});
@@ -207,10 +253,15 @@ export function AdminScheduleTabs({
     });
   }, []);
 
-  // A deep link straight to ?view=timetable has to fetch before it can paint.
+  // Landing on the Timetable without its data fetches it, however we landed
+  // there: a deep link straight to ?view=timetable, a navigation adopted above,
+  // Back onto one, or the switch. Watching the live `view` rather than the
+  // initialView prop is what makes the middle two work at all — and it is one
+  // rule instead of the three near-identical `if (!timetable) loadTimetable()`
+  // lines that used to sit at each of those doors.
   useEffect(() => {
-    if (initialView === "timetable") loadTimetable();
-  }, [initialView, loadTimetable]);
+    if (view === "timetable" && !timetableRef.current) loadTimetable();
+  }, [view, loadTimetable]);
 
   /** Write the current place into the URL. `push` adds a history entry, so
    *  Back steps a week rather than leaving the Schedule altogether. */
@@ -256,7 +307,6 @@ export function AdminScheduleTabs({
 
   function changeView(next: ScheduleView) {
     setView(next);
-    if (next === "timetable" && !timetable) loadTimetable();
     writeUrl(next, anchor, true);
   }
 
@@ -269,12 +319,11 @@ export function AdminScheduleTabs({
       const nextView: ScheduleView = p.get("view") === "timetable" ? "timetable" : "week";
       const nextAnchor = p.get("date") ?? today;
       setView(nextView);
-      if (nextView === "timetable" && !timetableRef.current) loadTimetable();
       if (nextAnchor !== anchorRef.current) load(nextAnchor);
     };
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
-  }, [today, loadTimetable, load]);
+  }, [today, load]);
 
   const refreshSessions = useCallback(() => {
     startTransition(async () => {
@@ -364,6 +413,14 @@ export function AdminScheduleTabs({
 
       {view === "week" ? (
         <AdminCalendar
+          // Keyed on the deep link so an adopted navigation actually opens the
+          // sheet. AdminCalendar seeds `selected` from openSessionId with a lazy
+          // useState — the same trap as above, one level down — so a changed
+          // openSessionId on a mounted child would be ignored and the founder
+          // would land on the right week with no session open. Remounting is the
+          // honest fix rather than a patch: everything it holds is sheet state,
+          // which should reset when he arrives from somewhere else anyway.
+          key={openSessionId ?? "none"}
           sessions={sessions}
           coaches={coaches}
           venues={venues}
@@ -376,6 +433,10 @@ export function AdminScheduleTabs({
         />
       ) : timetable ? (
         <AdminWeeklyClasses
+          // Same reason as the key above, for the other direction: "edit the
+          // weekly class" on a session sheet arrives as ?class=…, and the class
+          // editor is seeded from it by a lazy useState too.
+          key={openClassId ?? "none"}
           classes={timetable.classes}
           privateSeries={timetable.privateSeries}
           oneOffCount={timetable.oneOffCount}

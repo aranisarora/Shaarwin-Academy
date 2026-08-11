@@ -12,7 +12,11 @@ import {
   type SessionRow,
 } from "@/components/app/admin-calendar-types";
 import { venueDisplayName } from "@/lib/venue-display";
-import { fetchFollowThrough, NO_FOLLOW_THROUGH } from "@/lib/session-followthrough";
+import {
+  fetchFollowThrough,
+  sessionClientIds,
+  NO_FOLLOW_THROUGH,
+} from "@/lib/session-followthrough";
 import {
   assignPrivateSessionClientCore,
   bulkRemoveClassesCore,
@@ -681,6 +685,7 @@ export async function fetchWeekSessions(
       privatePlayerName:
         (priv?.players as unknown as { full_name: string } | null)?.full_name ?? null,
       privateClientId: priv?.client_id ?? null,
+      clientIds: sessionClientIds(owed, priv?.client_id ?? null),
       address,
       classId: cls.id,
       classActive: cls.active,
@@ -919,7 +924,10 @@ export async function fetchTimetable(): Promise<Timetable> {
     supabase
       .from("private_booking_series")
       .select(
-        "id,weekday,start_time,duration_minutes,preferred_coach,venue_id,venue_label," +
+        // client_id as well as the joined name: the sub-line needs the name, the
+        // client filter needs the id, and resolving one back from the other
+        // would make two families called Sharma one row on the founder's screen.
+        "id,client_id,weekday,start_time,duration_minutes,preferred_coach,venue_id,venue_label," +
           "venues(name,unit)," +
           "player:players!private_booking_series_player_id_fkey(full_name)," +
           "client:profiles!private_booking_series_client_id_fkey(full_name)"
@@ -987,14 +995,27 @@ export async function fetchTimetable(): Promise<Timetable> {
 
   const nextSessionIds = [...nextByClass.values()].map((n) => n.sessionId);
   const bookedBySession = new Map<string, number>();
+  // The families behind those same bookings, so the client filter can find a
+  // group class the way it finds a private. Folded from the rows already being
+  // read for the count rather than from a query of their own — asking `bookings`
+  // twice for one set of sessions is how a screen gets slow one field at a time.
+  const clientsBySession = new Map<string, Set<string>>();
   if (nextSessionIds.length) {
     const { data: bookings } = await supabase
       .from("bookings")
-      .select("session_id")
+      .select("session_id,client_id")
       .in("session_id", nextSessionIds)
       .in("status", ["confirmed", "attended"]);
-    for (const b of bookings ?? [])
+    for (const b of bookings ?? []) {
       bookedBySession.set(b.session_id, (bookedBySession.get(b.session_id) ?? 0) + 1);
+      // A Set, because two children of one family in the same class are two
+      // bookings and one name to filter by. School pupils have no client at all.
+      if (b.client_id) {
+        const seen = clientsBySession.get(b.session_id) ?? new Set<string>();
+        seen.add(b.client_id);
+        clientsBySession.set(b.session_id, seen);
+      }
+    }
   }
 
   const lastByClass = new Map<string, string>();
@@ -1027,6 +1048,7 @@ export async function fetchTimetable(): Promise<Timetable> {
       isSchool: c.is_school,
       coachName: next?.coachName ?? null,
       bookedCount: next ? (bookedBySession.get(next.sessionId) ?? 0) : 0,
+      clientIds: next ? [...(clientsBySession.get(next.sessionId) ?? [])] : [],
       nextSessionId: next?.sessionId ?? null,
       nextSessionStart: next?.starts_at ?? null,
       nextCoachId: next?.coachId ?? null,
@@ -1042,6 +1064,7 @@ export async function fetchTimetable(): Promise<Timetable> {
 
   type SeriesRow = {
     id: string;
+    client_id: string | null;
     weekday: number;
     start_time: string;
     duration_minutes: number;
@@ -1087,6 +1110,7 @@ export async function fetchTimetable(): Promise<Timetable> {
       id: s.id,
       playerName: s.player?.full_name ?? "Player",
       clientName: s.client?.full_name ?? "",
+      clientId: s.client_id ?? null,
       weekday: isoWeekdayCode[s.weekday - 1] ?? "MO",
       time: String(s.start_time).slice(0, 5),
       duration: s.duration_minutes,

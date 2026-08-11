@@ -26,6 +26,11 @@
 // 'no_show' is deliberately not chased for an assessment. You cannot rate a
 // player who was not there, and the queue in the database does not ask anyone
 // to.
+//
+// The same read also carries out the FAMILIES on each session (clientIds). That
+// is filtering, not follow-through, and it lives here only because the roster
+// query already returns those rows — the alternative is a second trip to
+// `bookings` for exactly the same week to answer "what is the Sharma family in".
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/database.types";
@@ -35,12 +40,52 @@ export type FollowThrough = {
   rosterUnmarked: number;
   /** Players marked attended that this session has no assessment for. */
   assessPending: number;
+  /**
+   * Every client with a live booking on the session — the parents who pay, not
+   * the children who turn up.
+   *
+   * It rides along here rather than in a query of its own because the roster
+   * read that answers the two counts above already has the column. The founder's
+   * question is "show me everything the Sharma family is in this week", and that
+   * has to reach group classes too — reading it off the private's own client
+   * would answer it for privates and quietly lose the rest.
+   */
+  clientIds: string[];
 };
 
-export const NO_FOLLOW_THROUGH: FollowThrough = { rosterUnmarked: 0, assessPending: 0 };
+export const NO_FOLLOW_THROUGH: FollowThrough = {
+  rosterUnmarked: 0,
+  assessPending: 0,
+  clientIds: [],
+};
 
-type BookingRow = { session_id: string; player_id: string | null; status: string };
+type BookingRow = {
+  session_id: string;
+  player_id: string | null;
+  status: string;
+  client_id: string | null;
+};
 type AssessmentRow = { session_id: string | null; player_id: string | null };
+
+/**
+ * The families to filter a session by: everyone holding a live booking on it,
+ * plus the private's own client.
+ *
+ * That last part is not a nicety. A private session's client hangs off the CLASS
+ * (private_class_details), and a slot assigned to a family can carry no booking
+ * row at all — so filtering to that family would drop their private lessons,
+ * which are the sessions they are most likely to be looking for.
+ *
+ * Exported because SessionRow is assembled in two places (the schedule page and
+ * fetchWeekSessions) and those two have drifted before.
+ */
+export function sessionClientIds(
+  owed: FollowThrough,
+  privateClientId: string | null
+): string[] {
+  if (!privateClientId || owed.clientIds.includes(privateClientId)) return owed.clientIds;
+  return [...owed.clientIds, privateClientId];
+}
 
 /**
  * Fold the two raw reads into one answer per session.
@@ -62,7 +107,12 @@ export function foldFollowThrough(
   for (const b of bookings) {
     if (!b.session_id) continue;
     let row = out.get(b.session_id);
-    if (!row) out.set(b.session_id, (row = { rosterUnmarked: 0, assessPending: 0 }));
+    if (!row)
+      out.set(b.session_id, (row = { rosterUnmarked: 0, assessPending: 0, clientIds: [] }));
+    // Once per family, not once per booking: two children of one family in the
+    // same class is two bookings and still one name to filter by. A school
+    // pupil registered in the hall has no client account at all and adds none.
+    if (b.client_id && !row.clientIds.includes(b.client_id)) row.clientIds.push(b.client_id);
     if (b.status === "confirmed") {
       row.rosterUnmarked++;
     } else if (b.status === "attended") {
@@ -73,7 +123,7 @@ export function foldFollowThrough(
 }
 
 /**
- * What each of these sessions still owes.
+ * What each of these sessions still owes, and which families are on it.
  *
  * Two reads rather than a view, because this has to work against the live
  * database today and every schema change here is applied to production by hand
@@ -93,7 +143,7 @@ export async function fetchFollowThrough(
   const [{ data: bookings }, { data: assessments }] = await Promise.all([
     supabase
       .from("bookings")
-      .select("session_id,player_id,status")
+      .select("session_id,player_id,status,client_id")
       .in("session_id", sessionIds)
       // Waitlisted and cancelled rows are not a roster: nobody owes an answer
       // about a child who was never given a place.
