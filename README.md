@@ -31,8 +31,9 @@ token. Two secrets are still placeholders — see Go-live below.
   unassigned lane + tap-to-reassign (+ lock), classes, coaches, clients,
   settings editor.
 - **PWA** — manifest, icons, service worker (app-shell cache + push handlers).
-- **Design system** — Court Noir tokens, Fraunces/Inter, both moods, on
-  display at `/styleguide`.
+- **Design system** — Court Noir tokens, Fraunces/Inter, both moods. Defined in
+  `app/globals.css`; the card language is documented in
+  `components/app/ClassCard.tsx`.
 
 Booking/cancel/private flows call the SQL RPCs first and fall back to
 equivalent JS logic until the migrations are applied, so the app works today

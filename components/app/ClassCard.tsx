@@ -47,18 +47,23 @@
 // so any combination of them is drawable and none can eat another:
 //   • plum/teal left rail = a private / a school's class ┐ identity, additive,
 //   • the glyph on line 3 = the same fact, in a shape    ┘ never a status
-//   • faint green surface = nothing to do here            ┐ the outcome, on
-//   • faint red surface   = something is owed on this one ┘ every session
-//   • warm ember surface  = live right now — outranks the outcome
+//   • faint green surface = it ran and it went right ┐ the verdict, and ONLY
+//   • faint red surface   = it ran and it did not    ┘ on classes that have run
+//   • warm ember surface  = live right now
 //   • red border          = no coach yet, and nothing else
 //   • ember ring + wash   = you have picked this one
 //   • grey ink            = out of play — over, called off, ended, paused
-//   • the badge row       = arrival, attendance, assessments — what is owed
+//   • the badge row       = arrival, attendance, assessments — the detail
 //
 // The four surfaces are one channel with one winner, decided in `stateTone`
 // rather than by the order Tailwind writes them. Grey ink is a separate channel
 // and composes with any of them: a finished class that owes a register is grey
 // words on a faint red card, which is the pair of facts the founder wants.
+//
+// AN UPCOMING CLASS GETS NO VERDICT. Green means "this one went right", which a
+// class that has not happened cannot have done, and painting the future green
+// both said something false and spent the colour on nine cards in ten — at
+// which point it is the background of the screen rather than a finding on it.
 
 import Link from "next/link";
 import { Badge } from "@/components/ui/Badge";
@@ -377,21 +382,24 @@ export function SessionCard({
   // with reads as one flat grey block, and the two red chips left on it are the
   // only colour on screen. The exception cost more than it bought — it meant
   // "finished" looked like two different states depending on paperwork.
-  // IS THIS CARD HIS PROBLEM — the one question the week is scanned for, asked
-  // of every session and answered in a colour before a word is read.
+  // DID THIS CLASS GO RIGHT — asked only of classes that have actually
+  // happened, because a verdict on a class that has not run yet is not a
+  // verdict, it is a guess.
   //
-  // "Wrong" is deliberately wider than the follow-through counts: a class with
-  // nobody rostered on it is the most broken card the app can draw and owes
-  // nothing at all, so keying the wash on `issues.any` alone would have painted
-  // it green. Green is a claim that there is nothing to do here, and it has to
-  // be true of everything, not just of the paperwork.
+  // The wash briefly ran on the whole week, and green on Thursday's classes was
+  // the tell that it was wrong: nothing had gone right there, nothing had gone
+  // anything, the class simply had not happened. It also drained the signal — a
+  // colour carried by nine cards in ten is the background of the screen, not a
+  // finding on it. So the future stays plain, and the past is graded.
   //
-  // A coach who turned up late is NOT wrong for this purpose, deliberately.
-  // Nothing can be done about it now, so a red card would sit in the week for
-  // ever advertising a job that does not exist. It is still said on the card —
-  // in the "! Arrived 12 min late" chip — and in the sheet, next to the clock.
-  const issues = off ? null : sessionIssues(session);
-  const wrong = !off && (!session.coachId || issues!.any);
+  // GREEN IS A CLAIM ABOUT THE WHOLE CLASS, not just about the paperwork: the
+  // coach was rostered, turned up, turned up on time, marked who came and rated
+  // them. Anything short of all of that is red. That includes a coach who
+  // walked in twelve minutes late — there is no job left to do about it, but a
+  // class the parents stood around waiting for did not go right, and the
+  // founder is scanning for exactly that.
+  const done = !off && status === "completed";
+  const issues = done ? sessionIssues(session) : null;
   const tone = `${stateTone({
     dim: off || status === "completed",
     // A class with nobody to teach it, and nothing else. Everything the session
@@ -399,10 +407,10 @@ export function SessionCard({
     // and of what without touching the edge the kind rail lives on.
     alert: !off && !session.coachId,
     live: !off && status === "in_progress",
-    // A cancelled class is neither good news nor a job — it is information, and
-    // washing it either colour would be the card having an opinion about a
-    // class that did not happen.
-    outcome: off ? undefined : wrong ? "owed" : "ok",
+    // Never on a cancelled class. It is not a class that went well and not one
+    // that went badly — it did not happen, and grading it either way would be
+    // the card having an opinion about nothing.
+    outcome: issues ? (issues.wentWrong ? "owed" : "ok") : undefined,
   })} ${kindRail(session)}`;
   const inner = (
     <>

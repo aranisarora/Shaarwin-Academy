@@ -98,14 +98,30 @@ export type SessionIssues = {
   /** Is anyone still owing anything? A late arrival is not owed — see the note
    *  at the top of this file. */
   any: boolean;
+  /**
+   * Did this class go right?
+   *
+   * Wider than `any` in both directions it can be. A class with nobody rostered
+   * owes no paperwork at all and is the most broken thing the schedule can
+   * draw; a coach who walked in twelve minutes late leaves no job behind but
+   * the parents still stood there waiting. Neither is "outstanding work", and
+   * both mean the class did not go right.
+   *
+   * Answered whether or not the class has run — this file reports what is true
+   * and the caller decides when the question is worth asking. The card only
+   * paints it on sessions that are over, because a verdict on a class that has
+   * not happened yet is a guess.
+   */
+  wentWrong: boolean;
 };
 
-export const NO_ISSUES: SessionIssues = {
+const NO_ISSUES: SessionIssues = {
   arrival: null,
   noArrival: false,
   attendance: 0,
   assess: 0,
   any: false,
+  wentWrong: false,
 };
 
 /**
@@ -135,11 +151,13 @@ export function sessionIssues(session: IssueInput, now?: number): SessionIssues 
   const attendance = over ? session.rosterUnmarked : 0;
   const assess = over ? session.assessPending : 0;
 
+  const any = noArrival || attendance > 0 || assess > 0;
   return {
     arrival,
     noArrival,
     attendance,
     assess,
-    any: noArrival || attendance > 0 || assess > 0,
+    any,
+    wentWrong: any || session.coachId == null || arrival?.late === true,
   };
 }

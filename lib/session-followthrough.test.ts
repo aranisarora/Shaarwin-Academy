@@ -1,9 +1,5 @@
 import { describe, it, expect } from "vitest";
-import {
-  foldFollowThrough,
-  owesFollowThrough,
-  NO_FOLLOW_THROUGH,
-} from "./session-followthrough";
+import { foldFollowThrough } from "./session-followthrough";
 
 const b = (session_id: string, player_id: string | null, status: string) => ({
   session_id,
@@ -69,12 +65,5 @@ describe("foldFollowThrough", () => {
     // nothing — the caller reads the miss as NO_FOLLOW_THROUGH, not "unknown".
     const out = foldFollowThrough([], []);
     expect(out.get("s1")).toBeUndefined();
-    expect(owesFollowThrough(NO_FOLLOW_THROUGH)).toBe(false);
-  });
-
-  it("owesFollowThrough is true if either half is outstanding", () => {
-    expect(owesFollowThrough({ rosterUnmarked: 1, assessPending: 0 })).toBe(true);
-    expect(owesFollowThrough({ rosterUnmarked: 0, assessPending: 1 })).toBe(true);
-    expect(owesFollowThrough({ rosterUnmarked: 0, assessPending: 0 })).toBe(false);
   });
 });

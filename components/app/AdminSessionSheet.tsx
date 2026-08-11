@@ -430,7 +430,15 @@ export function AdminSessionSheet({
   // preview and coming back is the ordinary path through here, and the whole
   // callout has to be able to empty itself out — a red box saying nothing is
   // the app insisting on a problem he has just fixed.
-  const anyOutstanding = issues.noArrival || unmarkedCount > 0 || issues.assess > 0;
+  //
+  // A late arrival counts, and has to: it is one of the things that turns the
+  // card red, and a red card that opens onto a clean-looking sheet is the exact
+  // contradiction lib/session-issues.ts exists to prevent. It is the one entry
+  // here that is a fact rather than a job, which is why the heading asks for
+  // attention rather than for work, and why it alone does not raise the button.
+  const lateArrival = !!issues.arrival?.late;
+  const owedWork = issues.noArrival || unmarkedCount > 0 || issues.assess > 0;
+  const anyOutstanding = owedWork || lateArrival;
   // Attendance is only editable for a week after the class (lib/attendance-
   // window.ts), and the founder's route in is the coach preview — which is
   // bound by exactly the same window. Offering a button past it would send him
@@ -698,19 +706,37 @@ export function AdminSessionSheet({
                   afford "✗ Attendance 8"; opening it is how he finds out which
                   eight, whether the coach ever turned up, and — the part that
                   was missing entirely — how to actually clear it. Everything
-                  here is a thing somebody still owes. A coach who arrived late
-                  is reported in the Coach block below instead: it is worth
-                  knowing and there is nothing left to do about it, so it does
-                  not belong on a list of jobs. */}
+                  here is a reason the card is not green. */}
               {anyOutstanding && (
                 <div className="space-y-3 rounded-[12px] border border-err p-4">
-                  {/* Names the work, not the state. "Not closed out" is the
-                      phrase the codebase thinks in and it describes a condition;
-                      the founder opening this at 9pm wants to know what is left
-                      to do about it. Same reason "Register" became
-                      "Attendance". */}
-                  <p className="label !text-err">Still to do</p>
+                  {/* Not "Not closed out" — that is the phrase the codebase
+                      thinks in and it describes a condition. And not "Still to
+                      do" either, which was the first try and was wrong the
+                      moment a late arrival could put a card in here: that is
+                      something to know, not something to do. Same instinct that
+                      turned "Register" into "Attendance" — say the plain thing
+                      that stays true of every row underneath it. */}
+                  <p className="label !text-err">Needs attention</p>
                   <ul className="space-y-2 text-sm">
+                    {lateArrival && (
+                      <li>
+                        <span aria-hidden className="mr-1.5 text-err">
+                          !
+                        </span>
+                        <span className="font-medium">
+                          {detail?.coachName ?? "The coach"} arrived{" "}
+                          {issues.arrival?.label}.
+                        </span>{" "}
+                        {/* No claim about what colour the card is: this same
+                            line shows on a live session, which is ember for a
+                            reason that has nothing to do with lateness. */}
+                        <span className="text-fg-2">
+                          The class started without them and the parents were
+                          left waiting. Nothing to mark here — it is a thing to
+                          know, and to raise with them.
+                        </span>
+                      </li>
+                    )}
                     {issues.noArrival && (
                       <li>
                         <span aria-hidden className="mr-1.5 text-err">
@@ -764,17 +790,21 @@ export function AdminSessionSheet({
                       </li>
                     )}
                   </ul>
-                  {session.coachId && canMark ? (
-                    <Button className="w-full" onClick={fixAsCoach} loading={pending}>
-                      Fix it in {detail?.coachName?.split(" ")[0] ?? "the coach"}&apos;s app
-                    </Button>
-                  ) : (
-                    <p className="text-sm text-fg-2">
-                      {session.coachId
-                        ? "This session closed for changes a week after it ran — its paperwork can't be corrected now."
-                        : "Nobody was rostered on this session, so there is nobody to mark it."}
-                    </p>
-                  )}
+                  {/* Only when there is something a tap can actually change. A
+                      lateness that cannot be un-happened must not grow a button
+                      promising to fix it. */}
+                  {owedWork &&
+                    (session.coachId && canMark ? (
+                      <Button className="w-full" onClick={fixAsCoach} loading={pending}>
+                        Fix it in {detail?.coachName?.split(" ")[0] ?? "the coach"}&apos;s app
+                      </Button>
+                    ) : (
+                      <p className="text-sm text-fg-2">
+                        {session.coachId
+                          ? "This session closed for changes a week after it ran — its paperwork can't be corrected now."
+                          : "Nobody was rostered on this session, so there is nobody to mark it."}
+                      </p>
+                    ))}
                 </div>
               )}
               {isOpenPrivate && (

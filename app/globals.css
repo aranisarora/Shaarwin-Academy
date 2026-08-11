@@ -72,8 +72,9 @@
    * a `var()` in `color-mix()`'s percentage slot, and rather than leaving the
    * declaration alone it drops the mix entirely — `--card-bg: var(--ok)`, a
    * fully saturated green card, silently, at build time only. So the percentage
-   * stays a literal and the whole mix is the token. Tuned by eye against
-   * `/styleguide`, which draws every state in both moods side by side. */
+   * stays a literal and the whole mix is the token. If you retune these, check
+   * the computed background rather than a screenshot — that bug is invisible in
+   * source and survives a glance at the page. */
   --card-ok-bg: color-mix(in srgb, var(--ok) 9%, var(--surface-2));
   --card-ok-bg-hover: color-mix(in srgb, var(--ok) 15%, var(--surface-2));
   --card-owed-bg: color-mix(in srgb, var(--err) 9%, var(--surface-2));

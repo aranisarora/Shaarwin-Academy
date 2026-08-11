@@ -81,15 +81,54 @@ describe("sessionIssues", () => {
     expect(i.noArrival).toBe(false);
   });
 
-  // A late coach is a fact, not a job. Nothing on the schedule can be done
-  // about one, so it must not put the session in the needs-attention list.
-  it("prints a late arrival without calling it outstanding work", () => {
+  // A late coach is a fact, not a job — nothing can be done about one — but the
+  // class still did not go right, so the two answers must differ.
+  it("prints a late arrival as a verdict, not as outstanding work", () => {
     const i = sessionIssues(
       session({ coachArrivedAt: iso(20) }),
       START + 90 * 60_000
     );
     expect(i.arrival).toMatchObject({ late: true, label: "20 min late" });
     expect(i.any).toBe(false);
+    expect(i.wentWrong).toBe(true);
+  });
+
+  // The card paints this one. It is the whole verdict, so every way a class can
+  // fall short has to reach it — including the two that leave no work behind.
+  describe("wentWrong", () => {
+    const OVER = START + 90 * 60_000;
+
+    it("clears a class that was taught on time and fully closed out", () => {
+      const i = sessionIssues(session({ coachArrivedAt: iso(-10) }), OVER);
+      expect(i).toMatchObject({ any: false, wentWrong: false });
+    });
+
+    it("condemns a class nobody was rostered on, which owes nothing at all", () => {
+      const i = sessionIssues(session({ coachId: null }), OVER);
+      expect(i.any).toBe(false);
+      expect(i.wentWrong).toBe(true);
+    });
+
+    it("condemns a class whose coach was late even with the paperwork done", () => {
+      const i = sessionIssues(session({ coachArrivedAt: iso(30) }), OVER);
+      expect(i.wentWrong).toBe(true);
+    });
+
+    it("condemns an unmarked register", () => {
+      const i = sessionIssues(
+        session({ coachArrivedAt: iso(-10), rosterUnmarked: 1 }),
+        OVER
+      );
+      expect(i.wentWrong).toBe(true);
+    });
+
+    it("condemns a missing rating", () => {
+      const i = sessionIssues(
+        session({ coachArrivedAt: iso(-10), assessPending: 1 }),
+        OVER
+      );
+      expect(i.wentWrong).toBe(true);
+    });
   });
 
   it("owes nothing on a class that was called off", () => {

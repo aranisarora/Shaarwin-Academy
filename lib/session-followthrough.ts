@@ -39,11 +39,6 @@ export type FollowThrough = {
 
 export const NO_FOLLOW_THROUGH: FollowThrough = { rosterUnmarked: 0, assessPending: 0 };
 
-/** True if anything at all is still owed. */
-export function owesFollowThrough(f: FollowThrough): boolean {
-  return f.rosterUnmarked > 0 || f.assessPending > 0;
-}
-
 type BookingRow = { session_id: string; player_id: string | null; status: string };
 type AssessmentRow = { session_id: string | null; player_id: string | null };
 

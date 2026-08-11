@@ -9,7 +9,6 @@ const routes: [path: string, shot: string][] = [
   ["/login/school", "login-school"],
   ["/signup", "signup"],
   ["/schools", "schools"],
-  ["/styleguide", "styleguide"],
 ];
 
 for (const [path, shot] of routes) {
