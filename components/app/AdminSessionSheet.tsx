@@ -43,6 +43,9 @@ import {
   wallDate,
   wallTime,
 } from "@/lib/academy-time";
+import { useNow } from "@/lib/use-now";
+import { attendanceState } from "@/lib/attendance-window";
+import { sessionIssues } from "@/lib/session-issues";
 import {
   arrivalSourceLabel,
   fmtDistance,
@@ -58,6 +61,21 @@ import {
 } from "./admin-calendar-types";
 
 type Scope = "session" | "class";
+
+/** "Aarav, Diya and Kabir" — and past four, a count.
+ *
+ * The point of naming them at all is that the same two children go unmarked
+ * every week and a number can never say so. Past a handful that stops being
+ * true: eleven names is a wall he scrolls past, and the roster is directly
+ * below with all of them on it anyway. */
+function listNames(names: string[], max = 4): string {
+  if (names.length === 0) return "they";
+  const shown = names.slice(0, max);
+  const rest = names.length - shown.length;
+  if (rest > 0) return `${shown.join(", ")} and ${rest} more`;
+  if (shown.length === 1) return shown[0];
+  return `${shown.slice(0, -1).join(", ")} and ${shown[shown.length - 1]}`;
+}
 
 export function AdminSessionSheet({
   session,
@@ -390,6 +408,69 @@ export function AdminSessionSheet({
     (p) => p.status === "attended" || p.status === "no_show"
   ).length;
 
+  // ── What the card's red chips were about ──────────────────────────────────
+  //
+  // A card is a summary; this sheet is the thing behind it. So the two read the
+  // same lib/session-issues.ts, and the sheet's job is to answer the question
+  // the chip could only raise: "✗ Attendance 8" becomes eight names, and a
+  // button that goes and marks them.
+  //
+  // Ticking, not frozen at open: a session that ends while the sheet is up
+  // starts owing a register, and a sheet left open on a phone would otherwise
+  // keep insisting the class is still running.
+  const now = useNow();
+  const issues = sessionIssues(session, now);
+  // The live roster beats the count the week query came back with — the founder
+  // may have just marked these very players in the coach preview and come
+  // straight back here.
+  const unmarked = booked.filter((p) => p.status === "confirmed");
+  const unmarkedCount = roster ? unmarked.length : issues.attendance;
+  // Re-derived from what is on screen rather than from `issues.any`, which was
+  // computed from the week query. The founder marking a register in the coach
+  // preview and coming back is the ordinary path through here, and the whole
+  // callout has to be able to empty itself out — a red box saying nothing is
+  // the app insisting on a problem he has just fixed.
+  const anyOutstanding = issues.noArrival || unmarkedCount > 0 || issues.assess > 0;
+  // Attendance is only editable for a week after the class (lib/attendance-
+  // window.ts), and the founder's route in is the coach preview — which is
+  // bound by exactly the same window. Offering a button past it would send him
+  // to a screen with dead controls on it, so past the edge this says so instead.
+  const canMark = attendanceState(session.starts_at, session.ends_at, now) === "open";
+
+  /** Into the coach's own app, on this session, as this coach.
+   *
+   * /admin has no attendance marker and no assessment editor — by design, see
+   * app/coach/session/[id]/actions.ts — so "view as coach" is not a curiosity
+   * here, it is the only route to fixing a register. It used to land on the
+   * coach's home screen and leave him to find the session himself; from a
+   * callout naming one session it goes straight to that session. */
+  const fixAsCoach = () =>
+    startTransition(async () => {
+      const ok = await viewAsCoach(session.coachId as string);
+      // Hard navigation: the preview cookie is set httpOnly by the server
+      // action, so a soft router.push would re-render /coach from the client
+      // cache without it.
+      if (ok) window.location.assign(`/coach/session/${session.id}`);
+      else errMsg("Preview unavailable — only founders can view as coach.");
+    });
+
+  /** How we know the coach was there, in the brackets after the time: whether
+   *  they tapped it or the geofence caught them, and how far off the venue they
+   *  were when it fired. Built as a list so neither half has to know whether the
+   *  other is present — the two used to be spliced together by a stack of
+   *  ternaries that each had to re-derive whose turn it was to write the "(". */
+  const arrivalNotes: React.ReactNode[] = [];
+  if (issues.arrival && session.coachArrivalSource) {
+    arrivalNotes.push(arrivalSourceLabel(session.coachArrivalSource));
+  }
+  if (issues.arrival && session.coachArrivalDistanceM != null) {
+    arrivalNotes.push(
+      <span className={session.coachArrivalDistanceM > 500 ? "text-err" : undefined}>
+        {fmtDistance(session.coachArrivalDistanceM)}
+      </span>
+    );
+  }
+
   const rosterList =
     roster === null ? (
       <div className="flex justify-center py-2">
@@ -612,6 +693,90 @@ export function AdminSessionSheet({
                   </Button>
                 </div>
               )}
+              {/* ── The card's red chips, spelled out ──
+                  This is what the schedule's chips are FOR. The card can only
+                  afford "✗ Attendance 8"; opening it is how he finds out which
+                  eight, whether the coach ever turned up, and — the part that
+                  was missing entirely — how to actually clear it. Everything
+                  here is a thing somebody still owes. A coach who arrived late
+                  is reported in the Coach block below instead: it is worth
+                  knowing and there is nothing left to do about it, so it does
+                  not belong on a list of jobs. */}
+              {anyOutstanding && (
+                <div className="space-y-3 rounded-[12px] border border-err p-4">
+                  {/* Names the work, not the state. "Not closed out" is the
+                      phrase the codebase thinks in and it describes a condition;
+                      the founder opening this at 9pm wants to know what is left
+                      to do about it. Same reason "Register" became
+                      "Attendance". */}
+                  <p className="label !text-err">Still to do</p>
+                  <ul className="space-y-2 text-sm">
+                    {issues.noArrival && (
+                      <li>
+                        <span aria-hidden className="mr-1.5 text-err">
+                          ✗
+                        </span>
+                        <span className="font-medium">Nobody marked the coach in.</span>{" "}
+                        <span className="text-fg-2">
+                          {detail?.coachConfirmedAt
+                            ? `${detail?.coachName ?? "They"} said they were coming, but never marked arriving — so nobody was told the class had started.`
+                            : `${detail?.coachName ?? "They"} never confirmed and never marked arriving, so we have no evidence this class was taught.`}
+                        </span>
+                      </li>
+                    )}
+                    {unmarkedCount > 0 && (
+                      <li>
+                        <span aria-hidden className="mr-1.5 text-err">
+                          ✗
+                        </span>
+                        {/* No denominator until the roster is actually in.
+                            `session.capacity` is the size of the room, not the
+                            number of children booked into it, and "8 of 8 not
+                            marked" on a class of three is a worse answer than
+                            no answer. */}
+                        <span className="font-medium">
+                          {roster
+                            ? `${unmarkedCount} of ${booked.length} players not marked.`
+                            : `${unmarkedCount} player${unmarkedCount === 1 ? "" : "s"} not marked.`}
+                        </span>{" "}
+                        <span className="text-fg-2">
+                          {/* The names, not just the number. "8 unmarked" is the
+                              card's job; the sheet is where he finds out it is
+                              the same three every week. */}
+                          {roster
+                            ? `Nobody has said whether ${listNames(unmarked.map((p) => p.name))} turned up.`
+                            : "Nobody has said whether they turned up."}
+                        </span>
+                      </li>
+                    )}
+                    {issues.assess > 0 && (
+                      <li>
+                        <span aria-hidden className="mr-1.5 text-err">
+                          ✗
+                        </span>
+                        <span className="font-medium">
+                          {issues.assess} player{issues.assess === 1 ? "" : "s"} not rated.
+                        </span>{" "}
+                        <span className="text-fg-2">
+                          They were marked present and have no assessment from this
+                          session, so their parents have nothing to read.
+                        </span>
+                      </li>
+                    )}
+                  </ul>
+                  {session.coachId && canMark ? (
+                    <Button className="w-full" onClick={fixAsCoach} loading={pending}>
+                      Fix it in {detail?.coachName?.split(" ")[0] ?? "the coach"}&apos;s app
+                    </Button>
+                  ) : (
+                    <p className="text-sm text-fg-2">
+                      {session.coachId
+                        ? "This session closed for changes a week after it ran — its paperwork can't be corrected now."
+                        : "Nobody was rostered on this session, so there is nobody to mark it."}
+                    </p>
+                  )}
+                </div>
+              )}
               {isOpenPrivate && (
                 <div className="space-y-2 rounded-[12px] border border-ember p-4">
                   <p className="label">No client on this slot</p>
@@ -636,48 +801,44 @@ export function AdminSessionSheet({
                       confirmed or had said nothing at all. */}
                   <p className="text-sm text-fg-2">
                     {detail?.coachConfirmedAt
-                      ? `Said he's coming ${formatClock(detail.coachConfirmedAt)}`
+                      ? `Said they're coming ${formatClock(detail.coachConfirmedAt)}`
                       : "Hasn't confirmed yet"}
-                    {session.coachArrivedAt
-                      ? ` · arrived ${formatClock(session.coachArrivedAt)}`
-                      : " — not arrived yet"}
-                    {session.coachArrivedAt && session.coachArrivalSource
-                      ? ` (${arrivalSourceLabel(session.coachArrivalSource)}`
-                      : ""}
-                    {session.coachArrivedAt && session.coachArrivalDistanceM != null ? (
+                    {issues.arrival ? (
                       <>
-                        {session.coachArrivalSource ? ", " : " ("}
-                        <span
-                          className={
-                            session.coachArrivalDistanceM > 500 ? "text-err" : undefined
-                          }
-                        >
-                          {fmtDistance(session.coachArrivalDistanceM)}
+                        {` · arrived ${formatClock(session.coachArrivedAt as string)} — `}
+                        {/* BOTH HALVES, and only here. The card prints the gap
+                            alone because that is what he is scanning for; this
+                            keeps the wall clock beside it, because a timestamp
+                            is what an argument with a coach needs and "12 min
+                            late" is what a decision needs. Red only past the
+                            grace — see lib/session-issues.ts. */}
+                        <span className={issues.arrival.late ? "text-err" : undefined}>
+                          {issues.arrival.label}
                         </span>
-                        )
+                        {arrivalNotes.length > 0 && (
+                          <>
+                            {" ("}
+                            {arrivalNotes.map((n, i) => (
+                              <span key={i}>
+                                {i > 0 ? ", " : ""}
+                                {n}
+                              </span>
+                            ))}
+                            {")"}
+                          </>
+                        )}
                       </>
-                    ) : session.coachArrivedAt && session.coachArrivalSource ? (
-                      ")"
                     ) : (
-                      ""
+                      " — not arrived yet"
                     )}
                   </p>
                   <button
                     type="button"
-                    onClick={() =>
-                      startTransition(async () => {
-                        const ok = await viewAsCoach(session.coachId as string);
-                        // Hard navigation: the preview cookie is set httpOnly by
-                        // the server action, so a soft router.push would re-render
-                        // /coach from the client cache without it.
-                        if (ok) window.location.assign("/coach");
-                        else errMsg("Preview unavailable — only founders can view as coach.");
-                      })
-                    }
+                    onClick={fixAsCoach}
                     disabled={pending}
                     className="text-sm text-ember hover:underline disabled:opacity-50"
                   >
-                    View this coach&apos;s app →
+                    Open this session in their app →
                   </button>
                 </div>
               )}

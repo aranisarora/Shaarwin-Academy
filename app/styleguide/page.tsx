@@ -95,7 +95,7 @@ const at = (mins: number) => new Date(SPEC_NOW + mins * 60_000).toISOString();
 function CardSpecimens() {
   const rows: { caption: string; session: SessionRow }[] = [
     {
-      caption: "Live · arrived",
+      caption: "Live · arrived early",
       session: specimen({
         starts_at: at(-20),
         ends_at: at(40),
@@ -109,7 +109,16 @@ function CardSpecimens() {
       session: specimen({ starts_at: at(-35), ends_at: at(25), venueName: "La Palazzo" }),
     },
     {
-      caption: "Live · no coach — warm and red at once",
+      caption: "Live · coach walked in late",
+      session: specimen({
+        starts_at: at(-40),
+        ends_at: at(20),
+        venueName: "Adarsh Palm Retreat",
+        coachArrivedAt: at(-28),
+      }),
+    },
+    {
+      caption: "Live · no coach — the only red edge left",
       session: specimen({
         starts_at: at(-10),
         ends_at: at(50),
@@ -119,7 +128,7 @@ function CardSpecimens() {
       }),
     },
     {
-      caption: "Finished · arrived (the geofence one)",
+      caption: "Finished · closed out, nothing owed",
       session: specimen({
         starts_at: at(-180),
         ends_at: at(-120),
@@ -140,7 +149,7 @@ function CardSpecimens() {
       }),
     },
     {
-      caption: "Finished · arrived, register kept, nobody assessed",
+      caption: "Finished · arrived, marked, nobody rated",
       session: specimen({
         starts_at: at(-260),
         ends_at: at(-200),
@@ -152,15 +161,15 @@ function CardSpecimens() {
       }),
     },
     {
-      caption: "Finished · register half kept",
+      caption: "Finished · late, and half marked — grey card, loud chips",
       session: specimen({
         starts_at: at(-330),
         ends_at: at(-270),
         status: "completed",
         venueName: "Prestige Ferns",
-        coachArrivedAt: at(-334),
+        coachArrivedAt: at(-312),
         rosterUnmarked: 3,
-        assessPending: 0,
+        assessPending: 2,
       }),
     },
     {

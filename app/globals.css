@@ -498,29 +498,32 @@ body {
   --card-bg: color-mix(in srgb, var(--ember) 15%, var(--surface-2));
 }
 
-/* Out of play — recessed, not faded.
+/* Out of play — greyed, not filled and not faded.
  *
- * This was `opacity: .75`, which had two problems and solved one thing badly.
- * Opacity multiplies every text colour on the card at once, so a finished
- * card's words landed near 3.6:1 — under AA — and the floor could not be pushed
- * lower without making them worse. And 25% of fade is a weak signal on paper:
- * a finished session and an upcoming one differed by almost nothing, which on
- * the desktop lanes was the ONLY difference between them, because the sink to
- * the bottom of the day only happens in the phone's day-first grouping.
+ * Two wrong answers came before this one, and they were wrong in opposite
+ * directions. First `opacity: .75`, which multiplies every text colour on the
+ * card at once: a finished card's words landed near 3.6:1, under AA, and the
+ * fade could not be deepened without making them worse. Then a repainted
+ * surface — the card took the page's own ground and sank into it — which read
+ * clearly but said the wrong thing. A BACKGROUND IS A CATEGORY; INK IS A STATE.
+ * Filling the card put finished sessions in a different visual class from
+ * upcoming ones, so a week with a normal amount of history in it came out
+ * striped in two colours of panel, and the founder was reading the stripes
+ * before he read a single word on any card.
  *
- * A card that is over stops being a raised object instead. It takes the page's
- * own ground (`--surface`, which is the darker of the two in both moods by
- * design, so this needs no per-mood value), softens its edge, and drops its
- * title from primary to secondary text. Nothing is multiplied, so every colour
- * on it is a real token at full strength — the arrival chip included, which is
- * now the only thing a finished card says.
+ * So the card stays a card. It keeps the same surface as every other row, and
+ * only its INK goes quiet: the title drops from primary to secondary text, the
+ * secondary lines were already there, and the edge softens. Nothing is
+ * multiplied, so anything that sets its own colour keeps it at full strength —
+ * which is exactly what makes this work. The red chips on a class that never
+ * got closed out are then the only saturated thing left in a grey day, and they
+ * are what he is scanning for.
  *
- * The kind rail stays at full strength on purpose: a finished private is still
- * a private. Identity does not expire, and muting it here would be the state
- * layer reaching into the identity channel, which is the one thing the card is
- * built not to allow. */
+ * The kind rail stays at full strength for the same reason it always did: a
+ * finished private is still a private. Identity does not expire, and muting it
+ * here would be the state layer reaching into the identity channel, which is
+ * the one thing the card is built not to allow. */
 .card-done {
-  --card-bg: var(--surface);
   border-color: color-mix(in srgb, var(--line) 55%, transparent);
   color: var(--text-2);
 }
