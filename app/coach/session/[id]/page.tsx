@@ -136,9 +136,6 @@ async function SessionBody({
         endsAt={session.ends_at}
         coachArrivedAt={session.coach_arrived_at}
         coachConfirmedAt={session.coach_confirmed_at}
-        venueLat={cls.venues?.lat ?? priv?.lat ?? null}
-        venueLng={cls.venues?.lng ?? priv?.lng ?? null}
-        venueName={cls.location_label ?? null}
       />
 
       <SessionRoster

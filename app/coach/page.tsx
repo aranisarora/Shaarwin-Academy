@@ -55,13 +55,6 @@ type ActionRow = {
   classes: unknown;
 };
 
-type VenueEmbed = { name: string; lat: number | null; lng: number | null };
-type PrivEmbed = {
-  address: string | null;
-  lat: number | null;
-  lng: number | null;
-  address_details: unknown;
-};
 
 /** The one action to surface in the takeover sheet, or null. Rows are ordered by
  *  starts_at, so `find` returns the soonest match. Arrive (in-window, unmarked)
@@ -73,16 +66,7 @@ function pickCoachAction(
   tomorrowKey: string
 ): CoachAction | null {
   const toAction = (r: ActionRow, phase: "confirm" | "arrive"): CoachAction => {
-    const cls = r.classes as {
-      title?: string;
-      location_label?: string | null;
-      venues?: VenueEmbed | VenueEmbed[] | null;
-      private_class_details?: PrivEmbed | PrivEmbed[] | null;
-    };
-    const venue = Array.isArray(cls.venues) ? cls.venues[0] : cls.venues;
-    const priv = Array.isArray(cls.private_class_details)
-      ? cls.private_class_details[0]
-      : cls.private_class_details;
+    const cls = r.classes as { title?: string; location_label?: string | null };
     const dk = dayLabel(r.starts_at);
     const dayName = dk === todayKey ? "Today" : dk === tomorrowKey ? "Tomorrow" : dk;
     return {
@@ -94,8 +78,6 @@ function pickCoachAction(
       // one string, so none of them can name a different place.
       venueName: cls.location_label ?? null,
       phase,
-      venueLat: venue?.lat ?? priv?.lat ?? null,
-      venueLng: venue?.lng ?? priv?.lng ?? null,
     };
   };
 
@@ -132,7 +114,9 @@ async function Schedule() {
     supabase
       .from("class_sessions")
       .select(
-        "id,starts_at,ends_at,coach_confirmed_at,coach_arrived_at,classes!inner(title,location_label,venues(name,lat,lng),private_class_details(address,lat,lng,address_details))"
+        // location_label resolves the venue server-side, so the sheet needs no
+        // venue embed of its own — and with the geofence gone, no coordinates.
+        "id,starts_at,ends_at,coach_confirmed_at,coach_arrived_at,classes!inner(title,location_label)"
       )
       .eq("coach_id", coachId)
       .eq("status", "scheduled")

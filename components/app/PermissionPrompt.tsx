@@ -9,11 +9,13 @@ import type { PromptCopy, PromptMode } from "@/lib/permission-prompt";
  * How a permission gets asked for — the presentation only, with no idea which
  * permission it is.
  *
- * PR #24 built this inside PushPrompt for push. Location is the second ask, and
- * a second copy of a focus trap and a card layout is how two prompts end up
- * behaving differently on the same phone. What each permission keeps for itself
- * is the part with judgement in it: which states are worth asking about, and
- * what the words are (lib/push-prompt.ts, lib/location-prompt.ts).
+ * PR #24 built this inside PushPrompt for push, and it was lifted out here when
+ * location became the second ask — a second copy of a focus trap and a card
+ * layout is how two prompts end up behaving differently on the same phone. The
+ * location ask has since gone (its geofence with it), so push is the only
+ * caller today; the split is kept because the next permission inherits it. What
+ * each permission keeps for itself is the part with judgement in it: which
+ * states are worth asking about, and what the words are (lib/push-prompt.ts).
  *
  * `mode` is the whole of the escalation story: the first ask in a browsing
  * session is a real dialog, and after a dismissal it steps back to the card

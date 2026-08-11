@@ -18,8 +18,9 @@ import { PermissionPrompt } from "@/components/app/PermissionPrompt";
  *
  * Which states are worth asking about, and why the rest are silent, is
  * pushPromptFor() in lib/push-prompt.ts, where it can be tested without a
- * browser. The modal and card themselves are <PermissionPrompt />, shared with
- * the location ask.
+ * browser. The modal and card themselves are <PermissionPrompt />, which was
+ * built shared when location was the second ask; push is the only permission
+ * this app requests now, and the shell stays for the next one.
  *
  * Two things here are load-bearing and easy to lose in a refactor:
  *

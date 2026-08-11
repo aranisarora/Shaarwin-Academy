@@ -1,11 +1,11 @@
-// Two permission dialogs must never be on screen together, and location must
-// never be asked of anyone who has no arrival to mark. Both rules are enforced
-// by *wiring* — which prompt is mounted where, and what holds the slot — so
-// neither is reachable from a pure function call, and a component harness
-// doesn't exist here (vitest runs in `node` by design).
+// Two permission dialogs must never be on screen together, and this app should
+// ask for exactly one permission: push. Both rules are enforced by *wiring* —
+// which prompt is mounted where, and what holds the slot — so neither is
+// reachable from a pure function call, and a component harness doesn't exist
+// here (vitest runs in `node` by design).
 //
 // So these read the sources. That is unusual, and it is deliberate: the failure
-// modes being guarded are "somebody moved <LocationPrompt /> into the shared
+// modes being guarded are "somebody mounted a second permission ask in a shared
 // layout" and "somebody let the queued prompt render before push had settled",
 // and both are edits to wiring rather than to logic. lib/push-prompt.test.ts
 // already does the same thing to keep PushToggle on the shared copy map.
@@ -58,27 +58,26 @@ describe("prompt queue wiring", () => {
     expect(src).toMatch(/if \(!isClaiming\(decision\)\) return <>\{thenAsk\}<\/>;/);
   });
 
-  it("asks for location in the coach shell and nowhere else", () => {
-    const coach = source("app", "coach", "layout.tsx");
-    expect(coach).toContain("<PushPrompt thenAsk={<LocationPrompt />} />");
-
-    // Parents and the founder. A location request buys them nothing, and this is
-    // the edit that would quietly undo that — one import in the wrong layout.
-    for (const shell of ["app", "admin"]) {
+  it("asks for no permission but push, in any shell", () => {
+    // Location was the second ask, queued behind push in the coach shell. It is
+    // gone: the geofence it existed for marked one session in a day of
+    // production while the tray button did the same job with the app closed.
+    // This is the edit that would quietly bring it back — one import in one
+    // layout — and there is no longer a component for it to import.
+    for (const shell of ["coach", "app", "admin"]) {
       const src = source("app", shell, "layout.tsx");
-      expect(src, shell).not.toContain("LocationPrompt");
-      // They keep the plain push ask, with nothing queued behind it.
+      expect(src, shell).not.toContain("Location");
+      // The plain push ask, with nothing queued behind it.
       expect(src, shell).toContain("<PushPrompt />");
     }
   });
 
-  it("keeps every prompt on the shared shell rather than its own modal", () => {
+  it("keeps the push prompt on the shared shell rather than its own modal", () => {
     // A second focus trap is how two prompts start behaving differently on the
-    // same phone — one of them trapping Tab, the other not.
-    for (const prompt of ["PushPrompt.tsx", "LocationPrompt.tsx"]) {
-      const src = source("components", "app", prompt);
-      expect(src, prompt).toContain("PermissionPrompt");
-      expect(src, prompt).not.toContain("createPortal");
-    }
+    // same phone — one of them trapping Tab, the other not. The shell is still
+    // shared machinery even with one caller: the next permission inherits it.
+    const src = source("components", "app", "PushPrompt.tsx");
+    expect(src).toContain("PermissionPrompt");
+    expect(src).not.toContain("createPortal");
   });
 });

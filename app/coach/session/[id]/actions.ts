@@ -238,10 +238,16 @@ export async function confirmComing(sessionId: string): Promise<Result> {
   return { ok: true };
 }
 
-export async function markArrived(
-  sessionId: string,
-  opts?: { source?: "auto" | "tap"; distanceM?: number | null }
-): Promise<Result> {
+/**
+ * Mark arrival from inside the app.
+ *
+ * The source is fixed at 'tap' because this server action *is* the in-app path —
+ * the notification tray posts to /api/push-action ('push') and WhatsApp goes
+ * through lib/whatsapp/interactive.ts ('wa'). It used to take a source and a
+ * distance so geofenced auto-arrival could pass 'auto' and how far off the fix
+ * was; both are gone with the fence.
+ */
+export async function markArrived(sessionId: string): Promise<Result> {
   const blocked = await refuseInPreview();
   if (blocked) return blocked;
 
@@ -254,9 +260,7 @@ export async function markArrived(
   const { error } = await supabase.rpc("coach_mark_arrival", {
     p_session: sessionId,
     p_late: false,
-    p_source: opts?.source ?? "tap",
-    // Omitted rather than passed as null — the SQL argument defaults to NULL.
-    p_distance_m: opts?.distanceM ?? undefined,
+    p_source: "tap",
   });
   if (error) return { ok: false, error: arrivalError(error.message) };
   revalidatePath(`/coach/session/${sessionId}`);
