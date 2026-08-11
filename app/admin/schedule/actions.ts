@@ -12,6 +12,7 @@ import {
   type SessionRow,
 } from "@/components/app/admin-calendar-types";
 import { venueDisplayName } from "@/lib/venue-display";
+import { fetchFollowThrough, NO_FOLLOW_THROUGH } from "@/lib/session-followthrough";
 import {
   assignPrivateSessionClientCore,
   bulkRemoveClassesCore,
@@ -624,6 +625,14 @@ export async function fetchWeekSessions(
     for (const p of privProfiles ?? []) clientNameMap.set(p.id, p.full_name);
   }
 
+  // Paging to another week has to answer the same questions the first render
+  // did. Leaving this out would not have failed loudly — the cards would simply
+  // have stopped reporting unkept registers the moment the founder paged.
+  const followThrough = await fetchFollowThrough(
+    supabase,
+    (rawSessions ?? []).map((s) => s.id)
+  );
+
   const classTime = (classId: string, fallbackIso: string) => {
     const iso = nextByClass[classId] ?? fallbackIso;
     return utcToAcademyWall(new Date(iso)).time;
@@ -632,6 +641,7 @@ export async function fetchWeekSessions(
   const sessions: SessionRow[] = (rawSessions ?? []).map((s) => {
     const cls = s.classes;
     const priv = cls.private_class_details;
+    const owed = followThrough.get(s.id) ?? NO_FOLLOW_THROUGH;
     const address: StructuredAddress | null = cls.venues
       ? fromDetails(asAddressDetails(cls.venues.address_details), {
           address: cls.venues.address,
@@ -660,6 +670,8 @@ export async function fetchWeekSessions(
       coachArrivedAt: s.coach_arrived_at,
       coachArrivalSource: s.coach_arrival_source,
       coachArrivalDistanceM: s.coach_arrival_distance_m,
+      rosterUnmarked: owed.rosterUnmarked,
+      assessPending: owed.assessPending,
       title: cls.title,
       capacity: s.capacity_override ?? cls.capacity,
       isPrivate: cls.class_type === "private",
