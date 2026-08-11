@@ -17,6 +17,13 @@ const eslintConfig = defineConfig([
     // in code nobody here wrote. Without this, running any of the CLI commands
     // AGENTS.md tells you to run makes `npm run lint` fail.
     "supabase/.temp/**",
+    // Agent worktrees — full checkouts of other branches, each able to grow its
+    // own .next/. The ignores above are anchored to this config's directory, so
+    // a nested build directory slips past them: two built worktrees in here put
+    // 2,498 errors and 49,485 warnings into `npm run lint`, every one of them
+    // minified chunks from code nobody edits. Gitignored, so nothing under it
+    // should ever be linted.
+    ".claude/**",
   ]),
   // Every user-facing timestamp goes through lib/academy-time.ts, so the app
   // renders in academy time (Asia/Kolkata) rather than the viewer's timezone.

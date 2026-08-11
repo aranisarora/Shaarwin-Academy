@@ -174,10 +174,6 @@ export function VenueManager({ venues }: { venues: Venue[] }) {
       venues.filter((v) => v.id !== editing.id)
     );
 
-  // The saved row behind the open sheet — the visibility control acts on the
-  // venue as it stands, not on the unsaved edits above it.
-  const current = editing?.id ? venues.find((v) => v.id === editing.id) : undefined;
-
   function submit() {
     if (!editing || !editing.name.trim() || !isAddressComplete(editing.addr)) return;
     if (needsUnit) return;
