@@ -23,6 +23,7 @@ import * as webpush from "jsr:@negrel/webpush@0.5";
 // see digest.test.ts. (The TYPES duplication further down is a different case:
 // that one is shared with lib/, across the Deno/Next boundary.)
 import { summariseDay, type DayReportRow, type UnreachableRow } from "./digest.ts";
+import { appendLink, sessionLink } from "./links.ts";
 import {
   locationPhrase,
   notArrivedBody,
@@ -110,6 +111,10 @@ const VAPID_SUBJECT_ENV = Deno.env.get("VAPID_SUBJECT");
 const VAPID_SUBJECT_FALLBACK = "mailto:hello@sharwinacademy.com";
 const APP_URL = Deno.env.get("APP_URL") ?? "https://sharwinacademy.com";
 const WINDOW_MS = 24 * 60 * 60 * 1000;
+// WhatsApp's own ceiling on a free-form message body. Nothing we send comes near
+// it — the cap exists so the deep-link budget has a number to reserve against,
+// the same way the 900-character template variable does.
+const FREE_FORM_MAX = 4096;
 const IST = "Asia/Kolkata";
 
 // ── One row per notification type ───────────────────────────────────────────
@@ -2297,9 +2302,18 @@ async function deliverWhatsApp(
   const inWindow =
     !!lastInbound && Date.now() - new Date(lastInbound.created_at).getTime() < WINDOW_MS;
 
+  // The link to the one session this row is about, when it is about one. The
+  // interactive templates above carry their own (a button, or variable {{3}});
+  // these two plain-text paths carried none at all, so the channel the founder
+  // actually reads told him a coach hadn't marked arrived and left him to work
+  // out which class, and to find it by hand.
+  const link = sessionLink(row.data, APP_URL);
+
   const fields: Record<string, string> = { To: `whatsapp:${phone}` };
   if (inWindow) {
-    fields.Body = `*${row.title}*\n${row.body}`;
+    // Free-form: its own line, because this is the tappable thing and a URL
+    // buried mid-sentence is one the thumb misses.
+    fields.Body = `*${row.title}*\n${appendLink(row.body, link, FREE_FORM_MAX, "\n")}`;
   } else if (TWILIO_TEMPLATE_SID) {
     // Business-initiated outside the window → approved Utility template.
     //
@@ -2308,10 +2322,14 @@ async function deliverWhatsApp(
     // message was single-line when this was written; the morning briefings are
     // not, so an unflattened brief would never reach anyone outside the 24h
     // window. Flatten to " · " and cap the length rather than lose the message.
+    //
+    // The link goes in the SAME variable and is reserved before the words are
+    // capped, not sliced off the end with them — see appendLink. A URL cut in
+    // half is a 404 delivered inside the alert about the thing it points at.
     fields.ContentSid = TWILIO_TEMPLATE_SID;
     fields.ContentVariables = JSON.stringify({
       "1": firstName,
-      "2": oneLine(`${row.title} — ${row.body}`).slice(0, 900),
+      "2": appendLink(oneLine(`${row.title} — ${row.body}`), link, 900, " "),
     });
   } else {
     // No template configured and outside the window: can't send free-form. This

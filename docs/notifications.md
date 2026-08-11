@@ -311,6 +311,43 @@ to re-query the session to say where and when. `location_str` holds the rendered
 phrase (including `"location TBC"`), not the raw label: an empty template
 variable is a rejected WhatsApp send.
 
+#### …on every surface, WhatsApp included
+
+Three surfaces render this link, and they must agree about when it exists:
+
+| Surface | How it appears |
+| --- | --- |
+| Alerts feed | The whole row is the link; an **"Open the session"** affordance says so (`NotificationsList.tsx`). |
+| Push | The banner deep-links on tap — nothing to add. |
+| WhatsApp | The absolute URL on the end of the message (`links.ts` → `deliverWhatsApp`). |
+
+WhatsApp was the gap, and it was the worst one to have: it is the channel the
+founder actually reads at 6:30pm, and it is built from `title` and `body` alone,
+so it said *"Ravi hasn't marked arrived"* and left him to find the class himself.
+
+The rule for **which** rows get a link is `sessionPath()` in `links.ts`, and it
+is deliberately the same rule as `opensOneSession()` in `NotificationsList.tsx`
+— one notification must not offer the link on one surface and withhold it on
+another. It cannot be shared across the Deno/Next boundary, so it is restated;
+change one and change the other. It matches only the two shapes we emit
+(`/admin/schedule?…session=…` and `/coach/session/<id>`), because a bare
+`session_id` also rides along on rows that point at the app home, and
+`?session=` on `/coach/players/<player>` means something else entirely.
+
+Two things `appendLink()` guarantees, both of which are load-bearing:
+
+- **The link survives truncation.** The out-of-window path caps the template
+  variable at 900 characters, and a cap applied *after* the URL is appended cuts
+  it in half — a 404 delivered inside the alert about the thing it points at. The
+  link is reserved first; the words take what is left.
+- **A body that already links keeps its own.** `coach_after_class` writes a url
+  into its sentence. Two links a few words apart is noise and a chance for them
+  to disagree.
+
+Interactive templates are untouched: they carry their own link as a button or as
+a variable (`{{3}}` on the after-class template), and they return before this
+code runs.
+
 ### The five with no producer
 
 Kept in the table rather than deleted, so that if a producer ever returns the
