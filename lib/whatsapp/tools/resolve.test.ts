@@ -12,10 +12,16 @@ type Call = { table: string; ops: string[] };
  * Rows keyed by table, so one stub can answer for players, profiles, classes
  * and venues in the single fan-out the resolver performs.
  */
-function stubClient(byTable: Record<string, unknown[]>, roster: unknown[] = []) {
+function stubClient(
+  byTable: Record<string, unknown[]>,
+  roster: unknown[] = [],
+  /** Tables whose read blows up — RLS refusing a lookup, in practice. */
+  throwsFor: readonly string[] = []
+) {
   const calls: Call[] = [];
   const client = {
     from(table: string) {
+      if (throwsFor.includes(table)) throw new Error("permission denied");
       const call: Call = { table, ops: [] };
       calls.push(call);
       const builder: Record<string, unknown> = {
@@ -172,15 +178,7 @@ describe("resolve — one lookup, every kind", () => {
    * asked about is still on their roster.
    */
   it("still answers when one of the lookups fails", async () => {
-    const { client } = (() => {
-      const inner = stubClient({ players: [AARAV_PLAYER] });
-      const original = inner.client.from.bind(inner.client);
-      inner.client.from = ((table: string) => {
-        if (table === "classes") throw new Error("permission denied");
-        return original(table);
-      }) as typeof inner.client.from;
-      return inner;
-    })();
+    const { client } = stubClient({ players: [AARAV_PLAYER] }, [], ["classes"]);
 
     const ctx: ToolContext = {
       phone: "+919812345678",

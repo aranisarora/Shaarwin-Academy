@@ -1908,19 +1908,46 @@ export type Database = {
         }
         Relationships: []
       }
-      wa_inbound_seen: {
+      wa_chat_locks: {
         Row: {
           created_at: string
+          locked_until: string
+          phone: string
+          run_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          locked_until: string
+          phone: string
+          run_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          locked_until?: string
+          phone?: string
+          run_id?: string | null
+        }
+        Relationships: []
+      }
+      wa_inbound_seen: {
+        Row: {
+          body: string | null
+          created_at: string
+          handled_at: string | null
           message_sid: string
           phone: string | null
         }
         Insert: {
+          body?: string | null
           created_at?: string
+          handled_at?: string | null
           message_sid: string
           phone?: string | null
         }
         Update: {
+          body?: string | null
           created_at?: string
+          handled_at?: string | null
           message_sid?: string
           phone?: string | null
         }
@@ -2316,6 +2343,14 @@ export type Database = {
       }
       prune_wa_entity_memory: { Args: never; Returns: undefined }
       prune_wa_inbound_seen: { Args: never; Returns: undefined }
+      wa_claim_chat: {
+        Args: { p_phone: string; p_run?: string | null; p_ttl_seconds?: number }
+        Returns: boolean
+      }
+      wa_release_chat: {
+        Args: { p_phone: string; p_run?: string | null }
+        Returns: undefined
+      }
       purge_pending_session_reminders: {
         Args: { p_class_ids: string[] }
         Returns: number

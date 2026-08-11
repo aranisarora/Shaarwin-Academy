@@ -50,14 +50,29 @@ const seedSql = readFileSync(join(root, "supabase", "seed.sql"), "utf8");
 // Also strip 0009's narrowing of coach_availability: 0075 dropped that table
 // outright, so replaying the statement now fails on a relation that no longer
 // exists. Stripping beats editing 0009 — a migration is a record of what ran.
+// And rename venues.active → is_public wherever 0009 writes it: 0081 renamed
+// the column. Two statements do (the `update venues set active = false`, and
+// the `active = true` tail of the venues upsert), and both had to be caught —
+// the rebuild has been dying on "column active of relation venues does not
+// exist" since 0081 shipped, which is also why nobody had noticed that `find`
+// on venues and classes was broken in exactly the same way.
+//
+// A RENAME, not a strip: the venues are what the batch classes hang off, so
+// dropping either statement would take the whole seed down with it. Scoped to
+// venues DML on purpose — classes.active is a real column and must not be
+// touched.
 const FUNC_REDEF = /create or replace function[\s\S]*?\bas \$\$[\s\S]*?\$\$;/gi;
 const DROPPED_TABLE_DML = /^update coach_availability\b[\s\S]*?;/gim;
+const RENAMED_VENUE_UPDATE = /(^update venues\s+set\s+)active\b/gim;
+const RENAMED_VENUE_UPSERT = /(\blat = excluded\.lat, lng = excluded\.lng, )active\b/gi;
 const batchesSql = readFileSync(
   join(root, "supabase", "migrations", "0009_bengaluru_batches.sql"),
   "utf8"
 )
   .replace(FUNC_REDEF, "-- [harness] 0009 function redef stripped (schema.sql is canonical)")
-  .replace(DROPPED_TABLE_DML, "-- [harness] coach_availability DML stripped (table dropped in 0075)");
+  .replace(DROPPED_TABLE_DML, "-- [harness] coach_availability DML stripped (table dropped in 0075)")
+  .replace(RENAMED_VENUE_UPDATE, "$1is_public")
+  .replace(RENAMED_VENUE_UPSERT, "$1is_public");
 
 // schema.sql is a readability-grouped dump, NOT dependency-ordered: foreign keys
 // (both standalone `ALTER TABLE … ADD FOREIGN KEY` and inline `… references …`

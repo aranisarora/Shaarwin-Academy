@@ -11,6 +11,7 @@ import { getVertexToken, vertexUrl } from "@/lib/vertex";
 import { toolsForRole, type ToolContext, type WaTool } from "./tools";
 import { lintReply, usedMessagingTool } from "./lint";
 import { harvest, harvestResolved, recall, remember, renderMemory, type Remembered } from "./memory";
+import { isReadOnlyTool } from "./turn";
 
 const MAX_TOOL_ROUNDS = 12;
 const HISTORY_MESSAGES = 24;
@@ -283,14 +284,27 @@ async function loadHistory(admin: SupabaseClient<Database>, phone: string): Prom
   return merged;
 }
 
+/**
+ * Returns the reply to send, or null when the turn was SUPERSEDED — newer input
+ * arrived before a state-changing tool ran, so this run stood down without
+ * writing anything and without saying anything. The caller sends nothing; the
+ * coalescing loop starts again with the correction folded in.
+ */
 export async function runAgent(opts: {
   phone: string;
   userText: string;
   profile: Profile | null;
   supabase: SupabaseClient<Database> | null;
   admin: SupabaseClient<Database>;
-}): Promise<string> {
-  const { phone, userText, profile, supabase, admin } = opts;
+  /**
+   * Consulted immediately before any tool that isn't read-only. False means the
+   * person has said something this run has not read — and a correction has to
+   * beat the action it corrects, so the run abandons the write rather than
+   * completing it against out-of-date instructions.
+   */
+  stillCurrent?: () => Promise<boolean>;
+}): Promise<string | null> {
+  const { phone, userText, profile, supabase, admin, stillCurrent } = opts;
   const ctx: ToolContext = { phone, profile, supabase, admin };
   // A school login has no WhatsApp identity — it is an impersonal credential
   // shared by several people and carries no phone, so no inbound number can
@@ -352,6 +366,21 @@ export async function runAgent(opts: {
     if (calls.length === 0) break;
 
     messages.push({ role: "model", parts });
+
+    // Nothing may be WRITTEN on behalf of an instruction that has already been
+    // corrected. Checked once per round, before any of the round's calls run,
+    // so the turn stands down whole rather than half-applied: "cancel tomorrow"
+    // followed a second later by "actually just move it" must not cancel.
+    if (stillCurrent && calls.some((c) => !isReadOnlyTool(c.functionCall.name))) {
+      if (!(await stillCurrent())) {
+        console.info("wa: newer input arrived, standing down before writing", {
+          phoneTail: phone.slice(-4),
+          wouldHaveCalled: calls.map((c) => c.functionCall.name).join(","),
+        });
+        return null;
+      }
+    }
+
     const results: Part[] = [];
     for (const call of calls) {
       usedTools.push(call.functionCall.name);

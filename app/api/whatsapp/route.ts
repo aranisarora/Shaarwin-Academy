@@ -15,6 +15,7 @@ import {
 } from "@/lib/whatsapp/identity";
 import { applyOptOut, matchOptOut } from "@/lib/whatsapp/optout";
 import { normalizePhone } from "@/lib/whatsapp/phone";
+import { claimAndQueue, markHandled, runCoalescedTurn } from "@/lib/whatsapp/turn";
 import {
   sendWhatsApp,
   stripWhatsappPrefix,
@@ -129,12 +130,13 @@ async function handleInbound(
 
   const admin = adminClient();
 
-  // Exactly-once: claim this MessageSid before doing anything with side effects.
-  // We ack Twilio instantly and work in after(), so a retry can arrive while the
-  // first pass is mid-flight — that's how one "I've arrived" became three
-  // replies in production. The primary key makes the claim atomic; the loser of
-  // the race just returns. (notification-fix-plan 1.6.)
-  if (!(await claimInbound(admin, phone, ev.messageSid))) {
+  // Exactly-once AND enqueue, in one INSERT. Claiming the MessageSid before any
+  // side effect is old — we ack Twilio instantly and work in after(), so a
+  // retry can arrive mid-flight, which is how one "I've arrived" became three
+  // replies. What is new is that the claim row now carries the text, so a run
+  // already in flight for this chat can absorb this message instead of a second
+  // run answering it in parallel. (notification-fix-plan 1.6 + upgrade 3.4.)
+  if (!(await claimAndQueue(admin, phone, ev.messageSid, text))) {
     console.info("wa: duplicate inbound", ev.messageSid, "— skipping");
     return;
   }
@@ -150,6 +152,9 @@ async function handleInbound(
   }
   if (!profile) {
     console.warn("wa: no profile for", phone, "reason", identity.reason);
+    // Take it out of the queue. Leaving it there would fold an unanswerable
+    // message into somebody's next sentence and act on it a second time.
+    await markHandled(admin, [ev.messageSid]);
     await sendWhatsApp(
       phone,
       "I'm having trouble reaching your account right now — please try again in a minute."
@@ -167,6 +172,8 @@ async function handleInbound(
       { phone, role: "user", content: text.slice(0, 4000) },
       { phone, role: "assistant", content: reply.slice(0, 4000) },
     ]);
+    // STOP is a complete thought on its own — never merged into a burst.
+    await markHandled(admin, [ev.messageSid]);
     await sendWhatsApp(phone, reply);
     return;
   }
@@ -174,6 +181,7 @@ async function handleInbound(
   const supabase = await userClientFor(profile.email);
   if (!supabase) {
     console.error("wa: session mint failed for", profile.id);
+    await markHandled(admin, [ev.messageSid]);
     await sendWhatsApp(
       phone,
       "I couldn't securely access your account just now. Please try again in a minute."
@@ -200,48 +208,55 @@ async function handleInbound(
         { phone, role: "user", content: (text || ev.payload).slice(0, 4000) },
         { phone, role: "assistant", content: reply.slice(0, 4000) },
       ]);
+      // A tap is deliberate and self-contained: it runs one exact RPC and is
+      // never folded into a burst.
+      await markHandled(admin, [ev.messageSid]);
       await sendWhatsApp(phone, reply);
       return;
     }
   }
 
-  // Free text (or a non-coach) → the assistant. Cheap flood guard first, before
-  // any LLM spend.
-  const { count } = await admin
-    .from("wa_messages")
-    .select("id", { count: "exact", head: true })
-    .eq("phone", phone)
-    .eq("role", "user")
-    .gte("created_at", new Date(Date.now() - 60000).toISOString());
-  if ((count ?? 0) >= RATE_LIMIT_PER_MINUTE) {
-    await sendWhatsApp(phone, "You're messaging faster than I can think — give me a minute 🙂");
-    return;
-  }
+  // Free text (or a non-coach) → the assistant, serialized per chat and over
+  // the whole burst rather than this one fragment. Everything below runs while
+  // holding the chat lock, so the flood guard and the agent see the same queue.
+  await runCoalescedTurn({
+    admin,
+    phone,
+    runId: crypto.randomUUID(),
+    handle: async ({ text: burst }, stillCurrent) => {
+      // Cheap flood guard, before any LLM spend. Coalescing already softens
+      // this — a burst is now one wa_messages row, not five — so what is left
+      // here is a genuine flood rather than someone typing quickly.
+      const { count } = await admin
+        .from("wa_messages")
+        .select("id", { count: "exact", head: true })
+        .eq("phone", phone)
+        .eq("role", "user")
+        .gte("created_at", new Date(Date.now() - 60000).toISOString());
+      if ((count ?? 0) >= RATE_LIMIT_PER_MINUTE) {
+        await sendWhatsApp(phone, "You're messaging faster than I can think — give me a minute 🙂");
+        return "answered";
+      }
 
-  const reply = await runAgent({ phone, userText: text, profile, supabase, admin });
-  await sendWhatsApp(phone, reply);
+      const reply = await runAgent({
+        phone,
+        userText: burst,
+        profile,
+        supabase,
+        admin,
+        stillCurrent: stillCurrent ?? undefined,
+      });
+      // null = the run stood down before writing because a correction landed.
+      // Say nothing and leave the fragments queued; the next pass answers the
+      // whole sentence.
+      if (reply === null) return "superseded";
+
+      await sendWhatsApp(phone, reply);
+      return "answered";
+    },
+  });
 }
 
-/**
- * Claim an inbound MessageSid. Returns true if this request is the first to see
- * it (proceed) and false if it's a Twilio retry of something we already handled
- * (ack and drop).
- *
- * Fails OPEN on an unexpected DB error: a dropped message is worse than a rare
- * double reply, and the only DB error we expect here is the duplicate-key one we
- * explicitly look for. A missing sid (shouldn't happen — Twilio always sends
- * one) also proceeds rather than swallowing the message.
- */
-async function claimInbound(
-  admin: ReturnType<typeof adminClient>,
-  phone: string,
-  messageSid: string
-): Promise<boolean> {
-  if (!messageSid) return true;
-  const { error } = await admin.from("wa_inbound_seen").insert({ message_sid: messageSid, phone });
-  if (!error) return true;
-  // 23505 = unique_violation → someone else already claimed this sid.
-  if (error.code === "23505") return false;
-  console.warn("wa: inbound claim failed, processing anyway", error.message);
-  return true;
-}
+// claimInbound moved to lib/whatsapp/turn.ts as claimAndQueue: the claim row now
+// carries the message body, so claiming and queueing are one INSERT and there is
+// no window where a message is claimed but not yet visible to a run in flight.

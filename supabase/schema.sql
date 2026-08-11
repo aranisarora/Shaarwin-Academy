@@ -501,6 +501,25 @@ create table public.wa_messages (
 create table public.wa_inbound_seen (
   message_sid text not null,
   phone text,
+  created_at timestamptz default now() not null,
+  -- The message itself (0086), so a run can absorb fragments that arrived
+  -- beside it. Claiming and queueing are one INSERT, which leaves no window
+  -- where a message is claimed but not yet queued.
+  body text,
+  -- Null while still unanswered. Set when a run folds it into a turn — which is
+  -- NOT "seen": the claim happens on arrival, this happens on being answered.
+  handled_at timestamptz
+);
+
+-- One agent run per chat at a time (0086). People text in fragments — "cancel
+-- tomorrow" / "actually just move it" / "to 5pm" — and three parallel runs each
+-- see a history without the others, so the first one acts on a sentence the
+-- third retracts. A TTL rather than a boolean: a serverless run can die holding
+-- the lock, and a chat silenced forever is worse than a double reply.
+create table public.wa_chat_locks (
+  phone text not null,
+  locked_until timestamptz not null,
+  run_id uuid,
   created_at timestamptz default now() not null
 );
 
@@ -647,6 +666,7 @@ ALTER TABLE public.wa_messages ADD CONSTRAINT wa_messages_seq_key UNIQUE (seq);
 ALTER TABLE public.wa_messages ADD CONSTRAINT wa_messages_role_check CHECK ((role = ANY (ARRAY['user'::text, 'assistant'::text])));
 ALTER TABLE public.wa_inbound_seen ADD CONSTRAINT wa_inbound_seen_pkey PRIMARY KEY (message_sid);
 ALTER TABLE public.wa_entity_memory ADD CONSTRAINT wa_entity_memory_pkey PRIMARY KEY (phone, kind, entity_id);
+ALTER TABLE public.wa_chat_locks ADD CONSTRAINT wa_chat_locks_pkey PRIMARY KEY (phone);
 ALTER TABLE public.webhook_events ADD CONSTRAINT webhook_events_event_id_key UNIQUE (event_id);
 ALTER TABLE public.webhook_events ADD CONSTRAINT webhook_events_stripe_event_id_key UNIQUE (stripe_event_id);
 ALTER TABLE public.webhook_events ADD CONSTRAINT webhook_events_pkey PRIMARY KEY (id);
@@ -683,6 +703,7 @@ CREATE INDEX wa_messages_phone_idx ON public.wa_messages USING btree (phone, cre
 CREATE INDEX wa_messages_phone_seq_idx ON public.wa_messages USING btree (phone, seq DESC);
 CREATE INDEX wa_inbound_seen_created_at_idx ON public.wa_inbound_seen USING btree (created_at);
 CREATE INDEX wa_entity_memory_phone_seen_idx ON public.wa_entity_memory USING btree (phone, last_seen_at DESC);
+CREATE INDEX wa_inbound_seen_pending_idx ON public.wa_inbound_seen USING btree (phone, created_at) WHERE (handled_at IS NULL);
 CREATE INDEX bookings_player_id_idx ON public.bookings USING btree (player_id);
 CREATE INDEX notifications_user_id_idx ON public.notifications USING btree (user_id);
 CREATE INDEX notifications_failed_idx ON public.notifications USING btree (created_at DESC) WHERE (status = 'failed'::notification_status);
@@ -5427,6 +5448,47 @@ as $$
   delete from public.wa_entity_memory where last_seen_at < now() - interval '30 days';
 $$;
 
+-- Take the per-chat run lock, or report that someone else holds it. The whole
+-- decision is one statement on purpose: INSERT .. ON CONFLICT DO UPDATE .. WHERE
+-- takes row locks in the engine, so two webhooks arriving in the same
+-- millisecond cannot both be told they won. A read-then-write in the
+-- application could, and that is the race this removes.
+create or replace function public.wa_claim_chat(
+  p_phone text,
+  p_run uuid default null,
+  p_ttl_seconds integer default 120
+)
+returns boolean
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  insert into public.wa_chat_locks as l (phone, locked_until, run_id)
+  values (p_phone, now() + make_interval(secs => p_ttl_seconds), p_run)
+  on conflict (phone) do update
+     set locked_until = excluded.locked_until,
+         run_id       = excluded.run_id
+   where l.locked_until < now();
+
+  return found;
+end;
+$$;
+
+-- Release early, so the next message does not wait out the TTL. Guarded by
+-- run_id: a run whose lease already expired and was taken by someone else must
+-- not release the new holder's lock on its way out.
+create or replace function public.wa_release_chat(p_phone text, p_run uuid default null)
+returns void
+language sql
+security definer
+set search_path = public
+as $$
+  delete from public.wa_chat_locks
+   where phone = p_phone
+     and (p_run is null or run_id is null or run_id = p_run);
+$$;
+
 -- Every write to a push_subscriptions row comes from a browser that is open
 -- right now, so "when was this row last written" and "when was this device last
 -- alive" are the same fact. Stamped here rather than by each caller, so a
@@ -5508,6 +5570,7 @@ alter table public.venues enable row level security;
 alter table public.wa_messages enable row level security;
 alter table public.wa_inbound_seen enable row level security;
 alter table public.wa_entity_memory enable row level security;
+alter table public.wa_chat_locks enable row level security;
 alter table public.webhook_events enable row level security;
 
 -- ── Policies ─────────────────────────────────────────────────────────────────
@@ -5589,9 +5652,9 @@ CREATE POLICY "school reads own campus" ON public.venues AS PERMISSIVE FOR SELEC
 -- There is no wa_* policy, and that absence is deliberate. The one that existed
 -- read wa_links, which 0074 dropped: profiles.phone is the binding now, and it
 -- is covered by the profiles policies. wa_messages, wa_inbound_seen and
--- wa_entity_memory keep RLS on with no policy at all — service-role only, so
--- the chat transcript and the ids the assistant resolved from it stay out of
--- the chat's own reach.
+-- wa_entity_memory and wa_chat_locks keep RLS on with no policy at all —
+-- service-role only, so the chat transcript, the ids the assistant resolved
+-- from it, and the per-chat run lock all stay out of the chat's own reach.
 CREATE POLICY "founder reads webhook events" ON public.webhook_events AS PERMISSIVE FOR SELECT TO public USING (( SELECT is_founder() AS is_founder));
 CREATE POLICY "staff reads categories" ON public.skill_categories AS PERMISSIVE FOR SELECT TO public USING ((( SELECT is_coach() AS is_coach) OR ( SELECT is_founder() AS is_founder)));
 CREATE POLICY "founder manages categories" ON public.skill_categories AS PERMISSIVE FOR ALL TO public USING (( SELECT is_founder() AS is_founder)) WITH CHECK (( SELECT is_founder() AS is_founder));
