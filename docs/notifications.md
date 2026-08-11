@@ -976,9 +976,12 @@ and `location_label(classes)`; change one, change the other. Covered by
 `tests/db/venue-label.test.ts` and `lib/venue-display.test.ts`.
 
 `location_maps_url(classes)` gives directions for the message. It uses the
-**private's own pin, not its venue's**, matching what `coach_mark_arrival`
-geofences against — a map pointing elsewhere would send a coach to a spot that
-then fails the arrival check.
+**private's own pin, not its venue's**, because that pin is the address the
+coach is actually expected at — a private is taught at the client's own court,
+which is why it has coordinates its venue row does not describe. This used to be
+stated as matching what `coach_mark_arrival` geofenced against; the fence is gone
+(0083) and the map is now the only thing the pin feeds, which makes it the only
+thing keeping a coach from driving to the wrong address.
 
 ### Read-time vs write-time — the distinction that hid a bug for a day
 

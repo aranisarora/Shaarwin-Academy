@@ -114,16 +114,16 @@ create table public.class_sessions (
   created_at timestamptz default now() not null,
   coach_arrived_at timestamptz,
   coach_confirmed_at timestamptz,
-  -- Which of the three doors the tap came through: 'tap' in the app, 'push' on
-  -- the notification button, 'wa' from WhatsApp (0083). 'auto' is historical —
-  -- the geofence that wrote it is gone, and one production row still carries it.
   coach_arrival_source text,
-  -- Historical (0083). Metres from the venue when the geofence marked a coach
-  -- arrived. Nothing has written it since the fence was removed; kept so
-  -- founder_day_report and the admin schedule readers keep their shape.
   coach_arrival_distance_m integer,
   coach_late_at timestamptz
 );
+
+comment on column public.class_sessions.coach_arrival_source is
+  'Where the arrival was marked: ''tap'' in the app, ''push'' on the notification button, ''wa'' from WhatsApp. ''auto'' is historical — the geofence that wrote it was removed, and nothing writes it now.';
+
+comment on column public.class_sessions.coach_arrival_distance_m is
+  'Historical. Metres between the coach''s device and the venue when geofenced auto-arrival marked them. Nothing has written this since the fence was removed; it is kept so founder_day_report and the admin schedule readers keep their shape.';
 
 create table public.classes (
   id uuid default gen_random_uuid() not null,
@@ -4264,6 +4264,8 @@ begin
   return v_arrived;
 end;
 $function$;
+
+COMMENT ON FUNCTION public.coach_mark_arrival IS 'Mark a coach arrived (or running late) and tell the people who need to know. p_source records which of the three doors the tap came through — ''tap'' in the app, ''push'' on the notification button, ''wa'' from WhatsApp — so we can see whether the notification is carrying its share.';
 
 CREATE OR REPLACE FUNCTION public.coach_undo_arrival(p_session uuid)
  RETURNS void

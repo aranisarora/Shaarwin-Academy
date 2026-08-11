@@ -230,11 +230,13 @@ describe("location_label — venue plus the unit inside it", () => {
   });
 });
 
-describe("location_maps_url — directions that match the arrival geofence", () => {
+describe("location_maps_url — directions to where the coach is actually due", () => {
   it("uses the private's own pin, not its venue's", async () => {
-    // coach_mark_arrival geofences a private against private_class_details
-    // lat/lng. A map pointing at the venue centroid instead would send a coach
-    // to a spot that then fails the arrival check.
+    // A private is taught at the client's own court, which private_class_details
+    // holds coordinates for and the venue row does not describe. A map pointing
+    // at the venue centroid instead sends the coach to the wrong address. The
+    // fence that used to check this second-hand is gone (0083), so the map is
+    // the only thing the pin now feeds.
     const venueId = await venueIdByName(SEEDED_VENUE.name);
     const priv = await createPrivateSession({ startsAt: hoursFromNow(6), venueId });
 
