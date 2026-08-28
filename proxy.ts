@@ -56,8 +56,34 @@ export async function proxy(request: NextRequest) {
   // Note it falls back to a full `getUser()` call, silently, if the token's alg
   // is HS*, it carries no `kid`, or WebCrypto is missing. None apply here, but
   // the symptom of a regression would be lost speed rather than an error.
-  const { data: claimsData } = await supabase.auth.getClaims();
-  const userId = claimsData?.claims?.sub ?? null;
+  //
+  // This await is also the whole site's single point of failure, so it is raced
+  // against a timeout. On 2026-08-28 Supabase's auth container hung — accepted
+  // TLS, then sent zero bytes forever — and because a cold invocation fetches
+  // the JWKS from `/auth/v1/.well-known/jwks.json`, this call never resolved.
+  // Every route 504'd with MIDDLEWARE_INVOCATION_TIMEOUT after 300s, marketing
+  // pages included, for every visitor *with a session cookie* (signed-out
+  // visitors short-circuit before the network and saw a healthy site, which
+  // made the outage look like anything but auth). Losing the race or throwing
+  // is treated as signed-out: public routes render, protected routes bounce to
+  // /login, and an auth outage is scoped to sessions instead of the site. The
+  // budget is generous — a real refresh is a ~150ms Tokyo round trip, so 3s is
+  // only ever spent when auth is already down.
+  let userId: string | null = null;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const raced = await Promise.race([
+      supabase.auth.getClaims(),
+      new Promise<null>((resolve) => {
+        timer = setTimeout(() => resolve(null), 3_000);
+      }),
+    ]);
+    userId = raced?.data?.claims?.sub ?? null;
+  } catch {
+    // A thrown network error is the same outage as a hang, just faster.
+  } finally {
+    clearTimeout(timer);
+  }
 
   const { pathname } = request.nextUrl;
   const wanted = PROTECTED_PREFIXES.find(
