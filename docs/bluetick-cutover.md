@@ -85,6 +85,27 @@ changes what the public sees.
    for years should not first hear about the move from a robot, and Meta does
    not allow it anyway.
 
+## Thrown — 2026-09-11, 17:11 UTC
+
+What was actually done, so the reversal knows what it is reversing:
+
+- Step 1: the four env vars set on Vercel, Production and Preview
+  (`NEXT_PUBLIC_WHATSAPP_NUMBER` replaced — it had carried the Twilio number).
+- Step 2: `cron.unschedule('notify-worker')` returned `true`. Two jobs remain
+  (`private-series-nightly`, `session-status-hourly`); they write only to
+  Sharwin's own database and message nobody.
+- Step 3: **not changed.** The old number's webhook already pointed at
+  `https://sharwinacademy.com/api/whatsapp`, and that path became the
+  autoresponder when step 5 deployed — verified with a signed POST. What could
+  not be verified is Twilio itself: the account credentials in `.env.local`
+  answer **401** to Twilio's REST API, so the old number may no longer deliver
+  inbound messages at all. Check the console; if the account is suspended, the
+  founder's announcement is the only bridge from the old number.
+- Step 4: `live = true` on workspace `5c21e72f-490a-4994-ba03-fd3e4c7caa6e`.
+- Step 5: PR #39 merged (`d134556`), deployment `dpl_EbegJPryGbssDaJvmG5dXisfMkwG`
+  aliased to sharwinacademy.com and www.
+- Step 6: **the founder's**, not done by a session.
+
 ## THE REVERSAL
 
 The site and the messaging reverse independently. Do the messaging first: it is
