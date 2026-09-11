@@ -109,7 +109,7 @@ function CoachesGridSkeleton() {
 // page is per-visitor any more — there is no session to read.
 export const revalidate = 3600;
 
-const BOOK_MESSAGE = "Hi! I'd like to book a table tennis class.";
+const BOOK_MESSAGE = "Hi! I'd like to book table tennis classes.";
 
 export default function LandingPage() {
   return (
@@ -231,7 +231,7 @@ export default function LandingPage() {
                 thread where it gets arranged. */}
             <a
               href={whatsappLink(
-                "Hi! I'd like to ask about private coaching at my place."
+                "Hi! I'd like to book private table tennis coaching at my place."
               )}
               target="_blank"
               rel="noopener noreferrer"

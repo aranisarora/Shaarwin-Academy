@@ -26,7 +26,7 @@ export const revalidate = 300;
 const WINDOW_DAYS = 7;
 
 const WHATSAPP_MESSAGE =
-  "Hi! I'd like to ask about a table tennis class on the schedule.";
+  "Hi! I'd like to book table tennis classes from the schedule.";
 
 /** A "YYYY-MM-DD" that is actually a date, or null. */
 function parseFrom(value: string | string[] | undefined): string | null {

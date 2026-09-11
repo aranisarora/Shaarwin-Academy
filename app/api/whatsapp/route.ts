@@ -12,19 +12,13 @@
  */
 
 import { createHmac, timingSafeEqual } from "crypto";
-
-/** The number the academy now answers on. Digits only — wa.me rejects "+". */
-const NEW_NUMBER = process.env.NEXT_PUBLIC_WHATSAPP_NUMBER ?? "12402623933";
-
-/** The workspace key the new thread must open with, so the assistant knows
- *  which business the sender means. */
-const BLUETICK_KEY = process.env.NEXT_PUBLIC_BLUETICK_KEY ?? "";
+import { whatsappLink } from "@/lib/contact";
 
 function forwardingMessage(): string {
-  const link = `https://wa.me/${NEW_NUMBER}${
-    BLUETICK_KEY ? `?text=${encodeURIComponent(BLUETICK_KEY)}` : ""
-  }`;
-  return `Sharwin Academy has moved to a new WhatsApp number. Tap to continue: ${link}`;
+  // The same link every button on the site opens: the sentence, then the
+  // workspace key as "With my code: …", so the assistant knows which business
+  // the sender means.
+  return `Sharwin Academy has moved to a new WhatsApp number. Tap to continue: ${whatsappLink()}`;
 }
 
 /** Escape the five XML entities — the message is interpolated into TwiML. */

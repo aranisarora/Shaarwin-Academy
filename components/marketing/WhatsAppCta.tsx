@@ -7,7 +7,7 @@ import { whatsappLink } from "@/lib/contact";
  * There is no sign-up, no login and no booking screen here any more: booking,
  * cancelling and asking a question all happen in one WhatsApp thread with the
  * academy's assistant. Every CTA on the marketing pages goes through this
- * component so the number and the prefilled workspace key are set in one place.
+ * component so the number and the "With my code: …" clause are set in one place.
  */
 export function WhatsAppCta({
   message,

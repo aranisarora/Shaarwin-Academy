@@ -33,10 +33,14 @@ changes what the public sees.
    `5c21e72f-490a-4994-ba03-fd3e4c7caa6e`):
    - `BLUETICK_URL=https://bluetick-kappa.vercel.app` — where bluetick is
      deployed.
-   - `BLUETICK_DIARY_KEY=shout-daily-jab` — the academy's workspace key.
-     Server-only.
-   - `NEXT_PUBLIC_BLUETICK_KEY=shout-daily-jab` — the same key, public, so
-     `wa.me` links can prefill it.
+   - `BLUETICK_DIARY_KEY=ping-pong-club` — the academy's workspace key.
+     Server-only. (The import minted `shout-daily-jab`; it was changed to
+     words that read as a phrase the same day, before anything was printed —
+     a key is three hyphenated words of 3–5 letters, and that is the only
+     shape bluetick accepts.)
+   - `NEXT_PUBLIC_BLUETICK_KEY=ping-pong-club` — the same key, public: every
+     `wa.me` link on the site prefills "…With my code: ping-pong-club", and
+     bluetick reads the key from anywhere in the message.
    - `NEXT_PUBLIC_WHATSAPP_NUMBER=12402623933`.
 
    Redeploy so the public values are baked into the client bundle. The diary
@@ -66,14 +70,16 @@ changes what the public sees.
    may talk to real people:
 
    ```sql
-   update workspace set live = true where key = 'shout-daily-jab';
+   update workspace set live = true where key = 'ping-pong-club';
    ```
 
-   Before that, look at it in bluetick's `/emu`: the people, the two standing
-   memories (house rules, plans), the Coach role. One person is written down at
-   `known` on purpose — the account owner, whose number is active in their own
-   test workspace on the same sender; sending `shout-daily-jab` to the number
-   moves them in.
+   Before that, look at it in bluetick's `/emu`: the people, the three standing
+   memories (house rules, plans, and where the timetable page is — the
+   assistant hands `https://sharwinacademy.com/schedule` to an owner who asks
+   for the schedule, and to nobody else), the Coach role. One person is written
+   down at `known` on purpose — the account owner, whose number is active in
+   their own test workspace on the same sender; sending `ping-pong-club` to
+   the number moves them in.
 
 5. **Ship it.** Merge `bluetick-tenant` into `main` and promote the deployment.
    `/login`, `/signup`, `/app`, `/coach`, `/admin` and `/school` start
