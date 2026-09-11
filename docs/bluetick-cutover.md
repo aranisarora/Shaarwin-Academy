@@ -28,16 +28,21 @@ runbook are documented in `scripts/README.md`.
 In this order. Steps 1–4 are reversible on their own; step 5 is the one that
 changes what the public sees.
 
-1. **Set the env on Vercel** (Production), on the Sharwin project:
-   - `BLUETICK_URL` — where bluetick is deployed.
-   - `BLUETICK_DIARY_KEY` — the academy's workspace key (three hyphenated
-     words). Server-only.
-   - `NEXT_PUBLIC_BLUETICK_KEY` — the same key, public, so `wa.me` links can
-     prefill it.
+1. **Set the env on Vercel** (Production), on the Sharwin project. The values
+   as of the import of 2026-09-11 (run `sharwin-20260911T164046Z`, workspace
+   `5c21e72f-490a-4994-ba03-fd3e4c7caa6e`):
+   - `BLUETICK_URL=https://bluetick-kappa.vercel.app` — where bluetick is
+     deployed.
+   - `BLUETICK_DIARY_KEY=shout-daily-jab` — the academy's workspace key.
+     Server-only.
+   - `NEXT_PUBLIC_BLUETICK_KEY=shout-daily-jab` — the same key, public, so
+     `wa.me` links can prefill it.
    - `NEXT_PUBLIC_WHATSAPP_NUMBER=12402623933`.
 
-   Redeploy so the public values are baked into the client bundle. Nothing is
-   live yet: `/schedule` will 404 from bluetick until step 4.
+   Redeploy so the public values are baked into the client bundle. The diary
+   is already published (the import set `attrs.public_diary`), so `/schedule`
+   renders a real week as soon as the env is in — that is not the same as
+   being live: the assistant does not talk to anybody until step 4.
 
 2. **Stop the notify cron.** In Sharwin's Supabase SQL editor:
 
@@ -57,9 +62,18 @@ changes what the public sees.
    thread. Send one message to the old number and check you get it back.
 
 4. **Turn the workspace on in bluetick.** Set the academy workspace's
-   `attrs.public_diary = true` (the import sets this) and `live = true` — the
-   founder's own switch, the thing that says the assistant may talk to real
-   people. Load `/schedule` against the new env and confirm a real week renders.
+   `live = true` — the founder's own switch, the thing that says the assistant
+   may talk to real people:
+
+   ```sql
+   update workspace set live = true where key = 'shout-daily-jab';
+   ```
+
+   Before that, look at it in bluetick's `/emu`: the people, the two standing
+   memories (house rules, plans), the Coach role. One person is written down at
+   `known` on purpose — the account owner, whose number is active in their own
+   test workspace on the same sender; sending `shout-daily-jab` to the number
+   moves them in.
 
 5. **Ship it.** Merge `bluetick-tenant` into `main` and promote the deployment.
    `/login`, `/signup`, `/app`, `/coach`, `/admin` and `/school` start
