@@ -107,7 +107,7 @@ export function WeComeToYou() {
       <Reveal>
         <WhatsAppCta
           className="mt-10"
-          message="Hi! I'd like to book a table tennis class."
+          message="Hi! I'd like to book private table tennis coaching at my place."
         >
           Book on WhatsApp
         </WhatsAppCta>

@@ -16,7 +16,7 @@ export const metadata: Metadata = {
 // lives on /schedule, which reads bluetick at request time.
 export const revalidate = 3600;
 
-const BOOK_MESSAGE = "Hi! I'd like to book a class at one of your venues.";
+const BOOK_MESSAGE = "Hi! I'd like to book table tennis classes at one of your venues.";
 
 export default async function LocationsPage() {
   const venues = await getVenues();

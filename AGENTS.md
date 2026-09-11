@@ -41,7 +41,7 @@ are built to this text; change neither half alone.
 
 ```
 GET {BLUETICK_URL}/api/diary/{key}?from=YYYY-MM-DD&days=N
-  - {key} is workspace.key (three hyphenated words, e.g. lurk-salt-card).
+  - {key} is workspace.key (three hyphenated words of 3–5 letters, e.g. ping-pong-club).
   - from: a local date on the workspace's clock; default = today on that clock.
     days: default 7, min 1, max 42.
   - The window is [from 00:00, from+days 00:00) in the workspace timezone.

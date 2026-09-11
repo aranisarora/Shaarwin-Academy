@@ -26,7 +26,7 @@ export const revalidate = 300;
 const WINDOW_DAYS = 7;
 
 const WHATSAPP_MESSAGE =
-  "Hi! I'd like to ask about a table tennis class on the schedule.";
+  "Hi! I'd like to book table tennis classes from the schedule.";
 
 /** A "YYYY-MM-DD" that is actually a date, or null. */
 function parseFrom(value: string | string[] | undefined): string | null {
@@ -221,7 +221,7 @@ export default async function SchedulePage({
             </p>
             <WhatsAppCta
               className="mt-5"
-              message="Hi! Could you send me this week's class times?"
+              message="Hi! I'd like to book table tennis classes. Could you send me this week's times?"
             >
               Message us on WhatsApp
             </WhatsAppCta>

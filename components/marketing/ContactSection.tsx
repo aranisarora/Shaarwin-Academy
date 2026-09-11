@@ -56,7 +56,7 @@ export function ContactSection() {
 
       <Reveal>
         <div className="mt-10 flex flex-wrap gap-3">
-          <WhatsAppCta size="lg" message="Hi! I'd like to book a table tennis class.">
+          <WhatsAppCta size="lg" message="Hi! I'd like to book table tennis classes.">
             Book on WhatsApp
           </WhatsAppCta>
           <ButtonLink href="/schedule" variant="ghost" size="lg">

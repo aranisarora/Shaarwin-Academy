@@ -60,7 +60,7 @@ export function StageHeader() {
           {/* There is no account to sign into any more — the only door is the
               WhatsApp thread the academy now runs on. */}
           <a
-            href={whatsappLink("Hi! I'd like to book a table tennis class.")}
+            href={whatsappLink()}
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex min-h-11 items-center rounded-[8px] bg-ember px-4 text-sm font-semibold text-ivory transition-colors hover:bg-ember-2"
