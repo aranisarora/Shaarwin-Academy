@@ -1,9 +1,9 @@
 import Image from "next/image";
 import { Reveal } from "@/components/Reveal";
-import { ButtonLink } from "@/components/ui/Button";
+import { WhatsAppCta } from "@/components/marketing/WhatsAppCta";
 
-const REGISTER_HREF =
-  "https://wa.me/918431435758?text=Hi%20Sharwin%20TTA%20—%20I%27d%20like%20to%20register%20interest%20for%20the%20Summer%20Camp%202026.";
+const REGISTER_MESSAGE =
+  "Hi Sharwin TTA — I'd like to register interest for the Summer Camp 2026.";
 
 /** Seasonal camp promo. Image lives at /public/images/summer-camp.jpg. */
 export function SummerCamp() {
@@ -25,9 +25,9 @@ export function SummerCamp() {
             First paddle or levelling up your competitive game, it&apos;s a
             transformative few weeks — skill-building, fun, and unforgettable.
           </p>
-          <ButtonLink href={REGISTER_HREF} className="mt-8">
+          <WhatsAppCta className="mt-8" message={REGISTER_MESSAGE}>
             Register interest
-          </ButtonLink>
+          </WhatsAppCta>
         </Reveal>
         <Reveal delay={150}>
           <div className="relative aspect-[904/1280] overflow-hidden rounded-[12px] border border-line bg-ink-2">

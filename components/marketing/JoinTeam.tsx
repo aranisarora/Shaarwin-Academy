@@ -1,10 +1,10 @@
 import Image from "next/image";
 import academyHall from "@/public/images/academy-hall.jpg";
 import { Reveal } from "@/components/Reveal";
-import { ButtonLink } from "@/components/ui/Button";
+import { WhatsAppCta } from "@/components/marketing/WhatsAppCta";
 
-const APPLY_HREF =
-  "https://wa.me/918431435758?text=Hi%20Sharwin%20TTA%20—%20I%27d%20like%20to%20apply%20as%20a%20coach.%20Here%20are%20my%20playing%20videos%2C%20qualifications%20and%20years%20of%20experience%3A";
+const APPLY_MESSAGE =
+  "Hi Sharwin TTA — I'd like to apply as a coach. Here are my playing videos, qualifications and years of experience:";
 
 /** Coach hiring section — applications come in over WhatsApp. */
 export function JoinTeam() {
@@ -27,9 +27,9 @@ export function JoinTeam() {
             qualifications and years of experience. Our founder reviews every
             application personally.
           </p>
-          <ButtonLink href={APPLY_HREF} size="lg" className="mt-8">
+          <WhatsAppCta size="lg" className="mt-8" message={APPLY_MESSAGE}>
             Apply via WhatsApp
-          </ButtonLink>
+          </WhatsAppCta>
           <p className="mt-3 text-sm text-slate">
             Opens WhatsApp with a pre-filled message — just hit send.
           </p>
