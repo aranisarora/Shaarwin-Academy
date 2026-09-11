@@ -221,7 +221,7 @@ export default async function SchedulePage({
             </p>
             <WhatsAppCta
               className="mt-5"
-              message="Hi! Could you send me this week's class times?"
+              message="Hi! I'd like to book table tennis classes. Could you send me this week's times?"
             >
               Message us on WhatsApp
             </WhatsAppCta>
