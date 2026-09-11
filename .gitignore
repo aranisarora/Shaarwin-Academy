@@ -37,6 +37,9 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# …and the template is the one that must be committed: it is the list of what
+# the site reads.
+!.env.example
 
 # vercel
 .vercel

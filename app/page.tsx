@@ -15,8 +15,9 @@ import { SummerCamp } from "@/components/marketing/SummerCamp";
 import { JoinTeam } from "@/components/marketing/JoinTeam";
 import { ContactSection } from "@/components/marketing/ContactSection";
 import { Skeleton } from "@/components/ui/Skeleton";
+import { whatsappLink } from "@/lib/contact";
 import { getVenues, getCoaches } from "@/lib/data";
-import { AuthCta } from "@/components/marketing/AuthCta";
+import { WhatsAppCta } from "@/components/marketing/WhatsAppCta";
 
 import heroServe from "@/public/images/hero-serve.jpg";
 import heroServeMobile from "@/public/images/hero-serve-mobile.jpg";
@@ -104,9 +105,11 @@ function CoachesGridSkeleton() {
 }
 
 // Marketing homepage: static + revalidated hourly so India visitors get it from
-// the edge PoP near them instead of a dynamic render in Tokyo. The auth-aware CTA
-// lives in the AuthCta client island so the page body stays static.
+// the edge PoP near them instead of a dynamic render in Tokyo. Nothing on this
+// page is per-visitor any more — there is no session to read.
 export const revalidate = 3600;
+
+const BOOK_MESSAGE = "Hi! I'd like to book a table tennis class.";
 
 export default function LandingPage() {
   return (
@@ -162,12 +165,12 @@ export default function LandingPage() {
             </Reveal>
             <Reveal delay={360}>
               <div className="mt-8 flex flex-wrap gap-3">
-                <AuthCta signedInHref="/app" signedOutHref="/signup" size="lg">
+                <WhatsAppCta size="lg" message={BOOK_MESSAGE}>
                   <span aria-hidden className="h-2 w-2 rounded-full bg-ivory" />
-                  Book a class
-                </AuthCta>
-                <ButtonLink href="/locations" variant="ghost" size="lg">
-                  See locations
+                  Book on WhatsApp
+                </WhatsAppCta>
+                <ButtonLink href="/schedule" variant="ghost" size="lg">
+                  See this week
                 </ButtonLink>
               </div>
             </Reveal>
@@ -202,7 +205,7 @@ export default function LandingPage() {
         <div className="grid gap-6 md:grid-cols-2">
           <Reveal delay={80}>
             <Link
-              href="/signup"
+              href="/schedule"
               className="group relative block aspect-[3/2] overflow-hidden rounded-[12px] border border-line"
             >
               <Image
@@ -223,8 +226,15 @@ export default function LandingPage() {
             </Link>
           </Reveal>
           <Reveal delay={220}>
-            <Link
-              href="/signup"
+            {/* Private coaching never appears on the public timetable — it
+                happens at somebody's home — so this one goes straight to the
+                thread where it gets arranged. */}
+            <a
+              href={whatsappLink(
+                "Hi! I'd like to ask about private coaching at my place."
+              )}
+              target="_blank"
+              rel="noopener noreferrer"
               className="group relative block aspect-[3/2] overflow-hidden rounded-[12px] border border-line"
             >
               <Image
@@ -242,7 +252,7 @@ export default function LandingPage() {
                   A coach at your door
                 </p>
               </div>
-            </Link>
+            </a>
           </Reveal>
         </div>
       </section>
@@ -340,9 +350,9 @@ export default function LandingPage() {
                 for.&rdquo;
               </p>
             </blockquote>
-            <ButtonLink href="/signup" className="mt-8">
+            <WhatsAppCta className="mt-8" message={BOOK_MESSAGE}>
               Start your journey
-            </ButtonLink>
+            </WhatsAppCta>
           </Reveal>
         </div>
       </section>
@@ -473,13 +483,9 @@ export default function LandingPage() {
 
       {/* Sticky bottom CTA — phones only */}
       <div className="pb-safe fixed inset-x-0 bottom-0 z-30 border-t border-line bg-ink/95 p-3 backdrop-blur sm:hidden">
-        <AuthCta
-          signedInHref="/app"
-          signedOutHref="/signup"
-          signedInLabel="Open your app"
-          signedOutLabel="Find a class"
-          className="w-full"
-        />
+        <WhatsAppCta className="w-full" message={BOOK_MESSAGE}>
+          Book on WhatsApp
+        </WhatsAppCta>
       </div>
     </StageShell>
   );

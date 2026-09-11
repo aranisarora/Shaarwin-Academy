@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { Reveal } from "@/components/Reveal";
-import { ButtonLink } from "@/components/ui/Button";
+import { WhatsAppCta } from "@/components/marketing/WhatsAppCta";
 
 const places: {
   title: string;
@@ -37,8 +37,8 @@ const features = [
     body: "One-to-one coaching tailored entirely to your goals and availability, conducted at your place.",
   },
   {
-    title: "Easy scheduling",
-    body: "Book and manage sessions online — synced with Google Calendar automatically.",
+    title: "Booking by message",
+    body: "No app, no account. Book, reschedule or cancel in one WhatsApp thread — the week is always on the schedule page.",
   },
 ];
 
@@ -105,9 +105,12 @@ export function WeComeToYou() {
       </div>
 
       <Reveal>
-        <ButtonLink href="/signup" className="mt-10">
-          Book a class
-        </ButtonLink>
+        <WhatsAppCta
+          className="mt-10"
+          message="Hi! I'd like to book a table tennis class."
+        >
+          Book on WhatsApp
+        </WhatsAppCta>
       </Reveal>
     </section>
   );

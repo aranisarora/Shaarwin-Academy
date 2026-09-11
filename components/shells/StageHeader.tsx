@@ -3,32 +3,23 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { createClient } from "@/lib/supabase/client";
+import { whatsappLink } from "@/lib/contact";
 import logo from "@/public/images/logo.png";
 
 const nav = [
+  { href: "/schedule", label: "Schedule" },
   { href: "/locations", label: "Locations" },
   { href: "/coaches", label: "Coaches" },
 ];
 
 export function StageHeader() {
   const [scrolled, setScrolled] = useState(false);
-  // Detected client-side so the marketing shell stays statically renderable.
-  // Defaults to signed-out for the prerendered HTML, then upgrades on hydration.
-  const [signedIn, setSignedIn] = useState(false);
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 12);
     onScroll();
     window.addEventListener("scroll", onScroll, { passive: true });
     return () => window.removeEventListener("scroll", onScroll);
-  }, []);
-
-  useEffect(() => {
-    const supabase = createClient();
-    supabase.auth
-      .getSession()
-      .then(({ data }) => setSignedIn(data.session !== null));
   }, []);
 
   return (
@@ -66,29 +57,16 @@ export function StageHeader() {
               {item.label}
             </Link>
           ))}
-          {signedIn ? (
-            <Link
-              href="/app"
-              className="inline-flex min-h-11 items-center rounded-[8px] bg-ember px-4 text-sm font-semibold text-ivory transition-colors hover:bg-ember-2"
-            >
-              Open app
-            </Link>
-          ) : (
-            <>
-              <Link
-                href="/signup"
-                className="inline-flex min-h-11 items-center rounded-[8px] px-3 text-sm text-fg-2 transition-colors hover:text-fg"
-              >
-                Sign up
-              </Link>
-              <Link
-                href="/signup"
-                className="inline-flex min-h-11 items-center rounded-[8px] bg-ember px-4 text-sm font-semibold text-ivory transition-colors hover:bg-ember-2"
-              >
-                Find a class
-              </Link>
-            </>
-          )}
+          {/* There is no account to sign into any more — the only door is the
+              WhatsApp thread the academy now runs on. */}
+          <a
+            href={whatsappLink("Hi! I'd like to book a table tennis class.")}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex min-h-11 items-center rounded-[8px] bg-ember px-4 text-sm font-semibold text-ivory transition-colors hover:bg-ember-2"
+          >
+            Book on WhatsApp
+          </a>
         </nav>
       </div>
     </header>

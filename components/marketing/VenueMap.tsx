@@ -10,8 +10,8 @@ export function VenueMap({
   venues,
   height = "480px",
   interactiveCard = true,
-  ctaHref = "/locations",
-  ctaLabel = "See classes",
+  ctaHref = "/schedule",
+  ctaLabel = "See the week",
   autoLocate = false,
 }: {
   venues: Venue[];
