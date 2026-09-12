@@ -5,13 +5,11 @@ export default function robots(): MetadataRoute.Robots {
   return {
     rules: {
       userAgent: "*",
-      // Everything here is public. The old disallow list named /app, /coach and
-      // /admin — routes that no longer exist; they are now redirects to
-      // /schedule, which is itself indexable.
       allow: "/",
-      // The timetable's ?from= links generate an unbounded number of week URLs.
-      // The bare page is the one worth indexing.
-      disallow: ["/schedule?"],
+      // /schedule is the founder's page, behind a key (lib/schedule-gate.ts).
+      // It says noindex itself; this keeps a crawler from even asking. /app,
+      // /coach and /admin redirect there and need no line of their own.
+      disallow: ["/schedule"],
     },
     sitemap: `${base}/sitemap.xml`,
   };

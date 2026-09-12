@@ -17,7 +17,7 @@ const faqs = [
   },
   {
     q: "What are the class timings?",
-    a: "Flexible slots run through the week — mornings, evenings and weekends. The schedule page lists this week's group classes by day and venue; exact private timings depend on your location and coach availability, so ask us on WhatsApp.",
+    a: "Flexible slots run through the week — mornings, evenings and weekends. Message us on WhatsApp with your area and we'll send this week's group classes at the venue nearest you; exact private timings depend on your location and coach availability.",
   },
   {
     q: "How does membership work?",
@@ -45,7 +45,7 @@ const faqs = [
   },
   {
     q: "How do I book a class?",
-    a: "On WhatsApp. Look at the schedule page, pick a class, and message us — the same thread handles booking, rescheduling, cancelling and questions. There's no app to install and no account to create.",
+    a: "On WhatsApp. Tell us your area and we'll send you this week's classes; pick one and your place is held in the same thread — which also handles rescheduling, cancelling and questions. There's no app to install and no account to create.",
   },
 ];
 

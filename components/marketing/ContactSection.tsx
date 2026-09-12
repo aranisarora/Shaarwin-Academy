@@ -59,8 +59,8 @@ export function ContactSection() {
           <WhatsAppCta size="lg" message="Hi! I'd like to book table tennis classes.">
             Book on WhatsApp
           </WhatsAppCta>
-          <ButtonLink href="/schedule" variant="ghost" size="lg">
-            See this week
+          <ButtonLink href="/locations" variant="ghost" size="lg">
+            Find a venue
           </ButtonLink>
         </div>
       </Reveal>

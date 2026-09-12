@@ -1,11 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import Link from "next/link";
 import type { Venue } from "@/lib/data";
 import { VenueMap } from "@/components/marketing/VenueMap";
+import { WhatsAppCta } from "@/components/marketing/WhatsAppCta";
 import { venueDisplayName } from "@/lib/venue-display";
-import { ButtonLink } from "@/components/ui/Button";
+import { whatsappLink } from "@/lib/contact";
 
 /** How many nearby venues a visitor is shown before the rest are collapsed. */
 const MAX_VISIBLE = 4;
@@ -28,10 +28,10 @@ function haversineKm(
 /**
  * The venues nearest the visitor first, with the map beside them.
  *
- * What each venue is running this week is no longer answered here: the
- * timetable is one page, /schedule, fed by bluetick, so a venue card says where
- * the place is and hands the visitor to the week rather than carrying a
- * half-copy of it.
+ * What each venue is running this week is not answered here, or anywhere on
+ * the site: the timetable is the founder's own page now. A venue card says
+ * where the place is and hands the visitor to the WhatsApp thread, which sends
+ * them the week for that venue.
  */
 export function NearbyVenues({ venues }: { venues: Venue[] }) {
   const [origin, setOrigin] = useState<{ lat: number; lng: number } | null>(
@@ -75,7 +75,11 @@ export function NearbyVenues({ venues }: { venues: Venue[] }) {
               <p className="mt-2 text-sm text-slate">{venue.notes}</p>
             )}
             <div className="mt-5 flex flex-wrap items-center gap-4">
-              <ButtonLink href="/schedule">See the week here</ButtonLink>
+              <WhatsAppCta
+                message={`Hi! I'd like to know this week's classes at ${venueDisplayName(venue)}.`}
+              >
+                Ask about this venue
+              </WhatsAppCta>
               <a
                 href={`https://www.google.com/maps/dir/?api=1&destination=${venue.lat},${venue.lng}`}
                 target="_blank"
@@ -103,9 +107,14 @@ export function NearbyVenues({ venues }: { venues: Venue[] }) {
         )}
         <p className="text-sm text-smoke">
           Don&apos;t see your area?{" "}
-          <Link href="/schedule" className="text-ember hover:underline">
-            Check the schedule
-          </Link>{" "}
+          <a
+            href={whatsappLink("Hi! Do you coach in my area?")}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-ember hover:underline"
+          >
+            Ask us on WhatsApp
+          </a>{" "}
           — we also come to homes, offices, schools and colleges.
         </p>
       </div>
@@ -113,8 +122,6 @@ export function NearbyVenues({ venues }: { venues: Venue[] }) {
         <VenueMap
           venues={visible}
           height="60vh"
-          ctaHref="/schedule"
-          ctaLabel="See the week"
           autoLocate
         />
       </div>
