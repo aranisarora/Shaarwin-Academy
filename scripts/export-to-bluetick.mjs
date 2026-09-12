@@ -1,45 +1,47 @@
 #!/usr/bin/env node
 /**
- * Move Sharwin Table Tennis Academy into a Bluetick workspace.
+ * Import Sharwin Table Tennis Academy into an EXISTING bluetick workspace.
  *
- *   node scripts/export-to-bluetick.mjs --dry-run
- *   node scripts/export-to-bluetick.mjs --apply
- *   node scripts/export-to-bluetick.mjs --undo sharwin-20260911T153015Z
+ *   node scripts/export-to-bluetick.mjs --dry-run --workspace <uuid> [--manager +91…]
+ *   node scripts/export-to-bluetick.mjs --apply   --workspace <uuid> [--manager +91…]
  *
  * Options
- *   --owner +91...        Repeatable. Who becomes an owner. Default: every
- *                         profile with role 'founder' that carries a phone.
- *   --since 30d           How much history to carry over (default 30d).
- *   --horizon 52w         How far forward to extend the weekly runs (52w).
- *   --demote-conflicts    Somebody already active in another workspace on this
- *                         number is written down at 'known' here instead of
- *                         refusing the whole run. They are not made an owner.
- *                         Sending the key moves them in, as it would anybody.
- *   --bluetick-env PATH   Where DATABASE_URL lives
- *                         (default C:/Users/Aranis/Desktop/bluetick/.env.local).
+ *   --workspace <uuid>   REQUIRED. The workspace to fill. It must already
+ *                        exist, not be archived, and hold exactly one member —
+ *                        its owner — and nothing else at all.
+ *   --manager +91…       Repeatable. Somebody who gets the Manager role.
+ *   --bluetick-env PATH  Where DATABASE_URL lives
+ *                        (default C:/Users/Aranis/Desktop/bluetick/.env.local).
+ *   --report PATH        Where the markdown report is also written.
+ *
+ * WHAT THIS CARRIES, AND WHY IT IS SO LITTLE. The first import (2026-09-11)
+ * laid 52 weeks of occurrences, 468 phoneless school pupils, the old app's
+ * monthly plans and its "complimentary" arrangements. None of it was what the
+ * academy needs to go FORWARD, and all of it has been purged. This run carries
+ * three things: the numbers, the contacts, and the standing weekly timetable.
+ * No history. No pupils. No money. Every gap is the owner's to fill through
+ * the product, and three tasks ask him for them by name.
+ *
+ * A RULE THAT REPEATS IS A `series` ROW. Not 52 events. `app.lay_down` keeps
+ * the next five weeks of `event` rows in front of the runtime and books every
+ * standing place onto each one as it is laid; this script inserts the rules and
+ * calls it once. A standing place is a `booking` with `series_id` set and
+ * `event_id` empty.
  *
  * SHARWIN IS NEVER WRITTEN. Every statement against Supabase here is a read.
- * BLUETICK IS WRITTEN ONLY under --apply and --undo, inside one transaction
- * that is rolled back on any error. --dry-run runs the entire plan against the
- * real database inside a transaction that always ends in ROLLBACK, so the
- * counts it prints are counts of rows that really were written and really were
- * taken back — not estimates.
- *
- * --undo ENDS A RUN, IT DOES NOT ERASE ONE. It archives the workspace the run
- * founded and steps every membership down to 'removed' — the two moves
- * app.delete_workspace() makes, in that order and for its reasons. The diary
- * goes dark, nobody is held by the workspace any more and --apply may run
- * again; the events, bookings, memories and deeds stay, because they happened.
- * See the note above undo() for why deleting them is neither wanted nor, given
- * how the deed recorder treats a delete, even possible.
+ * BLUETICK IS WRITTEN ONLY under --apply, inside one transaction. --dry-run
+ * runs the whole plan against the real database inside a transaction that ends
+ * in ROLLBACK after `set constraints all immediate`, so the counts it prints
+ * are counts of rows that really were written and really were taken back — and
+ * every deferred constraint an --apply would meet at COMMIT has been asked.
  *
  * WHAT IT CANNOT DO. A memory written outside a turn lands at actor 'noticed',
  * whatever this script passes: app.memory_is_derived() derives the column from
- * the turn context, and an import has none. So nothing imported claims an owner
+ * the turn context and an import has none. So nothing imported claims an owner
  * said it. That is the honest record and it is left alone.
  */
 
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -48,43 +50,62 @@ import pg from "pg";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const DEFAULT_BLUETICK_ENV = "C:/Users/Aranis/Desktop/bluetick/.env.local";
-const LIVE_NUMBER = "+12402623933";
-const WORKSPACE_NAME = "Sharwin Table Tennis Academy";
+const DEFAULT_REPORT_DIR = "C:/Users/Aranis/.claude/jobs/9e5f9ded/tmp";
 const TZ = "Asia/Kolkata";
 const IST_MIN = 330; // Asia/Kolkata is +05:30 all year; India keeps no DST.
 const SEED_FOUNDER = /\+seedfounder@/i;
 
+/** The academy's own venue reads as the academy's name; the hall is what it is. */
+const ACADEMY_VENUE = /sharwin\s+table\s+tennis\s+academy/i;
+
+/**
+ * One number in Sharwin has a digit too many. It is Rishikesh Kirthi.m's, and
+ * the fix is applied to the raw string BEFORE it is normalised, because
+ * +9197420503111 is a perfectly well-formed fourteen-digit E.164 number and
+ * normalising would wave it through. The correction is listed in the report
+ * and handed to the owner to confirm.
+ */
+const PHONE_FIXES = { "+9197420503111": "+919742050311" };
+
+/** Numbers that are not the people their rows claim to be. */
+const SKIP_PHONES = new Map([
+  ["+916362615758", 'a second profile called "Stalin" — his, a relative\'s, or an old one'],
+  ["+919620700537", '"stalin prabhu", a third profile with that name'],
+  ["+918904506671", '"aranis (test)", a test row'],
+]);
+
+/** A phoneless founder pseudo-row: the academy itself, not a person. */
+const SKIP_NAMES = new Set(["sharwin table tennis academy"]);
+
+/** How far back a session is looked at to learn a weekly slot's time of day. */
+const SESSION_BACK_DAYS = 180;
+const SESSION_FWD_DAYS = 60;
+/** The window a one-off session has to fall in to be carried across. */
+const ONE_OFF_DAYS = 35;
+
+const WEEKDAY = ["", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+const BYDAY = { MO: 1, TU: 2, WE: 3, TH: 4, FR: 5, SA: 6, SU: 7 };
+
 // ── argv ─────────────────────────────────────────────────────────────────────
 
 function parseArgs(argv) {
-  const out = {
-    mode: null, undoRun: null, owners: [], demoteConflicts: false,
-    since: "30d", horizon: "52w", bluetickEnv: DEFAULT_BLUETICK_ENV,
-  };
+  const out = { mode: null, workspace: null, managers: [], bluetickEnv: DEFAULT_BLUETICK_ENV, report: null };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--dry-run") out.mode = "dry-run";
     else if (a === "--apply") out.mode = "apply";
-    else if (a === "--undo") { out.mode = "undo"; out.undoRun = argv[++i]; }
-    else if (a === "--owner") out.owners.push(argv[++i]);
-    else if (a === "--since") out.since = argv[++i];
-    else if (a === "--horizon") out.horizon = argv[++i];
-    else if (a === "--demote-conflicts") out.demoteConflicts = true;
+    else if (a === "--workspace") out.workspace = argv[++i];
+    else if (a === "--manager") out.managers.push(argv[++i]);
     else if (a === "--bluetick-env") out.bluetickEnv = argv[++i];
+    else if (a === "--report") out.report = argv[++i];
     else throw new Error(`unknown argument: ${a}`);
   }
-  if (!out.mode) throw new Error("say one of --dry-run, --apply, --undo <run-id>");
-  if (out.mode === "undo" && !out.undoRun) throw new Error("--undo needs a run id");
+  if (!out.mode) throw new Error("say one of --dry-run, --apply");
+  if (!out.workspace) throw new Error("--workspace <uuid> is required — this script fills a workspace, it does not found one");
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(out.workspace)) {
+    throw new Error(`--workspace ${out.workspace} is not a uuid`);
+  }
   return out;
-}
-
-/** "30d", "52w", "6h", "1y" → milliseconds. */
-function duration(text) {
-  const m = String(text).match(/^(\d+)\s*([hdwy])$/i);
-  if (!m) throw new Error(`cannot read a span from ${JSON.stringify(text)} — say 30d, 52w, 12h or 1y`);
-  const n = Number(m[1]);
-  const unit = { h: 3600e3, d: 86400e3, w: 7 * 86400e3, y: 365 * 86400e3 }[m[2].toLowerCase()];
-  return n * unit;
 }
 
 function readEnvFile(file) {
@@ -100,6 +121,9 @@ function readEnvFile(file) {
 // ── words and numbers ────────────────────────────────────────────────────────
 
 const last4 = (p) => (p ? `…${String(p).slice(-4)}` : "—");
+const firstName = (name) => String(name || "").trim().split(/\s+/)[0] || "Owner";
+const tidy = (s) => String(s ?? "").replace(/\s+/g, " ").trim();
+const same = (a, b) => tidy(a).toLowerCase() === tidy(b).toLowerCase() && tidy(a) !== "";
 
 /**
  * E.164, or null when the digits do not make a number. A bare ten-digit number
@@ -109,6 +133,7 @@ function normPhone(raw) {
   if (raw == null) return null;
   let s = String(raw).trim().replace(/[\s()\-.]/g, "");
   if (!s) return null;
+  if (PHONE_FIXES[s]) s = PHONE_FIXES[s];
   if (s.startsWith("00")) s = `+${s.slice(2)}`;
   if (!s.startsWith("+")) {
     const d = s.replace(/\D/g, "");
@@ -118,6 +143,12 @@ function normPhone(raw) {
     else return null;
   }
   return /^\+[1-9]\d{7,14}$/.test(s) ? s : null;
+}
+
+/** Did PHONE_FIXES touch this one? Reported, and handed to the owner. */
+function wasFixed(raw) {
+  const s = String(raw ?? "").trim().replace(/[\s()\-.]/g, "");
+  return PHONE_FIXES[s] ? { from: s, to: PHONE_FIXES[s] } : null;
 }
 
 function slug(text, fallback = "x") {
@@ -130,18 +161,18 @@ function slug(text, fallback = "x") {
   return s || fallback;
 }
 
-const rupees = (paise) =>
-  `₹${(Math.round(paise) / 100).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`;
-
 /** Postgres refuses a body over 500 characters, so cut before it has to. */
 function cap(body, n = 500) {
   const s = String(body).replace(/\s+/g, " ").trim();
   return s.length <= n ? s : `${s.slice(0, n - 1).trimEnd()}…`;
 }
 
+const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
 // ── the Asia/Kolkata wall clock ──────────────────────────────────────────────
 // A fixed offset, so a week added in milliseconds is a week added on the wall.
 
+const pad = (n, w = 2) => String(n).padStart(w, "0");
 const istOf = (d) => new Date(d.getTime() + IST_MIN * 60000);
 function istParts(d) {
   const t = istOf(d);
@@ -151,14 +182,32 @@ function istParts(d) {
     wd: t.getUTCDay() === 0 ? 7 : t.getUTCDay(), // ISO 1..7
   };
 }
-const istInstant = (y, m, d, hh, mi) =>
-  new Date(Date.UTC(y, m, d, hh, mi) - IST_MIN * 60000);
+const istInstant = (y, m, d, hh, mi) => new Date(Date.UTC(y, m, d, hh, mi) - IST_MIN * 60000);
 function istStamp(d) {
   const p = istParts(d);
-  const z = (n, w = 2) => String(n).padStart(w, "0");
-  return `${p.y}-${z(p.m + 1)}-${z(p.d)} ${z(p.hh)}:${z(p.mi)} IST`;
+  return `${p.y}-${pad(p.m + 1)}-${pad(p.d)} ${pad(p.hh)}:${pad(p.mi)} IST`;
 }
-const WEEK = 7 * 86400e3;
+const istDate = (d) => { const p = istParts(d); return `${p.y}-${pad(p.m + 1)}-${pad(p.d)}`; };
+const istTime = (d) => { const p = istParts(d); return `${pad(p.hh)}:${pad(p.mi)}`; };
+
+/** Date arithmetic on "YYYY-MM-DD", which has no timezone to get wrong. */
+function dateAdd(iso, days) {
+  const [y, m, d] = iso.split("-").map(Number);
+  const t = new Date(Date.UTC(y, m - 1, d) + days * 86400e3);
+  return `${t.getUTCFullYear()}-${pad(t.getUTCMonth() + 1)}-${pad(t.getUTCDate())}`;
+}
+function isoWeekdayOf(iso) {
+  const [y, m, d] = iso.split("-").map(Number);
+  const wd = new Date(Date.UTC(y, m - 1, d)).getUTCDay();
+  return wd === 0 ? 7 : wd;
+}
+/** The first date on or after `from` that falls on ISO weekday `wd`. */
+const nextOnWeekday = (from, wd) => dateAdd(from, (wd - isoWeekdayOf(from) + 7) % 7);
+/** "HH:MM" out of a Postgres time or a "HH:MM:SS" string. */
+const hhmm = (t) => {
+  const m = String(t ?? "").match(/^(\d{1,2}):(\d{2})/);
+  return m ? `${pad(Number(m[1]))}:${m[2]}` : null;
+};
 
 // ── Sharwin, read only ───────────────────────────────────────────────────────
 
@@ -178,11 +227,9 @@ function sharwinClient() {
  * THE ORDER IS NOT DECORATION. Postgres promises nothing about the order of two
  * separate LIMIT/OFFSET statements, and this reads a database people are using
  * right now: one concurrent UPDATE moves a heap tuple and a row is silently
- * handed back twice or skipped altogether. A skipped booking is a person with
- * no place; a skipped class_session walks a weekly run from the wrong week and
- * defeats the NEAR guard that would have caught the duplicate. So every page is
- * ordered by a key that is unique in the table, and the pages tile it exactly
- * once. `orderBy` names that key — the primary key, whatever it is called.
+ * handed back twice or skipped altogether. A skipped session is a slot whose
+ * time of day this import then has to guess. So every page is ordered by a key
+ * that is unique in the table, and the pages tile it exactly once.
  */
 async function fetchAll(sb, table, columns, shape = (q) => q, orderBy = ["id"]) {
   const page = 1000;
@@ -229,304 +276,79 @@ async function insertMany(db, table, columns, rows, chunk = 500) {
   return written;
 }
 
-// ═════════════════════════════════════════════════════════════════════════════
-// The plan
-// ═════════════════════════════════════════════════════════════════════════════
+/**
+ * The columns this script writes, table by table. Checked against
+ * information_schema before a single row is planned, because a column that has
+ * moved is a run that dies half way through an --apply, and a missing `series`
+ * is this whole script's reason for existing.
+ */
+const REQUIRED = {
+  person: ["id", "phone", "wa_profile_name", "attrs", "created_at"],
+  member: ["id", "workspace_id", "person_id", "label", "status", "is_owner", "reach_id", "created_at", "opted_out_at", "attrs"],
+  series: ["id", "workspace_id", "title", "host_id", "capacity", "every", "at", "minutes", "starts_on", "until", "laid_through", "attrs", "created_at"],
+  event: ["id", "workspace_id", "title", "starts_at", "ends_at", "host_id", "capacity", "status", "series_id", "attrs"],
+  booking: ["id", "workspace_id", "event_id", "series_id", "person_id", "status", "attrs", "created_at"],
+  memory: ["id", "workspace_id", "body", "subject_key", "about_person_id", "standing", "actor", "attrs", "created_at"],
+  task: ["id", "workspace_id", "person_id", "subject_key", "due", "expires", "instruction", "context_query", "status", "attrs", "requested_by", "about_person_id", "created_at"],
+  role: ["id", "workspace_id", "name", "description", "created_by", "attrs", "created_at"],
+  role_holder: ["id", "workspace_id", "role_id", "person_id", "granted_by", "granted_at"],
+  permit: ["id", "workspace_id", "role_id", "table_name", "verbs", "columns", "limits", "whose", "row_cap", "granted_by", "granted_at", "attrs"],
+};
 
-async function loadSharwin(sb, sinceTs) {
-  const iso = sinceTs.toISOString();
-  const [
-    profiles, coaches, players, venues, classes, sessions, bookings,
-    bookingSeries, privateSeries, privateDetails, subscriptions, plans,
-    products, settings, schoolAdmins, studentNotes,
-  ] = await Promise.all([
-    fetchAll(sb, "profiles", "id,role,full_name,email,phone,deleted_at,created_at,onboarded_at,default_address,wa_muted,approval_status,disputed"),
-    fetchAll(sb, "coaches", "id,active,bio,base_address"),
-    fetchAll(sb, "players", "id,client_id,full_name,date_of_birth,skill_level,notes,school_venue_id,grade,created_at"),
-    fetchAll(sb, "venues", "id,name,unit,address,postcode,notes,is_public,is_school"),
-    fetchAll(sb, "classes", "id,class_type,is_school,title,capacity,duration_minutes,venue_id,recurrence_rule,starts_on,ends_on,active,skill_level"),
-    fetchAll(sb, "class_sessions", "id,class_id,coach_id,starts_at,ends_at,status,capacity_override", (q) => q.gte("starts_at", iso)),
-    fetchAll(sb, "bookings", "id,session_id,client_id,player_id,status,series_id,private_series_id,booked_at"),
-    fetchAll(sb, "booking_series", "id,client_id,player_id,class_id,weekday,start_time,active", (q) => q.eq("active", true)),
-    fetchAll(sb, "private_booking_series", "id,client_id,player_id,preferred_coach,weekday,start_time,duration_minutes,address,venue_id,venue_label,unit_label,active", (q) => q.eq("active", true)),
-    fetchAll(sb, "private_class_details", "class_id,client_id,player_id,address,postcode,venue_label,unit_label", (q) => q, ["class_id"]),
-    fetchAll(sb, "subscriptions", "id,client_id,plan_id,source,status,created_at,current_period_start", (q) => q.eq("status", "active")),
-    fetchAll(sb, "plans", "id,name,description,price_pence,billing_interval_months,group_sessions_per_week,private_minutes_per_cycle,private_sessions_per_week,private_session_minutes,active"),
-    fetchAll(sb, "products", "id,name,description,kind,price_pence,member_price_pence,duration_minutes,active"),
-    fetchAll(sb, "settings", "key,value", (q) => q, ["key"]),
-    fetchAll(sb, "school_admins", "user_id,venue_id", (q) => q, ["user_id", "venue_id"]),
-    fetchAll(sb, "student_notes", "id,player_id,author_id,body,created_at"),
-  ]);
-  // Every session of a weekly class, however old — the extension walks from the
-  // last one that exists, which may sit before the history window.
-  const weeklyIds = classes.filter((c) => c.active && /FREQ=WEEKLY/i.test(c.recurrence_rule || "")).map((c) => c.id);
-  const olderWeekly = weeklyIds.length
-    ? await fetchAll(sb, "class_sessions", "id,class_id,coach_id,starts_at,ends_at,status,capacity_override",
-        (q) => q.in("class_id", weeklyIds).lt("starts_at", iso))
-    : [];
-  return {
-    profiles, coaches, players, venues, classes, sessions, allWeeklySessions: [...olderWeekly, ...sessions],
-    bookings, bookingSeries, privateSeries, privateDetails, subscriptions, plans,
-    products, settings, schoolAdmins, studentNotes,
-  };
+async function checkSchema(db) {
+  const trouble = [];
+  const rows = (await db.query(
+    `select table_name, column_name, is_nullable
+       from information_schema.columns
+      where table_schema = 'public' and table_name = any($1::text[])`,
+    [Object.keys(REQUIRED)])).rows;
+  const held = new Map();
+  for (const r of rows) {
+    if (!held.has(r.table_name)) held.set(r.table_name, new Map());
+    held.get(r.table_name).set(r.column_name, r.is_nullable === "YES");
+  }
+  for (const [table, cols] of Object.entries(REQUIRED)) {
+    const there = held.get(table);
+    if (!there) { trouble.push(`table \`${table}\` does not exist`); continue; }
+    const missing = cols.filter((c) => !there.has(c));
+    if (missing.length) trouble.push(`\`${table}\` is missing ${missing.map((c) => `\`${c}\``).join(", ")}`);
+  }
+  // A standing place is a booking with no event. If event_id is still NOT NULL
+  // the migration has not landed and every standing place would be refused.
+  const bookingCols = held.get("booking");
+  if (bookingCols && bookingCols.has("event_id") && bookingCols.get("event_id") === false) {
+    trouble.push("`booking.event_id` is still NOT NULL — a standing place has no event and cannot be written");
+  }
+  const layDown = Number((await db.query(
+    `select count(*)::int c from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+      where n.nspname = 'app' and p.proname = 'lay_down' and p.pronargs = 2`)).rows[0].c);
+  if (!layDown) trouble.push("`app.lay_down(uuid, uuid)` does not exist");
+  return trouble;
 }
 
-/**
- * Everybody this import will write down, keyed by a stable Sharwin identity.
- * A phone is the identity where there is one — two profiles on one number are
- * one human being, and bluetick holds phones unique across everybody.
- */
-function buildPeople(S, args, warn) {
-  const people = new Map(); // key → person plan
-  const byProfile = new Map();
-  const byPlayer = new Map();
+// ═════════════════════════════════════════════════════════════════════════════
+// Sharwin, read whole
+// ═════════════════════════════════════════════════════════════════════════════
 
-  const liveProfiles = S.profiles.filter((p) => !p.deleted_at && !SEED_FOUNDER.test(p.email || ""));
-  const skippedSeed = S.profiles.filter((p) => SEED_FOUNDER.test(p.email || "")).length;
-  const skippedDeleted = S.profiles.filter((p) => p.deleted_at).length;
-  const venueById = new Map(S.venues.map((v) => [v.id, v]));
-  const activeCoachIds = new Set(S.coaches.filter((c) => c.active).map((c) => c.id));
-
-  const add = (key, spec) => {
-    const seen = people.get(key);
-    if (seen) {
-      if (spec.profileId) seen.profileIds.add(spec.profileId);
-      if (spec.isOwner) seen.isOwner = true;
-      if (spec.status === "active") seen.status = "active";
-      // A mute is a promise and two profiles on one number are one human being,
-      // so if either of them asked not to be messaged, the person is opted out.
-      if (spec.optedOut) seen.optedOut = true;
-      if (spec.joinedAt && (!seen.joinedAt || String(spec.joinedAt) < String(seen.joinedAt))) {
-        seen.joinedAt = spec.joinedAt;
-      }
-      Object.assign(seen.memberAttrs, spec.memberAttrs || {});
-      return seen;
-    }
-    const person = {
-      key,
-      id: null,                       // filled in when the person row is settled
-      memberId: randomUUID(),
-      reused: false,
-      phone: spec.phone ?? null,
-      label: spec.label,
-      status: spec.status,
-      isOwner: !!spec.isOwner,
-      kind: spec.kind,
-      profileIds: new Set(spec.profileId ? [spec.profileId] : []),
-      playerId: spec.playerId ?? null,
-      parentKey: spec.parentKey ?? null,
-      memberAttrs: spec.memberAttrs || {},
-      conflict: null,
-      optedOut: !!spec.optedOut,
-      joinedAt: spec.joinedAt ?? null,
-      dob: spec.dob ?? null,
-      skill: spec.skill ?? null,
-      notes: spec.notes ?? null,
-    };
-    people.set(key, person);
-    return person;
-  };
-
-  const keyFor = (phone, fallback) => (phone ? `phone:${phone}` : fallback);
-
-  /**
-   * What Sharwin already knows about whether this person may be messaged, and
-   * whether they were ever let in. A mute is a promise the new workspace must
-   * inherit or it will message somebody who asked not to be; a self-signup that
-   * was never approved is somebody the academy knows OF, which is `known`, not
-   * somebody it deals with. Called exactly once per live profile.
-   */
-  let mutedCount = 0, unapprovedCount = 0, disputedCount = 0;
-  const approvedIn = (p) => !p.approval_status || p.approval_status === "approved";
-  const consentOf = (p) => {
-    const who = `${p.full_name || "somebody"} (${last4(p.phone)})`;
-    if (p.wa_muted) {
-      mutedCount++;
-      warn("consent", `${who} is muted in Sharwin — their membership is written opted out, so nothing reaches them`);
-    }
-    if (!approvedIn(p)) {
-      unapprovedCount++;
-      warn("consent", `${who} is ${p.approval_status} in Sharwin, not approved — written down at \`known\`, never made active`);
-    }
-    if (p.disputed) {
-      disputedCount++;
-      warn("consent", `${who} is marked disputed in Sharwin — carried across as a note on the membership`);
-    }
-    return {
-      optedOut: !!p.wa_muted,
-      joinedAt: p.created_at ?? null,
-      memberAttrs: {
-        ...(p.wa_muted ? { sharwin_wa_muted: true } : {}),
-        ...(approvedIn(p) ? {} : { sharwin_approval_status: p.approval_status }),
-        ...(p.disputed ? { sharwin_disputed: true } : {}),
-      },
-      /** A phone only makes somebody active if the academy actually let them in. */
-      statusFor: (phone) => (phone && approvedIn(p) ? "active" : "known"),
-    };
-  };
-
-  // 1 · owners.
-  const wantedOwners = args.owners.map((o) => normPhone(o));
-  args.owners.forEach((raw, i) => {
-    if (!wantedOwners[i]) warn("owners", `--owner ${last4(raw)} is not a number this can read`);
-  });
-  let ownerProfiles;
-  if (wantedOwners.some(Boolean)) {
-    const wanted = new Set(wantedOwners.filter(Boolean));
-    ownerProfiles = liveProfiles.filter((p) => wanted.has(normPhone(p.phone)));
-    for (const w of wanted) {
-      if (!ownerProfiles.some((p) => normPhone(p.phone) === w)) {
-        throw new Error(`--owner ${last4(w)} matches no live Sharwin profile — refusing to invent an owner`);
-      }
-    }
-  } else {
-    ownerProfiles = liveProfiles.filter((p) => p.role === "founder" && normPhone(p.phone));
-    for (const p of liveProfiles) {
-      if (p.role === "founder" && !normPhone(p.phone)) {
-        warn("owners", `founder ${p.full_name} carries no usable phone and cannot be an owner`);
-      }
-    }
-  }
-  ownerProfiles.sort((a, b) => String(a.created_at).localeCompare(String(b.created_at)));
-  if (!ownerProfiles.length) throw new Error("no founder with a phone, so nobody can found the workspace");
-  const owners = ownerProfiles.map((p) => {
-    // An owner is active whatever else is true of them — somebody has to be
-    // able to run the room — but a mute is still a mute and travels with them.
-    const c = consentOf(p);
-    return add(keyFor(normPhone(p.phone), `profile:${p.id}`), {
-      kind: "owner", label: p.full_name || "Owner", phone: normPhone(p.phone),
-      status: "active", isOwner: true, profileId: p.id,
-      optedOut: c.optedOut, joinedAt: c.joinedAt,
-      memberAttrs: { sharwin_profile_id: p.id, sharwin_role: p.role, ...c.memberAttrs },
-    });
-  });
-
-  // 2 · coaches.
-  for (const p of liveProfiles.filter((x) => x.role === "coach" && activeCoachIds.has(x.id))) {
-    const phone = normPhone(p.phone);
-    if (p.phone && !phone) warn("phones", `coach ${p.full_name} (${last4(p.phone)}) has a phone this cannot normalise`);
-    const c = consentOf(p);
-    add(keyFor(phone, `profile:${p.id}`), {
-      kind: "coach", label: p.full_name || "Coach", phone,
-      status: "active", profileId: p.id,
-      optedOut: c.optedOut, joinedAt: c.joinedAt,
-      memberAttrs: { sharwin_profile_id: p.id, sharwin_role: "coach", ...c.memberAttrs },
-    });
-  }
-
-  // 3 · clients.
-  for (const p of liveProfiles.filter((x) => x.role === "client")) {
-    const phone = normPhone(p.phone);
-    if (p.phone && !phone) warn("phones", `client ${p.full_name} (${last4(p.phone)}) has a phone this cannot normalise`);
-    const c = consentOf(p);
-    add(keyFor(phone, `profile:${p.id}`), {
-      kind: "client", label: p.full_name || "Client", phone,
-      status: c.statusFor(phone), profileId: p.id,
-      optedOut: c.optedOut, joinedAt: c.joinedAt,
-      memberAttrs: { sharwin_profile_id: p.id, sharwin_role: "client", ...c.memberAttrs },
-    });
-  }
-
-  // 4 · school logins.
-  const campusesOf = new Map();
-  for (const sa of S.schoolAdmins) {
-    const v = venueById.get(sa.venue_id);
-    if (!v) continue;
-    if (!campusesOf.has(sa.user_id)) campusesOf.set(sa.user_id, []);
-    campusesOf.get(sa.user_id).push(v.name);
-  }
-  for (const p of liveProfiles.filter((x) => x.role === "school")) {
-    const phone = normPhone(p.phone);
-    const c = consentOf(p);
-    add(keyFor(phone, `profile:${p.id}`), {
-      kind: "school_admin", label: p.full_name || "School", phone, status: "known", profileId: p.id,
-      optedOut: c.optedOut, joinedAt: c.joinedAt,
-      memberAttrs: {
-        sharwin_profile_id: p.id, sharwin_role: "school",
-        school: campusesOf.get(p.id) || [],
-        ...c.memberAttrs,
-      },
-    });
-  }
-
-  // 5 · players. A child is reached through the parent who holds the phone; a
-  //     school pupil is reached through nobody at all, and that is the truth.
-  let selfPlayers = 0;
-  const addParent = (parent, parentKey) => {
-    const phone = normPhone(parent.phone);
-    const c = consentOf(parent);
-    return add(parentKey, {
-      kind: "parent", label: parent.full_name || "Parent", phone,
-      status: c.statusFor(phone), profileId: parent.id,
-      optedOut: c.optedOut, joinedAt: c.joinedAt,
-      memberAttrs: { sharwin_profile_id: parent.id, sharwin_role: parent.role, ...c.memberAttrs },
-    });
-  };
-  for (const pl of S.players) {
-    const name = (pl.full_name || "").trim();
-    if (!name) warn("players", `player ${pl.id.slice(0, 8)} has no name — called "Player ${pl.id.slice(0, 6)}"`);
-    const label = name || `Player ${pl.id.slice(0, 6)}`;
-    if (pl.client_id) {
-      const parent = S.profiles.find((p) => p.id === pl.client_id);
-      const parentKey = parent && !parent.deleted_at
-        ? keyFor(normPhone(parent.phone), `profile:${parent.id}`)
-        : null;
-      if (!parentKey) warn("players", `${label}'s parent profile is gone, so nobody carries their messages`);
-      // An adult who plays has a player row of their own under their own name.
-      // They are not their own child, and a workspace that said so would be
-      // wrong about the one thing it must not be wrong about: who is who.
-      const sameName = parent && name && parent.full_name
-        && parent.full_name.trim().toLowerCase() === name.toLowerCase();
-      if (sameName && parentKey) {
-        const parentPerson = people.get(parentKey) || addParent(parent, parentKey);
-        parentPerson.playerId = pl.id;
-        parentPerson.memberAttrs.sharwin_player_id = pl.id;
-        byPlayer.set(pl.id, parentPerson);
-        selfPlayers++;
-        continue;
-      }
-      // A parent none of the passes above picked up — a founder who is not on
-      // the owner list, say — is still written down, because a child with a
-      // parent nobody holds is a child nobody can reach.
-      if (parentKey && !people.has(parentKey)) {
-        addParent(parent, parentKey);
-        warn("people", `${parent.full_name} (${parent.role}) is written down too, because ${label} is reached through them`);
-      }
-      const p = add(`player:${pl.id}`, {
-        kind: "child", label, phone: null, status: "known", playerId: pl.id, parentKey,
-        joinedAt: pl.created_at ?? null,
-        memberAttrs: { sharwin_player_id: pl.id, child_of_sharwin_profile_id: pl.client_id },
-        dob: pl.date_of_birth, skill: pl.skill_level, notes: pl.notes,
-      });
-      byPlayer.set(pl.id, p);
-    } else if (pl.school_venue_id) {
-      const v = venueById.get(pl.school_venue_id);
-      const p = add(`player:${pl.id}`, {
-        kind: "pupil", label, phone: null, status: "known", playerId: pl.id,
-        joinedAt: pl.created_at ?? null,
-        memberAttrs: {
-          sharwin_player_id: pl.id,
-          school: v ? v.name : null,
-          grade: pl.grade ?? null,
-        },
-        dob: pl.date_of_birth, skill: pl.skill_level, notes: pl.notes,
-      });
-      byPlayer.set(pl.id, p);
-    } else {
-      warn("players", `player ${label} belongs to neither a parent nor a school — skipped`);
-    }
-  }
-
-  for (const p of people.values()) for (const pid of p.profileIds) byProfile.set(pid, p);
-  for (const [pid, p] of byPlayer) byProfile.set(`player:${pid}`, p);
-
-  const merged = [...people.values()].filter((p) => p.profileIds.size > 1);
-  for (const p of merged) warn("people", `${p.profileIds.size} Sharwin profiles share ${last4(p.phone)} and become one person: ${p.label}`);
-
-  return {
-    people, byProfile, byPlayer, owners, skippedSeed, skippedDeleted, selfPlayers,
-    mutedCount, unapprovedCount, disputedCount,
-  };
+async function loadSharwin(sb, now) {
+  const back = new Date(now.getTime() - SESSION_BACK_DAYS * 86400e3).toISOString();
+  const fwd = new Date(now.getTime() + SESSION_FWD_DAYS * 86400e3).toISOString();
+  const [profiles, coaches, players, venues, classes, sessions, bookings, privateSeries, studentNotes] =
+    await Promise.all([
+      fetchAll(sb, "profiles", "id,role,full_name,email,phone,deleted_at,created_at,approval_status,wa_muted"),
+      fetchAll(sb, "coaches", "id,active"),
+      fetchAll(sb, "players", "id,client_id,full_name,date_of_birth,skill_level,notes,school_venue_id,grade,created_at"),
+      fetchAll(sb, "venues", "id,name,unit,address,postcode,notes,is_public,is_school"),
+      fetchAll(sb, "classes", "id,class_type,is_school,title,capacity,duration_minutes,venue_id,recurrence_rule,starts_on,ends_on,active"),
+      fetchAll(sb, "class_sessions", "id,class_id,coach_id,starts_at,ends_at,status,capacity_override",
+        (q) => q.gte("starts_at", back).lte("starts_at", fwd)),
+      fetchAll(sb, "bookings", "id,session_id,client_id,player_id,status,series_id,private_series_id,booked_at"),
+      fetchAll(sb, "private_booking_series",
+        "id,client_id,player_id,preferred_coach,weekday,start_time,duration_minutes,address,venue_id,venue_label,unit_label,active",
+        (q) => q.eq("active", true)),
+      fetchAll(sb, "student_notes", "id,player_id,author_id,body,created_at"),
+    ]);
+  return { profiles, coaches, players, venues, classes, sessions, bookings, privateSeries, studentNotes };
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -535,7 +357,6 @@ async function main() {
   const args = parseArgs(process.argv.slice(2));
   const out = [];
   const say = (line = "") => out.push(line);
-
   const warnings = new Map();
   const warn = (bucket, line) => {
     if (!warnings.has(bucket)) warnings.set(bucket, []);
@@ -545,907 +366,936 @@ async function main() {
   const db = blueClient(args.bluetickEnv);
   await db.connect();
   try {
-    if (args.mode === "undo") return await undo(db, args, say, out);
-    await exportRun(db, args, say, warn, warnings, out);
+    await importRun(db, args, say, warn, warnings, out);
   } finally {
     await db.end();
   }
 }
 
-// ── --undo ───────────────────────────────────────────────────────────────────
-
-/**
- * Undo a run by ENDING the workspace it founded, not by erasing it.
- *
- * WHY NOT A DELETE. Two reasons, and the second one alone settles it.
- *
- * 1 · Bluetick's doctrine is that a workspace is archived, never deleted:
- *     app.delete_workspace() sets archived_at and steps the owner down,
- *     precisely so that "everything that happened in it stays on the record".
- *     A script that hard-deletes a tenant is the only thing in the system that
- *     can take a fact off the record, and it should not exist.
- *
- * 2 · A delete could not be made to work here anyway. app.record_deed() writes
- *     one deed row PER WATCHED COLUMN on every DELETE and suppresses itself
- *     only for an INSERT on deed itself, so a delete of a deed IS recorded.
- *     Deleting ~21,700 imported rows would write ~200,000 deeds; deleting those
- *     deeds would write millions more; and `delete from workspace` would then
- *     cascade onto rows the same statement is removing. It runs away or it dies
- *     on a foreign key. It was never once run end to end, which is exactly how
- *     a safety net that does not hold gets written down as one.
- *
- * WHAT THIS DOES INSTEAD, in the order app.delete_workspace() uses and for its
- * reason: the workspace is archived FIRST, because app.assert_owner_remains()
- * reads archived_at to decide whether a room still needs an owner, and only
- * then does every membership step down to `removed`. Ending the memberships is
- * not tidiness — member_one_workspace_idx is partial on `status = 'active'`,
- * so an archived workspace full of active members would go on blocking every
- * one of those people from ever being imported again.
- *
- * Afterwards the diary is dark, nothing is routed there, nobody is held by it,
- * and --apply may run again. The events, bookings, memories and deeds all
- * stand, which is the point: they happened.
- */
-async function undo(db, args, say, out) {
-  const run = args.undoRun;
-  say(`# Undo \`${run}\``);
-  say();
-  const ws = (await db.query(
-    "select id, name, archived_at from workspace where attrs->>'imported' = $1 order by created_at", [run])).rows;
-  if (!ws.length) {
-    say(`No workspace carries \`attrs.imported = ${run}\`. Nothing to undo.`);
-    process.stdout.write(`${out.join("\n")}\n`);
-    return;
-  }
-  const ids = ws.map((w) => w.id);
-  const counts = [];
-  await db.query("begin");
+function finish(out, args, run) {
+  const text = `${out.join("\n")}\n`;
+  process.stdout.write(text);
+  const file = args.report || path.join(DEFAULT_REPORT_DIR, `import-${run}.md`);
   try {
-    const archived = await db.query(
-      `update workspace set archived_at = app.now(id)
-        where id = any($1::uuid[]) and archived_at is null`, [ids]);
-    counts.push(["workspace archived", archived.rowCount]);
-
-    // status_set_by is not optional: member_status_provenance_ck insists that a
-    // standing somebody moved says who moved it. The workspace's own first
-    // owner is the honest answer — this run made them, and this run ends it —
-    // and somebody ending their own membership falls back to themselves.
-    const ended = await db.query(
-      `update member m
-          set status = 'removed',
-              status_at = app.now(m.workspace_id),
-              status_set_by = coalesce(
-                (select o.person_id from member o
-                  where o.workspace_id = m.workspace_id and o.is_owner
-                  order by o.created_at limit 1),
-                m.person_id)
-        where m.workspace_id = any($1::uuid[]) and m.status <> 'removed'`, [ids]);
-    counts.push(["member ended", ended.rowCount]);
-
-    // A person this run invented who ended up in no workspace at all is the one
-    // thing there is no record to keep: nothing ever happened to them. A person
-    // insert writes no deed (app.record_deed returns early when the row names
-    // no workspace), so this deletes what it says and nothing else. A person
-    // who existed before the run is never touched.
-    const p = await db.query(
-      `delete from person p
-        where p.attrs->>'imported' = $1
-          and not exists (select 1 from member m where m.person_id = p.id)`, [run]);
-    counts.push(["person deleted", p.rowCount]);
-
-    const left = (await db.query(
-      `select (select count(*)::int from event   where workspace_id = any($1::uuid[])) as event,
-              (select count(*)::int from booking where workspace_id = any($1::uuid[])) as booking,
-              (select count(*)::int from memory  where workspace_id = any($1::uuid[])) as memory,
-              (select count(*)::int from deed    where workspace_id = any($1::uuid[])) as deed`,
-      [ids])).rows[0];
-    await db.query("commit");
-    say(`Workspaces: ${ws.map((w) => `${w.name} (${w.id})${w.archived_at ? " — already archived" : ""}`).join(", ")}`);
-    say();
-    say("| what | rows |");
-    say("| --- | --- |");
-    for (const [t, n] of counts) say(`| ${t} | ${n} |`);
-    say();
-    say("The workspace is archived, not erased — bluetick archives a workspace rather than deleting it (`app.delete_workspace`) so that what happened in it stays on the record. Still standing, and meant to be:");
-    say();
-    say(`- ${left.event} event(s), ${left.booking} booking(s), ${left.memory} memory(ies) and ${left.deed} deed(s).`);
-    say();
-    say("Nothing is routed to an archived workspace and its diary is no longer public. Every membership is `removed`, which is what frees those people to be imported again — `member_one_workspace_idx` counts only active ones — so `--apply` may be run afresh.");
+    mkdirSync(path.dirname(file), { recursive: true });
+    writeFileSync(file, text, "utf8");
+    process.stderr.write(`report written to ${file}\n`);
   } catch (e) {
-    await db.query("rollback");
-    throw e;
+    process.stderr.write(`could not write the report to ${file}: ${e.message}\n`);
   }
-  process.stdout.write(`${out.join("\n")}\n`);
 }
 
-// ── --dry-run / --apply ──────────────────────────────────────────────────────
-
-async function exportRun(db, args, say, warn, warnings, out) {
+async function importRun(db, args, say, warn, warnings, out) {
   const now = new Date();
-  const z = (n, w = 2) => String(n).padStart(w, "0");
-  const run = `sharwin-${now.getUTCFullYear()}${z(now.getUTCMonth() + 1)}${z(now.getUTCDate())}T${z(now.getUTCHours())}${z(now.getUTCMinutes())}${z(now.getUTCSeconds())}Z`;
-  // Said out loud before anything is read, because the report is written at the
-  // end and a run that dies at minute nine of an --apply would otherwise leave
-  // the operator unable to even name the run they have to undo.
+  const run = `sharwin-${now.getUTCFullYear()}${pad(now.getUTCMonth() + 1)}${pad(now.getUTCDate())}T${pad(now.getUTCHours())}${pad(now.getUTCMinutes())}${pad(now.getUTCSeconds())}Z`;
+  // Said before anything is read: a run that dies at minute nine of an --apply
+  // must still be nameable by whoever has to look at what it left behind.
   process.stderr.write(`run ${run}\n`);
-  const sinceTs = new Date(now.getTime() - duration(args.since));
-  const horizonTs = new Date(now.getTime() + duration(args.horizon));
+  const today = istDate(now);
+  const stop = (why) => { say(); say(`**Refused.** ${why} Nothing was written.`); finish(out, args, run); process.exitCode = 2; };
 
-  say(`# Sharwin → Bluetick · ${args.mode === "apply" ? "apply" : "dry run"}`);
+  say(`# Sharwin → bluetick · ${args.mode === "apply" ? "apply" : "dry run"}`);
   say();
-  say(`Run id \`${run}\` · history from ${istStamp(sinceTs)} · horizon to ${istStamp(horizonTs)} · workspace clock ${TZ}.`);
+  say(`Run \`${run}\` · workspace clock ${TZ} · today is ${today} · ${istStamp(now)}.`);
+  say();
+  say("Contacts and the standing weekly timetable only. No history, no school pupils, no plans, no money.");
   say();
 
-  // ── 1 · connection checks ──────────────────────────────────────────────────
+  // ── 1 · connections ───────────────────────────────────────────────────────
   say("## Connections");
   say();
   const sb = sharwinClient();
   const probe = await sb.from("profiles").select("id", { count: "exact", head: true });
   if (probe.error) throw new Error(`Sharwin unreachable: ${probe.error.message}`);
-  say(`- Sharwin (Supabase, service role, read-only): reachable — ${probe.count} profiles.`);
+  say(`- Sharwin (Supabase, service role, **read only**): reachable — ${probe.count} profiles.`);
 
   const who = (await db.query("select current_user as u")).rows[0].u;
   const wsCount = Number((await db.query("select count(*)::int c from workspace")).rows[0].c);
-  say(`- Bluetick (Postgres as \`${who}\`): reachable.`);
+  say(`- bluetick (Postgres as \`${who}\`, ${args.bluetickEnv.replace(/.*[\\/]/, "…/")}): reachable.`);
   if (wsCount === 0) {
-    const any = Number((await db.query("select count(*)::int c from deed")).rows[0].c);
-    say(`- **STOP.** \`select count(*) from workspace\` returned 0 while the database holds ${any} deeds. \`${who}\` is confined by row security and cannot be trusted to import anything. Nothing was written.`);
-    process.stdout.write(`${out.join("\n")}\n`);
-    process.exitCode = 2;
-    return;
+    const deeds = Number((await db.query("select count(*)::int c from deed")).rows[0].c);
+    say(`- **STOP.** \`select count(*) from workspace\` returned 0 while the database holds ${deeds} deeds. \`${who}\` is confined by row security and cannot be trusted to import anything.`);
+    return stop(`the connection is row-security confined.`);
   }
   say(`- Row security bypassed: \`select count(*) from workspace\` as \`${who}\` returns ${wsCount} — more than zero, so nothing is hiding.`);
   say();
 
-  const numRow = (await db.query("select id from sys.number where phone_e164 = $1", [LIVE_NUMBER])).rows[0];
-  if (!numRow) throw new Error(`the live number ${last4(LIVE_NUMBER)} has no sys.number row`);
-  const numberId = numRow.id;
-
-  // ── 2 · what already stands on that number ────────────────────────────────
-  const standing = (await db.query(
-    `select w.id, w.name, w.live, w.archived_at, w.key,
-            coalesce(json_agg(json_build_object('label', m.label, 'status', m.status,
-                                                'owner', m.is_owner, 'phone', p.phone)
-                              order by m.created_at) filter (where m.id is not null), '[]') as members
-       from workspace w
-       left join member m on m.workspace_id = w.id
-       left join person p on p.id = m.person_id
-      where w.number_id = $1
-      group by w.id
-      order by w.created_at`, [numberId])).rows;
-
-  say(`## The live number ${last4(LIVE_NUMBER)}`);
+  // ── 2 · the schema this script writes into ────────────────────────────────
+  const trouble = await checkSchema(db);
+  say("## The schema");
   say();
-  if (!standing.length) say("No workspace stands on it yet.");
-  for (const w of standing) {
-    // The key is never printed. It is the words somebody sends to get in, so a
-    // report that carries it is a report that lets its readers walk into a
-    // workspace that is not theirs. The id names the row well enough.
-    say(`- **${w.name}** — \`${w.id}\`, live ${w.live}, ${w.archived_at ? `archived ${w.archived_at.toISOString().slice(0, 10)}` : "not archived"}`);
-    for (const m of w.members) {
-      say(`  - ${m.label} · ${m.status}${m.owner ? " · owner" : ""} · ${last4(m.phone)}`);
+  if (trouble.length) {
+    say("**The database is not shaped for this run.**");
+    say();
+    for (const t of trouble) say(`- ${t}`);
+    say();
+    say("The migration that adds `series` and `booking.series_id` has not landed yet. Nothing is planned and nothing is written.");
+  } else {
+    say("Every column this script writes is there, `booking.event_id` is nullable, and `app.lay_down(uuid, uuid)` exists.");
+  }
+  say();
+
+  // ── 3 · the workspace it fills ────────────────────────────────────────────
+  const ws = (await db.query(
+    `select w.id, w.name, w.key, w.timezone, w.live, w.archived_at, w.attrs, w.number_id, n.phone_e164
+       from workspace w left join sys.number n on n.id = w.number_id
+      where w.id = $1`, [args.workspace])).rows[0];
+  say("## The workspace");
+  say();
+  if (!ws) { say(`No workspace \`${args.workspace}\`.`); return stop("that workspace does not exist."); }
+  say(`**${ws.name}** \`${ws.id}\` · number ${last4(ws.phone_e164)} · timezone ${ws.timezone} · live ${ws.live} · ${ws.archived_at ? `**archived ${istDate(ws.archived_at)}**` : "not archived"} · public diary ${ws.attrs?.public_diary === true}`);
+  say();
+  if (ws.archived_at) return stop("that workspace is archived.");
+  if (ws.timezone !== TZ) warn("workspace", `the workspace clock is ${ws.timezone}, not ${TZ} — every \`at\` written here is an ${TZ} wall time`);
+
+  const members = (await db.query(
+    `select m.id, m.person_id, m.label, m.status, m.is_owner, m.created_at, p.phone
+       from member m join person p on p.id = m.person_id
+      where m.workspace_id = $1 order by m.created_at`, [ws.id])).rows;
+  const holds = (await db.query(
+    `select (select count(*)::int from series      where workspace_id=$1) as series,
+            (select count(*)::int from event       where workspace_id=$1) as event,
+            (select count(*)::int from booking     where workspace_id=$1) as booking,
+            (select count(*)::int from memory      where workspace_id=$1) as memory,
+            (select count(*)::int from task        where workspace_id=$1) as task,
+            (select count(*)::int from role        where workspace_id=$1) as role,
+            (select count(*)::int from permit      where workspace_id=$1) as permit,
+            (select count(*)::int from role_holder where workspace_id=$1) as role_holder`,
+    [ws.id]).catch(() => ({ rows: [null] }))).rows[0];
+  for (const m of members) say(`- ${m.label} · ${m.status}${m.is_owner ? " · **owner**" : ""} · ${last4(m.phone)}`);
+  if (holds) {
+    say();
+    say(`It holds: ${Object.entries(holds).map(([k, v]) => `${k} ${v}`).join(", ")}.`);
+  }
+  say();
+  const owners = members.filter((m) => m.is_owner && m.status === "active");
+  if (owners.length !== 1) {
+    return stop(`it holds ${plural(owners.length, "active owner")}; this run fills a workspace that has exactly one.`);
+  }
+  // Somebody who walked in by key since the purge is real and stays: they are matched by
+  // number below and dressed rather than re-made. Only the timetable and the roles must be
+  // absent — a memory or a task the assistant wrote on somebody's arrival is a record, not a
+  // collision.
+  const mustBeEmpty = ["series", "event", "booking", "role", "permit", "role_holder"];
+  if (holds && mustBeEmpty.some((k) => holds[k] !== 0)) {
+    return stop("it already holds rows in series, event, booking, role, permit or role_holder.");
+  }
+  const ownerMember = owners[0];
+  const alreadyHere = new Map(members.filter((m) => !m.is_owner && m.status === "active").map((m) => [m.phone, m]));
+
+  // ── 4 · read Sharwin ──────────────────────────────────────────────────────
+  const S = await loadSharwin(sb, now);
+  const venueById = new Map(S.venues.map((v) => [v.id, v]));
+  const classById = new Map(S.classes.map((c) => [c.id, c]));
+  const profileById = new Map(S.profiles.map((p) => [p.id, p]));
+  const playerById = new Map(S.players.map((p) => [p.id, p]));
+  const activeCoachIds = new Set(S.coaches.filter((c) => c.active).map((c) => c.id));
+
+  // ── 5 · who comes across ──────────────────────────────────────────────────
+  const people = [];                 // every person this run writes or reuses
+  const byPhone = new Map();         // E.164 → person plan
+  const personOfProfile = new Map(); // sharwin profile id → person plan
+  const personOfPlayer = new Map();  // sharwin player id → person plan
+  const skipped = { noPhone: [], byPhone: [], byName: [], deleted: [], unapproved: [], seed: [], pupils: 0, schoolLogins: 0, adultSelf: [], dupChild: [] };
+  const fixedPhones = [];
+
+  const addPerson = (spec) => {
+    const p = {
+      id: null, memberId: randomUUID(), reused: false, isOwner: false,
+      phone: null, label: "?", kind: "client", createdAt: null, optedOut: false,
+      reachOf: null, attrs: {}, profileId: null, playerId: null, ...spec,
+    };
+    people.push(p);
+    if (p.phone) byPhone.set(p.phone, p);
+    if (p.profileId) personOfProfile.set(p.profileId, p);
+    return p;
+  };
+
+  /** A profile this import will not carry, and why. Every one is listed. */
+  const refuse = (p) => {
+    if (p.deleted_at) { skipped.deleted.push(p); return "deleted"; }
+    if (SEED_FOUNDER.test(p.email || "")) { skipped.seed.push(p); return "seed founder"; }
+    if (p.approval_status && p.approval_status !== "approved") { skipped.unapproved.push(p); return "not approved"; }
+    if (SKIP_NAMES.has(tidy(p.full_name).toLowerCase())) { skipped.byName.push(p); return "a pseudo-row, not a person"; }
+    const phone = normPhone(p.phone);
+    if (phone && SKIP_PHONES.has(phone)) { skipped.byPhone.push({ p, why: SKIP_PHONES.get(phone), phone }); return "a number that is not the person it claims"; }
+    return null;
+  };
+
+  // 5a · the owner. The workspace already holds them; this run only dresses
+  //      the row. Never is_owner, never arrived_as, never last_inbound_at.
+  const ownerProfile = S.profiles.find((p) =>
+    p.role === "founder" && !p.deleted_at && normPhone(p.phone) === ownerMember.phone);
+  if (!ownerProfile) {
+    say(`No live Sharwin founder carries ${last4(ownerMember.phone)}, the owner's number.`);
+    return stop("the owner in bluetick matches no founder profile in Sharwin.");
+  }
+  const owner = addPerson({
+    kind: "owner", isOwner: true, label: firstName(ownerProfile.full_name),
+    phone: ownerMember.phone, id: ownerMember.person_id, memberId: ownerMember.id, reused: true,
+    profileId: ownerProfile.id, createdAt: null,
+    attrs: { imported: run, sharwin_profile_id: ownerProfile.id },
+  });
+
+  // 5b · coaches.
+  for (const p of S.profiles.filter((x) => x.role === "coach" && activeCoachIds.has(x.id))) {
+    const no = refuse(p);
+    if (no) { warn("coaches", `coach ${p.full_name} skipped — ${no}`); continue; }
+    const phone = normPhone(p.phone);
+    if (!phone) { skipped.noPhone.push({ p, kind: "coach" }); warn("coaches", `coach ${p.full_name} has no usable number (${p.phone ?? "none"}) — skipped`); continue; }
+    const fix = wasFixed(p.phone);
+    if (fix) fixedPhones.push({ name: p.full_name, ...fix });
+    if (byPhone.has(phone)) { personOfProfile.set(p.id, byPhone.get(phone)); continue; }
+    addPerson({
+      kind: "coach", label: tidy(p.full_name) || "Coach", phone, profileId: p.id,
+      createdAt: p.created_at ?? null, optedOut: !!p.wa_muted,
+      attrs: { imported: run, sharwin_profile_id: p.id, sharwin_role: "coach" },
+    });
+  }
+
+  // 5c · clients. A household, reached on one number.
+  for (const p of S.profiles.filter((x) => x.role === "client")) {
+    const no = refuse(p);
+    if (no) continue;
+    const phone = normPhone(p.phone);
+    if (!phone) {
+      skipped.noPhone.push({ p, kind: "client" });
+      warn("clients", `${p.full_name || "a client"} has no number this can reach (${p.phone ?? "none"}) — skipped`);
+      continue;
+    }
+    const fix = wasFixed(p.phone);
+    if (fix) fixedPhones.push({ name: p.full_name, ...fix });
+    const seen = byPhone.get(phone);
+    if (seen) {
+      personOfProfile.set(p.id, seen);
+      warn("clients", `${p.full_name} shares ${last4(phone)} with ${seen.label} — one number is one person, so they are ${seen.label}`);
+      continue;
+    }
+    addPerson({
+      kind: "client", label: tidy(p.full_name) || "Client", phone, profileId: p.id,
+      createdAt: p.created_at ?? null, optedOut: !!p.wa_muted,
+      attrs: { imported: run, sharwin_profile_id: p.id, sharwin_role: "client" },
+    });
+  }
+  skipped.schoolLogins = S.profiles.filter((x) => x.role === "school" && !x.deleted_at).length;
+
+  // 5d · managers, by number.
+  const managerPeople = [];
+  for (const raw of args.managers) {
+    const phone = normPhone(raw);
+    if (!phone) { warn("managers", `--manager ${raw} is not a number this can read — skipped`); continue; }
+    const profile = S.profiles.find((p) => !p.deleted_at && normPhone(p.phone) === phone);
+    let person = byPhone.get(phone);
+    if (person) {
+      person.isManager = true;
+    } else {
+      person = addPerson({
+        kind: "manager", label: tidy(profile?.full_name) || "Manager", phone,
+        profileId: profile?.id ?? null, createdAt: profile?.created_at ?? null,
+        attrs: {
+          imported: run, sharwin_role: "manager",
+          ...(profile ? { sharwin_profile_id: profile.id } : {}),
+        },
+      });
+      person.isManager = true;
+    }
+    managerPeople.push(person);
+  }
+
+  // 5e · players. 450 of them are school pupils with no client at all and are
+  //      not imported: a pupil appears the day a coach names one. Of the rest,
+  //      a player row carrying its own parent's name IS the parent.
+  const childrenOf = new Map(); // parent person → Set(lower name)
+  const orphanPlayers = [];
+  for (const pl of S.players) {
+    if (!pl.client_id) { skipped.pupils++; continue; }
+    const parentProfile = profileById.get(pl.client_id);
+    const parent = personOfProfile.get(pl.client_id);
+    const name = tidy(pl.full_name);
+    if (!parent) {
+      orphanPlayers.push({ pl, parentProfile });
+      continue;
+    }
+    if (same(name, parentProfile?.full_name)) {
+      // The parent is the player. No second member row, and no "X is X's child".
+      personOfPlayer.set(pl.id, parent);
+      skipped.adultSelf.push({ name, parent: parent.label });
+      continue;
+    }
+    if (!name) { warn("players", `player ${pl.id.slice(0, 8)} under ${parent.label} has no name — skipped`); continue; }
+    if (!childrenOf.has(parent)) childrenOf.set(parent, new Map());
+    const seen = childrenOf.get(parent).get(name.toLowerCase());
+    if (seen) {
+      personOfPlayer.set(pl.id, seen);
+      skipped.dupChild.push({ name, parent: parent.label });
+      continue;
+    }
+    const child = addPerson({
+      kind: "child", label: name, phone: null, playerId: pl.id, reachOf: parent,
+      createdAt: pl.created_at ?? null,
+      attrs: { imported: run, sharwin_player_id: pl.id, child_of_sharwin_profile_id: pl.client_id },
+    });
+    childrenOf.get(parent).set(name.toLowerCase(), child);
+    personOfPlayer.set(pl.id, child);
+  }
+
+  // 5f · a child whose parent this run could not carry. The loud case is a
+  //      child who is on an active private slot: somebody is coaching them
+  //      every week and the academy has no number for the household.
+  const activePlayerIds = new Set(S.privateSeries.map((s) => s.player_id));
+  for (const { pl, parentProfile } of orphanPlayers) {
+    const who = `${tidy(pl.full_name) || "a player"} (parent ${parentProfile?.full_name ?? "unknown"}, ${last4(parentProfile?.phone)})`;
+    if (activePlayerIds.has(pl.id)) {
+      warn("unreachable", `**${who} is on an active private slot every week and their household has no number this import can use.** Their private slot is not imported.`);
+    } else {
+      warn("unreachable", `${who} is not imported — their parent is not carried across`);
     }
   }
-  say();
 
-  const clash = standing.find((w) => !w.archived_at && w.name === WORKSPACE_NAME);
-  if (clash && args.mode === "apply") {
-    say(`**Refused.** A workspace called ${WORKSPACE_NAME} already stands on this number (\`${clash.id}\`). Nothing was written.`);
-    process.stdout.write(`${out.join("\n")}\n`);
-    process.exitCode = 2;
-    return;
-  }
-  if (clash) say(`> A workspace called ${WORKSPACE_NAME} already stands on this number — \`--apply\` would refuse.`);
-
-  // ── 3 · read Sharwin ──────────────────────────────────────────────────────
-  const S = await loadSharwin(sb, sinceTs);
-  const {
-    people, byProfile, byPlayer, owners, skippedSeed, skippedDeleted, selfPlayers,
-    mutedCount, unapprovedCount, disputedCount,
-  } = buildPeople(S, args, warn);
-
-  // ── 4 · people already in bluetick, and who is spoken for elsewhere ───────
-  const phones = [...new Set([...people.values()].map((p) => p.phone).filter(Boolean))];
-  const existing = new Map(
-    (await db.query("select id, phone from person where phone = any($1::text[])", [phones]))
-      .rows.map((r) => [r.phone, r.id]));
-
-  const elsewhere = (await db.query(
-    `select p.phone, m.label, m.status, w.name as workspace, w.archived_at
-       from member m
-       join person p on p.id = m.person_id
-       join workspace w on w.id = m.workspace_id
-      where m.number_id = $1 and m.status = 'active' and p.phone = any($2::text[])`,
-    [numberId, phones])).rows;
-  const conflictByPhone = new Map(elsewhere.map((r) => [r.phone, r]));
-
-  // A person active in another room on this number cannot be made active here
-  // (member_one_workspace_idx). Under --demote-conflicts they are written down at
-  // `known` instead: a known membership is outside that index, so it neither
-  // breaks the room they are in nor pretends this one holds them, and sending
-  // this workspace's key moves them here the way it moves anybody. A known
-  // member cannot run a room, so ownership is dropped with a warning rather
-  // than left on a row that could not act on it.
-  const demoted = [];
-  for (const p of people.values()) {
+  // 5g · nobody may be active twice on one sender number.
+  const phones = people.filter((p) => p.phone).map((p) => p.phone);
+  const existing = new Map((await db.query(
+    "select id, phone from person where phone = any($1::text[])", [phones])).rows.map((r) => [r.phone, r.id]));
+  for (const p of people) {
+    if (p.id) continue; // the owner is already settled
     if (p.phone && existing.has(p.phone)) { p.id = existing.get(p.phone); p.reused = true; }
     else p.id = randomUUID();
-    if (p.phone && p.status === "active" && conflictByPhone.has(p.phone)) {
-      const c = conflictByPhone.get(p.phone);
-      if (args.demoteConflicts) {
-        p.status = "known";
-        if (p.isOwner) warn("owners", `${p.label} (${last4(p.phone)}) is active in "${c.workspace}" on this number — written down at known, not made an owner`);
-        else warn("conflicts", `${p.label} (${last4(p.phone)}) is active in "${c.workspace}" on this number — written down at known`);
-        p.isOwner = false;
-        p.memberAttrs.active_elsewhere = c.workspace;
-        demoted.push(p);
-      } else {
-        p.conflict = c;
-      }
-    }
   }
-
-  const hardConflicts = [...people.values()].filter((p) => p.conflict);
-  const writable = [...people.values()].filter((p) => !p.conflict);
-  const founder = owners.find((o) => !o.conflict && o.isOwner);
-  if (!founder) {
-    say("**STOP.** Every candidate owner already holds an active membership elsewhere on this number, so nobody can found the workspace. Nothing was written.");
+  // Already a member here — they arrived by key between the purge and this run. Their
+  // membership is theirs: it keeps its created_at, arrived_as and last_inbound_at, and this
+  // run only gives it the academy's name for them and the import's attrs.
+  for (const p of people) {
+    const here = p.phone ? alreadyHere.get(p.phone) : null;
+    if (!here) continue;
+    p.id = here.person_id;
+    p.memberId = here.id;
+    p.reused = true;
+    p.alreadyHere = here;
+    warn("people", `${p.label} (${last4(p.phone)}) walked in by key on ${istDate(here.created_at)} as "${here.label}" — the membership is kept and relabelled, not re-made`);
+  }
+  const clash = ws.number_id ? (await db.query(
+    `select p.phone, m.label, w.name as workspace
+       from member m join person p on p.id = m.person_id join workspace w on w.id = m.workspace_id
+      where m.number_id = $1 and m.status = 'active' and m.workspace_id <> $2 and p.phone = any($3::text[])`,
+    [ws.number_id, ws.id, phones])).rows : [];
+  if (clash.length) {
+    say("## Already active elsewhere on this number");
     say();
-    for (const o of owners) say(`- ${o.label} · ${last4(o.phone)} · active in **${o.conflict ? o.conflict.workspace : o.memberAttrs.active_elsewhere}**`);
-    process.stdout.write(`${out.join("\n")}\n`);
-    process.exitCode = 2;
-    return;
-  }
-
-  say("## Owners to be made");
-  say();
-  say("| name | phone | founds | note |");
-  say("| --- | --- | --- | --- |");
-  for (const o of owners) {
-    say(`| ${o.label} | ${last4(o.phone)} | ${o === founder ? "yes" : "no"} | ${o.conflict ? `**conflict** — active in ${o.conflict.workspace}, no member row written` : o.memberAttrs.active_elsewhere ? `**written down at known** — active in ${o.memberAttrs.active_elsewhere}; not an owner here until they send the key` : o.reused ? "reuses an existing person row" : "new person row"} |`);
-  }
-  say();
-
-  if (args.mode === "apply" && hardConflicts.length) {
-    say(`**Refused.** ${hardConflicts.length} hard conflict(s) — a person may hold only one active membership per sender number. Nothing was written.`);
+    for (const c of clash) say(`- ${c.label} ${last4(c.phone)} — active in **${c.workspace}**`);
     say();
-    for (const c of hardConflicts) say(`- ${c.label} · ${last4(c.phone)} · already active in **${c.conflict.workspace}**${c.conflict.archived_at ? " (archived)" : ""}`);
-    process.stdout.write(`${out.join("\n")}\n`);
-    process.exitCode = 2;
-    return;
+    return stop(`${plural(clash.length, "person", "people")} hold an active membership elsewhere on this sender number (\`member_one_workspace_idx\`).`);
   }
 
-  // ── 5 · the diary ─────────────────────────────────────────────────────────
-  const classById = new Map(S.classes.map((c) => [c.id, c]));
-  const venueById = new Map(S.venues.map((v) => [v.id, v]));
-  const pcdByClass = new Map(S.privateDetails.map((d) => [d.class_id, d]));
-
-  // series_key: the class title in stable words, disambiguated where two
-  // classes would claim the same one.
-  const slugOwners = new Map();
-  for (const c of S.classes) {
-    if (!c.recurrence_rule) continue;
-    const s = slug(c.title, "class");
-    if (!slugOwners.has(s)) slugOwners.set(s, []);
-    slugOwners.get(s).push(c.id);
-  }
-  const seriesKeyOf = (c) => {
-    if (!c.recurrence_rule) return null;
-    const s = slug(c.title, "class");
-    return slugOwners.get(s).length > 1 ? `${s}-${c.id.replace(/-/g, "").slice(0, 6)}` : s;
-  };
-
-  const personOfProfile = (id) => (id ? byProfile.get(id) || null : null);
-
-  /**
-   * Who carries this person's messages. A reach must have a number of their
-   * own — app.assert_reach_is_dialable() is what makes the hop exactly one —
-   * so a child whose parent has no phone is reachable through nobody, and the
-   * row says so rather than pointing at somebody who cannot be dialled.
-   */
-  let unreachable = 0;
-  const reachFor = (p) => {
-    if (!p.parentKey) return null;
-    const parent = people.get(p.parentKey);
-    if (!parent || parent.conflict) { unreachable++; return null; }
-    if (!parent.phone) {
-      unreachable++;
-      warn("reach", `${p.label} is reached through ${parent.label}, who has no number — reach left empty`);
-      return null;
-    }
-    return parent.memberId;
-  };
-  const hostFor = (profileId, whereabouts) => {
-    const p = personOfProfile(profileId);
-    // A coach who has since been switched off is not imported, so the session
-    // they take has no host here. Say so: an empty host must not be
-    // indistinguishable from a session that genuinely had no coach.
-    if (!p) {
-      if (profileId) {
-        warn("hosts", `${whereabouts}: coach profile ${String(profileId).slice(0, 8)} is not imported (inactive coach?) — host left empty`);
-      }
-      return null;
-    }
-    if (p.conflict) { warn("hosts", `${whereabouts}: host ${p.label} is in conflict and has no member row — host left empty`); return null; }
-    return p.id;
-  };
-
-  function placeAttrs(cls) {
-    if (cls.class_type === "private") {
-      const d = pcdByClass.get(cls.id);
-      return {
-        venue: d ? (d.venue_label || d.address || null) : null,
-        venue_unit: d ? (d.unit_label || null) : null,
-        address: d ? (d.address || null) : null,
-      };
-    }
-    const v = cls.venue_id ? venueById.get(cls.venue_id) : null;
-    return { venue: v ? v.name : null, venue_unit: v ? v.unit || null : null, address: v ? v.address || null : null };
-  }
-
-  const events = [];
-  const eventBySession = new Map();
-  const pushEvent = (e) => { events.push(e); return e; };
-
-  // (a) and (b) — every session Sharwin already holds inside the window.
-  for (const s of S.sessions) {
-    const cls = classById.get(s.class_id);
-    if (!cls) { warn("events", `session ${s.id.slice(0, 8)} names a class that is not there — skipped`); continue; }
-    const starts = new Date(s.starts_at);
-    const place = placeAttrs(cls);
-    if (!s.coach_id) warn("coaches", `${cls.title} at ${istStamp(starts)} has no coach`);
-    const e = pushEvent({
-      id: randomUUID(),
-      title: cls.title,
-      starts_at: starts,
-      ends_at: s.ends_at ? new Date(s.ends_at) : null,
-      host_id: hostFor(s.coach_id, `${cls.title} at ${istStamp(starts)}`),
-      capacity: s.capacity_override ?? cls.capacity ?? null,
-      status: s.status === "cancelled" ? "cancelled" : "scheduled",
-      series_key: seriesKeyOf(cls),
-      kind: cls.is_school ? "school" : cls.class_type,
-      bucket: starts < now ? "history" : "future",
-      attrs: {
-        kind: cls.is_school ? "school" : cls.class_type,
-        ...place,
-        school: !!cls.is_school,
-        sharwin: { class_id: cls.id, session_id: s.id, series_id: null },
-        imported: run,
-      },
-    });
-    eventBySession.set(s.id, e);
-  }
-
-  // (c) the weekly runs, carried on to the horizon.
+  // ── 6 · the timetable ─────────────────────────────────────────────────────
   const sessionsByClass = new Map();
-  for (const s of S.allWeeklySessions) {
+  for (const s of S.sessions) {
     if (!sessionsByClass.has(s.class_id)) sessionsByClass.set(s.class_id, []);
     sessionsByClass.get(s.class_id).push(s);
   }
-  for (const list of sessionsByClass.values()) list.sort((a, b) => new Date(a.starts_at) - new Date(b.starts_at));
+  for (const list of sessionsByClass.values()) {
+    list.sort((a, b) => new Date(a.starts_at) - new Date(b.starts_at));
+  }
 
-  const BYDAY = { MO: 1, TU: 2, WE: 3, TH: 4, FR: 5, SA: 6, SU: 7 };
-  const NEAR = 30 * 60000;
-  let backfillSkipped = 0;
-  const extendedClassEvents = [];
+  const series = [];
+  const standing = [];
+  const seriesFromClass = [];
 
-  for (const cls of S.classes.filter((c) => c.active && c.recurrence_rule)) {
-    const rule = cls.recurrence_rule.toUpperCase();
-    if (!/FREQ=WEEKLY/.test(rule) || /INTERVAL=(?!1\b)/.test(rule) || (rule.match(/BYDAY=([A-Z,]+)/)?.[1] || "").includes(",")) {
-      warn("recurrence", `${cls.title}: "${cls.recurrence_rule}" is not a simple weekly rule — not extended`);
+  const venueOf = (cls) => (cls.venue_id ? venueById.get(cls.venue_id) : null);
+  const titleOfClass = (cls) => {
+    const v = venueOf(cls);
+    const kind = cls.is_school ? "school" : "group";
+    const name = tidy(v?.name);
+    if (!name) { warn("venues", `${cls.title} names no venue — titled by its class`); return tidy(cls.title) || `${kind} class`; }
+    return `${ACADEMY_VENUE.test(name) ? "Academy hall" : name} ${kind} class`;
+  };
+  const placeOf = (cls) => {
+    const v = venueOf(cls);
+    return { venue: tidy(v?.name) || null, venue_unit: tidy(v?.unit) || null, address: tidy(v?.address) || null };
+  };
+
+  const hostless = [];
+  for (const cls of S.classes.filter((c) => c.active && /FREQ=WEEKLY/i.test(c.recurrence_rule || ""))) {
+    if (cls.class_type === "private") {
+      warn("classes", `${cls.title} is a weekly PRIVATE class — private arrangements come from private_booking_series, so it is not made a series`);
       continue;
     }
+    const rule = String(cls.recurrence_rule).toUpperCase();
+    const byday = (rule.match(/BYDAY=([A-Z,]+)/) || [])[1];
+    if (!byday) { warn("classes", `${cls.title}: "${cls.recurrence_rule}" names no BYDAY — skipped`); continue; }
+    const days = byday.split(",").map((d) => BYDAY[d.trim()]).filter(Boolean);
+    if (!days.length) { warn("classes", `${cls.title}: "${cls.recurrence_rule}" names no weekday this can read — skipped`); continue; }
     const list = sessionsByClass.get(cls.id) || [];
-    if (!list.length) { warn("recurrence", `${cls.title} repeats weekly but has no session to walk from — not extended`); continue; }
-    const lastSession = list[list.length - 1];
-    const lastStart = new Date(lastSession.starts_at);
-    const byday = BYDAY[(rule.match(/BYDAY=([A-Z]{2})/) || [])[1]];
-    if (byday && istParts(lastStart).wd !== byday) {
-      warn("recurrence", `${cls.title}: BYDAY says ${Object.keys(BYDAY)[byday - 1]} but its last session falls on ISO day ${istParts(lastStart).wd} — walking from the session`);
-    }
-    const durMs = lastSession.ends_at
-      ? new Date(lastSession.ends_at) - lastStart
-      : (cls.duration_minutes || 60) * 60000;
-    const host = hostFor(lastSession.coach_id, `${cls.title} (extended)`);
-    const place = placeAttrs(cls);
-    const endsOn = cls.ends_on ? istInstant(...cls.ends_on.split("-").map((n, i) => (i === 1 ? Number(n) - 1 : Number(n))), 23, 59) : null;
-    const existingStarts = list.map((s) => new Date(s.starts_at).getTime());
 
-    for (let t = lastStart.getTime() + WEEK; t <= horizonTs.getTime(); t += WEEK) {
-      if (endsOn && t > endsOn.getTime()) break;
-      if (t < now.getTime()) { backfillSkipped++; continue; }
-      if (existingStarts.some((x) => Math.abs(x - t) <= NEAR)) continue;
-      const starts = new Date(t);
-      const e = pushEvent({
-        id: randomUUID(),
-        title: cls.title,
-        starts_at: starts,
-        ends_at: new Date(t + durMs),
-        host_id: host,
-        capacity: cls.capacity ?? null,
-        status: "scheduled",
-        series_key: seriesKeyOf(cls),
-        kind: cls.is_school ? "school" : cls.class_type,
-        bucket: "extended",
-        classId: cls.id,
-        attrs: {
-          kind: cls.is_school ? "school" : cls.class_type,
-          ...place,
-          school: !!cls.is_school,
-          sharwin: { class_id: cls.id, session_id: null, series_id: null },
-          imported: run,
-        },
-      });
-      extendedClassEvents.push(e);
-    }
-  }
+    for (const wd of days) {
+      const onDay = list.filter((s) => istParts(new Date(s.starts_at)).wd === wd);
+      const told = onDay.filter((s) => s.status === "scheduled" || s.status === "completed");
+      if (!told.length) {
+        warn("timetable", `${titleOfClass(cls)} says ${WEEKDAY[wd]} but has no scheduled or completed session on a ${WEEKDAY[wd]} in the last ${SESSION_BACK_DAYS} days or the next ${SESSION_FWD_DAYS} — the slot has no time of day, so it is skipped`);
+        continue;
+      }
+      const at = istTime(new Date(told[told.length - 1].starts_at));
 
-  // (c, second half) the standing private appointments.
-  const bookingsBySeries = new Map();
-  const bookingsByPlayer = new Map();
-  for (const b of S.bookings) {
-    if (b.private_series_id) {
-      if (!bookingsBySeries.has(b.private_series_id)) bookingsBySeries.set(b.private_series_id, []);
-      bookingsBySeries.get(b.private_series_id).push(b);
-    }
-    if (!bookingsByPlayer.has(b.player_id)) bookingsByPlayer.set(b.player_id, []);
-    bookingsByPlayer.get(b.player_id).push(b);
-  }
-  // Every session a booking of a private series can point at, old ones
-  // included, so "the last one already generated for it" is a true answer and
-  // not merely the last one inside the history window.
-  const allSessionsById = new Map();
-  for (const s of [...S.sessions, ...S.allWeeklySessions]) allSessionsById.set(s.id, s);
-  const wantedOld = [...new Set(S.bookings
-    .filter((b) => (b.private_series_id || b.series_id) && !allSessionsById.has(b.session_id))
-    .map((b) => b.session_id))];
-  for (let i = 0; i < wantedOld.length; i += 200) {
-    const slice = wantedOld.slice(i, i + 200);
-    const older = await fetchAll(sb, "class_sessions",
-      "id,class_id,coach_id,starts_at,ends_at,status,capacity_override", (q) => q.in("id", slice));
-    for (const s of older) allSessionsById.set(s.id, s);
-  }
-
-  const extendedPrivateEvents = [];
-  for (const ser of S.privateSeries) {
-    const player = byPlayer.get(ser.player_id);
-    if (!player) { warn("private", `private series ${ser.id.slice(0, 8)} names a player this import does not hold — skipped`); continue; }
-    const [hh, mi] = String(ser.start_time).split(":").map(Number);
-
-    let base = null, how = "next occurrence after now";
-    const own = (bookingsBySeries.get(ser.id) || [])
-      .map((b) => allSessionsById.get(b.session_id))
-      .filter(Boolean)
-      .map((s) => new Date(s.starts_at).getTime());
-    if (own.length) { base = Math.max(...own); how = "last session booked against the series"; }
-    else {
-      const theirs = (bookingsByPlayer.get(ser.player_id) || [])
-        .map((b) => allSessionsById.get(b.session_id))
-        .filter((s) => s && classById.get(s.class_id)?.class_type === "private")
-        .map((s) => new Date(s.starts_at).getTime());
-      if (theirs.length) { base = Math.max(...theirs); how = "last private session this player was booked into (the series itself carries no link)"; }
-      warn("private", `${player.label}: private series ${ser.id.slice(0, 8)} has no session booked against it — walked from ${how}`);
-    }
-    const from = Math.max(base ?? 0, now.getTime());
-
-    // The first slot on the series' own weekday and wall time strictly after `from`.
-    const p = istParts(new Date(from));
-    let first = istInstant(p.y, p.m, p.d, hh, mi || 0).getTime();
-    const shift = ((ser.weekday - istParts(new Date(first)).wd) + 7) % 7;
-    first += shift * 86400e3;
-    while (first <= from) first += WEEK;
-
-    // Only the player's PRIVATE sessions can duplicate a private slot. Their
-    // group classes are a different thing happening at a different place, and a
-    // private lesson half an hour after Tuesday's group is not a double entry —
-    // it is the lesson, and leaving it out would take it off the diary.
-    const near = (bookingsByPlayer.get(ser.player_id) || [])
-      .map((b) => allSessionsById.get(b.session_id))
-      .filter((s) => s && classById.get(s.class_id)?.class_type === "private")
-      .map((s) => new Date(s.starts_at).getTime());
-    const label = ser.venue_label || String(ser.address || "").split(/[,\n]/)[0].trim() || "home";
-    const host = hostFor(ser.preferred_coach, `private series for ${player.label}`);
-    if (!ser.preferred_coach) warn("coaches", `private series for ${player.label} names no preferred coach`);
-
-    for (let t = first; t <= horizonTs.getTime(); t += WEEK) {
-      if (near.some((x) => Math.abs(x - t) <= NEAR)) continue;
-      const e = pushEvent({
-        id: randomUUID(),
-        title: `Private session · ${label}`,
-        starts_at: new Date(t),
-        ends_at: new Date(t + (ser.duration_minutes || 60) * 60000),
-        host_id: host,
-        capacity: 1,
-        status: "scheduled",
-        series_key: `private-${ser.id.replace(/-/g, "").slice(0, 6)}`,
-        kind: "private",
-        bucket: "extended",
-        privateSeriesId: ser.id,
-        playerId: ser.player_id,
-        attrs: {
-          kind: "private",
-          venue: ser.venue_label || ser.address || null,
-          venue_unit: ser.unit_label || null,
-          address: ser.address || null,
-          school: false,
-          sharwin: { class_id: null, session_id: null, series_id: ser.id },
-          imported: run,
-        },
-      });
-      extendedPrivateEvents.push(e);
-    }
-  }
-
-  // ── 6 · bookings ──────────────────────────────────────────────────────────
-  const RANK = { attended: 4, missed: 3, booked: 2, waitlisted: 1, cancelled: 0 };
-  const STATUS = {
-    confirmed: "booked", waitlisted: "waitlisted", attended: "attended", no_show: "missed",
-    rescheduled: "cancelled", cancelled_by_client: "cancelled", cancelled_by_academy: "cancelled",
-  };
-  const bookings = new Map(); // `${eventId}:${personId}` → row
-  let bookingsCollapsed = 0, bookingsDroppedConflict = 0, bookingsNoPerson = 0;
-
-  /**
-   * `takenAt` is when the place was actually taken — Sharwin's booked_at where
-   * there is one. A generated place has none: it is a standing arrangement this
-   * script turned into a row just now, and now is the honest answer for it.
-   * Where two collapse onto one place the earlier moment is kept, because that
-   * is when this person first had a place at this event.
-   */
-  const place = (event, person, status, attrs, takenAt = null) => {
-    if (!person) { bookingsNoPerson++; return; }
-    if (person.conflict) { bookingsDroppedConflict++; return; }
-    const k = `${event.id}:${person.id}`;
-    const seen = bookings.get(k);
-    if (seen) {
-      bookingsCollapsed++;
-      if (RANK[status] > RANK[seen.status]) { seen.status = status; seen.attrs = attrs; }
-      if (takenAt && (!seen.created_at || String(takenAt) < String(seen.created_at))) seen.created_at = takenAt;
-      return;
-    }
-    bookings.set(k, { id: randomUUID(), event_id: event.id, person_id: person.id, status, attrs, created_at: takenAt });
-  };
-
-  for (const b of S.bookings) {
-    const e = eventBySession.get(b.session_id);
-    if (!e) continue;
-    place(e, byPlayer.get(b.player_id), STATUS[b.status] || "booked",
-      { imported: run, sharwin_booking_id: b.id }, b.booked_at ?? null);
-  }
-
-  // The standing arrangements, carried onto the events we generated.
-  const seriesByClass = new Map();
-  for (const bs of S.bookingSeries) {
-    if (!seriesByClass.has(bs.class_id)) seriesByClass.set(bs.class_id, []);
-    seriesByClass.get(bs.class_id).push(bs);
-  }
-  // Nothing in the database stops a place being written past a capacity —
-  // app.book() is what enforces it and a raw insert never calls it. So count,
-  // and say so, rather than either dropping somebody's standing place or
-  // publishing a diary that reads 35/30 with nobody having been told.
-  let overbooked = 0;
-  const placedOn = new Map();
-  for (const e of extendedClassEvents) {
-    const list = seriesByClass.get(e.classId);
-    if (!list) continue;
-    const p = istParts(e.starts_at);
-    for (const bs of list) {
-      const [hh, mi] = String(bs.start_time).split(":").map(Number);
-      if (bs.weekday !== p.wd || hh !== p.hh || (mi || 0) !== p.mi) continue;
-      const before = bookings.size;
-      place(e, byPlayer.get(bs.player_id), "booked", { imported: run, sharwin_series_id: bs.id });
-      if (bookings.size === before) continue; // dropped, collapsed or nobody to place
-      const taken = (placedOn.get(e.id) || 0) + 1;
-      placedOn.set(e.id, taken);
-      if (e.capacity != null && taken > e.capacity) {
-        overbooked++;
-        if (taken === e.capacity + 1) {
-          warn("capacity", `${e.title} on ${istStamp(e.starts_at)} holds ${e.capacity} but ${list.length} standing arrangements match its weekday and time — the diary will read over capacity`);
+      // Who takes it. The next one actually on the books, then the commonest
+      // coach in the next four weeks, then — said out loud — the last coach who
+      // took it, because a timetable with no coach on it helps nobody.
+      const future = told.filter((s) => new Date(s.starts_at) > now && s.status === "scheduled" && s.coach_id);
+      let hostProfile = future[0]?.coach_id ?? null;
+      let hostFrom = "the next session on the books";
+      if (!hostProfile) {
+        const soon = told.filter((s) => {
+          const t = new Date(s.starts_at).getTime();
+          return s.coach_id && t > now.getTime() && t < now.getTime() + 28 * 86400e3;
+        });
+        hostProfile = commonest(soon.map((s) => s.coach_id));
+        if (hostProfile) hostFrom = "the commonest coach in the next four weeks";
+      }
+      if (!hostProfile) {
+        hostProfile = commonest(told.filter((s) => s.coach_id).map((s) => s.coach_id));
+        if (hostProfile) {
+          hostFrom = "the last coach who took it — nothing is on the books ahead";
+          warn("hosts", `${titleOfClass(cls)} ${WEEKDAY[wd]} ${at}: no future session, so the host is the coach of its last one`);
         }
       }
+      const host = hostProfile ? personOfProfile.get(hostProfile) : null;
+      if (!host) {
+        hostless.push(`${titleOfClass(cls)} · ${WEEKDAY[wd]} ${at}`);
+        warn("hosts", `${titleOfClass(cls)} ${WEEKDAY[wd]} ${at} has no coach this import holds — host left empty`);
+      }
+
+      // A class that has not started yet must not be laid down before it does.
+      const from = cls.starts_on && cls.starts_on > today ? cls.starts_on : today;
+      const startsOn = nextOnWeekday(from, wd);
+      if (cls.ends_on && cls.ends_on < startsOn) {
+        warn("timetable", `${titleOfClass(cls)} ${WEEKDAY[wd]} ended on ${cls.ends_on} — not imported`);
+        continue;
+      }
+      const row = {
+        id: randomUUID(), title: titleOfClass(cls), weekday: wd, at,
+        minutes: cls.duration_minutes > 0 ? cls.duration_minutes : null,
+        host: host ?? null, capacity: cls.capacity > 0 ? cls.capacity : null,
+        starts_on: startsOn, until: cls.ends_on ?? null, kind: cls.is_school ? "school" : "group",
+        hostFrom: host ? hostFrom : null,
+        attrs: {
+          kind: cls.is_school ? "school" : "group", school: !!cls.is_school,
+          ...placeOf(cls),
+          sharwin: { class_id: cls.id }, imported: run,
+        },
+      };
+      series.push(row);
+      seriesFromClass.push(row);
     }
   }
-  for (const e of extendedPrivateEvents) {
-    place(e, byPlayer.get(e.playerId), "booked", { imported: run, sharwin_private_series_id: e.privateSeriesId });
+
+  // Two classes at one venue on one day is the data saying two coaches are
+  // there. Both are kept; the same time as well as the same day is a question.
+  const doubled = [];
+  const byVenueDay = new Map();
+  for (const s of seriesFromClass) {
+    const k = `${s.attrs.venue}|${s.weekday}`;
+    if (!byVenueDay.has(k)) byVenueDay.set(k, []);
+    byVenueDay.get(k).push(s);
+  }
+  for (const [k, list] of byVenueDay) {
+    if (list.length < 2) continue;
+    const [venue, wd] = k.split("|");
+    const times = list.map((s) => s.at);
+    const clashing = times.length !== new Set(times).size;
+    doubled.push({ venue, weekday: Number(wd), times, clashing, hosts: list.map((s) => s.host?.label ?? "no coach") });
+    if (clashing) {
+      warn("timetable", `${venue} has ${list.length} classes on ${WEEKDAY[wd]} at the SAME time (${times.join(", ")}) with coaches ${list.map((s) => s.host?.label ?? "—").join(" and ")} — both kept, because the data says two`);
+    }
   }
 
-  // ── 7 · memories ──────────────────────────────────────────────────────────
-  const setting = (k, fallback) => {
-    const row = S.settings.find((s) => s.key === k);
-    return row ? row.value : fallback;
-  };
+  // 6b · the private slots. One row is one arrangement, whether or not the old
+  //      app ever generated a session for it.
+  const privateNoCoach = [];
+  const privateNeverRan = [];
+  const bookedPrivate = new Set(S.bookings.filter((b) => b.private_series_id).map((b) => b.private_series_id));
+  for (const ser of S.privateSeries) {
+    const person = personOfPlayer.get(ser.player_id);
+    const pl = playerById.get(ser.player_id);
+    if (!person) {
+      warn("private", `a private slot on ${WEEKDAY[ser.weekday] ?? ser.weekday} at ${hhmm(ser.start_time)} names ${tidy(pl?.full_name) || `player ${String(ser.player_id).slice(0, 8)}`}, whom this import does not hold — the slot is not imported`);
+      continue;
+    }
+    const wd = Number(ser.weekday);
+    if (!(wd >= 1 && wd <= 7)) { warn("private", `${person.label}'s private slot has weekday ${ser.weekday} — skipped`); continue; }
+    const at = hhmm(ser.start_time);
+    if (!at) { warn("private", `${person.label}'s private slot has no readable start time (${ser.start_time}) — skipped`); continue; }
+    const host = ser.preferred_coach ? personOfProfile.get(ser.preferred_coach) : null;
+    if (!host) {
+      privateNoCoach.push({ who: person.label, weekday: wd, at });
+      warn("private", `${person.label}'s ${WEEKDAY[wd]} ${at} private slot names ${ser.preferred_coach ? "a coach this import does not hold" : "no coach"} — host left empty`);
+    }
+    if (!bookedPrivate.has(ser.id)) privateNeverRan.push({ who: person.label, weekday: wd, at });
+    const v = ser.venue_id ? venueById.get(ser.venue_id) : null;
+    const venue = tidy(ser.venue_label) || tidy(v?.name) || tidy(String(ser.address || "").split(",")[0]) || null;
+    const row = {
+      id: randomUUID(), title: `${person.label} private session`, weekday: wd, at,
+      minutes: ser.duration_minutes > 0 ? ser.duration_minutes : null,
+      host: host ?? null, capacity: 1, starts_on: nextOnWeekday(today, wd), until: null, kind: "private",
+      hostFrom: host ? "the slot's preferred coach" : null,
+      attrs: {
+        kind: "private", school: false, venue,
+        venue_unit: tidy(ser.unit_label) || null, address: tidy(ser.address) || null,
+        sharwin: { private_series_id: ser.id }, imported: run,
+      },
+    };
+    series.push(row);
+    standing.push({
+      id: randomUUID(), series_id: row.id, person, seriesTitle: row.title,
+      attrs: { imported: run, sharwin_private_series_id: ser.id },
+    });
+  }
+
+  // 6c · one-offs: something inside five weeks that no series covers and a
+  //      person this workspace holds has a live place at.
+  const weeklyClassIds = new Set(S.classes.filter((c) => c.active && /FREQ=WEEKLY/i.test(c.recurrence_rule || "")).map((c) => c.id));
+  const liveBookingsBySession = new Map();
+  for (const b of S.bookings) {
+    if (!["confirmed", "waitlisted"].includes(b.status)) continue;
+    if (b.private_series_id) continue;
+    if (!liveBookingsBySession.has(b.session_id)) liveBookingsBySession.set(b.session_id, []);
+    liveBookingsBySession.get(b.session_id).push(b);
+  }
+  const oneOffs = [];
+  for (const s of S.sessions) {
+    if (s.status !== "scheduled") continue;
+    const t = new Date(s.starts_at).getTime();
+    if (!(t > now.getTime() && t < now.getTime() + ONE_OFF_DAYS * 86400e3)) continue;
+    if (weeklyClassIds.has(s.class_id)) continue;
+    const cls = classById.get(s.class_id);
+    if (!cls) { warn("one-offs", `session ${s.id.slice(0, 8)} names a class that is not there — skipped`); continue; }
+    const held = (liveBookingsBySession.get(s.id) || [])
+      .map((b) => ({ b, person: personOfPlayer.get(b.player_id) }))
+      .filter((x) => x.person);
+    if (!held.length) continue;
+    const host = s.coach_id ? personOfProfile.get(s.coach_id) : null;
+    const title = cls.class_type === "private" ? `${held[0].person.label} private session` : titleOfClass(cls);
+    const ev = {
+      id: randomUUID(), title, starts_at: new Date(s.starts_at),
+      ends_at: s.ends_at ? new Date(s.ends_at) : null,
+      host: host ?? null, capacity: s.capacity_override ?? (cls.capacity > 0 ? cls.capacity : null),
+      people: held.map((x) => x.person),
+      attrs: {
+        kind: cls.is_school ? "school" : cls.class_type === "private" ? "private" : "group",
+        school: !!cls.is_school,
+        ...(cls.class_type === "private" ? { venue: null, venue_unit: null, address: null } : placeOf(cls)),
+        sharwin: { class_id: cls.id, session_id: s.id }, imported: run,
+      },
+    };
+    oneOffs.push(ev);
+  }
+
+  // ── 7 · memories. Three standing rows, coach notes, and nothing else. ─────
   const memories = [];
-  const remember = (body, key, about, standingRow) =>
+  const remember = (body, key, about, isStanding, attrs = {}) =>
     memories.push({
       id: randomUUID(), body: cap(body), subject_key: key ? cap(key, 80) : null,
-      about_person_id: about || null, standing: !!standingRow,
-      attrs: { imported: run },
+      about_person_id: about || null, standing: !!isStanding,
+      attrs: { imported: run, ...attrs },
     });
 
-  /** Standing memories are read on every turn, so they are few and they are short. */
-  const standingRows = (prefix, parts, key) => {
-    const rows = [];
-    let body = prefix;
-    for (const part of parts) {
-      if (`${body} ${part}`.length > 500) { if (body !== prefix) rows.push(body); body = prefix; }
-      body = `${body} ${part}`;
-    }
-    if (body !== prefix) rows.push(body);
-    rows.forEach((b, i) => remember(b, rows.length > 1 ? `${key}-${i + 1}` : key, null, true));
-  };
+  remember(
+    "Sessions are paid per session. The rate is per person and is Stalin's to state — before charging anybody whose rate isn't written down, ask him. Nothing is owed from before today.",
+    "how-money-works", null, true);
+  remember(
+    `${owner.label} runs this academy and is not technical. Keep messages short, plain and concrete. He decides prices, which coach goes where, and every change to the timetable — ask him rather than assume. He wants to be told what is happening and asked what he wants.`,
+    "stalin", owner.id, true);
+  remember(
+    "The week's timetable is published at https://sharwinacademy.com/schedule — public group classes by venue and day, with the coach and the places left. When an owner asks for the schedule, hand them that link; give it to nobody else.",
+    "schedule-page", null, true, { set_by: "operator", set_on: "2026-09-12" });
 
-  const houseRules = [
-    `Cancel or move a booking at least ${setting("cancellation_window_hours", 24)} hours before it starts.`,
-    `Booking closes ${setting("booking_cutoff_minutes", 60)} minutes before a session begins.`,
-    `A place offered from the waitlist is held for ${setting("waitlist_claim_minutes", 15)} minutes, then passes on.`,
-    `A late payment has ${setting("dunning_grace_days", 7)} days of grace before it is chased.`,
-  ];
-  standingRows("How things run here:", houseRules, "house-rules");
+  const venueNotes = S.venues.filter((v) => tidy(v.notes));
+  for (const v of venueNotes) {
+    const where = [tidy(v.name), tidy(v.unit)].filter(Boolean).join(", ");
+    remember(`${where} — ${tidy(v.address)}. ${tidy(v.notes)}`, `venue:${slug(v.name, v.id.slice(0, 6))}`, null, false);
+  }
 
-  const activePlans = S.plans.filter((p) => p.active);
-  const planLine = (p) => {
-    const every = p.billing_interval_months === 1 ? "month" : `${p.billing_interval_months} months`;
-    return `${p.name} ${rupees(p.price_pence)}/${every};`;
-  };
-  standingRows("Current plans:", activePlans.map(planLine), "plans");
-
-  for (const p of activePlans) {
-    const bits = [`${p.name}: ${rupees(p.price_pence)} every ${p.billing_interval_months === 1 ? "month" : `${p.billing_interval_months} months`}.`];
-    if (p.group_sessions_per_week) bits.push(`${p.group_sessions_per_week} group session${p.group_sessions_per_week > 1 ? "s" : ""} a week.`);
-    if (p.private_sessions_per_week) bits.push(`${p.private_sessions_per_week} private session${p.private_sessions_per_week > 1 ? "s" : ""} a week${p.private_session_minutes ? `, ${p.private_session_minutes} minutes each` : ""}.`);
-    else if (p.private_minutes_per_cycle) bits.push(`${p.private_minutes_per_cycle} private minutes a cycle.`);
-    if (p.description) bits.push(p.description);
-    remember(bits.join(" "), `plan:${slug(p.name, p.id.slice(0, 6))}`, null, false);
+  let noteMemories = 0;
+  for (const pl of S.players) {
+    const person = personOfPlayer.get(pl.id);
+    if (!person || !tidy(pl.notes)) continue;
+    remember(tidy(pl.notes), `note:${pl.id.slice(0, 8)}`, person.id, false);
+    noteMemories++;
   }
-  for (const pr of S.products.filter((x) => x.active)) {
-    const bits = [`${pr.name}: ${rupees(pr.price_pence)}`];
-    if (pr.member_price_pence != null) bits.push(`(${rupees(pr.member_price_pence)} on a group plan)`);
-    if (pr.duration_minutes) bits.push(`· ${pr.duration_minutes} minutes`);
-    if (pr.description) bits.push(`· ${pr.description}`);
-    remember(`${bits.join(" ")}.`, `plan:${slug(pr.id, "product")}`, null, false);
-  }
-  for (const v of S.venues.filter((x) => x.is_public)) {
-    const post = v.postcode && !String(v.address || "").includes(v.postcode) ? `, ${v.postcode}` : "";
-    const bits = [v.unit ? `${v.name}, ${v.unit}` : v.name, "—", `${v.address}${post}.`];
-    if (v.notes) bits.push(v.notes);
-    remember(bits.join(" "), `venue:${slug(v.name, v.id.slice(0, 6))}`, null, false);
-  }
-  const planById = new Map(S.plans.map((p) => [p.id, p]));
-  for (const sub of S.subscriptions) {
-    const person = byProfile.get(sub.client_id);
-    if (!person || person.conflict) continue;
-    const plan = planById.get(sub.plan_id);
-    const paid = sub.source === "comp" ? "complimentary" : sub.source === "razorpay" ? "paid via Razorpay" : sub.source;
-    const since = String(sub.current_period_start || sub.created_at).slice(0, 10);
-    remember(`${person.label} is on ${plan ? plan.name : "a plan"} (${paid}), since ${since}.`,
-      `arrangement:${person.id}`, person.id, false);
-  }
-  const notesByPlayer = new Map();
   for (const n of S.studentNotes) {
-    if (!notesByPlayer.has(n.player_id)) notesByPlayer.set(n.player_id, []);
-    notesByPlayer.get(n.player_id).push(n);
-  }
-  for (const child of [...people.values()].filter((p) => p.kind === "child" && !p.conflict)) {
-    const parent = child.parentKey ? people.get(child.parentKey) : null;
-    const bits = [parent ? `${child.label} is ${parent.label}'s child.` : `${child.label} is a child here.`];
-    if (child.skill) bits.push(`Plays at ${child.skill} level.`);
-    if (child.dob) bits.push(`Born ${child.dob}.`);
-    if (child.notes) bits.push(child.notes);
-    const notes = notesByPlayer.get(child.playerId) || [];
-    if (notes.length === 1) bits.push(notes[0].body);
-    else if (notes.length > 1) warn("notes", `${child.label} has ${notes.length} coach notes — none were folded in`);
-    remember(bits.join(" "), `child:${child.id}`, child.id, false);
+    const person = personOfPlayer.get(n.player_id);
+    if (!person || !tidy(n.body)) continue;
+    remember(tidy(n.body), `note:${String(n.player_id).slice(0, 8)}`, person.id, false);
+    noteMemories++;
   }
 
-  // ── 8 · role, permits, holders ────────────────────────────────────────────
-  const roleId = randomUUID();
-  const coachPeople = [...people.values()].filter((p) => p.kind === "coach" && !p.conflict);
-  const permits = [
-    { table_name: "booking", verbs: ["update"], columns: ["status"], whose: "anyone",
-      limits: { status: { in: ["booked", "attended", "missed", "cancelled"] } }, row_cap: 30 },
-    { table_name: "memory", verbs: ["insert"], columns: null, whose: "anyone", limits: {}, row_cap: 10 },
-    { table_name: "booking", verbs: ["insert"], columns: null, whose: "anyone", limits: {}, row_cap: 10 },
+  // ── 8 · the three tasks ───────────────────────────────────────────────────
+  const coachPeople = people.filter((p) => p.kind === "coach");
+  const clientPeople = people.filter((p) => p.kind === "client");
+  const childPeople = people.filter((p) => p.kind === "child");
+  const groupSeries = series.filter((s) => s.kind === "group");
+  const schoolSeries = series.filter((s) => s.kind === "school");
+  const privateSeriesRows = series.filter((s) => s.kind === "private");
+  const groupVenues = new Set(groupSeries.map((s) => s.attrs.venue).filter(Boolean));
+  const schoolVenues = new Set(schoolSeries.map((s) => s.attrs.venue).filter(Boolean));
+
+  const day7 = new Date(now.getTime() + 7 * 86400e3);
+  const day1 = new Date(now.getTime() + 86400e3);
+  const day14 = new Date(now.getTime() + 14 * 86400e3);
+  // The next 06:45 on the academy's own wall clock.
+  const nowIst = istParts(now);
+  let next0645 = istInstant(nowIst.y, nowIst.m, nowIst.d, 6, 45);
+  if (next0645 <= now) next0645 = new Date(next0645.getTime() + 86400e3);
+
+  const introduce = [
+    `Introduce this assistant to ${owner.label}, who owns the academy, has never used it, and is not technical. Write plainly, in short sentences, no jargon and no lists of features.`,
+    `Tell him what is already loaded: ${plural(coachPeople.length, "coach", "coaches")}; ${plural(clientPeople.length, "family", "families")} with ${plural(childPeople.length, "named child", "named children")} between them; and the weekly timetable — ${plural(groupSeries.length, "group class", "group classes")} across ${plural(groupVenues.size, "venue")}, ${plural(schoolSeries.length, "school class", "school classes")} across ${plural(schoolVenues.size, "school")}, and ${plural(privateSeriesRows.length, "private session")} a week.`,
+    "Then say what it can take off his plate, in four plain items: (1) send him each morning's sessions grouped by coach; (2) tell coaches where they are going and tell families when something changes; (3) take bookings and cancellations from parents in their own chat; (4) keep track of who has paid for each session and remind the ones who have not.",
+    "Tell him the parent and coach WhatsApp groups still do not know this number — nobody has been messaged yet, and he has to tell them himself from his own phone. The link to share is in his tail; give it to him.",
+    "Then ask him which of the four he wants first, and stop. Do not promise a price or a rate: he sets those.",
+    "His window is shut, so this goes out on an approved template.",
+  ].join(" ");
+
+  const gapLines = [];
+  if (privateNoCoach.length) {
+    gapLines.push(`Private slots with nobody named to coach them: ${privateNoCoach.map((g) => `${g.who} ${WEEKDAY[g.weekday]} ${g.at}`).join("; ")}. Ask him who takes each one.`);
+  }
+  for (const d of doubled.filter((x) => x.clashing)) {
+    gapLines.push(`${d.venue} has two classes on ${WEEKDAY[d.weekday]} at ${d.times[0]} (${d.hosts.join(" and ")}). Both are in the timetable because the data says two. Ask him whether that is right.`);
+  }
+  const stalins = skipped.byPhone.filter((s) => /stalin/i.test(s.p.full_name || ""));
+  if (stalins.length) {
+    gapLines.push(`Two other numbers in the old system are called Stalin — ${stalins.map((s) => `${s.phone} ("${tidy(s.p.full_name)}")`).join(" and ")}. Neither was imported. Ask him whether they are his, a relative's, or old.`);
+  }
+  for (const f of fixedPhones) {
+    gapLines.push(`${tidy(f.name)}'s number was stored as ${f.from}, which has a digit too many. It was corrected to ${f.to}. Ask him to confirm that is right.`);
+  }
+  if (skipped.noPhone.length) {
+    gapLines.push(`These people are in the old system with no usable number and were not imported: ${skipped.noPhone.map((s) => tidy(s.p.full_name) || "unnamed").join(", ")}. Ask him for their numbers, one at a time.`);
+  }
+  if (privateNeverRan.length) {
+    gapLines.push(`These private slots exist as arrangements but the old system never generated a session for them: ${privateNeverRan.map((g) => `${g.who} ${WEEKDAY[g.weekday]} ${g.at}`).join("; ")}. Ask him whether they still run.`);
+  }
+  const gapsInstruction = [
+    `Work through this list with ${owner.label} one item at a time — ask one, wait for the answer, write it down, then ask the next. Never send the whole list at once.`,
+    ...gapLines.map((l, i) => `${i + 1}. ${l}`),
+    "When he answers, change the rows he is talking about rather than only remembering the answer.",
+  ].join(" ");
+
+  const tasks = [
+    { subject_key: "introduce-yourself", due: now, expires: day7, instruction: introduce, attrs: { imported: run } },
+    { subject_key: "import-gaps", due: day1, expires: day14, instruction: gapsInstruction, attrs: { imported: run } },
+    {
+      subject_key: "coach-schedule", due: next0645, expires: "2027-09-30 00:00+05:30",
+      instruction: "Send Stalin today's sessions grouped by coach: lead with how many are on and which coaches have nothing today, then each coach's sessions with time, place and who is expected; name any session that has no coach. Keep it short. He can say 'stop the morning schedule' to end this.",
+      attrs: { imported: run, every: "1 day", at: "06:45" },
+    },
   ];
+
+  // ── 9 · roles and permits ─────────────────────────────────────────────────
+  const coachRoleId = randomUUID();
+  const managerRoleId = randomUUID();
+  const roles = [
+    { id: coachRoleId, name: "Coach", description: "Takes sessions, marks who came, and writes notes about players", holders: coachPeople },
+    ...(managerPeople.length ? [{ id: managerRoleId, name: "Manager", description: "Runs the day to day on the owner's behalf: people, the diary, bookings, reminders and what is owed", holders: managerPeople }] : []),
+  ];
+  const permits = [
+    { role_id: coachRoleId, table_name: "booking", verbs: ["update"], columns: ["status"], limits: { status: { in: ["booked", "attended", "missed", "cancelled"] } }, row_cap: 30 },
+    { role_id: coachRoleId, table_name: "memory", verbs: ["insert"], columns: null, limits: {}, row_cap: 10 },
+    { role_id: coachRoleId, table_name: "booking", verbs: ["insert"], columns: null, limits: {}, row_cap: 10 },
+    ...(managerPeople.length ? [
+      { role_id: managerRoleId, table_name: "person", verbs: ["update"], columns: ["phone", "wa_profile_name", "attrs"], limits: {}, row_cap: 20 },
+      { role_id: managerRoleId, table_name: "member", verbs: ["insert", "update"], columns: ["label", "reach_id", "opted_out_at", "attrs"], limits: {}, row_cap: 20 },
+      { role_id: managerRoleId, table_name: "booking", verbs: ["insert", "update", "delete"], columns: null, limits: {}, row_cap: 50 },
+      { role_id: managerRoleId, table_name: "event", verbs: ["insert", "update", "delete"], columns: null, limits: {}, row_cap: 30 },
+      { role_id: managerRoleId, table_name: "task", verbs: ["insert", "update", "delete"], columns: null, limits: {}, row_cap: 20 },
+      { role_id: managerRoleId, table_name: "memory", verbs: ["insert"], columns: null, limits: {}, row_cap: 20 },
+      { role_id: managerRoleId, table_name: "ledger", verbs: ["insert", "update"], columns: null, limits: {}, row_cap: 30 },
+      { role_id: managerRoleId, table_name: "mute", verbs: ["insert", "update", "delete"], columns: null, limits: {}, row_cap: 10 },
+    ] : []),
+  ];
+
+  // ── 10 · what the plan came to, before anything is written ────────────────
+  say("## The plan");
+  say();
+  say("| table | rows |");
+  say("| --- | --- |");
+  say(`| person | ${people.filter((p) => !p.reused).length} new, ${people.filter((p) => p.reused).length} reused |`);
+  say(`| member | 1 owner updated, ${people.length - 1} inserted |`);
+  say(`| series | ${series.length} — group ${groupSeries.length}, school ${schoolSeries.length}, private ${privateSeriesRows.length} |`);
+  say(`| booking (standing) | ${standing.length} |`);
+  say(`| event (one-off) | ${oneOffs.length} |`);
+  say(`| booking (one-off) | ${oneOffs.reduce((n, e) => n + e.people.length, 0)} |`);
+  say(`| memory | ${memories.length} — standing ${memories.filter((m) => m.standing).length}, notes ${noteMemories}, venue ${venueNotes.length} |`);
+  say(`| task | ${tasks.length} |`);
+  say(`| role | ${roles.length} · ${roles.map((r) => r.name).join(", ")} |`);
+  say(`| permit | ${permits.length} |`);
+  say(`| role_holder | ${roles.reduce((n, r) => n + r.holders.length, 0)} |`);
+  say();
+
+  if (trouble.length) {
+    say("The plan above is real and the counts are real, but **the schema check above failed**, so no transaction was opened.");
+    return stop("the database does not carry `series` yet.");
+  }
 
   // ═══ write it — one transaction, committed only under --apply ════════════
-  //
-  // Order is forced by the schema: app.create_workspace needs its founder to be
-  // a person already, so the people go in first and the workspace second; a
-  // child's member row needs its parent's, so the adults go in before them.
   const counts = {};
-  let committed = false;
+  let laid = [];
   await db.query("begin");
   try {
-    counts.person_new = await insertMany(db, "person", ["id", "phone", "wa_profile_name", "attrs"],
-      writable.filter((p) => !p.reused).map((p) => ({
-        id: p.id,
-        phone: p.phone,
-        wa_profile_name: null,
+    counts.person = await insertMany(db, "person", ["id", "phone", "wa_profile_name", "attrs"],
+      people.filter((p) => !p.reused).map((p) => ({
+        id: p.id, phone: p.phone, wa_profile_name: null,
         attrs: JSON.stringify({
           imported: run,
-          ...(p.profileIds.size ? { sharwin_profile_id: [...p.profileIds][0] } : {}),
-          ...(p.profileIds.size > 1 ? { sharwin_profile_ids: [...p.profileIds] } : {}),
+          ...(p.profileId ? { sharwin_profile_id: p.profileId } : {}),
           ...(p.playerId ? { sharwin_player_id: p.playerId } : {}),
         }),
       })));
-    counts.person_reused = writable.filter((p) => p.reused).length;
 
-    const workspaceId = (await db.query("select app.create_workspace($1,$2,$3) as id",
-      [WORKSPACE_NAME, founder.id, numberId])).rows[0].id;
-    await db.query("update workspace set timezone = $2, attrs = attrs || $3::jsonb where id = $1",
-      [workspaceId, TZ, JSON.stringify({ public_diary: true, imported: run })]);
-    const wsRow = (await db.query("select key, timezone, live from workspace where id=$1", [workspaceId])).rows[0];
-    counts.workspace = 1;
-    counts.key = wsRow.key;
-
-    // create_workspace wrote the founder's member row itself; take its id and
-    // dress it with what this import knows.
-    founder.memberId = (await db.query(
-      "select id from member where workspace_id=$1 and person_id=$2", [workspaceId, founder.id])).rows[0].id;
-    await db.query(
-      `update member
-          set label = $2,
-              attrs = attrs || $3::jsonb,
-              created_at = coalesce($4::timestamptz, created_at),
-              opted_out_at = coalesce(opted_out_at, $5::timestamptz)
-        where id = $1`,
-      [founder.memberId, founder.label, JSON.stringify({ imported: run, ...founder.memberAttrs }),
-       founder.joinedAt, founder.optedOut ? now : null]);
+    // The owner's row is dressed, never re-made. is_owner, arrived_as and
+    // last_inbound_at are the workspace's own facts and are not this run's to
+    // touch; created_at is when he arrived, which was before this script ran.
+    await db.query("update member set label = $2, attrs = $3::jsonb where id = $1",
+      [owner.memberId, owner.label, JSON.stringify(owner.attrs)]);
 
     // created_at is when they arrived at the academy, not when this script ran.
-    // A workspace whose every member appears to have joined in the same second
-    // is wrong about its own history from its first day, and deed reads its
-    // stamp off the same clock. app.stamp_world_clock leaves a column that
-    // already carries a value exactly as it was written, so this holds.
+    // app.stamp_world_clock leaves a supplied value exactly as it was written.
     const memberRow = (p) => ({
-      id: p.memberId, workspace_id: workspaceId, person_id: p.id, label: p.label,
-      status: p.status, is_owner: p.isOwner,
-      reach_id: reachFor(p),
-      created_at: p.joinedAt ?? null,
+      id: p.memberId, workspace_id: ws.id, person_id: p.id, label: p.label,
+      status: "active", is_owner: false,
+      reach_id: p.reachOf ? p.reachOf.memberId : null,
+      created_at: p.createdAt ?? null,
       opted_out_at: p.optedOut ? now : null,
-      attrs: JSON.stringify({ imported: run, ...p.memberAttrs }),
+      attrs: JSON.stringify(p.attrs),
     });
-    const cols = ["id", "workspace_id", "person_id", "label", "status", "is_owner", "reach_id",
-                  "created_at", "opted_out_at", "attrs"];
-    const adults = writable.filter((p) => p !== founder && !p.parentKey);
-    const children = writable.filter((p) => p !== founder && p.parentKey);
-    counts.member = 1
-      + await insertMany(db, "member", cols, adults.map(memberRow))
-      + await insertMany(db, "member", cols, children.map(memberRow));
+    const cols = ["id", "workspace_id", "person_id", "label", "status", "is_owner", "reach_id", "created_at", "opted_out_at", "attrs"];
+    // Adults first: a child's reach_id points at a member row that must be there. Somebody
+    // already here is dressed, not inserted.
+    const newcomer = (p) => p !== owner && !p.alreadyHere;
+    counts.member = await insertMany(db, "member", cols, people.filter((p) => newcomer(p) && !p.reachOf).map(memberRow))
+      + await insertMany(db, "member", cols, people.filter((p) => newcomer(p) && p.reachOf).map(memberRow));
+    counts.relabelled = 0;
+    for (const p of people.filter((x) => x.alreadyHere)) {
+      await db.query("update member set label = $2, attrs = attrs || $3::jsonb where id = $1",
+        [p.memberId, p.label, JSON.stringify(p.attrs)]);
+      counts.relabelled++;
+    }
 
+    counts.role = await insertMany(db, "role", ["id", "workspace_id", "name", "description", "created_by", "attrs"],
+      roles.map((r) => ({
+        id: r.id, workspace_id: ws.id, name: r.name, description: r.description,
+        created_by: owner.id, attrs: JSON.stringify({ imported: run }),
+      })));
+    counts.permit = await insertMany(db, "permit",
+      ["id", "workspace_id", "role_id", "table_name", "verbs", "columns", "limits", "whose", "row_cap", "granted_by", "attrs"],
+      permits.map((p) => ({
+        id: randomUUID(), workspace_id: ws.id, role_id: p.role_id, table_name: p.table_name,
+        verbs: p.verbs, columns: p.columns, limits: JSON.stringify(p.limits), whose: "anyone",
+        row_cap: p.row_cap, granted_by: owner.id, attrs: JSON.stringify({ imported: run }),
+      })));
+    counts.role_holder = await insertMany(db, "role_holder",
+      ["id", "workspace_id", "role_id", "person_id", "granted_by"],
+      roles.flatMap((r) => r.holders.map((h) => ({
+        id: randomUUID(), workspace_id: ws.id, role_id: r.id, person_id: h.id, granted_by: owner.id,
+      }))));
+
+    counts.series = await insertMany(db, "series",
+      ["id", "workspace_id", "title", "host_id", "capacity", "every", "at", "minutes", "starts_on", "until", "laid_through", "attrs"],
+      series.map((s) => ({
+        id: s.id, workspace_id: ws.id, title: s.title, host_id: s.host ? s.host.id : null,
+        capacity: s.capacity, every: "1 week", at: s.at, minutes: s.minutes,
+        starts_on: s.starts_on, until: s.until, laid_through: null,
+        attrs: JSON.stringify(s.attrs),
+      })));
+
+    // A standing place: no event, a series, and app.lay_down books it onto
+    // every occurrence as each one is laid down.
+    counts.standing = await insertMany(db, "booking",
+      ["id", "workspace_id", "event_id", "series_id", "person_id", "status", "attrs"],
+      standing.map((b) => ({
+        id: b.id, workspace_id: ws.id, event_id: null, series_id: b.series_id,
+        person_id: b.person.id, status: "booked", attrs: JSON.stringify(b.attrs),
+      })));
+
+    // One-offs go in BEFORE lay_down, so the diary it lays sits beside them.
     counts.event = await insertMany(db, "event",
-      ["id", "workspace_id", "title", "starts_at", "ends_at", "host_id", "capacity", "status", "series_key", "attrs"],
-      events.map((e) => ({
-        id: e.id, workspace_id: workspaceId, title: e.title, starts_at: e.starts_at,
-        ends_at: e.ends_at, host_id: e.host_id, capacity: e.capacity, status: e.status,
-        series_key: e.series_key, attrs: JSON.stringify(e.attrs),
+      ["id", "workspace_id", "title", "starts_at", "ends_at", "host_id", "capacity", "status", "series_id", "attrs"],
+      oneOffs.map((e) => ({
+        id: e.id, workspace_id: ws.id, title: e.title, starts_at: e.starts_at, ends_at: e.ends_at,
+        host_id: e.host ? e.host.id : null, capacity: e.capacity, status: "scheduled",
+        series_id: null, attrs: JSON.stringify(e.attrs),
       })));
+    counts.oneOffBooking = await insertMany(db, "booking",
+      ["id", "workspace_id", "event_id", "series_id", "person_id", "status", "attrs"],
+      oneOffs.flatMap((e) => e.people.map((p) => ({
+        id: randomUUID(), workspace_id: ws.id, event_id: e.id, series_id: null,
+        person_id: p.id, status: "booked", attrs: JSON.stringify({ imported: run }),
+      }))));
 
-    counts.booking = await insertMany(db, "booking",
-      ["id", "workspace_id", "event_id", "person_id", "status", "created_at", "attrs"],
-      [...bookings.values()].map((b) => ({
-        id: b.id, workspace_id: workspaceId, event_id: b.event_id, person_id: b.person_id,
-        status: b.status, created_at: b.created_at ?? null, attrs: JSON.stringify(b.attrs),
-      })));
+    laid = (await db.query(
+      "select outcome, count(*)::int as n from app.lay_down(null::uuid, $1) group by 1 order by 1", [ws.id])).rows;
 
     counts.memory = await insertMany(db, "memory",
       ["id", "workspace_id", "body", "about_person_id", "standing", "actor", "subject_key", "attrs"],
       memories.map((m) => ({
-        id: m.id, workspace_id: workspaceId, body: m.body, about_person_id: m.about_person_id,
+        id: m.id, workspace_id: ws.id, body: m.body, about_person_id: m.about_person_id,
         standing: m.standing, actor: "noticed", subject_key: m.subject_key,
         attrs: JSON.stringify(m.attrs),
       })));
 
-    counts.role = await insertMany(db, "role",
-      ["id", "workspace_id", "name", "description", "created_by", "attrs"],
-      [{ id: roleId, workspace_id: workspaceId, name: "Coach",
-         description: "Takes classes, marks who came, and writes notes about players",
-         created_by: founder.id, attrs: JSON.stringify({ imported: run }) }]);
-
-    counts.permit = await insertMany(db, "permit",
-      ["id", "workspace_id", "role_id", "table_name", "verbs", "columns", "limits", "whose", "row_cap", "granted_by", "attrs"],
-      permits.map((p) => ({
-        id: randomUUID(), workspace_id: workspaceId, role_id: roleId, table_name: p.table_name,
-        verbs: p.verbs, columns: p.columns, limits: JSON.stringify(p.limits), whose: p.whose,
-        row_cap: p.row_cap, granted_by: founder.id, attrs: JSON.stringify({ imported: run }),
-      })));
-
-    counts.role_holder = await insertMany(db, "role_holder",
-      ["id", "workspace_id", "role_id", "person_id", "granted_by"],
-      coachPeople.map((c) => ({
-        id: randomUUID(), workspace_id: workspaceId, role_id: roleId,
-        person_id: c.id, granted_by: founder.id,
+    counts.task = await insertMany(db, "task",
+      ["id", "workspace_id", "person_id", "subject_key", "due", "expires", "instruction", "context_query", "status", "requested_by", "about_person_id", "attrs"],
+      tasks.map((t) => ({
+        id: randomUUID(), workspace_id: ws.id, person_id: owner.id, subject_key: t.subject_key,
+        due: t.due, expires: t.expires, instruction: t.instruction, context_query: null,
+        status: "pending", requested_by: null, about_person_id: null,
+        attrs: JSON.stringify(t.attrs),
       })));
 
     // What the database itself says is there, before it is taken back.
-    const real = (await db.query(
-      `select (select count(*)::int from member   where workspace_id=$1) as member,
-              (select count(*)::int from event    where workspace_id=$1) as event,
-              (select count(*)::int from booking  where workspace_id=$1) as booking,
-              (select count(*)::int from memory   where workspace_id=$1) as memory,
-              (select count(*)::int from role     where workspace_id=$1) as role,
-              (select count(*)::int from permit   where workspace_id=$1) as permit,
+    counts.real = (await db.query(
+      `select (select count(*)::int from member      where workspace_id=$1) as member,
+              (select count(*)::int from series      where workspace_id=$1) as series,
+              (select count(*)::int from event       where workspace_id=$1) as event,
+              (select count(*)::int from booking     where workspace_id=$1) as booking,
+              (select count(*)::int from booking     where workspace_id=$1 and series_id is not null and event_id is null) as standing,
+              (select count(*)::int from memory      where workspace_id=$1) as memory,
+              (select count(*)::int from task        where workspace_id=$1) as task,
+              (select count(*)::int from role        where workspace_id=$1) as role,
+              (select count(*)::int from permit      where workspace_id=$1) as permit,
               (select count(*)::int from role_holder where workspace_id=$1) as role_holder,
-              (select count(*)::int from deed     where workspace_id=$1) as deed`, [workspaceId])).rows[0];
-    counts.verified = real;
-    counts.workspaceId = workspaceId;
+              (select count(*)::int from deed        where workspace_id=$1) as deed`, [ws.id])).rows[0];
 
-    if (args.mode === "apply") { await db.query("commit"); committed = true; }
+    if (args.mode === "apply") await db.query("commit");
     else {
       // A ROLLBACK never evaluates a DEFERRABLE INITIALLY DEFERRED constraint,
       // so without this a clean dry run would not prove that --apply reaches
-      // COMMIT: the six deferred owner-only triggers would be checked for the
-      // first time on the real run. Flushing them here asks exactly the
-      // question a commit would and then takes everything back anyway. The
-      // warning in 0010_permits.sql against flushing ALL is aimed at the
-      // runtime executor, which speaks for a person; this session has no
-      // speaker, which is the case app.assert_owner_acts() exempts outright.
+      // COMMIT: the deferred owner-only triggers would be checked for the first
+      // time on the real run. Flushing them here asks exactly the question a
+      // commit would and then takes everything back anyway.
       await db.query("set constraints all immediate");
       await db.query("rollback");
     }
   } catch (e) {
     await db.query("rollback");
-    // Say what was learned before dying, so a failure at minute nine of an
-    // --apply is still a readable report and not just a stack trace.
-    if (out.length) process.stdout.write(`${out.join("\n")}\n\n**Failed — the transaction rolled back.**\n`);
+    say();
+    say(`**Failed — the transaction rolled back. Nothing stands.** \`${e.message}\``);
+    finish(out, args, run);
     throw e;
   }
 
-  // ── 9 · the report ────────────────────────────────────────────────────────
-  const by = (list, f) => list.reduce((acc, x) => { const k = f(x); acc[k] = (acc[k] || 0) + 1; return acc; }, {});
-  const tally = (o) => Object.entries(o).sort().map(([k, v]) => `${k} ${v}`).join(", ") || "—";
-
-  say(`## What ${args.mode === "apply" ? "was" : "would be"} written`);
+  // ── 11 · the report ───────────────────────────────────────────────────────
+  const wrote = args.mode === "apply" ? "was written" : "would be written";
+  say(`## What ${wrote}`);
   say();
-  say(`Workspace \`${counts.workspaceId}\` · key \`${counts.key}\` · timezone ${TZ} · live **false** (the founder's own switch) · \`attrs.public_diary = true\`.`);
+  say("Counts read back out of Postgres inside the transaction" + (args.mode === "apply" ? "." : ", which then rolled back."));
   say();
-  say("| table | rows | shape |");
+  say("| table | in the workspace | of which this run |");
   say("| --- | --- | --- |");
-  say(`| workspace | 1 | ${WORKSPACE_NAME} |`);
-  say(`| person | ${counts.person_new} new, ${counts.person_reused} reused | reused = a person row already carrying that phone |`);
-  say(`| member | ${counts.verified.member} | ${tally(by(writable, (p) => p.status))} · owners ${writable.filter((p) => p.isOwner).length} · reached through a parent ${writable.filter((p) => p.parentKey).length - unreachable} |`);
-  say(`| event | ${counts.verified.event} | by kind: ${tally(by(events, (e) => e.kind))} · by origin: ${tally(by(events, (e) => e.bucket))} |`);
-  say(`| booking | ${counts.verified.booking} | ${tally(by([...bookings.values()], (b) => b.status))} |`);
-  say(`| memory | ${counts.verified.memory} | standing ${memories.filter((m) => m.standing).length}, told when it is relevant ${memories.filter((m) => !m.standing).length} |`);
-  say(`| role | ${counts.verified.role} | Coach |`);
-  say(`| permit | ${counts.verified.permit} | on the Coach role |`);
-  say(`| role_holder | ${counts.verified.role_holder} | one per active coach |`);
-  say(`| deed | ${counts.verified.deed} | written by the database, one marker per row |`);
-  say();
-  say(`Counts are read back out of Postgres inside the transaction${args.mode === "apply" ? "" : ", which then rolled back — nothing stands"}.`);
+  say(`| person | — | ${counts.person} new, ${people.filter((p) => p.reused).length} reused |`);
+  say(`| member | ${counts.real.member} | ${counts.member} inserted, 1 owner relabelled${counts.relabelled ? `, ${counts.relabelled} already here relabelled` : ""} |`);
+  say(`| series | ${counts.real.series} | group ${groupSeries.length}, school ${schoolSeries.length}, private ${privateSeriesRows.length} |`);
+  say(`| event | ${counts.real.event} | ${counts.event} one-off, the rest laid down by \`app.lay_down\` |`);
+  say(`| booking | ${counts.real.booking} | ${counts.real.standing} standing (series, no event), ${counts.real.booking - counts.real.standing} on occurrences |`);
+  say(`| memory | ${counts.real.memory} | standing ${memories.filter((m) => m.standing).length}, notes ${noteMemories}, venue ${venueNotes.length} |`);
+  say(`| task | ${counts.real.task} | ${tasks.map((t) => `\`${t.subject_key}\``).join(", ")} |`);
+  say(`| role | ${counts.real.role} | ${roles.map((r) => r.name).join(", ")} |`);
+  say(`| permit | ${counts.real.permit} | Coach 3${managerPeople.length ? ", Manager 8" : ""} |`);
+  say(`| role_holder | ${counts.real.role_holder} | ${roles.map((r) => `${r.name} ${r.holders.length}`).join(", ")} |`);
+  say(`| deed | ${counts.real.deed} | written by the database, one marker per row |`);
   say();
 
-  say("## Conflicts");
+  say("## The diary, laid down");
   say();
-  if (!hardConflicts.length) say("No hard conflict: nobody this import makes active already holds an active membership on this number.");
-  else {
-    say(`**${hardConflicts.length} hard.** A person may hold one active membership per sender number (\`member_one_workspace_idx\`). \`--apply\` refuses while any stands.`);
-    say();
-    say("| who | phone | already active in |");
-    say("| --- | --- | --- |");
-    for (const c of hardConflicts) say(`| ${c.label} | ${last4(c.phone)} | ${c.conflict.workspace}${c.conflict.archived_at ? " (archived)" : ""} |`);
-    say();
-    say("The way through is to end the other membership first — archive that workspace, or remove them from it — and run again. `--owner` only helps when the person in the way is an owner and nothing else here; somebody who also plays or coaches is written down whoever owns the room. Nothing here weakens a row to get past it. `--demote-conflicts` writes them down at `known` instead, which is not weaker: it is the standing of somebody this room has been told about and who has not yet walked in.");
-  }
-  if (demoted.length) {
-    say();
-    say(`**${demoted.length} written down at known** (\`--demote-conflicts\`): active in another room on this number, so not active here and not an owner. Sending this workspace's key moves them in.`);
-    say();
-    say("| who | phone | active in |");
-    say("| --- | --- | --- |");
-    for (const p of demoted) say(`| ${p.label} | ${last4(p.phone)} | ${p.memberAttrs.active_elsewhere} |`);
+  say("`app.lay_down(null::uuid, workspace)` walks every series, lays its occurrences five weeks ahead and books every standing place onto each one.");
+  say();
+  say("| outcome | rows |");
+  say("| --- | --- |");
+  for (const r of laid) say(`| ${r.outcome} | ${r.n} |`);
+  if (!laid.length) say("| — | nothing to lay |");
+  say();
+
+  // ── Data quality ──────────────────────────────────────────────────────────
+  say("## Data quality");
+  say();
+  const dq = (what, found, done) => say(`| ${what} | ${found} | ${done} |`);
+  say("| bucket | what was found | what was done |");
+  say("| --- | --- | --- |");
+  dq("client households", `${S.profiles.filter((p) => p.role === "client").length} client profiles`,
+    `${clientPeople.length} imported with a usable +91 number`);
+  dq("malformed number", fixedPhones.length ? fixedPhones.map((f) => `${tidy(f.name)} — ${f.from}`).join("; ") : "none",
+    fixedPhones.length ? `fixed to ${fixedPhones.map((f) => f.to).join("; ")} before normalising, and handed to ${owner.label} to confirm (\`import-gaps\`)` : "—");
+  dq("clients with no number", skipped.noPhone.length ? skipped.noPhone.map((s) => tidy(s.p.full_name) || "unnamed").join(", ") : "none",
+    skipped.noPhone.length ? `skipped — unreachable; named to ${owner.label} in \`import-gaps\`` : "—");
+  dq("numbers that are not who they say", skipped.byPhone.length ? skipped.byPhone.map((s) => `${tidy(s.p.full_name)} ${s.phone} (${s.why})`).join("; ") : "none",
+    skipped.byPhone.length ? `skipped; the two called Stalin are a question for him (\`import-gaps\`)` : "—");
+  dq("phoneless pseudo-rows", skipped.byName.length ? skipped.byName.map((p) => tidy(p.full_name)).join(", ") : "none",
+    skipped.byName.length ? "skipped — the academy is not a person" : "—");
+  dq("deleted / unapproved / seed", `${skipped.deleted.length} deleted, ${skipped.unapproved.length} unapproved, ${skipped.seed.length} seed founders`, "skipped");
+  dq("adult-self player rows", `${skipped.adultSelf.length} player rows carry their own parent's name`,
+    "no member row for the player — the parent IS the player, and holds their private slot");
+  dq("children", `${childPeople.length} players whose name differs from the parent's`,
+    `a member row each, reached through the parent (\`reach_id\`)${skipped.dupChild.length ? `; ${skipped.dupChild.length} duplicate name(s) folded` : ""}`);
+  dq("school pupils", `${skipped.pupils} players with no client at all`, "**not imported** — a pupil appears the day a coach names one");
+  dq("school logins", `${skipped.schoolLogins} profiles with role \`school\``, "not imported");
+  dq("coaches", `${S.profiles.filter((p) => p.role === "coach").length} coach profiles, ${activeCoachIds.size} active`,
+    `${coachPeople.length} imported, all holding the Coach role`);
+  dq("weekly classes", `${S.classes.filter((c) => c.active && /FREQ=WEEKLY/i.test(c.recurrence_rule || "")).length} active weekly classes`,
+    `${seriesFromClass.length} series (one per BYDAY weekday)`);
+  dq("slots with no time of day", (warnings.get("timetable") || []).filter((l) => /no time of day/.test(l)).length || "none", "skipped and warned — nothing is invented");
+  dq("slots with no coach", hostless.length ? hostless.join("; ") : "none", hostless.length ? "host left empty, listed for the owner" : "—");
+  dq("doubled venue/day", doubled.length ? doubled.map((d) => `${d.venue} ${WEEKDAY[d.weekday]} (${d.times.join(", ")})`).join("; ") : "none",
+    doubled.length ? "both kept — the data says two coaches are there; the clashing ones go to `import-gaps`" : "—");
+  dq("private arrangements", `${S.privateSeries.length} active \`private_booking_series\``,
+    `${privateSeriesRows.length} series + ${standing.length} standing places`);
+  dq("private slots with no coach", privateNoCoach.length ? privateNoCoach.map((g) => `${g.who} ${WEEKDAY[g.weekday]} ${g.at}`).join("; ") : "none",
+    privateNoCoach.length ? "host empty; handed to the owner (`import-gaps`)" : "—");
+  dq("private slots the old app stopped generating", privateNeverRan.length ? privateNeverRan.map((g) => `${g.who} ${WEEKDAY[g.weekday]} ${g.at}`).join("; ") : "none",
+    privateNeverRan.length ? "imported anyway — the row IS the arrangement; the owner is asked whether they still run" : "—");
+  dq("public group class regulars", "0 bookings and 0 booking_series in the source for public group classes",
+    "no standing places invented for them");
+  dq("booking_series rows", "all belong to school classes", "ignored");
+  dq("venue notes", `${venueNotes.length} of ${S.venues.length} venues carry notes`,
+    venueNotes.length ? `${venueNotes.length} venue memory(ies)` : "no venue memories — addresses ride on the series' attrs");
+  dq("coach notes", `${S.players.filter((p) => tidy(p.notes)).length} players.notes + ${S.studentNotes.length} student_notes`,
+    `${noteMemories} memory(ies) about the player they name`);
+  dq("muted in Sharwin", `${S.profiles.filter((p) => p.wa_muted).length}`,
+    `${people.filter((p) => p.optedOut).length} membership(s) written with \`opted_out_at\` set`);
+  dq("history", `${S.bookings.length} bookings and every past session`, "**not imported** — nothing is owed from before today");
+  dq("one-off future sessions", `${oneOffs.length} inside ${ONE_OFF_DAYS} days with a live booking of somebody held and no series`,
+    oneOffs.length ? `${oneOffs.length} event(s) + ${counts.oneOffBooking} booking(s)` : "—");
+  say();
+
+  // ── the people ────────────────────────────────────────────────────────────
+  say("## The people written");
+  say();
+  say("| label | kind | number | reached through |");
+  say("| --- | --- | --- | --- |");
+  const order = { owner: 0, manager: 1, coach: 2, client: 3, child: 4 };
+  for (const p of [...people].sort((a, b) => (order[a.kind] - order[b.kind]) || a.label.localeCompare(b.label))) {
+    say(`| ${p.label} | ${p.kind}${p.isManager && p.kind !== "manager" ? " + manager" : ""} | ${last4(p.phone)} | ${p.reachOf ? p.reachOf.label : "—"} |`);
   }
   say();
-  say(`**Soft.** ${counts.person_reused} person row(s) already exist on these phones and are reused rather than duplicated — that is the intended behaviour, not a problem.`);
-  if (bookingsDroppedConflict) say(`${bookingsDroppedConflict} booking(s) dropped because the person they belong to is in conflict and gets no member row.`);
-  if (bookingsNoPerson) say(`${bookingsNoPerson} booking(s) name a player this import does not hold.`);
-  if (bookingsCollapsed) say(`${bookingsCollapsed} Sharwin booking(s) collapsed onto an existing (event, person) pair; the strongest outcome won.`);
-  if (selfPlayers) say(`${selfPlayers} player row(s) carry their own client's name — an adult who plays, not a child. They are the same person here, with one member row, and no "X is X's child" memory.`);
-  if (backfillSkipped) say(`${backfillSkipped} weekly occurrence(s) fell before now and were not invented as history.`);
-  if (unreachable) say(`${unreachable} child(ren) have a parent with no number, so nobody carries their messages and \`reach_id\` is empty — the database refuses a reach who cannot be dialled.`);
-  say(`**Consent.** ${mutedCount} person(s) muted in Sharwin — their membership is written with \`opted_out_at\` set, so the workspace sends them nothing. ${unapprovedCount} whose Sharwin sign-up was never approved are written down at \`known\` rather than made active. ${disputedCount} marked disputed, carried as a note on the membership.`);
-  if (overbooked) {
-    say(`**Over capacity.** ${overbooked} place(s) land on a generated class that is already full. Nothing in the database refuses them — \`app.book()\` is what enforces a capacity and a straight insert never calls it — so they are written and said out loud here instead: the diary will show those classes over their limit until somebody sorts them out.`);
+
+  // ── the timetable ─────────────────────────────────────────────────────────
+  say("## The timetable written");
+  say();
+  say("| title | day | at | minutes | coach | places | kind |");
+  say("| --- | --- | --- | --- | --- | --- | --- |");
+  for (const s of [...series].sort((a, b) => (a.weekday - b.weekday) || a.at.localeCompare(b.at) || a.title.localeCompare(b.title))) {
+    say(`| ${s.title} | ${WEEKDAY[s.weekday]} | ${s.at} | ${s.minutes ?? "—"} | ${s.host ? s.host.label : "**none**"} | ${s.capacity ?? "no limit"} | ${s.kind} |`);
+  }
+  say();
+  say(`Every series repeats \`every '1 week'\`, starts on its next weekday from ${today}, and carries \`until\` = the class's own end date (${series.filter((s) => s.until).length} have one).`);
+  say();
+
+  say("## The memories written");
+  say();
+  for (const m of memories) say(`- ${m.standing ? "**standing** · " : ""}\`${m.subject_key}\` — ${m.body}`);
+  say();
+  say("## The tasks written");
+  say();
+  for (const t of tasks) {
+    say(`- \`${t.subject_key}\` · due ${t.due instanceof Date ? istStamp(t.due) : t.due} · expires ${t.expires instanceof Date ? istStamp(t.expires) : t.expires}${t.attrs.every ? ` · repeats every ${t.attrs.every} at ${t.attrs.at}` : ""}`);
+    say(`  > ${t.instruction}`);
   }
   say();
 
@@ -1454,56 +1304,30 @@ async function exportRun(db, args, say, warn, warnings, out) {
   if (!warnings.size) say("None.");
   for (const [bucket, lines] of warnings) {
     say(`**${bucket}** — ${lines.length}`);
-    for (const l of lines.slice(0, 6)) say(`- ${l}`);
-    if (lines.length > 6) say(`- …and ${lines.length - 6} more`);
+    for (const l of lines) say(`- ${l}`);
     say();
   }
-  const clean = [
-    ["phones that would not normalise", (warnings.get("phones") || []).length],
-    ["recurrence rules that are not simple weekly", (warnings.get("recurrence") || []).length],
-    ["private series that could not be placed", (warnings.get("private") || []).length],
-    ["players with no name", (warnings.get("players") || []).length],
-    ["coach notes too many to fold in", (warnings.get("notes") || []).length],
-    ["sessions whose host had to be dropped", (warnings.get("hosts") || []).length],
-    ["people muted, unapproved or disputed in Sharwin", (warnings.get("consent") || []).length],
-    ["generated classes written over their capacity", (warnings.get("capacity") || []).length],
-  ].filter(([, n]) => n === 0).map(([w]) => w);
-  if (clean.length) { say(`Checked and clean: ${clean.join("; ")} — none.`); say(); }
 
-  say("## Five events");
-  say();
-  say("| title | starts (IST) | host | venue | seats |");
-  say("| --- | --- | --- | --- | --- |");
-  const personLabel = new Map([...people.values()].map((p) => [p.id, p.label]));
-  const sample = [...events].sort((a, b) => a.starts_at - b.starts_at)
-    .filter((_, i, arr) => i % Math.max(1, Math.floor(arr.length / 5)) === 0).slice(0, 5);
-  for (const e of sample) {
-    say(`| ${e.title} | ${istStamp(e.starts_at)} | ${e.host_id ? personLabel.get(e.host_id) || "—" : "—"} | ${e.attrs.venue || "—"} | ${e.capacity ?? "no limit"} |`);
-  }
-  say();
-  say("## Three memories");
-  say();
-  for (const m of [memories.find((x) => x.standing), memories.find((x) => x.subject_key?.startsWith("venue:")), memories.find((x) => x.subject_key?.startsWith("child:"))].filter(Boolean)) {
-    say(`- ${m.standing ? "**standing** · " : ""}\`${m.subject_key}\` — ${m.body}`);
-  }
-  say();
   say("## Idempotency");
   say();
-  say([
-    "This script is not idempotent and does not pretend to be: a second `--apply` would found a second workspace.",
-    `It is instead refused — \`--apply\` exits 2 without writing when a non-archived workspace called ${WORKSPACE_NAME} already stands on ${last4(LIVE_NUMBER)}, and again when any hard conflict stands.`,
-    "Every row it writes carries `attrs.imported` set to the run id, and `--undo <run-id>` ENDS that run: it archives the workspace and steps every membership down to `removed`, which is what frees those people and lets `--apply` run again.",
-    "It does not erase anything — bluetick archives a workspace rather than deleting it, so the events, bookings, memories and deeds all stay on the record, and so does anything real people wrote after the import.",
-    "Person rows that already existed are reused, never rewritten, and `--undo` leaves them where they were; only a person this run invented who ended up in no workspace at all is removed.",
-  ].join(" "));
+  say("This run is not idempotent and does not pretend to be. It refuses outright — exit 2, nothing written — unless the workspace exists, is not archived, has exactly one active owner and holds no series, event, booking, role, permit or role_holder at all. People who walked in by key before it ran are kept and relabelled by number. Running it twice is therefore impossible without emptying the timetable first, which is a deliberate act and not this script's to make.");
   say();
   if (args.mode !== "apply") {
-    say(`**Nothing was written.** The whole plan ran against ${args.bluetickEnv.replace(/.*[\\/]/, "…/")}'s database inside one transaction and that transaction ended in ROLLBACK${committed ? "" : " — proven by the counts above, which came from Postgres itself"}.`);
+    say(`**Nothing was written.** The whole plan ran against the real database inside one transaction; \`set constraints all immediate\` asked every deferred constraint the question a COMMIT would ask, and then the transaction ended in ROLLBACK. The counts above came from Postgres itself, a moment before it took them back.`);
   } else {
-    say(`**Committed.** Workspace \`${counts.workspaceId}\` now stands, not live. Inspect it in bluetick's /emu, then the founder flips \`live\`.`);
+    say(`**Committed.** Workspace \`${ws.id}\` now carries its people, its timetable and its three tasks. \`live\` is untouched (${ws.live}).`);
   }
 
-  process.stdout.write(`${out.join("\n")}\n`);
+  finish(out, args, run);
+}
+
+/** The value that turns up most often, or null. */
+function commonest(list) {
+  const n = new Map();
+  for (const x of list) if (x) n.set(x, (n.get(x) || 0) + 1);
+  let best = null, most = 0;
+  for (const [k, v] of n) if (v > most) { best = k; most = v; }
+  return best;
 }
 
 main().catch((e) => {
