@@ -1,7 +1,7 @@
-// Inline line icons for the studio shell — no icon dependency. Each is 24px,
+// Inline line icons for the app shells — no icon dependency. Each is 24px,
 // 1.5px stroke, `currentColor`, so they inherit the nav's `fg-2`/`ember`
-// colours and match the ivory line aesthetic. Keep them boring and legible: a
-// coach in his 40s reads these at a glance.
+// colours and match the ivory line aesthetic better than the old dingbats.
+// Keep them boring and legible: a coach in his 40s reads these at a glance.
 
 type IconProps = { className?: string };
 
@@ -20,6 +20,17 @@ function base(className?: string) {
   };
 }
 
+/** Today — a house. */
+export function HomeIcon({ className }: IconProps) {
+  return (
+    <svg {...base(className)}>
+      <path d="M3 10.5 12 3l9 7.5" />
+      <path d="M5 9.5V20a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9.5" />
+      <path d="M9.5 21v-6h5v6" />
+    </svg>
+  );
+}
+
 /** Schedule — a calendar. */
 export function CalendarIcon({ className }: IconProps) {
   return (
@@ -30,12 +41,116 @@ export function CalendarIcon({ className }: IconProps) {
   );
 }
 
-/** WhatsApp — the speech bubble with the handset in it. */
-export function WhatsAppIcon({ className }: IconProps) {
+/** Weekly classes — a repeat loop. */
+export function RepeatIcon({ className }: IconProps) {
   return (
     <svg {...base(className)}>
-      <path d="M12 3.5a8.5 8.5 0 0 0-7.3 12.9L3.5 20.5l4.2-1.1A8.5 8.5 0 1 0 12 3.5Z" />
-      <path d="M9.2 8.6c.2-.4.5-.4.8-.4h.5c.2 0 .4.1.5.4l.7 1.6c.1.2 0 .4-.1.6l-.5.6c.6 1.1 1.5 2 2.6 2.6l.6-.5c.2-.2.4-.2.6-.1l1.6.7c.3.1.4.3.4.5v.6c0 .4-.2.7-.5.9-.6.4-1.3.5-2 .3a8 8 0 0 1-5-5c-.2-.7-.1-1.4.3-2Z" />
+      <path d="M17 3.5 20.5 7 17 10.5" />
+      <path d="M20.5 7H7a3.5 3.5 0 0 0-3.5 3.5V12" />
+      <path d="M7 20.5 3.5 17 7 13.5" />
+      <path d="M3.5 17H17a3.5 3.5 0 0 0 3.5-3.5V12" />
+    </svg>
+  );
+}
+
+/** Players — two people. */
+export function PeopleIcon({ className }: IconProps) {
+  return (
+    <svg {...base(className)}>
+      <circle cx="9" cy="8" r="3.25" />
+      <path d="M3.5 20v-1a5.5 5.5 0 0 1 11 0v1" />
+      <path d="M16 5.2a3.25 3.25 0 0 1 0 5.6" />
+      <path d="M17.5 14.2A5.5 5.5 0 0 1 20.5 19v1" />
+    </svg>
+  );
+}
+
+/** Coaches — a person with a check (approved / on the roster). */
+export function CoachIcon({ className }: IconProps) {
+  return (
+    <svg {...base(className)}>
+      <circle cx="10" cy="8" r="3.25" />
+      <path d="M4 20v-1a6 6 0 0 1 9.5-4.85" />
+      <path d="m15 18 2 2 4-4" />
+    </svg>
+  );
+}
+
+/** Skills — a star. */
+export function StarIcon({ className }: IconProps) {
+  return (
+    <svg {...base(className)}>
+      <path d="m12 3.5 2.6 5.27 5.82.85-4.21 4.1.99 5.79L12 16.77 6.8 19.5l.99-5.79-4.21-4.1 5.82-.85Z" />
+    </svg>
+  );
+}
+
+/** Venues — a map pin. */
+export function MapPinIcon({ className }: IconProps) {
+  return (
+    <svg {...base(className)}>
+      <path d="M12 21s6.5-5.2 6.5-10a6.5 6.5 0 0 0-13 0c0 4.8 6.5 10 6.5 10Z" />
+      <circle cx="12" cy="11" r="2.25" />
+    </svg>
+  );
+}
+
+/** Billing — a receipt. */
+export function ReceiptIcon({ className }: IconProps) {
+  return (
+    <svg {...base(className)}>
+      <path d="M5.5 3.5h13v17l-2.2-1.4-2.15 1.4L12 20.6l-2.15 1.3-2.15-1.4L5.5 21z" />
+      <path d="M9 8h6M9 12h6" />
+    </svg>
+  );
+}
+
+/** Settings — a gear. */
+export function GearIcon({ className }: IconProps) {
+  return (
+    <svg {...base(className)}>
+      <circle cx="12" cy="12" r="2.75" />
+      <path d="M12 3v2.5M12 18.5V21M4.2 7.5l2.2 1.25M17.6 15.25l2.2 1.25M4.2 16.5l2.2-1.25M17.6 8.75l2.2-1.25" />
+    </svg>
+  );
+}
+
+/** A tick — done / confirmed states. */
+export function CheckIcon({ className }: IconProps) {
+  return (
+    <svg {...base(className)}>
+      <path d="m5 12.5 4.5 4.5L19 6.5" />
+    </svg>
+  );
+}
+
+/** A padlock — a step that isn't unlocked yet. */
+export function LockIcon({ className }: IconProps) {
+  return (
+    <svg {...base(className)}>
+      <rect x="4.5" y="10.5" width="15" height="10" rx="2" />
+      <path d="M8 10.5V7.5a4 4 0 0 1 8 0v3" />
+    </svg>
+  );
+}
+
+/** Notifications — a bell. */
+export function BellIcon({ className }: IconProps) {
+  return (
+    <svg {...base(className)}>
+      <path d="M6.5 9.5a5.5 5.5 0 0 1 11 0c0 4 1.5 5.5 1.5 5.5H5s1.5-1.5 1.5-5.5Z" />
+      <path d="M10 18.5a2 2 0 0 0 4 0" />
+    </svg>
+  );
+}
+
+/** More — three dots. */
+export function DotsIcon({ className }: IconProps) {
+  return (
+    <svg {...base(className)}>
+      <circle cx="5.5" cy="12" r="1.4" fill="currentColor" stroke="none" />
+      <circle cx="12" cy="12" r="1.4" fill="currentColor" stroke="none" />
+      <circle cx="18.5" cy="12" r="1.4" fill="currentColor" stroke="none" />
     </svg>
   );
 }

@@ -13,15 +13,15 @@ const faqs = [
   },
   {
     q: "Do you offer trial sessions?",
-    a: "Yes — every child's first group class is free, no payment details needed. Message us on WhatsApp with your child's name and age and we'll put them in the nearest class. There's also a discounted intro offer on your first private session.",
+    a: "Yes — every child's first group class is free, no payment details needed. Sign up, add your player and book the trial straight from the app. There's also a discounted intro offer on your first private session.",
   },
   {
     q: "What are the class timings?",
-    a: "Flexible slots run through the week — mornings, evenings and weekends. Message us on WhatsApp with your area and we'll send this week's group classes at the venue nearest you; exact private timings depend on your location and coach availability.",
+    a: "Flexible slots run through the week — mornings, evenings and weekends. Exact times depend on your location and coach availability; check the booking page for live slots.",
   },
   {
     q: "How does membership work?",
-    a: "One monthly payment, cancel anytime. Group plans hold a weekly routine — one, two or three classes a week. Private plans book 60-minute one-to-one sessions at your home, from once to four times a week. You can also pay per class without any membership; plans just work out cheaper. We'll set it all up with you over WhatsApp.",
+    a: "One monthly payment, cancel anytime. Group plans hold a weekly routine — one, two or three classes a week. Private plans book 60-minute one-to-one sessions at your home, from once to four times a week. You can also pay per class without any membership; plans just work out cheaper.",
   },
   {
     q: "What if I need to cancel a session?",
@@ -29,7 +29,7 @@ const faqs = [
   },
   {
     q: "Can I cancel my membership?",
-    a: "Any time — just say so in the WhatsApp thread. Your access runs to the end of the month you've paid for.",
+    a: "Any time, in two taps from your membership screen. Your access runs to the end of the month you've paid for.",
   },
   {
     q: "Do you coach children?",
@@ -41,11 +41,7 @@ const faqs = [
   },
   {
     q: "How do I pay for classes?",
-    a: "We send a payment link in the WhatsApp thread — UPI, cards and netbanking all work. Your place is held as soon as payment clears.",
-  },
-  {
-    q: "How do I book a class?",
-    a: "On WhatsApp. Tell us your area and we'll send you this week's classes; pick one and your place is held in the same thread — which also handles rescheduling, cancelling and questions. There's no app to install and no account to create.",
+    a: "Payment is handled securely in the app. When you choose a plan you're taken to Razorpay checkout — UPI, cards and netbanking all work — and your membership activates the moment payment clears.",
   },
 ];
 

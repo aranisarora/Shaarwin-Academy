@@ -1,19 +1,17 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import type { Venue } from "@/lib/data";
 import { venueDisplayName } from "@/lib/venue-display";
-import { whatsappLink } from "@/lib/contact";
 
 /** Dark Mapbox map with ember venue pins. Tap pin → mini card. Locate-me button shows user position. */
 export function VenueMap({
   venues,
   height = "480px",
   interactiveCard = true,
-  // The pin's card hands the visitor to WhatsApp, like every other button on
-  // the site — there is no public week to send them to.
-  ctaHref = whatsappLink("Hi! I'd like to book classes at one of your venues."),
-  ctaLabel = "Book on WhatsApp",
+  ctaHref = "/locations",
+  ctaLabel = "See classes",
   autoLocate = false,
 }: {
   venues: Venue[];
@@ -213,14 +211,12 @@ export function VenueMap({
             </button>
           </div>
           <div className="mt-3 flex flex-wrap items-center gap-3">
-            <a
+            <Link
               href={ctaHref}
-              target="_blank"
-              rel="noopener noreferrer"
               className="inline-flex min-h-11 items-center rounded-[8px] bg-ember px-4 text-sm font-semibold text-ivory hover:bg-ember-2"
             >
               {ctaLabel}
-            </a>
+            </Link>
             <a
               href={`https://www.google.com/maps/dir/?api=1&destination=${selected.lat},${selected.lng}`}
               target="_blank"

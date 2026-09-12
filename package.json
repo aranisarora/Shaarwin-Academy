@@ -7,16 +7,25 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "content": "node scripts/export-content.mjs"
+    "test": "vitest run",
+    "test:db": "vitest run --config vitest.db.config.ts",
+    "db:start": "supabase start",
+    "db:reset": "node scripts/test-db-reset.mjs",
+    "e2e": "playwright test",
+    "e2e:flows": "playwright test --config playwright.flows.config.ts",
+    "wa:provision": "node scripts/whatsapp/provision-templates.mjs",
+    "prepare": "git config core.hooksPath .githooks || exit 0"
   },
   "dependencies": {
+    "@supabase/ssr": "^0.12.0",
+    "@supabase/supabase-js": "^2.110.0",
     "mapbox-gl": "^3.25.0",
     "next": "16.2.10",
     "react": "19.2.4",
     "react-dom": "19.2.4"
   },
   "devDependencies": {
-    "@supabase/supabase-js": "^2.110.0",
+    "@playwright/test": "^1.61.1",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/react": "^19",
@@ -26,6 +35,7 @@
     "eslint-config-next": "16.2.10",
     "pg": "^8.22.0",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^2.1.9"
   }
 }

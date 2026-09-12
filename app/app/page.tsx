@@ -1,0 +1,223 @@
+import type { Metadata } from "next";
+import { Suspense } from "react";
+import Link from "next/link";
+import { requireUser } from "@/lib/auth";
+import { getSubscriptionSummary, formatRenewalDate } from "@/lib/billing";
+import { getMyBookings, splitBookings } from "@/lib/booking";
+import { formatSessionDate, nowMs } from "@/lib/academy-time";
+import { ClientShell } from "@/components/app/ClientShell";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { ButtonLink } from "@/components/ui/Button";
+import { Badge } from "@/components/ui/Badge";
+import { WhatsAppAssistantCard } from "@/components/app/WhatsAppAssistantCard";
+import { AddressDisplay } from "@/components/app/AddressDisplay";
+import { getMasteryMap, masteryLabel } from "@/lib/mastery";
+import { PageSkeleton, Skeleton } from "@/components/ui/Skeleton";
+
+export const metadata: Metadata = { title: "Home" };
+
+/**
+ * The header greeting. The only part of this screen's chrome that needs the
+ * profile, so it streams into the shell's title slot instead of making the
+ * whole shell wait on auth — `StudioShell` takes a `ReactNode` there, which is
+ * the same seam app/app/loading.tsx uses for its skeleton title.
+ */
+async function Greeting() {
+  const { profile } = await requireUser("/app");
+  return <>Hi, {profile.full_name.split(" ")[0]}</>;
+}
+
+/**
+ * Everything on the home screen that needs data. Streamed under the shell so
+ * the chrome paints before auth resolves, rather than waiting on the booking,
+ * billing and mastery queries behind it — `getMasteryMap` in particular can't
+ * join the Promise.all, since it needs the player ids it returns.
+ *
+ * The `requireUser` here is free: it shares one profile read with `Greeting`
+ * above via the React cache in lib/auth.ts.
+ */
+async function HomeBody() {
+  const { supabase, user } = await requireUser("/app");
+  const userId = user.id;
+
+  const [summary, bookings, playersRes] = await Promise.all([
+    getSubscriptionSummary(supabase, userId),
+    getMyBookings(supabase, userId),
+    supabase
+      .from("players")
+      .select("id,full_name")
+      .eq("client_id", userId)
+      .order("created_at"),
+  ]);
+  const players = playersRes.data ?? [];
+  const masteryMap = await getMasteryMap(
+    supabase,
+    players.map((p) => p.id),
+  );
+
+  // Sorted, so `[0]` really is the next session and each player's `find` below
+  // really is their soonest — both used to take whatever the query listed first.
+  const { upcoming } = splitBookings(bookings, nowMs());
+  const next = upcoming[0];
+  const attended = bookings.filter((b) => b.status === "attended").length;
+
+  const bookButtons = (
+    <div className="grid grid-cols-2 gap-3">
+      <ButtonLink href="/app/book" size="lg" className="w-full">
+        Book group class
+      </ButtonLink>
+      <ButtonLink href="/app/book/private" size="lg" className="w-full">
+        Book private class
+      </ButtonLink>
+    </div>
+  );
+
+  return (
+    <>
+      {next ? (
+        <div
+          data-mood="stage"
+          className="rounded-[12px] border border-line bg-surface p-6 text-fg"
+        >
+          <p className="label mb-2">Next session</p>
+          <p className="font-display tnum text-4xl">
+            {formatSessionDate(next.session.starts_at)}
+          </p>
+          <p className="mt-2 text-fg-2">
+            {next.session.classTitle}
+            {next.session.venueName
+              ? ` — ${next.session.venueName}`
+              : " — at your address"}
+            {next.session.coachName ? ` · Coach ${next.session.coachName}` : ""}
+          </p>
+          {next.session.address && (
+            <AddressDisplay
+              address={next.session.address}
+              audience="public"
+              className="mt-2"
+            />
+          )}
+          {(next.status === "waitlisted" || next.session.isPrivate) && (
+            <div className="mt-4 flex flex-wrap items-center gap-3">
+              {next.status === "waitlisted" && (
+                <Badge tone="ember">Waitlist</Badge>
+              )}
+              {next.session.isPrivate && <Badge>Private</Badge>}
+            </div>
+          )}
+          <div className="mt-4">
+            <ButtonLink href="/app/schedule" variant="ghost">
+              Manage booking
+            </ButtonLink>
+          </div>
+        </div>
+      ) : summary.active ? (
+        <div className="space-y-4">
+          <EmptyState
+            image="/images/empty-ivory.jpg"
+            copy="Nothing booked. The table's free — book a class."
+          />
+          {bookButtons}
+        </div>
+      ) : (
+        <EmptyState
+          image="/images/empty-ivory.jpg"
+          copy="Nothing booked. The table's free."
+        />
+      )}
+
+      {players.length > 0 && (
+        <div>
+          <p className="label mb-3">Your players</p>
+          <ul className="grid gap-3 sm:grid-cols-2">
+            {players.map((p) => {
+              const playerNext = upcoming.find((b) => b.playerId === p.id);
+              const mastery = masteryMap.get(p.id) ?? 0;
+              return (
+                <li key={p.id}>
+                  <Link
+                    href={`/app/players/${p.id}`}
+                    className="block rounded-[12px] border border-line bg-surface-2 p-4 transition-colors hover:border-ember"
+                  >
+                    <p className="font-medium">{p.full_name}</p>
+                    <p className="mt-1 text-sm text-fg-2">
+                      {playerNext
+                        ? `Next: ${formatSessionDate(playerNext.session.starts_at)}`
+                        : "Nothing booked"}
+                    </p>
+                    <p className="tnum mt-1 text-sm text-fg-2">
+                      Mastery {mastery}% · {masteryLabel(mastery)}
+                    </p>
+                    <p className="mt-1 text-xs text-ember">
+                      Progress &amp; notes →
+                    </p>
+                  </Link>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
+
+      {/* Already shown under the empty state in the no-booking + active-plan
+            branch — don't repeat it there. */}
+      {(next || !summary.active) && bookButtons}
+
+      <WhatsAppAssistantCard />
+
+      {summary.active ? (
+        <p className="text-sm text-fg-2">
+          {summary.planName} — renews {formatRenewalDate(summary.periodEnd)}
+          {summary.minutesBalance > 0
+            ? ` · ${summary.minutesBalance} private min left`
+            : ""}
+        </p>
+      ) : summary.hasAccountTrial || summary.openTrialPlayerIds.length > 0 ? (
+        <div className="rounded-[12px] border border-ember bg-surface-2 p-4">
+          <p className="font-display text-xl">
+            Your first group class is free — on us. 🏓
+          </p>
+          <p className="mt-1 text-sm text-fg-2">
+            Book the trial above — no payment details needed.
+          </p>
+        </div>
+      ) : (
+        <p className="text-sm text-fg-2">
+          No active membership —{" "}
+          <Link
+            href="/app/membership"
+            className="text-ember underline-offset-4 hover:underline"
+          >
+            see plans
+          </Link>
+          , or book a one-off class.
+        </p>
+      )}
+
+      {attended > 0 && (
+        <p className="tnum text-sm text-fg-2">
+          {attended} session{attended === 1 ? "" : "s"} played. Keep the streak
+          alive.
+        </p>
+      )}
+    </>
+  );
+}
+
+export default function AppHomePage() {
+  return (
+    <ClientShell
+      title={
+        <Suspense fallback={<Skeleton className="h-6 w-32" />}>
+          <Greeting />
+        </Suspense>
+      }
+    >
+      <div className="mx-auto max-w-2xl space-y-6">
+        <Suspense fallback={<PageSkeleton />}>
+          <HomeBody />
+        </Suspense>
+      </div>
+    </ClientShell>
+  );
+}

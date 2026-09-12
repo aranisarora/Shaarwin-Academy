@@ -225,3 +225,55 @@ The public site no longer links to `/schedule`; every "see this week" became a
 WhatsApp ask. Bluetick's diary endpoint itself still answers anyone who has the
 workspace key — which is public, in every wa.me link — so the private rows are
 still readable at the API. That is bluetick's to close, not this site's.
+
+## Reverted — 2026-09-12
+
+The founder asked for the old app back for the weekend: he handles logistics
+himself in it until he says otherwise, and starts on bluetick on Monday
+2026-09-14. This section is what was done and what Monday undoes.
+
+**The site.** `main`'s tree is `5e7b222` again — the last full-app commit —
+in one commit (`2a9946b`, "the full app comes back"), merged through a PR.
+The schedule-only site is preserved as tag `stripped-2026-09-12` and branch
+`stripped-schedule-only` (both `83badc3`); the never-merged Meta Cloud API
+work is tag `wa-cloud-api-wip`. `NEXT_PUBLIC_WHATSAPP_NUMBER` on Vercel went
+back to the Twilio number (Production and Preview). `BLUETICK_URL`,
+`BLUETICK_DIARY_KEY`, `NEXT_PUBLIC_BLUETICK_KEY` and `SCHEDULE_ADMIN_KEY` were
+left in place — the full app reads none of them and Monday needs them.
+`notify-worker` was re-scheduled in Sharwin's Supabase (the statement in the
+header of `supabase/functions/notify/index.ts`, project ref
+`jkjgdpifimvnptpxjixk`). WhatsApp from the app stays broken: the Twilio account
+answers 401. Push notifications work.
+
+**Bluetick.** Nothing was archived and nobody was removed. The workspace
+(`5c21e72f-490a-4994-ba03-fd3e4c7caa6e`) holds exactly what the founder saying
+"remove all pending tasks, I'm handling logistics myself until I say so" would
+leave: every pending task set `done` (the daily coach schedule, the import-gaps
+list, the first-priority question, the manager's three-hourly update), a
+standing memory in his own voice (`subject_key = bluetick-paused`,
+`actor = owner_said`) telling the assistant to answer everyone with one line —
+bluetick is not running for the academy, use the app at sharwinacademy.com —
+and the `schedule-page` memory retired because `/schedule` no longer exists on
+the reverted site. `live = false` for the record (nothing reads it). The diary
+endpoint keeps answering; the beat keeps laying the timetable down; both are
+harmless. One booking had been made through bluetick since the import (a
+private session already past) — nothing to carry back.
+
+**Monday — the flip.** In this order:
+
+1. Site: branch from `origin/main`, `git revert -m 1 <the merge of PR
+   revert-to-full-app>`, PR, merge. Before merging set
+   `NEXT_PUBLIC_WHATSAPP_NUMBER` back to `12402623933` on Production and
+   Preview (build-time). Verify `/schedule?key=…` answers and `/app` redirects
+   to `/schedule`.
+2. Sharwin's Supabase: `select cron.unschedule('notify-worker');`
+3. Bluetick, from outside a turn (`app.turn_opened_by = 'operator'`, no
+   workspace GUC): re-insert the `schedule-page` standing memory with the same
+   link; `live = true`.
+4. The founder writes "resume" to the number. The assistant retires the
+   `bluetick-paused` memory on his turn (an owner may retire what an owner
+   said). If it does not, supersede the row by hand. Anything he wants back —
+   the morning schedule — he asks for.
+5. Whatever changed in the app over the weekend (bookings, new people) exists
+   only in Sharwin's Supabase; there is no import into a workspace that already
+   has people. List it by `created_at` and enter what matters by hand.

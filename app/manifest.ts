@@ -1,21 +1,17 @@
 import type { MetadataRoute } from "next";
 
-/**
- * There is no installable app any more — this is a marketing site. The manifest
- * stays so an added-to-home-screen shortcut gets the academy's icon and name
- * rather than a screenshot of the page, but it opens at the front door and
- * wears the site's own ink chrome.
- */
 export default function manifest(): MetadataRoute.Manifest {
   return {
     name: "Sharwin Table Tennis Academy",
     short_name: "Sharwin TTA",
-    description:
-      "Table tennis coaching across Bengaluru — classes, coaches and venues.",
-    start_url: "/",
-    display: "browser",
-    background_color: "#0B0C0F",
-    theme_color: "#0B0C0F",
+    description: "Book table tennis classes and private coaching.",
+    start_url: "/app",
+    display: "standalone",
+    background_color: "#F4F1EA",
+    // Installed, this app opens at /app and never leaves the ivory shell, so the
+    // system chrome around it should be ivory too. Ink was left over from when
+    // the manifest described the marketing site.
+    theme_color: "#F4F1EA",
     icons: [
       { src: "/icon-192.png", sizes: "192x192", type: "image/png" },
       { src: "/icon-512.png", sizes: "512x512", type: "image/png" },

@@ -1,109 +1,86 @@
-# Sharwin TTA — the website
+# Sharwin TTA — Table Tennis Academy
 
-A marketing site with one live page on it: the public timetable.
-
-Everything that used to sit behind a login here — booking, memberships, the
-coach app, the founder's admin, the WhatsApp assistant, the notification
-worker, the whole Supabase schema — has moved to **bluetick**, which runs the
-academy over WhatsApp. What is left is the shop window, plus a read-only view
-of the week that bluetick publishes.
-
-There is no database in this repo, no auth, and no server-side writes.
+Production Next.js app built to the `sharwin-build` package plan: dark
+image-led marketing site (Stage mood), client booking app, coach app and
+founder admin (Studio mood), on Supabase + Razorpay + Mapbox.
 
 ## Run it
 
 ```bash
 npm install
 npm run dev        # http://localhost:3000
-npm run build      # production build
-npm run lint
+npm run build      # production build (passes clean)
 ```
 
-`.env.local` holds the handful of values the site reads — see `.env.example`,
-which lists every one of them and what it is for.
+`.env.local` is already populated with the Supabase URL/anon key and Mapbox
+token. Two secrets are still placeholders — see Go-live below.
 
-## The pages
+## What's live right now
 
-| Route | What it is |
-| --- | --- |
-| `/` | The landing page: hero, record, programmes, venues map, founder, coaches, testimonials, camp, hiring, FAQ, contact. |
-| `/schedule` | **The founder's week.** Every class — group, private and school — by day, in the old admin's cards, read-only, from bluetick. Behind a key: see below. |
-| `/locations` | The venues, nearest first, on the map. Each hands the visitor to WhatsApp. |
-| `/coaches` | The coaching roster. |
-| `/schools`, `/colleges` | The institutional pitches. |
-| `/legal/[slug]` | Terms, privacy, safeguarding. |
-| `/api/whatsapp` | The old Twilio number's autoresponder: "we've moved", plus a link to the new thread. Reads nothing, writes nothing. |
+- **Marketing site** `/` `/locations` `/coaches` `/schools` `/colleges` `/legal/*` — reads
+  venues, plans, classes and sessions from the live Supabase project (already
+  seeded: 3 venues, 3 plans, 4 classes, 4 weeks of sessions, settings).
+- **Auth** — email OTP + Google via Supabase; role-routed by `proxy.ts`
+  (client → `/app`, coach → `/coach`, founder → `/admin`).
+- **Client app** — home, map-first booking with booking sheet + waitlists,
+  schedule with cancel windows, private-session wizard (address → pin → slots
+  → confirm), membership screen, notifications inbox, `.ics` downloads.
+- **Coach app** — Today timeline with travel gaps, session sheet (attendance,
+  autosaving notes, report problem, can't-make-it cover), calendar, players.
+- **Founder admin** — KPI dashboard + exceptions inbox, master calendar with
+  unassigned lane + tap-to-reassign (+ lock), classes, coaches, clients,
+  settings editor.
+- **PWA** — manifest, icons, service worker (app-shell cache + push handlers).
+- **Design system** — Court Noir tokens, Fraunces/Inter, both moods. Defined in
+  `app/globals.css`; the card language is documented in
+  `components/app/ClassCard.tsx`.
 
-Every call to action on every page is the same WhatsApp link
-(`components/marketing/WhatsAppCta.tsx`). There is no sign-up, no login, and no
-booking screen: `/login`, `/signup`, `/app`, `/coach`, `/admin` and `/school`
-are redirects to `/schedule` so old links land somewhere sensible.
+Booking/cancel/private flows call the SQL RPCs first and fall back to
+equivalent JS logic until the migrations are applied, so the app works today
+and hardens automatically once you run the SQL.
 
-## The one locked page
+## Go-live checklist
 
-`/schedule` is the Schedule tab of the admin that used to live here, with
-everything you could do on it taken away: the same ivory shell, the same week
-strip, the same day cards and class cards, and a button back to WhatsApp. It
-lists the whole week, private lessons at people's homes included, so it is not
-public.
+1. **Apply the SQL** (Supabase SQL editor, in order):
+   `supabase/migrations/0001_rls_auth.sql` → `0002_billing.sql` →
+   `0003_booking_rpcs.sql` → `0004_assignment_engine.sql` →
+   `0005_private_reschedule.sql`. This turns on full RLS and the race-proof
+   RPC contracts (`book_session`, `assign_coach`, …).
+   Then apply `0011_razorpay_inr.sql` to switch pricing to INR (paise) and add
+   the Razorpay columns.
+2. **Service role key** — put the real `SUPABASE_SERVICE_ROLE_KEY` in
+   `.env.local` (Razorpay webhook mirroring uses it).
+3. **Coach accounts** — `node scripts/seed-live.mjs` is idempotent; rerun it
+   once the Supabase email rate limit clears (built-in SMTP allows ~2
+   emails/hour) to create the coach + demo-client accounts, or create users in
+   the dashboard with matching emails. To make an account the founder/coach,
+   set `profiles.role` accordingly.
+4. **Razorpay** — set `RAZORPAY_KEY_ID` + `RAZORPAY_KEY_SECRET`, run
+   `node scripts/razorpay-setup.mjs` (creates quarterly INR Plans and links
+   them to `plans`), then add a webhook in the Razorpay Dashboard pointed at
+   `/api/razorpay/webhook` (events: `subscription.activated`,
+   `subscription.charged`, `subscription.pending`, `subscription.halted`,
+   `subscription.cancelled`, `subscription.completed`) and set
+   `RAZORPAY_WEBHOOK_SECRET` to the secret you chose there. Until then, checkout
+   reports "billing not configured" and comp subscriptions keep booking working.
+5. **Notifications delivery** — deploy `supabase/functions/notify` on a
+   1-minute cron (command in the file header). Resend key is already in env.
+6. **Deploy** — Vercel: set the same env vars, `NEXT_PUBLIC_APP_URL` to the
+   real domain.
 
-There is no login. The door is a link: `/schedule?key=<SCHEDULE_ADMIN_KEY>`.
-`proxy.ts` swaps the key for a year-long HttpOnly cookie and drops it from the
-URL; the page (`lib/schedule-gate.ts`) trusts only the cookie, and with no key
-configured nobody gets in. Bluetick's assistant holds that link in a standing
-memory (`schedule-page`) and hands it to the owner only — rotate the key on
-Vercel and update the memory in the same breath.
+## Seeded logins
 
-## Where the data comes from
-
-Two sources, and they are different in kind.
-
-**1. Reference data — `content/academy.json`, checked in.**
-Venues, coaches, plans and products. They change a few times a year, so they
-are a file rather than a query. `lib/data.ts` reads it; `getVenues()`,
-`getCoaches()`, `getPlans()` and `getProducts()` still have the signatures the
-pages always used.
-
-Regenerate it from Sharwin's Supabase project (read-only) when the founder adds
-a venue or a coach:
-
-```bash
-npm run content        # node scripts/export-content.mjs
-```
-
-That script is the only thing in the repo that talks to Supabase. It also
-downloads any remote photo into `public/images/content/…` and rewrites the JSON
-to the local path, so the built site never depends on Supabase being up.
-Commit the JSON and the images together.
-
-**2. The timetable — bluetick, at request time.**
-`lib/bluetick.ts` GETs bluetick's diary endpoint (contract in `AGENTS.md`)
-with a 5-minute revalidate. It never throws: if the diary cannot be loaded,
-`/schedule` renders its shell with a stated gap, rather than an empty grid that
-would read as "no classes this week".
-
-## Deploying
-
-Vercel, region `hnd1` (`vercel.json`) — the audience is in Bengaluru.
-
-Set `BLUETICK_URL`, `BLUETICK_DIARY_KEY`, `NEXT_PUBLIC_BLUETICK_KEY`,
-`NEXT_PUBLIC_WHATSAPP_NUMBER`, `NEXT_PUBLIC_APP_URL`,
-`NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN`, `TWILIO_AUTH_TOKEN` and
-`SCHEDULE_ADMIN_KEY` (server-only; the founder's link carries it).
-
-The full cutover — and how to reverse it — is `docs/bluetick-cutover.md`.
+- Founder: `aa5925+seedfounder@ic.ac.uk` (log in via email OTP) — role is
+  already `founder`, lands on `/admin`.
 
 ## Layout
 
 ```
-app/                 routes: marketing pages, /schedule, /api/whatsapp
-components/marketing the sections the pages are built from
-components/shells    StageShell + StageHeader (the ink site chrome)
-components/ui        Button, Badge, Skeleton, Spinner, SectionDivider
-lib/bluetick.ts      the diary client — the one coupling to bluetick
-lib/data.ts          content/academy.json, typed
-lib/academy-time.ts  every date format on the site, in academy time
-content/academy.json venues, coaches, plans, products (generated)
-scripts/             export-content.mjs (read-only) · export-to-bluetick.mjs
-public/images/       photo library, including content/ (generated)
+app/                 routes (marketing, app, coach, admin, api)
+components/          ui kit, shells, marketing, app components
+lib/                 supabase clients, auth guard, data access, razorpay
+supabase/migrations  RLS + RPC contracts (apply in order)
+supabase/seed.sql    canonical idempotent seeds (service role)
+scripts/             seed-live.mjs · razorpay-setup.mjs · make-icons.mjs
+public/images/       generated Court Noir image library + real photos
 ```
