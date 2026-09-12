@@ -162,3 +162,47 @@ Once the academy has run a full month on bluetick with no reversal, the
 Supabase project can be paused (not deleted — the historical record of who
 attended what is a safeguarding artefact). `scripts/export-content.mjs` is the
 only thing that still reads it; freeze `content/academy.json` before pausing.
+
+## Re-imported — 2026-09-12
+
+The 2026-09-11 import was purged and redone. What was wrong with it: 52 weeks of
+occurrences laid down with nothing to extend them (5,929 events, 15,130 bookings for a
+business of ~115 a week), 468 phoneless school pupils written down at `known`, the old
+app's monthly plans and its "complimentary" arrangements carried as if they described how
+the academy charges. It does not: sessions are paid per session, at a rate per person the
+founder states.
+
+What the second run carries, and nothing else:
+
+- **People with numbers.** The owner; the 10 coaches (Coach role); every client household
+  with a usable +91 number (52); their named children (26), reached through the parent;
+  one manager. Not carried: 450 school pupils (a pupil appears the day a coach names one),
+  7 clients with no number, the school logins, three test/duplicate profiles, and 35
+  "player" rows that are just the parent's own name. One number was corrected
+  (`+9197420503111` → `+919742050311`).
+- **The standing timetable as rules.** bluetick now has a `series` table — the rule for
+  something that repeats — and lays its occurrences down five weeks ahead (`app.lay_down`,
+  run by the beat every minute). Each weekly class slot is one series (15 group, 40
+  school); each active private slot is one series with one **standing booking** (a
+  `booking` carrying `series_id` and no `event_id`) for the player. 99 series, 508
+  occurrences on the first lay-down.
+- **Three tasks for the owner**: `introduce-yourself` (what is loaded, what it can take off
+  his plate, ask what he wants first), `import-gaps` (the four coachless private slots,
+  Neev Academy's doubled 6:30 am slots, two other numbers named Stalin, the corrected
+  number, the seven people with no number — one at a time), and `coach-schedule` (every
+  day at 06:45, the day's sessions by coach).
+- **Three standing memories**: how money works, who Stalin is and how he likes things, and
+  where the public timetable lives.
+
+Money starts from zero. Nothing from before 12 September is owed or recorded.
+
+Invocation (the workspace must already exist and hold its owner; anybody who walked in by
+key since the purge is kept and relabelled by number):
+
+```
+node scripts/export-to-bluetick.mjs --dry-run --workspace <uuid> --manager +91…
+node scripts/export-to-bluetick.mjs --apply   --workspace <uuid> --manager +91…
+```
+
+The diary JSON now carries `series_id` and `series_title` on an occurrence instead of
+`series_key`; `lib/bluetick.ts` reads them and `/schedule` is unchanged.

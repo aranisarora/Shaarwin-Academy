@@ -30,7 +30,9 @@ export type DiaryEvent = {
   capacity: number | null;
   /** Bookings at status booked or attended. */
   taken: number;
-  series_key: string | null;
+  /** The rule this occurrence was laid down from, and that rule's own title; both null on a one-off. */
+  series_id: string | null;
+  series_title: string | null;
   attrs: DiaryEventAttrs;
 };
 
@@ -95,7 +97,8 @@ function parseDiary(body: unknown): Diary | null {
       host,
       capacity: typeof raw.capacity === "number" ? raw.capacity : null,
       taken: typeof raw.taken === "number" ? raw.taken : 0,
-      series_key: typeof raw.series_key === "string" ? raw.series_key : null,
+      series_id: typeof raw.series_id === "string" ? raw.series_id : null,
+      series_title: typeof raw.series_title === "string" ? raw.series_title : null,
       attrs: isRecord(raw.attrs) ? (raw.attrs as DiaryEventAttrs) : {},
     });
   }

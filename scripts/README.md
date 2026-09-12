@@ -172,3 +172,24 @@ conflict. `--undo <run-id>` is how a run is taken back: it archives that run's
 workspace and ends its memberships, which clears both refusals and leaves the
 record whole. It does not remove the rows the run wrote, and nothing removes
 them.
+
+## export-to-bluetick.mjs (2026-09-12)
+
+Fills an EXISTING bluetick workspace with the academy's people and standing timetable.
+Contacts and rules only: no history, no school pupils, no plans, no money.
+
+```
+node scripts/export-to-bluetick.mjs --dry-run --workspace <uuid> [--manager +91…] [--report FILE]
+node scripts/export-to-bluetick.mjs --apply   --workspace <uuid> [--manager +91…] [--report FILE]
+```
+
+- `--workspace` is required. The run refuses unless the workspace exists, is not archived,
+  has exactly one active owner and holds no series, event, booking, role, permit or
+  role_holder. Members who arrived by key beforehand are kept and relabelled by number.
+- `--dry-run` runs the whole plan inside a transaction that ends in ROLLBACK after
+  `set constraints all immediate`; its counts are real.
+- Sharwin is read with the service key from `.env.local`; bluetick is written as `runtime`
+  over `DATABASE_URL` from `--bluetick-env` (default the bluetick checkout's `.env.local`).
+- The report (markdown, also written to `--report`) carries a Data quality section naming
+  everything skipped and why, the people and the timetable written, and the three tasks.
+- There is no undo. Emptying a workspace is a deliberate act done by hand.
