@@ -4,115 +4,59 @@
 This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` before writing any code. Heed deprecation notices.
 <!-- END:nextjs-agent-rules -->
 
-# There is no database
+# Database
 
-This repo used to be a full-stack academy app on Supabase. It is not any more.
-Booking, memberships, coaches, schools, notifications and the WhatsApp
-assistant all moved to **bluetick**; the migrations, RPCs, RLS policies,
-generated types, edge functions and the test harness that went with them were
-deleted, not archived. Do not reintroduce them, and do not write SQL here.
+The canonical Postgres schema is **`supabase/schema.sql`** — a full snapshot of the `public` schema (tables, columns, types, enums, constraints, indexes, functions, RLS policies). **Read it before writing any SQL, migration, or Supabase `.from()/.select()` query** so column names, types, and enum values are exact. Do not infer the schema from migrations or app code — the live schema has drifted ahead of the migration files.
 
-Nothing in `app/`, `components/` or `lib/` may import `@supabase/*`. The site
-builds and serves with no credentials at all except a Mapbox token.
+## Live access — the Supabase CLI
 
-## Reference data is a file
-
-`content/academy.json` holds the venues, coaches, plans and products.
-`lib/data.ts` is the only reader; the pages call `getVenues()`, `getCoaches()`,
-`getPlans()`, `getProducts()`.
-
-It is regenerated, never hand-edited:
+The **Supabase CLI** is how you reach the live database. Project ref: `jkjgdpifimvnptpxjixk` (subdomain of `NEXT_PUBLIC_SUPABASE_URL`), already linked. Read the live schema with:
 
 ```bash
-npm run content        # node scripts/export-content.mjs
+supabase db dump --linked --schema public -f /tmp/live.sql
 ```
 
-That script reads `.env.local` by hand and SELECTs from Sharwin's Supabase
-project. **It is read-only and must stay read-only** — it is the last thread
-back to that database, and the database is still live for the historical
-record. It also downloads remote photos into `public/images/content/<kind>/`
-and rewrites the JSON to the local path, so a built site never fetches from
-Supabase Storage. Commit the JSON and the downloaded images together.
+That is the ground truth to check `supabase/schema.sql` against. It is read-only and safe to run any time.
 
-## The timetable comes from bluetick
+### Do NOT push migrations with the CLI
 
-`/schedule` reads bluetick's public diary through `lib/bluetick.ts`. Both sides
-are built to this text; change neither half alone.
+`supabase db push` is a deliberate no-op here — `[db.migrations] enabled = false` in `config.toml`. Do not "fix" that:
 
-```
-GET {BLUETICK_URL}/api/diary/{key}?from=YYYY-MM-DD&days=N
-  - {key} is workspace.key (three hyphenated words of 3–5 letters, e.g. ping-pong-club).
-  - from: a local date on the workspace's clock; default = today on that clock.
-    days: default 7, min 1, max 42.
-  - The window is [from 00:00, from+days 00:00) in the workspace timezone.
-200 application/json
-  { ok: true,
-    workspace: { name: string, timezone: string, key: string },
-    from: "YYYY-MM-DD", until: "YYYY-MM-DD",
-    events: [ { id: uuid, title: string,
-                starts_at: string, ends_at: string|null,     // ISO 8601 WITH the workspace's UTC offset, e.g. 2026-09-14T18:00:00+05:30 — never a trailing Z
-                status: "scheduled"|"cancelled",
-                host: { id: uuid, label: string }|null,      // label = member.label of host_id in this workspace
-                capacity: integer|null,
-                taken: integer,                              // count of booking rows at status booked or attended
-                series_key: string|null,
-                attrs: object } ]                            // event.attrs verbatim
-      sorted by starts_at asc, then title }
-404 { ok:false, error: string } — when no workspace with archived_at IS NULL carries that key with attrs->>'public_diary' = 'true'. Does not distinguish "no such key" from "not public".
-400 { ok:false, error } on a malformed from/days.
-Response headers: Cache-Control: public, s-maxage=300, stale-while-revalidate=900
-event.attrs as bluetick's import writes them (the page reads these keys):
-  { kind: "group"|"private"|"school", venue: string|null, venue_unit: string|null, address: string|null,
-    school: boolean, sharwin: { class_id: uuid|null, session_id: uuid|null, series_id: uuid|null }, imported: string }
+- `supabase/migrations/` has drifted behind the live DB and no longer replays from empty (0001 assumes a pre-migration base schema).
+- The remote migration history shares **no versions at all** with the local files — every remote entry is a timestamp (`20260808045552`) stamped by the tooling that applied it, and `supabase migration list --linked` shows all 74 local files as unapplied. Re-enabling the push would try to replay 0001 onwards against production.
+
+So a migration reaches production by **executing its SQL directly against the linked database** — the Studio SQL editor, or a `pg` script like `scripts/test-db-reset.mjs` pointed at the pooler. Add the file under `supabase/migrations/` for the record either way.
+
+## Keep it in sync
+
+Any change to the database schema **must** refresh and commit `supabase/schema.sql` in the same commit as the change:
+
+1. Add the migration under `supabase/migrations/` and apply it to production (see above).
+2. Update `supabase/schema.sql` **by hand**, in the file's existing style. It is a curated, readability-grouped snapshot — lowercase `create table`, explanatory comments, no GRANTs — not a `pg_dump`. Pasting a dump over it destroys the comments and breaks the regex parsing in `scripts/test-db-reset.mjs`.
+3. Verify both directions: `npm run db:reset` must rebuild the local DB from it cleanly, and the objects you changed must match `supabase db dump --linked`. Remember to include everything the migration touched — a dropped table's trigger functions do not go with it, and a dropped policy can orphan the comment above it.
+4. `git add supabase/schema.sql` and commit it alongside the change.
+
+### Types
+
+`lib/database.types.ts` is generated but **not** wholesale-replaceable:
+
+```bash
+npm run db:reset && supabase gen types typescript --local
 ```
 
-Three rules the page depends on:
+Diff that against the committed file and port the delta. Do not overwrite — the committed file drops the `graphql_public` schema and carries a hand-maintained block of PostgREST computed fields (`classes.location_label` and friends, migration 0052) that `gen types` does not emit.
 
-1. **Do not re-zone the timestamps.** `starts_at` already carries the academy's
-   UTC offset, so the date portion of the string *is* the day the class is on.
-   Converting to an instant and formatting through a timezone would move a
-   late-evening class across midnight the moment an offset ever changed. Use
-   `isoWallDate` / `formatIsoWallClock` in `lib/academy-time.ts`.
-2. **Show everything, to the founder only.** The whole week — group, private
-   (somebody's home address) and school (somebody's campus) — is on the page,
-   and the page is behind a key: `proxy.ts` swaps `?key=` for a cookie,
-   `lib/schedule-gate.ts` decides what the cookie is worth, and with no
-   `SCHEDULE_ADMIN_KEY` set nobody gets in. Nothing on the public site links to
-   `/schedule`; every "see this week" is a WhatsApp ask instead.
-3. **A failed fetch is a stated gap, never an empty grid.** `fetchDiary` returns
-   `{ ok: false, reason }` and never throws; the page says the timetable can't
-   be loaded and offers WhatsApp. An empty week silently reads as "no classes",
-   which is a lie that costs the academy attendance.
+A pre-commit hook (`.githooks/pre-commit`) blocks any commit that stages a file under `supabase/migrations/` without also staging `supabase/schema.sql`. The hook is enrolled automatically by the `prepare` npm script on `npm install` (it sets `core.hooksPath` to `.githooks`).
 
-## Dates
+# E2E testing harness
 
-Every user-facing timestamp goes through `lib/academy-time.ts` — the academy
-runs on Asia/Kolkata and the reader may not. ESLint enforces this: building an
-`Intl.DateTimeFormat` or calling `toLocaleString` under `app/`, `components/`
-or `lib/` is an error. Add the shape you need to `academy-time.ts` and import
-it.
+A local-only harness (never the live DB) proves the app's DB logic and screens. Full design + setup in `docs/testing-harness-plan.md`; runbook in `e2e/README.md`. One-time: install Docker Desktop, `npm run db:start`, `cp .env.test.local.example .env.test.local`.
 
-## Calls to action
+- **Layer 1 — `npm run test:db`** (Vitest, `tests/db/`): calls Postgres RPCs directly against local Supabase and asserts `notifications` rows. Seconds to run, no browser.
+- **Layer 2 — `npm run e2e:flows`** (Playwright, `e2e/flows/`): drives real screens for a few critical journeys. Thin by design; assertion depth lives in Layer 1.
 
-There is one, and it is `components/marketing/WhatsAppCta.tsx`. The number and
-the prefilled workspace key live in `lib/contact.ts`. One WhatsApp number
-serves every bluetick workspace, so the key has to lead the message or the
-assistant cannot tell which business the sender means — never hand-write a
-`wa.me` URL.
+Conventions (treat as definition-of-done, same as the schema-sync hook):
 
-## The old Twilio number
-
-`app/api/whatsapp/route.ts` is an autoresponder, not a bot: it validates
-`X-Twilio-Signature` and replies with one sentence pointing at the new number.
-It has no imports beyond `node:crypto`. Keep it that way.
-
-## Scripts
-
-- `scripts/export-content.mjs` — reference data, read-only (above).
-- `scripts/export-to-bluetick.mjs` — the one-time migration of the live
-  academy into bluetick. See `scripts/README.md`.
-
-## Cutover
-
-`docs/bluetick-cutover.md` is the runbook: what moved where, the switch in
-order, and how to reverse it.
+1. **Any change to a Postgres function or migration** must run `npm run test:db` and update the affected `tests/db/` specs in the same commit. A failing Layer-1 test is a real signal, not rot.
+2. **A new user-facing flow that queues notifications** ships with at least one `tests/db/` spec; a new screen in a critical journey extends or adds one `e2e/flows/` spec. Scenario factories (`e2e/lib/scenario.ts`) + role fixtures make the marginal cost small.
+3. **A new role** is a config change: add one seed user + one `getStorageState(role)`/fixture line — no harness code.

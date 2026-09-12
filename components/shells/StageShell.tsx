@@ -1,7 +1,6 @@
 import Image from "next/image";
 import Link from "next/link";
 import { StageHeader } from "./StageHeader";
-import { CONTACT_EMAIL, displayWhatsappNumber, whatsappLink } from "@/lib/contact";
 import logo from "@/public/images/logo.png";
 
 const footerCols = [
@@ -13,10 +12,11 @@ const footerCols = [
     ],
   },
   {
-    title: "Programmes",
+    title: "Account",
     links: [
-      { href: "/schools", label: "For schools" },
-      { href: "/colleges", label: "For colleges" },
+      { href: "/login", label: "Log in" },
+      { href: "/signup", label: "Sign up" },
+      { href: "/app", label: "Member app" },
     ],
   },
   {
@@ -52,20 +52,18 @@ export function StageShell({ children }: { children: React.ReactNode }) {
             <ul className="mt-4 space-y-1.5 text-sm text-fg-2">
               <li>
                 <a
-                  href={whatsappLink()}
-                  target="_blank"
-                  rel="noopener noreferrer"
+                  href="https://wa.me/918431435758"
                   className="transition-colors hover:text-fg"
                 >
-                  WhatsApp: {displayWhatsappNumber()}
+                  WhatsApp: +91 84314 35758
                 </a>
               </li>
               <li>
                 <a
-                  href={`mailto:${CONTACT_EMAIL}`}
+                  href="mailto:stalin@sharwinacademy.com"
                   className="transition-colors hover:text-fg"
                 >
-                  {CONTACT_EMAIL}
+                  stalin@sharwinacademy.com
                 </a>
               </li>
             </ul>

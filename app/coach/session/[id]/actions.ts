@@ -1,0 +1,379 @@
+"use server";
+
+import { revalidatePath } from "next/cache";
+import { createClient } from "@/lib/supabase/server";
+import { attendanceClosedReason, attendanceState } from "@/lib/attendance-window";
+import { effectiveCoachId, getCoachPreview } from "@/lib/coach-preview";
+
+type Result = { ok: boolean; error?: string };
+
+export type AttendanceStatus = "attended" | "no_show" | "confirmed";
+
+/**
+ * Where a founder's "view as coach" preview may and may not write.
+ *
+ * Every read on these screens already resolves through `effectiveCoachId`, but
+ * every write compared `session.coach_id` against the founder's own id — so a
+ * founder in preview met "Not your session." on the two jobs the preview exists
+ * to reach. That matters more than a cosmetic gap: /admin has no attendance
+ * marker and no assessment editor, so the preview is the founder's *only* route
+ * to correct a roster or a rating, and the wrap-up flow was built on the premise
+ * that wrong paperwork must have a way back in.
+ *
+ * The line is drawn at side effects, not at write-vs-read. Marking a register,
+ * amending a rating and editing the coach's own notes are corrections to a
+ * record, and resolve to the previewed coach. Anything that reaches a real
+ * person — telling a parent the coach has arrived, reporting running late,
+ * starting a cover search — refuses, because a founder looking around must not
+ * be able to fire it. `refuseInPreview` guards that second group.
+ */
+async function refuseInPreview(): Promise<Result | null> {
+  const preview = await getCoachPreview();
+  if (!preview) return null;
+  return {
+    ok: false,
+    error: `You're viewing as ${preview.coachName}. Exit the preview to do this for real.`,
+  };
+}
+
+async function requireCoachSession(sessionId: string) {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { supabase, user: null, session: null };
+  const coachId = await effectiveCoachId(user.id);
+  const { data: session } = await supabase
+    .from("class_sessions")
+    .select("id,coach_id,starts_at,ends_at")
+    .eq("id", sessionId)
+    .maybeSingle();
+  if (!session || session.coach_id !== coachId) {
+    return { supabase, user, session: null };
+  }
+  return { supabase, user, session };
+}
+
+export async function setAttendance(
+  bookingId: string,
+  status: AttendanceStatus
+): Promise<Result> {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Sign in first." };
+
+  const { data: booking } = await supabase
+    .from("bookings")
+    .select("id,session_id,class_sessions!inner(coach_id,starts_at,ends_at)")
+    .eq("id", bookingId)
+    .maybeSingle();
+  if (!booking) return { ok: false, error: "Booking not found." };
+
+  const session = booking.class_sessions;
+  const coachId = await effectiveCoachId(user.id);
+  if (session.coach_id !== coachId) return { ok: false, error: "Not your session." };
+
+  // Same window the roster renders and the backlog chases — see
+  // lib/attendance-window.ts for why all three had to become one literal.
+  const state = attendanceState(session.starts_at, session.ends_at, Date.now());
+  if (state !== "open") {
+    return { ok: false, error: attendanceClosedReason(state) ?? "Attendance is closed." };
+  }
+
+  const { error } = await supabase
+    .from("bookings")
+    .update({ status })
+    .eq("id", bookingId);
+  if (error) return { ok: false, error: "Couldn't save." };
+  revalidatePath(`/coach/session/${booking.session_id}`);
+  return { ok: true };
+}
+
+/**
+ * Mark a whole roster at once.
+ *
+ * "All present" used to call setAttendance in a `for` loop — one HTTP round
+ * trip, one auth check and one booking lookup PER CHILD, awaited in series. A
+ * twelve-player class on a school-hall connection was twelve sequential
+ * requests behind one tap, and a failure halfway left the roster half-written
+ * with no sign of which half. This is at most three updates (one per distinct
+ * status) after a single ownership check, and it is the only path the roster
+ * uses now — the per-row toggle included, as a batch of one.
+ *
+ * Ownership is checked once against the session, then every booking id is
+ * confirmed to belong to it. A caller who mixes in someone else's booking is
+ * refused outright rather than partly applied; RLS ("coaches write attendance")
+ * is still the backstop under that.
+ */
+export async function setAttendanceBulk(
+  sessionId: string,
+  updates: { bookingId: string; status: AttendanceStatus }[]
+): Promise<Result> {
+  if (updates.length === 0) return { ok: true };
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Sign in first." };
+
+  const { data: session } = await supabase
+    .from("class_sessions")
+    .select("id,coach_id,starts_at,ends_at")
+    .eq("id", sessionId)
+    .maybeSingle();
+  const coachId = await effectiveCoachId(user.id);
+  if (!session || session.coach_id !== coachId) {
+    return { ok: false, error: "Not your session." };
+  }
+
+  const state = attendanceState(session.starts_at, session.ends_at, Date.now());
+  if (state !== "open") {
+    return { ok: false, error: attendanceClosedReason(state) ?? "Attendance is closed." };
+  }
+
+  const ids = [...new Set(updates.map((u) => u.bookingId))];
+  const { data: owned } = await supabase
+    .from("bookings")
+    .select("id")
+    .eq("session_id", sessionId)
+    .in("id", ids);
+  if ((owned?.length ?? 0) !== ids.length) {
+    return { ok: false, error: "Some of those bookings aren't on this class." };
+  }
+
+  // Group by target status so the whole roster costs one update per status,
+  // not one per player.
+  const byStatus = new Map<AttendanceStatus, string[]>();
+  for (const u of updates) {
+    const list = byStatus.get(u.status) ?? [];
+    list.push(u.bookingId);
+    byStatus.set(u.status, list);
+  }
+
+  for (const [status, bookingIds] of byStatus) {
+    const { error } = await supabase
+      .from("bookings")
+      .update({ status })
+      .in("id", bookingIds);
+    if (error) return { ok: false, error: "Couldn't save attendance." };
+  }
+
+  revalidatePath(`/coach/session/${sessionId}`);
+  revalidatePath("/coach");
+  return { ok: true };
+}
+
+/**
+ * Add a walk-in player to a school class. Only the coach at the session knows
+ * who turned up, so they register the pupil (name + school grade) here. The
+ * add_school_player RPC (SECURITY DEFINER) creates the account-less player,
+ * enrols them in the weekly series and books them onto this + future sessions.
+ */
+export async function addSchoolPlayer(
+  sessionId: string,
+  fullName: string,
+  grade: number | null
+): Promise<Result & { bookingId?: string }> {
+  const blocked = await refuseInPreview();
+  if (blocked) return blocked;
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Sign in first." };
+  if (fullName.trim() === "") return { ok: false, error: "Enter the player's name." };
+
+  const { data: playerId, error } = await supabase.rpc("add_school_player", {
+    p_session: sessionId,
+    p_full_name: fullName.trim(),
+    // p_grade is a smallint with no DEFAULT, so the generated Args type marks it
+    // required and non-null — it can't express "required, but NULL is valid".
+    // Giving the SQL argument a DEFAULT NULL would drop this cast.
+    p_grade: grade as number,
+  });
+  if (error) return { ok: false, error: "Couldn't add the player. Try again." };
+
+  // The booking just created for this session — so the coach can mark
+  // attendance for the new pupil straight away.
+  const { data: booking } = await supabase
+    .from("bookings")
+    .select("id")
+    .eq("session_id", sessionId)
+    .eq("player_id", playerId as string)
+    .maybeSingle();
+
+  revalidatePath(`/coach/session/${sessionId}`);
+  return { ok: true, bookingId: booking?.id };
+}
+
+export async function saveSessionNotes(sessionId: string, notes: string): Promise<Result> {
+  const { supabase, session } = await requireCoachSession(sessionId);
+  if (!session) return { ok: false, error: "Not your session." };
+  const { error } = await supabase
+    .from("class_sessions")
+    .update({ coach_notes: notes })
+    .eq("id", sessionId);
+  return error ? { ok: false, error: "Couldn't save notes." } : { ok: true };
+}
+
+export async function confirmComing(sessionId: string): Promise<Result> {
+  const blocked = await refuseInPreview();
+  if (blocked) return blocked;
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Sign in first." };
+
+  const { error } = await supabase.rpc("coach_confirm_session", {
+    p_session: sessionId,
+  });
+  if (error) return { ok: false, error: "Couldn't confirm. Try again." };
+  revalidatePath(`/coach/session/${sessionId}`);
+  return { ok: true };
+}
+
+/**
+ * Mark arrival from inside the app.
+ *
+ * The source is fixed at 'tap' because this server action *is* the in-app path —
+ * the notification tray posts to /api/push-action ('push') and WhatsApp goes
+ * through lib/whatsapp/interactive.ts ('wa'). It used to take a source and a
+ * distance so geofenced auto-arrival could pass 'auto' and how far off the fix
+ * was; both are gone with the fence.
+ */
+export async function markArrived(sessionId: string): Promise<Result> {
+  const blocked = await refuseInPreview();
+  if (blocked) return blocked;
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Sign in first." };
+
+  const { error } = await supabase.rpc("coach_mark_arrival", {
+    p_session: sessionId,
+    p_late: false,
+    p_source: "tap",
+  });
+  if (error) return { ok: false, error: arrivalError(error.message) };
+  revalidatePath(`/coach/session/${sessionId}`);
+  return { ok: true };
+}
+
+/**
+ * The guards migration 0079 put on coach_mark_arrival. "Try again" is the wrong
+ * thing to tell someone whose session was cancelled — it's not a transient
+ * failure and retrying cannot fix it.
+ *
+ * This screen gates itself to [start-60min, ends_at] already (SessionArrival),
+ * so a coach only reaches the window error via a page left open a long time —
+ * which is exactly when saying so is useful.
+ */
+function arrivalError(message: string): string {
+  if (message.includes("session_cancelled")) return "That session was cancelled.";
+  if (message.includes("outside_arrival_window")) {
+    return "The arrival window for this session has passed — refresh to see where things stand.";
+  }
+  return "Couldn't send. Try again.";
+}
+
+export async function undoArrival(sessionId: string): Promise<Result> {
+  const blocked = await refuseInPreview();
+  if (blocked) return blocked;
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Sign in first." };
+
+  const { error } = await supabase.rpc("coach_undo_arrival", { p_session: sessionId });
+  if (error) {
+    if (error.message.includes("undo_window_passed")) {
+      return { ok: false, error: "Too late to undo — that's been sent." };
+    }
+    return { ok: false, error: "Couldn't undo. Try again." };
+  }
+  revalidatePath(`/coach/session/${sessionId}`);
+  return { ok: true };
+}
+
+export async function markRunningLate(sessionId: string): Promise<Result> {
+  const blocked = await refuseInPreview();
+  if (blocked) return blocked;
+
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) return { ok: false, error: "Sign in first." };
+
+  const { error } = await supabase.rpc("coach_mark_arrival", {
+    p_session: sessionId,
+    p_late: true,
+    p_source: "tap",
+  });
+  if (error) return { ok: false, error: arrivalError(error.message) };
+  // Reporting lateness now stamps coach_late_at and coach_confirmed_at
+  // (migration 0071), so this screen has something to re-render — it didn't
+  // before, which is why it was the one arrival action that never revalidated.
+  revalidatePath(`/coach/session/${sessionId}`);
+  return { ok: true };
+}
+
+export async function reportProblem(sessionId: string): Promise<Result> {
+  const blocked = await refuseInPreview();
+  if (blocked) return blocked;
+
+  const { supabase, user, session } = await requireCoachSession(sessionId);
+  if (!session || !user) return { ok: false, error: "Not your session." };
+
+  const { data: founders } = await supabase
+    .from("profiles")
+    .select("id")
+    .eq("role", "founder");
+  if (founders && founders.length > 0) {
+    await supabase.from("notifications").insert(
+      founders.map((f) => ({
+        user_id: f.id,
+        type: "session_issue",
+        title: "Coach reported a problem",
+        body: "Open the session to follow up.",
+        data: { session_id: sessionId, url: "/admin/schedule" },
+      }))
+    );
+  }
+  return { ok: true };
+}
+
+export async function cantMakeIt(sessionId: string): Promise<Result> {
+  // Not merely a write: handle_coach_dropout unassigns the session and starts a
+  // cover search across every active coach. `user.id` below is therefore always
+  // the real signed-in coach, never a previewed one.
+  const blocked = await refuseInPreview();
+  if (blocked) return blocked;
+
+  const { supabase, user, session } = await requireCoachSession(sessionId);
+  if (!session || !user) return { ok: false, error: "Not your session." };
+
+  const { error } = await supabase.rpc("handle_coach_dropout", {
+    p_coach: user.id,
+    p_from: session.starts_at,
+    p_to: session.ends_at,
+  });
+
+  if (error) {
+    // Never silently null the coach without the engine's cover search — that
+    // leaves the session unassigned with no replacement lined up.
+    return { ok: false, error: "Couldn't arrange cover — tell the founder directly." };
+  }
+  revalidatePath("/coach");
+  return { ok: true };
+}

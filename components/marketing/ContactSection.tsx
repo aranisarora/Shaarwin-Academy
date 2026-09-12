@@ -1,18 +1,16 @@
 import { Reveal } from "@/components/Reveal";
 import { ButtonLink } from "@/components/ui/Button";
-import { WhatsAppCta } from "@/components/marketing/WhatsAppCta";
-import { CONTACT_EMAIL, displayWhatsappNumber, whatsappLink } from "@/lib/contact";
 
 const tiles = [
   {
     label: "WhatsApp",
-    value: displayWhatsappNumber(),
-    href: whatsappLink(),
+    value: "+91 84314 35758",
+    href: "https://wa.me/918431435758",
   },
   {
     label: "Email",
-    value: CONTACT_EMAIL,
-    href: `mailto:${CONTACT_EMAIL}`,
+    value: "stalin@sharwinacademy.com",
+    href: "mailto:stalin@sharwinacademy.com",
   },
   {
     label: "Location",
@@ -56,11 +54,11 @@ export function ContactSection() {
 
       <Reveal>
         <div className="mt-10 flex flex-wrap gap-3">
-          <WhatsAppCta size="lg" message="Hi! I'd like to book table tennis classes.">
-            Book on WhatsApp
-          </WhatsAppCta>
-          <ButtonLink href="/locations" variant="ghost" size="lg">
-            Find a venue
+          <ButtonLink href="/signup" size="lg">
+            Book a class
+          </ButtonLink>
+          <ButtonLink href="/login" variant="ghost" size="lg">
+            Sign in
           </ButtonLink>
         </div>
       </Reveal>

@@ -6,10 +6,7 @@ export default function robots(): MetadataRoute.Robots {
     rules: {
       userAgent: "*",
       allow: "/",
-      // /schedule is the founder's page, behind a key (lib/schedule-gate.ts).
-      // It says noindex itself; this keeps a crawler from even asking. /app,
-      // /coach and /admin redirect there and need no line of their own.
-      disallow: ["/schedule"],
+      disallow: ["/app", "/coach", "/admin"],
     },
     sitemap: `${base}/sitemap.xml`,
   };
