@@ -169,8 +169,8 @@ export default function LandingPage() {
                   <span aria-hidden className="h-2 w-2 rounded-full bg-ivory" />
                   Book on WhatsApp
                 </WhatsAppCta>
-                <ButtonLink href="/schedule" variant="ghost" size="lg">
-                  See this week
+                <ButtonLink href="/locations" variant="ghost" size="lg">
+                  Find your nearest table
                 </ButtonLink>
               </div>
             </Reveal>
@@ -205,7 +205,7 @@ export default function LandingPage() {
         <div className="grid gap-6 md:grid-cols-2">
           <Reveal delay={80}>
             <Link
-              href="/schedule"
+              href="/locations"
               className="group relative block aspect-[3/2] overflow-hidden rounded-[12px] border border-line"
             >
               <Image
@@ -226,9 +226,8 @@ export default function LandingPage() {
             </Link>
           </Reveal>
           <Reveal delay={220}>
-            {/* Private coaching never appears on the public timetable — it
-                happens at somebody's home — so this one goes straight to the
-                thread where it gets arranged. */}
+            {/* Private coaching happens at somebody's home, so this one goes
+                straight to the thread where it gets arranged. */}
             <a
               href={whatsappLink(
                 "Hi! I'd like to book private table tennis coaching at my place."

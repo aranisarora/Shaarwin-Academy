@@ -73,9 +73,12 @@ Three rules the page depends on:
    Converting to an instant and formatting through a timezone would move a
    late-evening class across midnight the moment an offset ever changed. Use
    `isoWallDate` / `formatIsoWallClock` in `lib/academy-time.ts`.
-2. **Hide what is not public.** `attrs.school === true` is somebody's campus and
-   `attrs.kind === 'private'` is somebody's home address. Neither belongs on a
-   public page.
+2. **Show everything, to the founder only.** The whole week — group, private
+   (somebody's home address) and school (somebody's campus) — is on the page,
+   and the page is behind a key: `proxy.ts` swaps `?key=` for a cookie,
+   `lib/schedule-gate.ts` decides what the cookie is worth, and with no
+   `SCHEDULE_ADMIN_KEY` set nobody gets in. Nothing on the public site links to
+   `/schedule`; every "see this week" is a WhatsApp ask instead.
 3. **A failed fetch is a stated gap, never an empty grid.** `fetchDiary` returns
    `{ ok: false, reason }` and never throws; the page says the timetable can't
    be loaded and offers WhatsApp. An empty week silently reads as "no classes",

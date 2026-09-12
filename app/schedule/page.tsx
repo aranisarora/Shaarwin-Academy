@@ -1,32 +1,47 @@
-import type { Metadata } from "next";
-import Link from "next/link";
-import { StageShell } from "@/components/shells/StageShell";
-import { Badge } from "@/components/ui/Badge";
-import { WhatsAppCta } from "@/components/marketing/WhatsAppCta";
-import { fetchDiary, type DiaryEvent } from "@/lib/bluetick";
-import {
-  academyToday,
-  formatIsoWallClock,
-  formatWallDayLong,
-  isoWallDate,
-  shiftWallDate,
-} from "@/lib/academy-time";
+import type { Metadata, Viewport } from "next";
+import { cookies } from "next/headers";
+import { StudioShell } from "@/components/shells/StudioShell";
+import { GroupCard } from "@/components/ui/GroupCard";
+import { CalendarIcon, WhatsAppIcon } from "@/components/ui/icons";
+import { DayHeading } from "@/components/schedule/DayHeading";
+import { Locked } from "@/components/schedule/Locked";
+import { SessionCard } from "@/components/schedule/SessionCard";
+import { WeekStrip } from "@/components/schedule/WeekStrip";
+import { fetchDiary } from "@/lib/bluetick";
+import { whatsappThreadLink } from "@/lib/contact";
+import { GATE_COOKIE, cookieOpens } from "@/lib/schedule-gate";
+import { academyToday, nowMs } from "@/lib/academy-time";
+import { dayDensity, groupByDay, sessionView } from "@/lib/schedule-view";
+
+// The founder's week — the Schedule tab of the admin that used to live here,
+// with everything you could do on it taken away.
+//
+// It is his page and nobody else's: private lessons are at people's homes and
+// school classes are on somebody's campus, and the whole week lists both. So it
+// is behind a key (lib/schedule-gate.ts), not a login: the assistant hands him
+// a link on WhatsApp, and the link is the door.
+//
+// Nothing here writes, and nothing here opens. A class is changed by saying so
+// in the WhatsApp thread, which is where every button on this page goes.
 
 export const metadata: Metadata = {
   title: "Schedule",
-  description:
-    "This week's group table tennis classes across Bengaluru — times, venues and coaches. Book your place on WhatsApp.",
+  // A page behind a key is not a page for a crawler.
+  robots: { index: false, follow: false },
 };
 
-// The diary endpoint caches for five minutes; so does this page. A timetable
-// that is five minutes stale is fine. A timetable that is a day stale is not.
-export const revalidate = 300;
+// The studio shell is ivory, so Android tints the address bar to match rather
+// than to the ink the marketing site asks for.
+export const viewport: Viewport = { themeColor: "#F4F1EA" };
 
-/** How many days one screen of the timetable shows. */
+/** How many days one screen of the week shows. */
 const WINDOW_DAYS = 7;
 
-const WHATSAPP_MESSAGE =
-  "Hi! I'd like to book table tennis classes from the schedule.";
+/** Clears the sticky header and the week strip under it, so a day the strip
+ *  jumps to lands below them rather than behind them. */
+const DAY_SCROLL_MARGIN: React.CSSProperties = {
+  scrollMarginTop: "calc(var(--header-h) + 8rem)",
+};
 
 /** A "YYYY-MM-DD" that is actually a date, or null. */
 function parseFrom(value: string | string[] | undefined): string | null {
@@ -41,227 +56,143 @@ function parseFrom(value: string | string[] | undefined): string | null {
   return round ? raw : null;
 }
 
-/**
- * The public timetable is the group programme. A private lesson is somebody's
- * home address and a school session is somebody's campus — neither is a class a
- * stranger can turn up to, and neither belongs on a public page.
- */
-function isPublicEvent(e: DiaryEvent): boolean {
-  return e.attrs.school !== true && e.attrs.kind !== "private";
-}
-
-function venueOf(e: DiaryEvent): string {
-  const venue = typeof e.attrs.venue === "string" ? e.attrs.venue.trim() : "";
-  if (!venue) return "Venue to be confirmed";
-  const unit =
-    typeof e.attrs.venue_unit === "string" ? e.attrs.venue_unit.trim() : "";
-  return unit ? `${venue} ${unit}` : venue;
-}
-
-function timeRange(e: DiaryEvent): string {
-  const start = formatIsoWallClock(e.starts_at);
-  const end = e.ends_at ? formatIsoWallClock(e.ends_at) : "";
-  return end ? `${start} – ${end}` : start;
-}
-
-function EventRow({ event }: { event: DiaryEvent }) {
-  const cancelled = event.status === "cancelled";
-  const places =
-    event.capacity !== null && event.capacity > 0
-      ? `${event.taken} of ${event.capacity} places`
-      : null;
-
+/** The way back. The thread itself, with nothing typed into it: he already has
+ *  the conversation, and this is the button that returns him to it. */
+function BackToWhatsApp({ size = "sm" }: { size?: "sm" | "lg" }) {
+  const sizing = size === "lg" ? "min-h-11 px-5 text-base" : "min-h-9 px-3 text-sm";
   return (
-    <li className="flex flex-wrap items-baseline gap-x-4 gap-y-1 border-t border-line py-3 first:border-t-0">
-      <p
-        className={`tnum w-40 shrink-0 text-sm ${
-          cancelled ? "text-slate line-through" : "text-ivory"
-        }`}
-      >
-        {timeRange(event)}
-      </p>
-      <div className="min-w-0 flex-1">
-        <p
-          className={`text-sm font-medium ${
-            cancelled ? "text-slate line-through" : "text-ivory"
-          }`}
-        >
-          {event.title}
-        </p>
-        <p className="mt-0.5 text-sm text-smoke">
-          {event.host ? `Coach ${event.host.label}` : "Coach to be confirmed"}
-        </p>
-      </div>
-      <div className="flex items-center gap-3">
-        {places && <p className="tnum text-sm text-smoke">{places}</p>}
-        {cancelled && <Badge tone="err">Cancelled</Badge>}
-      </div>
-    </li>
+    <a
+      href={whatsappThreadLink()}
+      target="_blank"
+      rel="noopener noreferrer"
+      className={`pressable inline-flex items-center justify-center gap-2 rounded-[8px] bg-ember font-semibold text-ivory hover:bg-ember-2 ${sizing}`}
+    >
+      <WhatsAppIcon className="h-4 w-4" />
+      {size === "lg" ? "Back to WhatsApp" : "WhatsApp"}
+    </a>
   );
 }
 
-function DaySection({
-  date,
-  events,
-}: {
-  date: string;
-  events: DiaryEvent[];
-}) {
-  // Venues keep the order their first class of the day appears in, so an
-  // evening venue never jumps above a morning one.
-  const byVenue = new Map<string, DiaryEvent[]>();
-  for (const event of events) {
-    const venue = venueOf(event);
-    const list = byVenue.get(venue) ?? [];
-    list.push(event);
-    byVenue.set(venue, list);
-  }
-
-  return (
-    <section className="border-t border-line py-8">
-      <h2 className="font-display text-2xl text-ivory md:text-3xl">
-        {formatWallDayLong(date)}
-      </h2>
-      {byVenue.size === 0 ? (
-        <p className="mt-3 text-smoke">No classes</p>
-      ) : (
-        <div className="mt-5 space-y-6">
-          {[...byVenue.entries()].map(([venue, venueEvents]) => (
-            <div
-              key={venue}
-              className="rounded-[12px] border border-line bg-ink-2 p-5"
-            >
-              <p className="label mb-3">{venue}</p>
-              <ul>
-                {venueEvents.map((event) => (
-                  <EventRow key={event.id} event={event} />
-                ))}
-              </ul>
-            </div>
-          ))}
-        </div>
-      )}
-    </section>
-  );
-}
+// Schedule is the only screen; WhatsApp is the only other place to go.
+const tabs = [
+  { href: "/schedule", label: "Schedule", icon: <CalendarIcon />, active: true },
+  { href: whatsappThreadLink(), label: "WhatsApp", icon: <WhatsAppIcon />, external: true },
+];
 
 export default async function SchedulePage({
   searchParams,
 }: {
   searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
 }) {
-  const params = await searchParams;
-  const requestedFrom = parseFrom(params.from);
+  const [params, jar] = await Promise.all([searchParams, cookies()]);
+  const open = await cookieOpens(jar.get(GATE_COOKIE)?.value);
 
+  if (!open) {
+    return (
+      <StudioShell title="Schedule" tabs={tabs}>
+        <Locked />
+      </StudioShell>
+    );
+  }
+
+  const requestedFrom = parseFrom(params.from);
   const result = await fetchDiary({
     from: requestedFrom ?? undefined,
     days: WINDOW_DAYS,
   });
 
-  // The window the page draws. When bluetick answered, its `from` is the
-  // authority — it resolved "today" on the academy's own clock, which a
-  // visitor's browser and this server may both get wrong.
-  const anchor = result.ok ? result.diary.from : requestedFrom ?? academyToday();
-  const days = Array.from({ length: WINDOW_DAYS }, (_, i) =>
-    shiftWallDate(anchor, i)
-  );
-
-  const eventsByDay = new Map<string, DiaryEvent[]>(days.map((d) => [d, []]));
-  if (result.ok) {
-    for (const event of result.diary.events) {
-      if (!isPublicEvent(event)) continue;
-      const day = isoWallDate(event.starts_at);
-      eventsByDay.get(day)?.push(event);
-    }
-  }
-
-  const prev = shiftWallDate(anchor, -WINDOW_DAYS);
-  const next = shiftWallDate(anchor, WINDOW_DAYS);
+  // When bluetick answered, its `from` is the authority — it resolved "today"
+  // on the academy's own clock.
+  const today = academyToday();
+  const anchor = result.ok ? result.diary.from : (requestedFrom ?? today);
+  const now = nowMs();
+  const sessions = result.ok ? result.diary.events.map((e) => sessionView(e, now)) : [];
+  const days = groupByDay(sessions, today);
 
   return (
-    <StageShell>
-      <div className="mx-auto max-w-4xl px-6 pb-32 pt-28">
-        <p className="label mb-3">Schedule</p>
-        <h1 className="font-display mb-4 text-4xl md:text-6xl">This week</h1>
-        <p className="mb-10 max-w-[52ch] text-lg text-smoke">
-          Group classes across Bengaluru, in academy time. To book a place, ask
-          a question or cancel, message us on WhatsApp — that&apos;s where
-          everything happens now.
-        </p>
-
-        <nav
-          aria-label="Week"
-          className="flex items-center justify-between gap-4 border-y border-line py-4"
-        >
-          <Link
-            href={`/schedule?from=${prev}`}
-            className="inline-flex min-h-11 items-center text-sm text-fg-2 transition-colors hover:text-fg"
-          >
-            ← Previous week
-          </Link>
-          <p className="tnum text-sm text-smoke">
-            {formatWallDayLong(days[0])} – {formatWallDayLong(days[days.length - 1])}
-          </p>
-          <Link
-            href={`/schedule?from=${next}`}
-            className="inline-flex min-h-11 items-center text-sm text-fg-2 transition-colors hover:text-fg"
-          >
-            Next week →
-          </Link>
-        </nav>
+    <StudioShell title="Schedule" tabs={tabs} actions={<BackToWhatsApp />}>
+      <div className="space-y-3">
+        <div className="sticky top-[var(--header-h)] z-20 -mx-5 border-b border-line bg-surface px-5 pb-2 pt-1.5">
+          <WeekStrip anchor={anchor} today={today} days={dayDensity(sessions)} />
+        </div>
 
         {!result.ok && (
-          <div className="mt-8 rounded-[12px] border border-ember bg-ink-2 p-6">
-            <p className="font-display text-xl text-ivory">
-              The timetable can&apos;t be loaded right now.
+          <div className="rounded-[12px] border border-ember bg-surface-2 p-4 text-sm">
+            <p className="font-medium text-fg">The schedule can&apos;t be loaded right now.</p>
+            <p className="mt-1 text-fg-2">
+              Bluetick didn&apos;t answer ({result.reason}). Try again in a minute.
             </p>
-            <p className="mt-2 max-w-[52ch] text-smoke">
-              Message us on WhatsApp for this week&apos;s classes — we&apos;ll
-              send you the times for your venue.
-            </p>
-            <WhatsAppCta
-              className="mt-5"
-              message="Hi! I'd like to book table tennis classes. Could you send me this week's times?"
-            >
-              Message us on WhatsApp
-            </WhatsAppCta>
           </div>
         )}
 
-        {result.ok && (
-          <div className="mt-2">
-            {days.map((day) => (
-              <DaySection
-                key={day}
-                date={day}
-                events={eventsByDay.get(day) ?? []}
-              />
-            ))}
+        {result.ok && sessions.length === 0 && (
+          <div className="rounded-[12px] border border-line bg-surface-2 p-4 text-sm text-fg-2">
+            <p className="font-medium text-fg">Nothing on this week.</p>
+            <p className="mt-1">
+              The timetable is written down five weeks ahead, so a week further
+              out than that stays empty until it is.
+            </p>
           </div>
         )}
 
-        <div className="mt-12 rounded-[12px] border border-line bg-ink-2 p-8 text-center md:p-12">
-          <h2 className="font-display text-3xl md:text-4xl">
-            Want a place in one of these?
-          </h2>
-          <p className="mx-auto mt-3 max-w-md text-smoke">
-            Booking, rescheduling and questions all happen in one WhatsApp
-            thread. Tap below and tell us which class.
+        <div className="space-y-2">
+          {days.map((day) => {
+            const on = day.rows.filter((s) => !s.cancelled);
+            const off = day.rows.filter((s) => s.cancelled);
+            return (
+              // The scroll target the week strip aims at.
+              <div key={day.key} id={`day-${day.key}`} style={DAY_SCROLL_MARGIN}>
+                <GroupCard
+                  title={<DayHeading label={day.label} isToday={day.isToday} />}
+                  meta={`${on.length} class${on.length === 1 ? "" : "es"}`}
+                >
+                  <div className="grid gap-2 p-3 sm:grid-cols-2 lg:grid-cols-3">
+                    {on.map((s) => (
+                      <SessionCard key={s.id} session={s} />
+                    ))}
+                    {on.length === 0 && off.length > 0 && (
+                      <p className="col-span-full px-1 text-sm text-fg-2">
+                        Nothing running — everything on this day was called off.
+                      </p>
+                    )}
+                    {/* The cancellations, folded into a line: the count is the
+                        fact he needs while scanning, the cards the fact he
+                        needs only once he has stopped. A native disclosure, so
+                        it works with no script. */}
+                    {off.length > 0 && (
+                      <details className="group col-span-full">
+                        <summary className="pressable flex min-h-11 list-none items-center gap-1.5 rounded-[8px] px-1 text-sm text-fg-2 hover:text-ember [&::-webkit-details-marker]:hidden">
+                          <span aria-hidden className="transition-transform group-open:rotate-90">
+                            ›
+                          </span>
+                          {off.length} cancelled
+                        </summary>
+                        <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                          {off.map((s) => (
+                            <SessionCard key={s.id} session={s} />
+                          ))}
+                        </div>
+                      </details>
+                    )}
+                  </div>
+                </GroupCard>
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="rounded-[12px] border border-line bg-surface-2 p-5 text-center">
+          <p className="font-semibold">Need to change something?</p>
+          <p className="mx-auto mt-1 max-w-sm text-sm text-fg-2">
+            This page only shows the week. Moving a class, swapping a coach or
+            calling one off all happen in your WhatsApp thread — just say so
+            there.
           </p>
-          <div className="mt-6 flex justify-center">
-            <WhatsAppCta size="lg" message={WHATSAPP_MESSAGE}>
-              Book or ask on WhatsApp
-            </WhatsAppCta>
+          <div className="mt-4 flex justify-center">
+            <BackToWhatsApp size="lg" />
           </div>
         </div>
       </div>
-
-      {/* Sticky bottom CTA — phones only */}
-      <div className="pb-safe fixed inset-x-0 bottom-0 z-30 border-t border-line bg-ink/95 p-3 backdrop-blur sm:hidden">
-        <WhatsAppCta className="w-full" message={WHATSAPP_MESSAGE}>
-          Book or ask on WhatsApp
-        </WhatsAppCta>
-      </div>
-    </StageShell>
+    </StudioShell>
   );
 }

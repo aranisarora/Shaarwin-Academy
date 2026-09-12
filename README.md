@@ -27,8 +27,8 @@ which lists every one of them and what it is for.
 | Route | What it is |
 | --- | --- |
 | `/` | The landing page: hero, record, programmes, venues map, founder, coaches, testimonials, camp, hiring, FAQ, contact. |
-| `/schedule` | **The timetable.** This week's group classes by day and venue, from bluetick. Prev/next week. Server-rendered, cached 5 minutes. |
-| `/locations` | The venues, nearest first, on the map. Each links to `/schedule`. |
+| `/schedule` | **The founder's week.** Every class — group, private and school — by day, in the old admin's cards, read-only, from bluetick. Behind a key: see below. |
+| `/locations` | The venues, nearest first, on the map. Each hands the visitor to WhatsApp. |
 | `/coaches` | The coaching roster. |
 | `/schools`, `/colleges` | The institutional pitches. |
 | `/legal/[slug]` | Terms, privacy, safeguarding. |
@@ -38,6 +38,21 @@ Every call to action on every page is the same WhatsApp link
 (`components/marketing/WhatsAppCta.tsx`). There is no sign-up, no login, and no
 booking screen: `/login`, `/signup`, `/app`, `/coach`, `/admin` and `/school`
 are redirects to `/schedule` so old links land somewhere sensible.
+
+## The one locked page
+
+`/schedule` is the Schedule tab of the admin that used to live here, with
+everything you could do on it taken away: the same ivory shell, the same week
+strip, the same day cards and class cards, and a button back to WhatsApp. It
+lists the whole week, private lessons at people's homes included, so it is not
+public.
+
+There is no login. The door is a link: `/schedule?key=<SCHEDULE_ADMIN_KEY>`.
+`proxy.ts` swaps the key for a year-long HttpOnly cookie and drops it from the
+URL; the page (`lib/schedule-gate.ts`) trusts only the cookie, and with no key
+configured nobody gets in. Bluetick's assistant holds that link in a standing
+memory (`schedule-page`) and hands it to the owner only — rotate the key on
+Vercel and update the memory in the same breath.
 
 ## Where the data comes from
 
@@ -62,10 +77,10 @@ to the local path, so the built site never depends on Supabase being up.
 Commit the JSON and the images together.
 
 **2. The timetable — bluetick, at request time.**
-`lib/bluetick.ts` GETs bluetick's public diary endpoint (contract in
-`AGENTS.md`) with a 5-minute revalidate. It never throws: if the diary cannot
-be loaded, `/schedule` renders its shell with a stated gap and a WhatsApp link,
-rather than an empty grid that would read as "no classes this week".
+`lib/bluetick.ts` GETs bluetick's diary endpoint (contract in `AGENTS.md`)
+with a 5-minute revalidate. It never throws: if the diary cannot be loaded,
+`/schedule` renders its shell with a stated gap, rather than an empty grid that
+would read as "no classes this week".
 
 ## Deploying
 
@@ -73,7 +88,8 @@ Vercel, region `hnd1` (`vercel.json`) — the audience is in Bengaluru.
 
 Set `BLUETICK_URL`, `BLUETICK_DIARY_KEY`, `NEXT_PUBLIC_BLUETICK_KEY`,
 `NEXT_PUBLIC_WHATSAPP_NUMBER`, `NEXT_PUBLIC_APP_URL`,
-`NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN` and `TWILIO_AUTH_TOKEN`.
+`NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN`, `TWILIO_AUTH_TOKEN` and
+`SCHEDULE_ADMIN_KEY` (server-only; the founder's link carries it).
 
 The full cutover — and how to reverse it — is `docs/bluetick-cutover.md`.
 

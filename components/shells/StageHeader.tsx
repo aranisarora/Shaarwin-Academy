@@ -6,8 +6,8 @@ import { useEffect, useState } from "react";
 import { whatsappLink } from "@/lib/contact";
 import logo from "@/public/images/logo.png";
 
+// No Schedule here: /schedule is the founder's own page now, behind a key.
 const nav = [
-  { href: "/schedule", label: "Schedule" },
   { href: "/locations", label: "Locations" },
   { href: "/coaches", label: "Coaches" },
 ];

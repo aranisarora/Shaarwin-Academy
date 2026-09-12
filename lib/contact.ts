@@ -52,3 +52,12 @@ export function whatsappLink(message: string = DEFAULT_MESSAGE): string {
   const query = text ? `?text=${encodeURIComponent(text)}` : "";
   return `https://wa.me/${WHATSAPP_NUMBER}${query}`;
 }
+
+/**
+ * The thread itself, with nothing typed into it — for somebody who already has
+ * the conversation on their phone: the founder, coming back from his schedule.
+ * No sentence and no key, because bluetick already knows who he is.
+ */
+export function whatsappThreadLink(): string {
+  return `https://wa.me/${WHATSAPP_NUMBER}`;
+}

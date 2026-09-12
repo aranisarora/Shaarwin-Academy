@@ -38,7 +38,7 @@ const features = [
   },
   {
     title: "Booking by message",
-    body: "No app, no account. Book, reschedule or cancel in one WhatsApp thread — the week is always on the schedule page.",
+    body: "No app, no account. Book, reschedule or cancel in one WhatsApp thread — ask and we send you the week's times.",
   },
 ];
 

@@ -206,3 +206,22 @@ node scripts/export-to-bluetick.mjs --apply   --workspace <uuid> --manager +91�
 
 The diary JSON now carries `series_id` and `series_title` on an occurrence instead of
 `series_key`; `lib/bluetick.ts` reads them and `/schedule` is unchanged.
+
+## The schedule is the founder's — 2026-09-12
+
+`/schedule` stopped being a public timetable. It is the Schedule tab of the old
+admin, read-only: every class this week — group, private and school — by day,
+in the same cards, with nothing to do to them and a button back to WhatsApp.
+Private lessons are at people's homes, so the page is behind a key:
+
+- `SCHEDULE_ADMIN_KEY` on Vercel (Production and Preview). Server-only. With
+  no key set nobody gets in, the founder included — set it before promoting.
+- The link is `https://sharwinacademy.com/schedule?key=<SCHEDULE_ADMIN_KEY>`.
+  `proxy.ts` turns the key into a year-long cookie and drops it from the URL.
+- The assistant's standing memory `schedule-page` in bluetick carries that link
+  and hands it to the owner only. Rotating the key means updating the memory.
+
+The public site no longer links to `/schedule`; every "see this week" became a
+WhatsApp ask. Bluetick's diary endpoint itself still answers anyone who has the
+workspace key — which is public, in every wa.me link — so the private rows are
+still readable at the API. That is bluetick's to close, not this site's.
