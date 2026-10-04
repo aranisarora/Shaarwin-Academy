@@ -80,7 +80,7 @@ export async function getSubscriptionSummary(
   clientId: string,
   graceDays = 7
 ): Promise<SubscriptionSummary> {
-  const [{ data: subs }, { data: ledger }, { data: credits }, { data: usedCredits }] = await Promise.all([
+  const [{ data: subs }, { data: balance }, { data: credits }, { data: usedCredits }] = await Promise.all([
     supabase
       .from("subscriptions")
       .select(
@@ -89,10 +89,7 @@ export async function getSubscriptionSummary(
       .eq("client_id", clientId)
       .in("status", ["active", "trialing", "past_due"])
       .order("created_at", { ascending: false }),
-    supabase
-      .from("private_credit_ledger")
-      .select("delta_minutes")
-      .eq("client_id", clientId),
+    supabase.rpc("private_minutes_balance", { p_client: clientId }),
     supabase
       .from("class_credits")
       .select("type,player_id")
@@ -106,10 +103,7 @@ export async function getSubscriptionSummary(
       .not("consumed_at", "is", null),
   ]);
 
-  const minutesBalance = (ledger ?? []).reduce(
-    (sum, row) => sum + row.delta_minutes,
-    0
-  );
+  const minutesBalance = balance ?? 0;
 
   const toPlanSummary = (row: SubRow): PlanSummary | null => {
     const plan = row.plans;
