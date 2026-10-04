@@ -134,7 +134,8 @@ what people actually feel.
      'notify-worker', '* * * * *',
      $$select net.http_post(
          url := '<project>/functions/v1/notify',
-         headers := '{"Authorization":"Bearer <service role>"}'::jsonb
+         headers := jsonb_build_object('Authorization', 'Bearer ' || (select decrypted_secret
+           from vault.decrypted_secrets where name = 'notify_worker_key'))
        )$$
    );
    ```

@@ -2,7 +2,8 @@
 //   supabase functions deploy notify
 //   select cron.schedule('notify-worker', '* * * * *', $$select net.http_post(
 //     url := 'https://<ref>.supabase.co/functions/v1/notify',
-//     headers := '{"Authorization": "Bearer <service-role-key>"}'::jsonb)$$);
+//     headers := jsonb_build_object('Authorization', 'Bearer ' || (select decrypted_secret
+//       from vault.decrypted_secrets where name = 'notify_worker_key')))$$);
 //
 // Claims due rows (skip-locked semantics via status flip), delivers them over
 // web push and WhatsApp, marks sent/failed. After delivery it runs a set of

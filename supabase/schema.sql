@@ -5650,6 +5650,6 @@ REVOKE EXECUTE ON FUNCTION public.submit_signup_request(p_name text, p_phone tex
 -- ── Scheduled jobs (pg_cron, live only; db:reset does not schedule them) ─────
 -- private-series-nightly  40 21 * * *  select public.generate_private_sessions(4)
 -- session-status-hourly   5 * * * *    select public.sweep_session_status()
--- notify-worker           * * * * *    net.http_post to functions/v1/notify
+-- notify-worker           * * * * *    net.http_post to functions/v1/notify, bearer from vault secret notify_worker_key
 -- cron-history-prune      15 22 * * *  delete cron.job_run_details older than 7 days; select public.prune_wa_inbound_seen()
 -- notifications-prune     20 22 * * *  select public.prune_notifications()
