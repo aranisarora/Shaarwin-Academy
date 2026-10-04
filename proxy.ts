@@ -131,8 +131,11 @@ export const config = {
   // into an invalid state → the visitor gets signed out. Static files, the
   // service worker, the manifest, robots, the sitemap and API routes render no
   // Server Component (route handlers write their own cookies), and router
-  // prefetches render only layouts and loading skeletons, so they skip it.
+  // prefetches of public pages render only layouts and loading skeletons, so
+  // they skip it. Prefetches inside the apps still run it: the coach and school
+  // layouts read the session for the founder preview banner.
   matcher: [
+    "/(app|coach|admin|school)/:path*",
     {
       source:
         "/((?!_next/static|_next/image|favicon.ico|sw\\.js|manifest\\.webmanifest|robots\\.txt|sitemap\\.xml|api/|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|mp4)$).*)",
