@@ -39,28 +39,16 @@ export async function getCoachSessions(
   const { data: sessions } = await supabase
     .from("class_sessions")
     .select(
-      "id,starts_at,ends_at,status,capacity_override,classes!inner(id,title,skill_level,capacity,class_type,is_school,location_label,venues(name,address,postcode,lat,lng,address_details),private_class_details(address,postcode,lat,lng,access_notes,address_details,profiles!client_id(full_name)))"
+      "id,starts_at,ends_at,status,capacity_override,classes!inner(id,title,skill_level,capacity,class_type,is_school,location_label,venues(name,address,postcode,lat,lng,address_details),private_class_details(address,postcode,lat,lng,access_notes,address_details,profiles!client_id(full_name))),bookings(status)"
     )
     .eq("coach_id", coachId)
+    .in("bookings.status", ["confirmed", "attended", "no_show"])
     .in("status", ["scheduled", "completed"])
     .gte("starts_at", from.toISOString())
     .lt("starts_at", to.toISOString())
     .order("starts_at");
 
-  if (!sessions || sessions.length === 0) return [];
-
-  const ids = sessions.map((s) => s.id);
-  const { data: bookingRows } = await supabase
-    .from("bookings")
-    .select("session_id")
-    .in("session_id", ids)
-    .in("status", ["confirmed", "attended", "no_show"]);
-  const counts = new Map<string, number>();
-  for (const row of bookingRows ?? []) {
-    counts.set(row.session_id, (counts.get(row.session_id) ?? 0) + 1);
-  }
-
-  return sessions.map((s) => {
+  return (sessions ?? []).map((s) => {
     const cls = s.classes;
     const priv = cls.private_class_details;
     const address = cls.venues
@@ -89,7 +77,7 @@ export async function getCoachSessions(
       isSchool: !!cls.is_school,
       level: cls.skill_level,
       capacity: s.capacity_override ?? cls.capacity,
-      confirmed: counts.get(s.id) ?? 0,
+      confirmed: s.bookings.length,
       playerName: priv?.profiles?.full_name ?? null,
       // The same string the coach's WhatsApp reminder carries: location_label
       // is a computed field over public.location_label(classes), so the card
