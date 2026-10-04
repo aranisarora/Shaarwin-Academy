@@ -661,7 +661,8 @@ CREATE INDEX wa_messages_phone_idx ON public.wa_messages USING btree (phone, cre
 CREATE INDEX wa_messages_phone_seq_idx ON public.wa_messages USING btree (phone, seq DESC);
 CREATE INDEX wa_inbound_seen_created_at_idx ON public.wa_inbound_seen USING btree (created_at);
 CREATE INDEX bookings_player_id_idx ON public.bookings USING btree (player_id);
-CREATE INDEX notifications_user_id_idx ON public.notifications USING btree (user_id);
+CREATE INDEX notifications_user_created_idx ON public.notifications USING btree (user_id, created_at DESC);
+CREATE INDEX notifications_type_session_idx ON public.notifications USING btree (type, ((data ->> 'session_id'::text)));
 CREATE INDEX notifications_failed_idx ON public.notifications USING btree (created_at DESC) WHERE (status = 'failed'::notification_status);
 CREATE INDEX notifications_user_type_created_idx ON public.notifications USING btree (user_id, type, created_at DESC);
 CREATE INDEX notifications_whatsapp_missed_idx ON public.notifications USING btree (whatsapp_status, created_at DESC) WHERE (whatsapp_status = ANY (ARRAY['failed'::text, 'no_phone'::text]));
