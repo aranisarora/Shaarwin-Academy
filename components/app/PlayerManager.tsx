@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { Badge } from "@/components/ui/Badge";
+import { Button } from "@/components/ui/Button";
 import { FilterBar, type FilterDef } from "@/components/ui/FilterBar";
 import { Input } from "@/components/ui/Input";
 import { Sheet } from "@/components/ui/Sheet";
@@ -39,6 +40,8 @@ type PlayerRow = {
    *  pupil, and on a household paying for nothing. */
   planNames: string[];
 };
+
+const PAGE = 50;
 
 const LEVELS = ["beginner", "intermediate", "advanced", "elite"] as const;
 
@@ -250,6 +253,10 @@ export function PlayerManager({ players }: { players: PlayerRow[] }) {
     });
   }, [players, search, levelFilter, schoolFilter, planFilter]);
 
+  const filterKey = `${search}|${levelFilter}|${schoolFilter}|${planFilter}`;
+  const [shown, setShown] = useState({ key: filterKey, count: PAGE });
+  const shownCount = shown.key === filterKey ? shown.count : PAGE;
+
   const filterDefs: FilterDef[] = [
     {
       key: "level",
@@ -324,7 +331,7 @@ export function PlayerManager({ players }: { players: PlayerRow[] }) {
       {players.length > 0 && <FilterBar filters={filterDefs} />}
 
       <ul className="divide-y divide-line rounded-[12px] border border-line bg-surface-2">
-        {filtered.map((p) => (
+        {filtered.slice(0, shownCount).map((p) => (
           <li key={p.id}>
             <button
               onClick={() => setSelected(p)}
@@ -355,6 +362,16 @@ export function PlayerManager({ players }: { players: PlayerRow[] }) {
           </li>
         )}
       </ul>
+
+      {filtered.length > shownCount && (
+        <Button
+          variant="ghost"
+          className="w-full"
+          onClick={() => setShown({ key: filterKey, count: shownCount + PAGE })}
+        >
+          Show more
+        </Button>
+      )}
 
       <Sheet
         open={selected !== null}

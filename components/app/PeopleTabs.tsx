@@ -6,7 +6,6 @@
 // tab, so the admin never hunts for a separate Players page.
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import { ClientManager, type PendingClientRow } from "./ClientManager";
 import { PlayerManager } from "./PlayerManager";
 import type { ComponentProps } from "react";
@@ -30,14 +29,14 @@ export function PeopleTabs({
   focusClientId?: string | null;
 }) {
   const [view, setView] = useState<View>(initialView);
-  const router = useRouter();
-
   function switchTo(next: View) {
     setView(next);
     // Keep the URL shareable/bookmarkable without a server round-trip.
-    router.replace(next === "clients" ? "/admin/players?view=clients" : "/admin/players", {
-      scroll: false,
-    });
+    window.history.replaceState(
+      null,
+      "",
+      next === "clients" ? "/admin/players?view=clients" : "/admin/players"
+    );
   }
 
   const tabBtn = (v: View, label: string, count: number) => (
