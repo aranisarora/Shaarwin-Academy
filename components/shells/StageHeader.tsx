@@ -3,7 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { createClient } from "@/lib/supabase/client";
+import { useSignedIn } from "@/components/marketing/useSignedIn";
 import logo from "@/public/images/logo.png";
 
 const nav = [
@@ -13,22 +13,13 @@ const nav = [
 
 export function StageHeader() {
   const [scrolled, setScrolled] = useState(false);
-  // Detected client-side so the marketing shell stays statically renderable.
-  // Defaults to signed-out for the prerendered HTML, then upgrades on hydration.
-  const [signedIn, setSignedIn] = useState(false);
+  const signedIn = useSignedIn();
 
   useEffect(() => {
     const onScroll = () => setScrolled(window.scrollY > 12);
     onScroll();
     window.addEventListener("scroll", onScroll, { passive: true });
     return () => window.removeEventListener("scroll", onScroll);
-  }, []);
-
-  useEffect(() => {
-    const supabase = createClient();
-    supabase.auth
-      .getSession()
-      .then(({ data }) => setSignedIn(data.session !== null));
   }, []);
 
   return (
@@ -49,7 +40,8 @@ export function StageHeader() {
             src={logo}
             alt=""
             aria-hidden
-            priority
+            width={64}
+            height={64}
             className="h-14 w-auto md:h-16"
           />
           <span className="hidden font-display text-sm font-semibold uppercase tracking-widest sm:inline">
