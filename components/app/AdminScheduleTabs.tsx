@@ -57,7 +57,7 @@ import type {
   Venue,
 } from "./admin-calendar-types";
 
-export type ScheduleView = "week" | "timetable";
+type ScheduleView = "week" | "timetable";
 
 /** The four questions both views ask, held once.
  *
@@ -183,14 +183,19 @@ export function AdminScheduleTabs({
   // the URL, and losing them on arrival is the bug the header comment describes.
   const navKey = `${initialView}|${initialAnchor}|${openSessionId ?? ""}|${openClassId ?? ""}`;
   const [adoptedNav, setAdoptedNav] = useState(navKey);
+  const [adoptedSessions, setAdoptedSessions] = useState(initialSessions);
   if (navKey !== adoptedNav) {
     setAdoptedNav(navKey);
+    setAdoptedSessions(initialSessions);
     setView(initialView);
     setAnchor(initialAnchor);
     // The server has already fetched the new anchor's week and handed it over,
     // so take it rather than asking for the week we were just given.
     setSessions(initialSessions);
     setFocusDate(null);
+  } else if (initialSessions !== adoptedSessions) {
+    setAdoptedSessions(initialSessions);
+    if (initialAnchor === anchor) setSessions(initialSessions);
   }
 
   // ── Shared across both views ───────────────────────────────────────────────
@@ -326,11 +331,12 @@ export function AdminScheduleTabs({
   }, [today, load]);
 
   const refreshSessions = useCallback(() => {
+    if (anchorRef.current === initialAnchor) return;
     startTransition(async () => {
       const result = await fetchWeekSessions(anchorRef.current, nextByClass, slotByClass);
       setSessions(result.sessions);
     });
-  }, [nextByClass, slotByClass]);
+  }, [initialAnchor, nextByClass, slotByClass]);
 
   /** The timetable mutates through its own sheets; re-fetch rather than
    *  router.refresh(), because the server page no longer holds this data. */

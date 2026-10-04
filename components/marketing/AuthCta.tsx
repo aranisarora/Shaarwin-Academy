@@ -1,7 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { createClient } from "@/lib/supabase/client";
+import { useSignedIn } from "@/components/marketing/useSignedIn";
 import { ButtonLink } from "@/components/ui/Button";
 
 type Variant = "primary" | "ghost" | "destructive";
@@ -10,7 +9,7 @@ type Size = "md" | "lg";
 /**
  * Auth-aware CTA for the (statically rendered) marketing homepage. The page
  * itself can't read the auth cookie without opting into dynamic rendering, so
- * this island checks the session client-side and swaps the link. It renders the
+ * this island checks the session cookie client-side and swaps the link. It renders the
  * signed-out variant during SSR/prerender, then upgrades on hydration for
  * signed-in visitors.
  */
@@ -34,14 +33,7 @@ export function AuthCta({
   size?: Size;
   className?: string;
 }) {
-  const [signedIn, setSignedIn] = useState(false);
-
-  useEffect(() => {
-    const supabase = createClient();
-    supabase.auth
-      .getSession()
-      .then(({ data }) => setSignedIn(data.session !== null));
-  }, []);
+  const signedIn = useSignedIn();
 
   return (
     <ButtonLink

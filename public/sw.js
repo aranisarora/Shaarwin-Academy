@@ -1,44 +1,32 @@
-/* Sharwin TTA service worker — static-asset caching, an offline fallback, and
- * the push handlers (P12).
+/* Sharwin TTA service worker: an offline fallback and the push handlers (P12).
  *
- * Deliberately does NOT cache HTML documents: those vary by auth state, so
- * caching them served stale signed-out pages (e.g. the home page). What it does
- * do for a navigation is catch the failure — an installed app with no signal
- * used to show the browser's dinosaur inside what the user believes is our app,
- * which reads as "Sharwin is broken" rather than "your phone is offline". So a
- * failed navigation falls back to the precached /offline page and nothing else.
- * Mutations are never queued offline: the app disables them with a banner.
- *
- * A note that shapes the notification code below: WebKit does not implement
- * notification action buttons. On iOS the actions array is simply ignored (and
- * push only exists at all once the site is on the Home Screen), so EVERY action
- * offered here must also be reachable by tapping the notification body and
- * landing on data.url. Treat the buttons as a shortcut for Android and desktop,
- * never as the only route to the thing. */
-const CACHE = "sharwin-v3";
-const PRECACHE = ["/offline", "/icon-192.png", "/icon-512.png"];
+ * WebKit does not implement notification action buttons. On iOS the actions
+ * array is ignored, so every action offered here must also be reachable by
+ * tapping the notification body and landing on data.url. */
+const CACHE = "sharwin-v4";
 const OFFLINE_URL = "/offline";
 const ACTION_ENDPOINT = "/api/push-action";
 
 self.addEventListener("install", (event) => {
-  event.waitUntil(
-    caches
-      .open(CACHE)
-      // Each entry is added on its own: cache.addAll rejects the whole install
-      // if a single URL 404s, which would leave a deploy with no worker at all
-      // over one missing icon.
-      .then((cache) =>
-        Promise.all(PRECACHE.map((url) => cache.add(url).catch(() => {})))
-      )
-      .then(() => self.skipWaiting())
-  );
+  event.waitUntil(precacheOffline().then(() => self.skipWaiting()));
 });
+
+async function precacheOffline() {
+  const res = await fetch(OFFLINE_URL, { cache: "reload" });
+  if (!res.ok) throw new Error(`offline page answered ${res.status}`);
+  const html = await res.clone().text();
+  const styles = [...html.matchAll(/href="(\/_next\/static\/[^"]+\.css)"/g)].map((m) => m[1]);
+  const cache = await caches.open(CACHE);
+  await cache.addAll(styles);
+  await cache.put(OFFLINE_URL, res);
+}
 
 self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches
       .keys()
       .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+      .then(() => self.registration.navigationPreload && self.registration.navigationPreload.enable())
       .then(() => self.clients.claim())
   );
 });
@@ -49,39 +37,25 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(request.url);
   if (url.origin !== self.location.origin) return;
 
-  // Navigations: always the network, because the server renders the auth state.
-  // The only thing we add is a landing place for when the network isn't there.
   if (request.mode === "navigate") {
-    event.respondWith(
-      fetch(request).catch(() =>
-        caches.match(OFFLINE_URL).then((cached) => cached || Response.error())
-      )
-    );
+    event.respondWith(navigate(event));
     return;
   }
 
-  // Only ever cache content-hashed static assets and images. Everything else —
-  // HTML documents, API/auth calls — goes straight to the network so the server
-  // always renders the correct auth state.
-  const isStaticAsset =
-    url.pathname.startsWith("/_next/static") ||
-    url.pathname.startsWith("/images/") ||
-    /\.(?:svg|png|jpg|jpeg|gif|webp|ico|woff2?)$/.test(url.pathname);
-  if (!isStaticAsset) return;
-
-  // stale-while-revalidate for static assets
-  event.respondWith(
-    caches.match(request).then(
-      (cached) =>
-        cached ||
-        fetch(request).then((res) => {
-          const copy = res.clone();
-          caches.open(CACHE).then((cache) => cache.put(request, copy));
-          return res;
-        })
-    )
-  );
+  if (url.pathname.startsWith("/_next/static/") && url.pathname.endsWith(".css")) {
+    event.respondWith(
+      fetch(request).catch(() => caches.match(request).then((cached) => cached || Response.error()))
+    );
+  }
 });
+
+async function navigate(event) {
+  try {
+    return (await event.preloadResponse) || (await fetch(event.request));
+  } catch {
+    return (await caches.match(OFFLINE_URL)) || Response.error();
+  }
+}
 
 /**
  * How many buttons this browser will actually draw. Chrome and Firefox publish

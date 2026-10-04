@@ -45,8 +45,7 @@ export type SessionRow = {
   privateClientId: string | null;
   // Every client with a live booking on this session, so "what is the Sharma
   // family in this week?" is answerable on group classes and not just on their
-  // privates. privateClientId is folded in here as well — see sessionClientIds,
-  // which both builders of this row use so they cannot disagree about it.
+  // privates. privateClientId is folded in here as well — see sessionClientIds.
   clientIds: string[];
   address: StructuredAddress | null;
   // Class scope — what "every week" edits apply to. Present on group sessions.
@@ -134,7 +133,7 @@ export type PrivateSeriesRow = {
  * "clientId" on its own for a family whose player profile doesn't exist yet,
  * "clientId|playerId" otherwise. Uuids contain no "|", so the split is safe.
  */
-export type PlayerChoice = { value: string; label: string };
+type PlayerChoice = { value: string; label: string };
 
 /** Every player across every client, as "Player (Family)" rows sorted by the
  * name the founder is scanning for. A client with no player yet still gets a

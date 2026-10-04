@@ -1,7 +1,9 @@
 import type { createClient } from "@/lib/supabase/server";
+import type { Database } from "@/lib/database.types";
 import { nowMs } from "@/lib/academy-time";
 
 type Supabase = Awaited<ReturnType<typeof createClient>>;
+type BookingStatus = Database["public"]["Enums"]["booking_status"];
 
 export type AttendanceEntry = {
   id: string;
@@ -29,81 +31,83 @@ export type StudentInsightsData = {
   upcoming: AttendanceEntry[];
 };
 
+/** What the insights card shows of each list; the counts cover everything. */
+const UPCOMING_SHOWN = 5;
+const HISTORY_SHOWN = 20;
+
+const ENTRY_SELECT = "id,status,class_sessions!inner(starts_at,status,classes(title,class_type))";
+
 /**
  * Attendance + stats for one player, from the caller's own view of `bookings`:
  * the founder sees everything, a coach only bookings on their own sessions
- * (RLS scopes the query, so this is safe to render on both admin and coach pages).
+ * (RLS scopes every query, so this is safe to render on both admin and coach pages).
+ *
+ * The counts are head counts and the lists stop at what the card shows, so the
+ * cost stays flat however long a player has been coming.
  */
 export async function getStudentInsights(
   supabase: Supabase,
   playerId: string
 ): Promise<StudentInsightsData> {
-  const { data } = await supabase
-    .from("bookings")
-    .select(
-      "id,status,class_sessions!inner(starts_at,status,classes(title,class_type))"
-    )
-    .eq("player_id", playerId);
+  const nowIso = new Date(nowMs()).toISOString();
+  const countFor = (statuses: BookingStatus[]) =>
+    supabase
+      .from("bookings")
+      .select("id", { count: "exact", head: true })
+      .eq("player_id", playerId)
+      .in("status", statuses);
 
-  const now = nowMs();
-  const rows = (data ?? []).map((b) => {
-    const session = b.class_sessions;
-    return {
-      id: b.id as string,
-      status: b.status as string,
-      sessionStatus: session.status,
-      startsAt: session.starts_at,
-      title: session.classes?.title ?? "Session",
-      classType: session.classes?.class_type ?? "group",
-    };
+  const [upcomingRes, historyRes, lastRes, attended, noShows, cancelled] = await Promise.all([
+    supabase
+      .from("bookings")
+      .select(ENTRY_SELECT, { count: "exact" })
+      .eq("player_id", playerId)
+      .in("status", ["confirmed", "waitlisted"])
+      .eq("class_sessions.status", "scheduled")
+      .gt("class_sessions.starts_at", nowIso)
+      .order("class_sessions(starts_at)")
+      .limit(UPCOMING_SHOWN),
+    supabase
+      .from("bookings")
+      .select(ENTRY_SELECT)
+      .eq("player_id", playerId)
+      .neq("status", "rescheduled")
+      .lte("class_sessions.starts_at", nowIso)
+      .order("class_sessions(starts_at)", { ascending: false })
+      .limit(HISTORY_SHOWN),
+    supabase
+      .from("bookings")
+      .select("class_sessions!inner(starts_at)")
+      .eq("player_id", playerId)
+      .eq("status", "attended")
+      .order("class_sessions(starts_at)", { ascending: false })
+      .limit(1),
+    countFor(["attended"]),
+    countFor(["no_show"]),
+    countFor(["cancelled_by_client", "cancelled_by_academy"]),
+  ]);
+
+  const toEntry = (b: NonNullable<typeof historyRes.data>[number]): AttendanceEntry => ({
+    id: b.id,
+    startsAt: b.class_sessions.starts_at,
+    title: b.class_sessions.classes?.title ?? "Session",
+    classType: b.class_sessions.classes?.class_type ?? "group",
+    status: b.status,
   });
 
-  const attended = rows.filter((r) => r.status === "attended");
-  const noShows = rows.filter((r) => r.status === "no_show");
-  const cancelled = rows.filter(
-    (r) => r.status === "cancelled_by_client" || r.status === "cancelled_by_academy"
-  );
-  const upcoming = rows
-    .filter(
-      (r) =>
-        (r.status === "confirmed" || r.status === "waitlisted") &&
-        r.sessionStatus === "scheduled" &&
-        new Date(r.startsAt).getTime() > now
-    )
-    .sort((a, b) => a.startsAt.localeCompare(b.startsAt));
-  const history = rows
-    .filter(
-      (r) =>
-        r.status !== "rescheduled" &&
-        !(upcoming as { id: string }[]).some((u) => u.id === r.id) &&
-        new Date(r.startsAt).getTime() <= now
-    )
-    .sort((a, b) => b.startsAt.localeCompare(a.startsAt));
-
-  const marked = attended.length + noShows.length;
-  const lastAttended = attended
-    .map((r) => r.startsAt)
-    .sort()
-    .at(-1);
-
-  const toEntry = (r: (typeof rows)[number]): AttendanceEntry => ({
-    id: r.id,
-    startsAt: r.startsAt,
-    title: r.title,
-    classType: r.classType,
-    status: r.status,
-  });
+  const attendedCount = attended.count ?? 0;
+  const marked = attendedCount + (noShows.count ?? 0);
 
   return {
     stats: {
-      attended: attended.length,
-      noShows: noShows.length,
-      cancelled: cancelled.length,
-      upcoming: upcoming.length,
-      attendanceRate: marked > 0 ? Math.round((attended.length / marked) * 100) : null,
-      lastAttended: lastAttended ?? null,
+      attended: attendedCount,
+      noShows: noShows.count ?? 0,
+      cancelled: cancelled.count ?? 0,
+      upcoming: upcomingRes.count ?? 0,
+      attendanceRate: marked > 0 ? Math.round((attendedCount / marked) * 100) : null,
+      lastAttended: lastRes.data?.[0]?.class_sessions.starts_at ?? null,
     },
-    history: history.map(toEntry),
-    upcoming: upcoming.map(toEntry),
+    history: (historyRes.data ?? []).map(toEntry),
+    upcoming: (upcomingRes.data ?? []).map(toEntry),
   };
 }

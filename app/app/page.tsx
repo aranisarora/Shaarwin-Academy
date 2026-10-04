@@ -3,7 +3,7 @@ import { Suspense } from "react";
 import Link from "next/link";
 import { requireUser } from "@/lib/auth";
 import { getSubscriptionSummary, formatRenewalDate } from "@/lib/billing";
-import { getMyBookings, splitBookings } from "@/lib/booking";
+import { getAttendedCounts, getMyBookings, splitBookings } from "@/lib/booking";
 import { formatSessionDate, nowMs } from "@/lib/academy-time";
 import { ClientShell } from "@/components/app/ClientShell";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -30,8 +30,7 @@ async function Greeting() {
 /**
  * Everything on the home screen that needs data. Streamed under the shell so
  * the chrome paints before auth resolves, rather than waiting on the booking,
- * billing and mastery queries behind it — `getMasteryMap` in particular can't
- * join the Promise.all, since it needs the player ids it returns.
+ * billing and mastery queries behind it.
  *
  * The `requireUser` here is free: it shares one profile read with `Greeting`
  * above via the React cache in lib/auth.ts.
@@ -40,26 +39,26 @@ async function HomeBody() {
   const { supabase, user } = await requireUser("/app");
   const userId = user.id;
 
-  const [summary, bookings, playersRes] = await Promise.all([
-    getSubscriptionSummary(supabase, userId),
-    getMyBookings(supabase, userId),
-    supabase
-      .from("players")
-      .select("id,full_name")
-      .eq("client_id", userId)
-      .order("created_at"),
-  ]);
-  const players = playersRes.data ?? [];
-  const masteryMap = await getMasteryMap(
-    supabase,
-    players.map((p) => p.id),
-  );
+  const playersP = supabase
+    .from("players")
+    .select("id,full_name")
+    .eq("client_id", userId)
+    .order("created_at")
+    .then((r) => r.data ?? []);
+  const [summary, bookings, attendedByPlayer, players, masteryMap] =
+    await Promise.all([
+      getSubscriptionSummary(supabase, userId),
+      getMyBookings(supabase, userId, 0),
+      getAttendedCounts(supabase, userId),
+      playersP,
+      playersP.then((ps) => getMasteryMap(supabase, ps.map((p) => p.id))),
+    ]);
 
   // Sorted, so `[0]` really is the next session and each player's `find` below
   // really is their soonest — both used to take whatever the query listed first.
   const { upcoming } = splitBookings(bookings, nowMs());
   const next = upcoming[0];
-  const attended = bookings.filter((b) => b.status === "attended").length;
+  const attended = [...attendedByPlayer.values()].reduce((a, n) => a + n, 0);
 
   const bookButtons = (
     <div className="grid grid-cols-2 gap-3">

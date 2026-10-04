@@ -4,7 +4,6 @@ import { revalidatePath, revalidateTag } from "next/cache";
 import { requireFounder } from "@/lib/founder";
 import { academyWallToUtc, formatDate, utcToAcademyWall } from "@/lib/academy-time";
 import { overlaps, weeklyOccurrences } from "@/lib/slot-clashes";
-import { asAddressDetails, fromDetails, type StructuredAddress } from "@/lib/address";
 import {
   WEEKDAYS,
   type ClassRow,
@@ -13,41 +12,49 @@ import {
 } from "@/components/app/admin-calendar-types";
 import { venueDisplayName } from "@/lib/venue-display";
 import {
-  fetchFollowThrough,
-  sessionClientIds,
-  NO_FOLLOW_THROUGH,
-} from "@/lib/session-followthrough";
+  readRankedCoaches,
+  readRoster,
+  readSessionDetail,
+  type RankedCoach,
+  type RosterEntry,
+  type SessionDetail,
+} from "@/lib/session-sheet";
+import { buildSessionRows, fetchWeekRaw } from "@/lib/session-week";
+import { createOneOffClassCore, type NewOneOffClass } from "@/lib/admin-ops";
 import {
   assignPrivateSessionClientCore,
-  bulkRemoveClassesCore,
   cancelFuturePrivateSessionsCore,
-  createOneOffClassCore,
   createPrivateSessionCore,
+  moveSessionCore,
+  reassignSessionCore,
+  setSessionCapacityCore,
+  type PrivateSessionInput,
+} from "@/lib/admin-ops-calendar";
+import {
+  bulkRemoveClassesCore,
   deleteGroupClassCore,
-  endPrivateSeriesCore,
-  planCalendarWipeCore,
   planClassRemovalCore,
+  type ClassRemovalPlan,
+  endGroupClassCore,
+  reassignClassCoachCore,
+  restoreGroupClassCore,
+  topUpSessionsCore,
+  updateGroupClassCore,
+  type ClassUpdate,
+} from "@/lib/admin-ops-classes";
+import { materializeInviteCore } from "@/lib/admin-ops-clients";
+import {
   planPrivateSeriesRemovalCore,
+  type PrivateSeriesRemovalPlan,
+  updatePrivateSeriesCore,
+  type PrivateSeriesPatch,
+} from "@/lib/admin-ops-private-series";
+import {
+  planCalendarWipeCore,
   wipeCalendarCore,
   type CalendarWipePreview,
   type CalendarWipeResult,
-  type ClassRemovalPlan,
-  type PrivateSeriesRemovalPlan,
-  materializeInviteCore,
-  endGroupClassCore,
-  moveSessionCore,
-  reassignClassCoachCore,
-  reassignSessionCore,
-  restoreGroupClassCore,
-  setSessionCapacityCore,
-  topUpSessionsCore,
-  updateGroupClassCore,
-  updatePrivateSeriesCore,
-  type PrivateSeriesPatch,
-  type ClassUpdate,
-  type NewOneOffClass,
-  type PrivateSessionInput,
-} from "@/lib/admin-ops";
+} from "@/lib/admin-ops-wipe";
 
 // ── WhatsApp/notify manifest ─────────────────────────────────────────────────
 // The founder migrated from a world where he *watched* each message send. So
@@ -65,10 +72,6 @@ import {
 //   cancelAllFuturePrivateSessions ... notifies the client + affected coaches, and
 //                                      retires the client's weekly slots so they stop
 //                                      regenerating
-//   endPrivateSeries ................. notifies each family + each coach, ONE message
-//                                      each across every slot in the selection; the
-//                                      minutes go back in full, including a week
-//                                      inside the 24-hour window
 //   updatePrivateSeries .............. notifies the family *iff* the slot moves, and every
 //                                      coach who had a week of it or is taking it now —
 //                                      ONE message each however many weeks move
@@ -101,7 +104,7 @@ import {
 //   assignPrivateSessionClient ....... notifies the client
 //   createPrivateSessionForInvite .... notifies the client
 //   previewSlotClashes ............... notifies nobody (read-only preview)
-//   getSessionDetail ................. notifies nobody (read-only)
+//   getSessionSheet .................. notifies nobody (read-only)
 // (cancelSession lives in app/admin/actions.ts: notifies everyone booked + coach.)
 type Result = { ok: boolean; error?: string; code?: string };
 
@@ -259,24 +262,6 @@ export async function planClassRemoval(
     planPrivateSeriesRemovalCore(supabase, seriesIds),
   ]);
   return { ok: true, ...plan, series };
-}
-
-/** Retire weekly private slots outright — the Schedule tab's client-wide
- * "cancel all upcoming" is a different, blunter thing. */
-export async function endPrivateSeries(
-  seriesIds: string[]
-): Promise<Result & { ended?: number; cancelled?: number; minutesReturned?: number }> {
-  const { supabase, founder } = await requireFounder();
-  if (!founder) return { ok: false, error: "Founder only." };
-  const result = await endPrivateSeriesCore(supabase, founder.id, seriesIds);
-  if (!result.ok) return result;
-  refresh();
-  return {
-    ok: true,
-    ended: result.ended,
-    cancelled: result.cancelled,
-    minutesReturned: result.minutesReturned,
-  };
 }
 
 /** Move a family's standing weekly slot, or change who takes it. Carries the
@@ -465,109 +450,27 @@ export async function createPrivateSessionForInvite(
 
 // ── Session roster (players + attendance) ────────────────────────────────────
 
-export type RosterEntry = {
-  id: string;
-  name: string;
-  /** "attended" = present, "no_show" = absent, "confirmed" = unmarked,
-   *  "waitlisted" = holding a place in the queue, not in the class. */
-  status: "confirmed" | "attended" | "no_show" | "waitlisted";
-  /** Where in the queue, for a waitlisted booking. Null for everyone else. */
-  waitlistPosition: number | null;
-};
-
-/**
- * Who's booked on a session and whether they were marked present or absent —
- * shown in the admin session sheet.
- *
- * The waitlist is opt-in per caller, and deliberately so: the weekly class
- * sheet asks this same question to list "Regulars", and a queue appearing in
- * that list would be answering a question nobody asked there.
- */
 export async function getSessionRoster(
   sessionId: string,
   opts?: { includeWaitlisted?: boolean }
 ): Promise<RosterEntry[]> {
   const { supabase, founder } = await requireFounder();
   if (!founder) return [];
-  const statuses: RosterEntry["status"][] = opts?.includeWaitlisted
-    ? ["confirmed", "attended", "no_show", "waitlisted"]
-    : ["confirmed", "attended", "no_show"];
-  const { data } = await supabase
-    .from("bookings")
-    .select("id,status,waitlist_position,players(full_name)")
-    .eq("session_id", sessionId)
-    .in("status", statuses);
-  return (data ?? [])
-    .map((b) => ({
-      id: b.id,
-      name: b.players?.full_name ?? "Unknown player",
-      status: b.status as RosterEntry["status"],
-      waitlistPosition: b.waitlist_position ?? null,
-    }))
-    .sort((a, b) => {
-      // Booked first, then the queue in its own order — a waitlisted name
-      // sorted alphabetically among the booked would read as being in.
-      const aQ = a.status === "waitlisted";
-      const bQ = b.status === "waitlisted";
-      if (aQ !== bQ) return aQ ? 1 : -1;
-      if (aQ && bQ) return (a.waitlistPosition ?? 0) - (b.waitlistPosition ?? 0);
-      return a.name.localeCompare(b.name);
-    });
+  return readRoster(supabase, sessionId, opts?.includeWaitlisted === true);
 }
 
-/**
- * The facts about one session that aren't already on the calendar row — the
- * coach's name, what he has said and done about turning up, anything he wrote
- * afterwards, and how many places were given back.
- *
- * Kept off `SessionRow` on purpose. That row's select string is duplicated
- * byte-for-byte in two files and is fetched for every session in a week, so
- * widening it to serve one open sheet would put all of this on a phone's wire
- * for sessions nobody is looking at.
- */
-export type SessionDetail = {
-  status: "scheduled" | "completed" | "cancelled";
-  coachName: string | null;
-  coachConfirmedAt: string | null;
-  coachNotes: string | null;
-  cancelReason: string | null;
-  /** Places that were held and given back — the ones the roster can't show. */
-  cancelledCount: number;
-};
-
-export async function getSessionDetail(sessionId: string): Promise<SessionDetail | null> {
+export async function getSessionSheet(
+  sessionId: string,
+  withRanks: boolean
+): Promise<{ roster: RosterEntry[]; detail: SessionDetail | null; ranked: RankedCoach[] | null }> {
   const { supabase, founder } = await requireFounder();
-  if (!founder) return null;
-
-  const { data: s } = await supabase
-    .from("class_sessions")
-    .select("status,coach_id,coach_notes,coach_confirmed_at,cancel_reason")
-    .eq("id", sessionId)
-    .maybeSingle();
-  if (!s) return null;
-
-  // Resolved from profiles rather than the sheet's `coaches` prop, which is
-  // filtered to active coaches — a session still rostered to a coach who has
-  // since been paused would otherwise show no name at all.
-  const [{ data: prof }, { count }] = await Promise.all([
-    s.coach_id
-      ? supabase.from("profiles").select("full_name").eq("id", s.coach_id).maybeSingle()
-      : Promise.resolve({ data: null }),
-    supabase
-      .from("bookings")
-      .select("id", { count: "exact", head: true })
-      .eq("session_id", sessionId)
-      .in("status", ["cancelled_by_client", "cancelled_by_academy"]),
+  if (!founder) return { roster: [], detail: null, ranked: null };
+  const [roster, detail, ranked] = await Promise.all([
+    readRoster(supabase, sessionId, true),
+    readSessionDetail(supabase, sessionId),
+    withRanks ? readRankedCoaches(supabase, sessionId) : null,
   ]);
-
-  return {
-    status: s.status as SessionDetail["status"],
-    coachName: prof?.full_name ?? null,
-    coachConfirmedAt: s.coach_confirmed_at,
-    coachNotes: s.coach_notes,
-    cancelReason: s.cancel_reason,
-    cancelledCount: count ?? 0,
-  };
+  return { roster, detail, ranked };
 }
 
 // ── Week data for client-side navigation ─────────────────────────────────────
@@ -596,110 +499,8 @@ export async function fetchWeekSessions(
   const from = academyWallToUtc(anchor, "00:00");
   const to = new Date(from.getTime() + 7 * 86400000);
 
-  const [{ data: rawSessions }] = await Promise.all([
-    supabase
-      .from("class_sessions")
-      .select(
-        "id,starts_at,ends_at,status,cancel_reason,coach_id,coach_arrived_at,coach_arrival_source,coach_arrival_distance_m,capacity_override,classes!inner(id,title,description,skill_level,capacity,duration_minutes,recurrence_rule,active,venue_id,class_type,is_school,location_label,venues(name,address,postcode,lat,lng,address_details),private_class_details(client_id,address,postcode,lat,lng,access_notes,address_details,players(full_name)))"
-      )
-      // Cancelled included — see the note on the same query in page.tsx.
-      .in("status", ["scheduled", "completed", "cancelled"])
-      .gte("starts_at", from.toISOString())
-      .lt("starts_at", to.toISOString())
-      .order("starts_at"),
-  ]);
-
-  const privateClientIds = [
-    ...new Set(
-      (rawSessions ?? [])
-        .map((s) => {
-          const cls = s.classes;
-          return cls.class_type === "private" ? (cls.private_class_details?.client_id ?? null) : null;
-        })
-        .filter((id): id is string => id !== null)
-    ),
-  ];
-
-  const clientNameMap = new Map<string, string>();
-  if (privateClientIds.length > 0) {
-    const { data: privProfiles } = await supabase
-      .from("profiles")
-      .select("id,full_name")
-      .in("id", privateClientIds);
-    for (const p of privProfiles ?? []) clientNameMap.set(p.id, p.full_name);
-  }
-
-  // Paging to another week has to answer the same questions the first render
-  // did. Leaving this out would not have failed loudly — the cards would simply
-  // have stopped reporting unkept registers the moment the founder paged.
-  const followThrough = await fetchFollowThrough(
-    supabase,
-    (rawSessions ?? []).map((s) => s.id)
-  );
-
-  const classTime = (classId: string, fallbackIso: string) => {
-    const iso = nextByClass[classId] ?? fallbackIso;
-    return utcToAcademyWall(new Date(iso)).time;
-  };
-
-  const sessions: SessionRow[] = (rawSessions ?? []).map((s) => {
-    const cls = s.classes;
-    const priv = cls.private_class_details;
-    const owed = followThrough.get(s.id) ?? NO_FOLLOW_THROUGH;
-    const address: StructuredAddress | null = cls.venues
-      ? fromDetails(asAddressDetails(cls.venues.address_details), {
-          address: cls.venues.address,
-          postcode: cls.venues.postcode,
-          lat: cls.venues.lat,
-          lng: cls.venues.lng,
-        })
-      : priv
-        ? fromDetails(asAddressDetails(priv.address_details), {
-            address: priv.address,
-            postcode: priv.postcode,
-            lat: priv.lat,
-            lng: priv.lng,
-            access_notes: priv.access_notes,
-          })
-        : null;
-
-
-    return {
-      id: s.id,
-      starts_at: s.starts_at,
-      ends_at: s.ends_at,
-      status: s.status,
-      cancelReason: s.cancel_reason,
-      coachId: s.coach_id,
-      coachArrivedAt: s.coach_arrived_at,
-      coachArrivalSource: s.coach_arrival_source,
-      coachArrivalDistanceM: s.coach_arrival_distance_m,
-      rosterUnmarked: owed.rosterUnmarked,
-      assessPending: owed.assessPending,
-      title: cls.title,
-      capacity: s.capacity_override ?? cls.capacity,
-      isPrivate: cls.class_type === "private",
-      isSchool: cls.is_school,
-      venueName: cls.location_label ?? null,
-      playerName: priv?.client_id ? (clientNameMap.get(priv.client_id) ?? null) : null,
-      privatePlayerName:
-        (priv?.players as unknown as { full_name: string } | null)?.full_name ?? null,
-      privateClientId: priv?.client_id ?? null,
-      clientIds: sessionClientIds(owed, priv?.client_id ?? null),
-      address,
-      classId: cls.id,
-      classActive: cls.active,
-      classDescription: cls.description ?? "",
-      classLevel: cls.skill_level,
-      classCapacity: cls.capacity,
-      classDuration: cls.duration_minutes,
-      classVenueId: cls.venue_id,
-      classWeekday: cls.recurrence_rule?.match(/BYDAY=(..)/)?.[1] ?? "MO",
-      classTime: classTime(cls.id, s.starts_at),
-      classSlotTime: slotByClass[cls.id] ?? null,
-      classRecurring: !!cls.recurrence_rule,
-    };
-  });
+  const { data: rawSessions } = await fetchWeekRaw(supabase, from, to);
+  const sessions = await buildSessionRows(supabase, rawSessions ?? [], nextByClass, slotByClass);
 
   const rangeLabel = `${formatDate(from)} – ${formatDate(to.getTime() - 86400000)}`;
 
@@ -709,14 +510,14 @@ export async function fetchWeekSessions(
 // ── What's already there ─────────────────────────────────────────────────────
 
 /** One session standing in the way of a slot the founder is picking. */
-export type SlotClash = {
+type SlotClash = {
   startsAt: string; // ISO
   endsAt: string; // ISO
   title: string;
   isPrivate: boolean;
 };
 
-export type SlotPreviewRow = {
+type SlotPreviewRow = {
   /** The instants this pick would occupy, ISO ascending. */
   occurrences: string[];
   /** Occurrences the NAMED coach cannot take. Empty when left on automatic. */
@@ -896,6 +697,7 @@ export async function fetchTimetable(): Promise<Timetable> {
   const { supabase, founder } = await requireFounder();
   if (!founder) return { classes: [], privateSeries: [], oneOffCount: 0 };
 
+  const nowIso = new Date().toISOString();
   const [
     { data: classes },
     { count: oneOffCount },
@@ -903,13 +705,25 @@ export async function fetchTimetable(): Promise<Timetable> {
     { data: venues },
     { data: series },
   ] = await Promise.all([
+    // Each class carries its next scheduled session (with the families booked on
+    // it) and its latest session of any status. Ending a class cancels every
+    // future session, so `next` comes back empty for one; its own past sessions
+    // still hold the truth about its slot, and a hardcoded fallback here used to
+    // rewrite that slot on the next save.
     supabase
       .from("classes")
       .select(
-        "id,title,description,skill_level,capacity,duration_minutes,recurrence_rule,active,ends_on,venue_id,is_school,venues(name,unit)"
+        "id,title,description,skill_level,capacity,duration_minutes,recurrence_rule,active,ends_on,venue_id,is_school,venues(name,unit),next:class_sessions(id,starts_at,coach_id,coaches(profiles(full_name)),bookings(client_id)),last:class_sessions(starts_at)"
       )
       .eq("class_type", "group")
       .not("recurrence_rule", "is", null)
+      .eq("next.status", "scheduled")
+      .gt("next.starts_at", nowIso)
+      .in("next.bookings.status", ["confirmed", "attended"])
+      .order("starts_at", { referencedTable: "next" })
+      .limit(1, { referencedTable: "next" })
+      .order("starts_at", { referencedTable: "last", ascending: false })
+      .limit(1, { referencedTable: "last" })
       .order("title"),
     supabase
       .from("classes")
@@ -921,117 +735,29 @@ export async function fetchTimetable(): Promise<Timetable> {
       .select("id,active,profiles!inner(full_name)")
       .eq("active", true),
     supabase.from("venues").select("id,name,unit").order("name"),
+    // client_id as well as the joined name: the sub-line needs the name, the
+    // client filter needs the id, and resolving one back from the other would
+    // make two families called Sharma one row on the founder's screen. Sessions
+    // link to a series through their booking's private_series_id, so the
+    // deep-link target is the earliest scheduled future session across those.
     supabase
       .from("private_booking_series")
       .select(
-        // client_id as well as the joined name: the sub-line needs the name, the
-        // client filter needs the id, and resolving one back from the other
-        // would make two families called Sharma one row on the founder's screen.
-        "id,client_id,weekday,start_time,duration_minutes,preferred_coach,venue_id,venue_label," +
-          "venues(name,unit)," +
-          "player:players!private_booking_series_player_id_fkey(full_name)," +
-          "client:profiles!private_booking_series_client_id_fkey(full_name)"
+        "id,client_id,weekday,start_time,duration_minutes,preferred_coach,venue_id,venue_label,player:players!private_booking_series_player_id_fkey(full_name),client:profiles!private_booking_series_client_id_fkey(full_name),bookings(class_sessions!inner(id,starts_at))"
       )
-      .eq("active", true),
+      .eq("active", true)
+      .eq("bookings.class_sessions.status", "scheduled")
+      .gt("bookings.class_sessions.starts_at", nowIso),
   ]);
 
-  const classIds = (classes ?? []).map((c) => c.id);
-  const { data: nextSessions } = classIds.length
-    ? await supabase
-        .from("class_sessions")
-        .select("id,class_id,starts_at,coach_id,coaches(profiles!inner(full_name))")
-        .in("class_id", classIds)
-        .eq("status", "scheduled")
-        .gt("starts_at", new Date().toISOString())
-        .order("starts_at")
-    : {
-        data: [] as {
-          id: string;
-          class_id: string;
-          starts_at: string;
-          coach_id: string | null;
-          coaches: unknown;
-        }[],
-      };
-
-  const nextByClass = new Map<
-    string,
-    { sessionId: string; starts_at: string; coachName: string | null; coachId: string | null }
-  >();
-  for (const s of nextSessions ?? []) {
-    if (nextByClass.has(s.class_id)) continue;
-    const coachName =
-      (s.coaches as unknown as { profiles: { full_name: string } } | null)?.profiles?.full_name ??
-      null;
-    nextByClass.set(s.class_id, {
-      sessionId: s.id,
-      starts_at: s.starts_at,
-      coachName,
-      coachId: s.coach_id,
-    });
-  }
-
-  // Ending a class cancels every future session, so the lookup above finds
-  // nothing for one. Its own past sessions still hold the truth about its slot;
-  // a hardcoded fallback here used to rewrite that slot on the next save.
-  const slotlessIds = classIds.filter((id) => !nextByClass.has(id));
-  const lastSessionsPromise = slotlessIds.length
-    ? supabase
-        .from("class_sessions")
-        .select("class_id,starts_at")
-        .in("class_id", slotlessIds)
-        .order("starts_at", { ascending: false })
-        .then((r) => r.data)
-    : Promise.resolve(null);
-
-  const seriesIds = ((series ?? []) as unknown as { id: string }[]).map((s) => s.id);
-  const seriesBookingsPromise = seriesIds.length
-    ? supabase
-        .from("bookings")
-        .select("private_series_id,class_sessions(id,starts_at,status)")
-        .in("private_series_id", seriesIds)
-        .then((r) => r.data)
-    : Promise.resolve(null);
-
-  const nextSessionIds = [...nextByClass.values()].map((n) => n.sessionId);
-  const bookedBySession = new Map<string, number>();
-  // The families behind those same bookings, so the client filter can find a
-  // group class the way it finds a private. Folded from the rows already being
-  // read for the count rather than from a query of their own — asking `bookings`
-  // twice for one set of sessions is how a screen gets slow one field at a time.
-  const clientsBySession = new Map<string, Set<string>>();
-  if (nextSessionIds.length) {
-    const { data: bookings } = await supabase
-      .from("bookings")
-      .select("session_id,client_id")
-      .in("session_id", nextSessionIds)
-      .in("status", ["confirmed", "attended"]);
-    for (const b of bookings ?? []) {
-      bookedBySession.set(b.session_id, (bookedBySession.get(b.session_id) ?? 0) + 1);
-      // A Set, because two children of one family in the same class are two
-      // bookings and one name to filter by. School pupils have no client at all.
-      if (b.client_id) {
-        const seen = clientsBySession.get(b.session_id) ?? new Set<string>();
-        seen.add(b.client_id);
-        clientsBySession.set(b.session_id, seen);
-      }
-    }
-  }
-
-  const lastByClass = new Map<string, string>();
-  for (const s of (await lastSessionsPromise) ?? []) {
-    if (!lastByClass.has(s.class_id)) lastByClass.set(s.class_id, s.starts_at);
-  }
-
   const classRows: ClassRow[] = (classes ?? []).map((c) => {
-    const next = nextByClass.get(c.id);
-    const last = lastByClass.get(c.id);
+    const [next] = c.next;
+    const [last] = c.last;
     const time = next
       ? utcToAcademyWall(new Date(next.starts_at)).time
       : last
-        ? utcToAcademyWall(new Date(last)).time
+        ? utcToAcademyWall(new Date(last.starts_at)).time
         : (timeFromTitle(c.title) ?? "18:30");
-    const v = c.venues as unknown as { name: string; unit: string | null } | null;
     return {
       id: c.id,
       title: c.title,
@@ -1044,68 +770,39 @@ export async function fetchTimetable(): Promise<Timetable> {
       active: c.active,
       endsOn: c.ends_on,
       venueId: c.venue_id,
-      venueName: v ? venueDisplayName(v) : null,
+      venueName: c.venues ? venueDisplayName(c.venues) : null,
       isSchool: c.is_school,
-      coachName: next?.coachName ?? null,
-      bookedCount: next ? (bookedBySession.get(next.sessionId) ?? 0) : 0,
-      clientIds: next ? [...(clientsBySession.get(next.sessionId) ?? [])] : [],
-      nextSessionId: next?.sessionId ?? null,
+      coachName: next?.coaches?.profiles.full_name ?? null,
+      bookedCount: next ? next.bookings.length : 0,
+      // A Set, because two children of one family in the same class are two
+      // bookings and one name to filter by. School pupils have no client at all.
+      clientIds: next
+        ? [...new Set(next.bookings.map((b) => b.client_id).filter((id): id is string => !!id))]
+        : [],
+      nextSessionId: next?.id ?? null,
       nextSessionStart: next?.starts_at ?? null,
-      nextCoachId: next?.coachId ?? null,
+      nextCoachId: next?.coach_id ?? null,
     };
   });
 
-  const coachNameById = new Map(
-    (coaches ?? []).map((c) => [
-      c.id,
-      (c.profiles as unknown as { full_name: string }).full_name,
-    ])
-  );
+  const coachNameById = new Map((coaches ?? []).map((c) => [c.id, c.profiles.full_name]));
 
-  type SeriesRow = {
-    id: string;
-    client_id: string | null;
-    weekday: number;
-    start_time: string;
-    duration_minutes: number;
-    preferred_coach: string | null;
-    venue_id: string | null;
-    venue_label: string | null;
-    venues: { name: string; unit: string | null } | null;
-    player: { full_name: string } | null;
-    client: { full_name: string } | null;
-  };
-  const seriesRows = (series ?? []) as unknown as SeriesRow[];
-
-  // Sessions link to a series through their booking's private_series_id, so the
-  // deep-link target is the earliest scheduled future session across those.
-  const nextBySeriesId = new Map<string, { id: string; starts_at: string }>();
-  {
-    const seriesBookings = await seriesBookingsPromise;
-    const nowIso = new Date().toISOString();
-    for (const b of seriesBookings ?? []) {
-      const sid = b.private_series_id as string | null;
-      const cs = b.class_sessions as unknown as {
-        id: string;
-        starts_at: string;
-        status: string;
-      } | null;
-      if (!sid || !cs || cs.status !== "scheduled" || cs.starts_at <= nowIso) continue;
-      const cur = nextBySeriesId.get(sid);
-      if (!cur || cs.starts_at < cur.starts_at)
-        nextBySeriesId.set(sid, { id: cs.id, starts_at: cs.starts_at });
-    }
-  }
-
+  const venueById = new Map((venues ?? []).map((v) => [v.id, v]));
   const knownVenueNames = new Set(
     (venues ?? []).map((v) => venueDisplayName(v).toLowerCase())
   );
   const isoWeekdayCode = WEEKDAYS.map(([code]) => code); // 0-based: [MO..SU]
 
-  const privateSeries: PrivateSeriesRow[] = seriesRows.map((s) => {
+  const privateSeries: PrivateSeriesRow[] = (series ?? []).map((s) => {
+    const venue = s.venue_id ? venueById.get(s.venue_id) : undefined;
     const venueName =
-      (s.venues ? venueDisplayName(s.venues) : s.venue_label?.trim()) ?? "Private location";
-    const next = nextBySeriesId.get(s.id);
+      (venue ? venueDisplayName(venue) : s.venue_label?.trim()) ?? "Private location";
+    const next = s.bookings
+      .map((b) => b.class_sessions)
+      .reduce<{ id: string; starts_at: string } | null>(
+        (soonest, cs) => (!soonest || cs.starts_at < soonest.starts_at ? cs : soonest),
+        null
+      );
     return {
       id: s.id,
       playerName: s.player?.full_name ?? "Player",

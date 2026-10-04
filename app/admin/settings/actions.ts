@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { requireFounder } from "@/lib/founder";
-import { saveSettingsCore } from "@/lib/admin-ops";
+import { saveSettingsCore } from "@/lib/admin-ops-settings";
 
 export async function saveSettings(
   values: Record<string, number>

@@ -18,13 +18,13 @@ import { SlotPicker } from "@/components/app/SlotPicker";
 import { WhatsAppSayHi } from "@/components/app/WhatsAppSayHi";
 import { fromDetails, type StructuredAddress } from "@/lib/address";
 import { haversineMeters } from "@/lib/geo";
+import { isWithinBengaluru } from "@/lib/coverage";
 import {
   composeLocationLabel,
   composeUnitLabel,
   venueDisplayName,
 } from "@/lib/venue-display";
 import {
-  checkCoverage,
   recordAreaInterest,
   getSlots,
   requestPrivateSessions,
@@ -33,10 +33,10 @@ import {
   type Slot,
 } from "@/app/app/book/private/actions";
 
-type Coach = { id: string; name: string; lat: number; lng: number };
+type Coach = { id: string; name: string };
 
 /** A place the academy already coaches at — offered by name near the pin. */
-export type WizardVenue = {
+type WizardVenue = {
   id: string;
   name: string;
   unit: string | null;
@@ -44,7 +44,7 @@ export type WizardVenue = {
   lng: number;
 };
 
-export type PrivatePlanLimits = {
+type PrivatePlanLimits = {
   /** Weekly cap; null = legacy minutes-only (one-off booking). */
   sessionsPerWeek: number | null;
   /** Fixed session length; null = free 60/90 choice. */
@@ -103,7 +103,6 @@ export function PrivateWizard({
         true
       )
   );
-  const [covered, setCovered] = useState<boolean | null>(null);
   const [interestEmail, setInterestEmail] = useState("");
   const [interestSent, setInterestSent] = useState(false);
   const [playerId, setPlayerId] = useState(players[0]?.id ?? "");
@@ -112,19 +111,19 @@ export function PrivateWizard({
   const pin = addr.lat !== null && addr.lng !== null
     ? { lat: addr.lat, lng: addr.lng }
     : null;
+  const covered = pin ? isWithinBengaluru(pin.lat, pin.lng) : null;
 
   // Step 2 — when. Multiple slots can be picked; each becomes its own session
   // (or, in weekly mode, its own standing weekly slot).
   const [duration, setDuration] = useState<number>(planMinutes ?? 60);
-  const [slots, setSlots] = useState<Slot[] | null>(null);
   const [selected, setSelected] = useState<string[]>([]);
   const [preferredCoach, setPreferredCoach] = useState("");
 
-  // Prefetched slots keyed by the inputs that determine them, so tapping
-  // "Choose a time" renders instantly instead of blocking on the round-trip.
-  const [prefetch, setPrefetch] = useState<{ key: string; slots: Slot[] } | null>(
-    null
-  );
+  const [prefetch, setPrefetch] = useState<{
+    key: string;
+    slots: Slot[] | "failed";
+  } | null>(null);
+  const [slotsAttempt, setSlotsAttempt] = useState(0);
 
   // Which place this is. A coach is told the venue plus the unit inside it, and
   // nothing downstream re-derives either — so it's answered once, here.
@@ -142,82 +141,42 @@ export function PrivateWizard({
   const [ranOut, setRanOut] = useState(false);
   const [pending, startTransition] = useTransition();
 
-  // Re-check coverage whenever the pin moves (fresh geocode or drag). State is
-  // only set inside the async callback; the cleared-address case is handled in
-  // updateAddr so we never setState synchronously in the effect body.
-  useEffect(() => {
-    if (addr.lat === null || addr.lng === null) return;
-    const lat = addr.lat;
-    const lng = addr.lng;
-    let cancelled = false;
-    (async () => {
-      const { covered } = await checkCoverage(lat, lng);
-      if (!cancelled) setCovered(covered);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [addr.lat, addr.lng]);
-
-  // Wrap the address setter so clearing the pin also clears stale coverage.
-  function updateAddr(next: StructuredAddress) {
-    setAddr(next);
-    if (next.lat === null || next.lng === null) setCovered(null);
-  }
-
   // Identifies a slot list by everything that determines it — the prefetch
   // cache is only reused when this key matches the current inputs.
   const slotKey = (lat: number, lng: number, dur: number, player: string) =>
     `${lat.toFixed(6)},${lng.toFixed(6)},${dur},${player}`;
 
-  // Prefetch on step 1 the moment the address is covered, so step 2 is instant.
-  // Same cancelled-flag guard as the coverage effect above — a stale prefetch
-  // (address dragged, duration changed) must never overwrite a newer one.
   useEffect(() => {
     if (!pin || covered !== true) return;
     const { lat, lng } = pin;
     const key = slotKey(lat, lng, duration, playerId);
     if (prefetch?.key === key) return;
     let cancelled = false;
-    (async () => {
-      const result = await getSlots(lat, lng, duration, playerId);
-      if (!cancelled) setPrefetch({ key, slots: result });
-    })();
+    const timer = setTimeout(() => {
+      getSlots(lat, lng, duration, playerId).then(
+        (result) => {
+          if (!cancelled) setPrefetch({ key, slots: result });
+        },
+        () => {
+          if (!cancelled) setPrefetch({ key, slots: "failed" });
+        }
+      );
+    }, 400);
     return () => {
       cancelled = true;
+      clearTimeout(timer);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pin?.lat, pin?.lng, covered, duration, playerId]);
+  }, [pin?.lat, pin?.lng, covered, duration, playerId, slotsAttempt]);
 
-  function toStep2() {
-    if (!pin) return;
-    setStep(2);
-    const key = slotKey(pin.lat, pin.lng, duration, playerId);
-    if (prefetch?.key === key) {
-      setSlots(prefetch.slots); // already in memory — no spinner
-      return;
-    }
-    setSlots(null);
-    startTransition(async () => {
-      const result = await getSlots(pin.lat, pin.lng, duration, playerId);
-      setSlots(result);
-    });
-  }
+  const slots =
+    pin && prefetch?.key === slotKey(pin.lat, pin.lng, duration, playerId)
+      ? prefetch.slots
+      : null;
 
   function changeDuration(d: number) {
     setDuration(d);
     setSelected([]); // minutes-per-slot changed — start the pick over
-    if (!pin) return;
-    const key = slotKey(pin.lat, pin.lng, d, playerId);
-    if (prefetch?.key === key) {
-      setSlots(prefetch.slots);
-      return;
-    }
-    setSlots(null);
-    startTransition(async () => {
-      const result = await getSlots(pin.lat, pin.lng, d, playerId);
-      setSlots(result);
-    });
   }
 
   // How many slots can be picked: the plan's weekly frequency in weekly mode,
@@ -376,7 +335,7 @@ export function PrivateWizard({
           {editingAddress ? (
             <AddressForm
               value={addr}
-              onChange={updateAddr}
+              onChange={setAddr}
               requireFlat
               showAccessNotes
               showUseMyLocation
@@ -529,16 +488,15 @@ export function PrivateWizard({
 
           <div>
             <Button
-              onClick={toStep2}
+              onClick={() => setStep(2)}
               disabled={
                 !isAddressComplete(addr, true) ||
                 covered !== true ||
-                !hasTable ||
-                pending
+                !hasTable
               }
               className="w-full"
             >
-              {pending ? <Spinner /> : "Choose a time"}
+              Choose a time
             </Button>
             {disabledReason && covered !== false && (
               <p className="mt-2 text-sm text-fg-2">{disabledReason}</p>
@@ -632,6 +590,20 @@ export function PrivateWizard({
             {slots === null ? (
               <div className="flex justify-center py-8">
                 <Spinner />
+              </div>
+            ) : slots === "failed" ? (
+              <div className="py-6 text-sm text-fg-2">
+                <p>Couldn&apos;t load times.</p>
+                <Button
+                  variant="ghost"
+                  onClick={() => {
+                    setPrefetch(null);
+                    setSlotsAttempt((n) => n + 1);
+                  }}
+                  className="mt-2"
+                >
+                  Try again
+                </Button>
               </div>
             ) : slots.length === 0 ? (
               <p className="py-6 text-sm text-fg-2">

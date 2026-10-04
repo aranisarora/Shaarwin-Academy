@@ -23,9 +23,9 @@ That is the ground truth to check `supabase/schema.sql` against. It is read-only
 `supabase db push` is a deliberate no-op here — `[db.migrations] enabled = false` in `config.toml`. Do not "fix" that:
 
 - `supabase/migrations/` has drifted behind the live DB and no longer replays from empty (0001 assumes a pre-migration base schema).
-- The remote migration history shares **no versions at all** with the local files — every remote entry is a timestamp (`20260808045552`) stamped by the tooling that applied it, and `supabase migration list --linked` shows all 74 local files as unapplied. Re-enabling the push would try to replay 0001 onwards against production.
+- The remote migration history shares **no versions at all** with the local files — every remote entry is a timestamp (`20260808045552`) stamped by the tooling that applied it, and `supabase migration list --linked` shows every local file as unapplied. Re-enabling the push would try to replay 0001 onwards against production.
 
-So a migration reaches production by **executing its SQL directly against the linked database** — the Studio SQL editor, or a `pg` script like `scripts/test-db-reset.mjs` pointed at the pooler. Add the file under `supabase/migrations/` for the record either way.
+So a migration reaches production by **executing its SQL directly against the linked database**: `supabase db query --linked -f supabase/migrations/<file>.sql`, or the Studio SQL editor. Add the file under `supabase/migrations/` for the record either way.
 
 ## Keep it in sync
 
@@ -47,6 +47,19 @@ npm run db:reset && supabase gen types typescript --local
 Diff that against the committed file and port the delta. Do not overwrite — the committed file drops the `graphql_public` schema and carries a hand-maintained block of PostgREST computed fields (`classes.location_label` and friends, migration 0052) that `gen types` does not emit.
 
 A pre-commit hook (`.githooks/pre-commit`) blocks any commit that stages a file under `supabase/migrations/` without also staging `supabase/schema.sql`. The hook is enrolled automatically by the `prepare` npm script on `npm install` (it sets `core.hooksPath` to `.githooks`).
+
+# Production operations
+
+These live in the database or on Supabase, not in the app, so no build or test shows them.
+
+- **`notify` has no autodeploy.** A change under `supabase/functions/notify/` does nothing in production until someone runs `supabase functions deploy notify --project-ref jkjgdpifimvnptpxjixk`. Deploy in the same session as the commit, then confirm the version went up with `supabase functions list --project-ref jkjgdpifimvnptpxjixk`. Skipping it lets production drift from the repo with nothing to say so.
+- **The worker's key is a Vault secret.** The `notify-worker` cron job (every minute) posts to `functions/v1/notify` with a bearer token it reads from `vault.decrypted_secrets` where `name = 'notify_worker_key'` (migration 0094). The key is not written in the cron command. Rotate it with `vault.update_secret`, not by rescheduling the job.
+- **WhatsApp delivery is a setting.** `notify` reads `settings.whatsapp_enabled` (a JSON boolean, held to that by a check constraint) on every run. Production has it `false` (migration 0095): notifications go out by push only, and a row with no push to carry it is marked `failed` with `whatsapp: disabled`. Turn it back on with `update settings set value = 'true' where key = 'whatsapp_enabled';`. The local seed sets it `true`.
+- **Retention runs nightly.** Two pg_cron jobs (times in GMT) stop tables growing without bound:
+  - `cron-history-prune` at 22:15 deletes `cron.job_run_details` older than seven days and runs `prune_wa_inbound_seen()` (migration 0085).
+  - `notifications-prune` at 22:20 runs `prune_notifications()`: it deletes notifications older than 60 days that are no longer pending, but keeps every `signup_request` and any unread `session_issue`, `private_request_parked` or `cover_offer` (migration 0092).
+
+  The other two jobs are `private-series-nightly` at 21:40 (`generate_private_sessions(4)`) and `session-status-hourly` at five past each hour (`sweep_session_status()`). Read the live list with `select jobname, schedule, command from cron.job;`.
 
 # E2E testing harness
 

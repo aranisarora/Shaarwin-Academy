@@ -92,5 +92,6 @@ insert into settings (key, value) values
   ('travel_buffer_minutes', '30'),
   ('reschedule_max_hops', '2'),
   ('dunning_grace_days', '7'),
-  ('waitlist_claim_minutes', '15')
+  ('waitlist_claim_minutes', '15'),
+  ('whatsapp_enabled', 'true')
 on conflict (key) do nothing;

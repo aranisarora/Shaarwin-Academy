@@ -69,7 +69,7 @@ import { KindIcon, KIND_TINT, KIND_WORD, type ClassKind } from "./class-type";
 type Mode = "weekly" | "school" | "private";
 /** Does it happen once, or every week? The one question the tabs used to
  *  answer behind his back. */
-export type RepeatChoice = "once" | "weekly";
+type RepeatChoice = "once" | "weekly";
 
 // The three kinds of class, named the same whichever way they repeat. They used
 // to be "Private class" when repeating and "Private session" when not, which is

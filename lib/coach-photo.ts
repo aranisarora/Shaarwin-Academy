@@ -62,7 +62,7 @@ const HOUSE_STYLE_PROMPT = [
   "Vertical 4:5 aspect ratio. No text, no logos, no props, no borders, no watermark.",
 ].join(" ");
 
-export type Portrait = { bytes: Buffer; mimeType: string };
+type Portrait = { bytes: Buffer; mimeType: string };
 
 /**
  * Generate a standardized portrait from a source image. Throws on failure so

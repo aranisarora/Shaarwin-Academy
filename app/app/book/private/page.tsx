@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { Suspense } from "react";
 import { requireUser } from "@/lib/auth";
 import { getSubscriptionSummary } from "@/lib/billing";
-import type { CoachRosterRow } from "@/lib/data";
+import { getVenues } from "@/lib/data";
 import { ClientShell } from "@/components/app/ClientShell";
 import { BookModeSwitch } from "@/components/app/BookModeSwitch";
 import { OnboardingBanner } from "@/components/app/onboarding/OnboardingBanner";
@@ -22,30 +22,18 @@ async function Header({ searchParams }: { searchParams: SearchParams }) {
 async function Wizard({ searchParams }: { searchParams: SearchParams }) {
   const { onboarding } = await searchParams;
   const { supabase, user, profile } = await requireUser("/app/book/private");
-  const [summary, playersRes, coachesRes, venuesRes] = await Promise.all([
+  const [summary, playersRes, coachesRes, venues] = await Promise.all([
     getSubscriptionSummary(supabase, user.id),
     supabase.from("players").select("id,full_name").eq("client_id", user.id),
     // Clients can't read other people's `profiles` rows, so the coach name has
     // to come from the definer-rights roster function, not a join.
     supabase.rpc("public_coach_roster"),
-    // Places we already coach at, offered by name when the client's pin lands
-    // near one. Active venues are world-readable (RLS), and naming one is
-    // strictly better than a typed guess: it sets venue_id, so a later rename
-    // corrects every message rather than leaving frozen copies.
-    // School campuses are excluded by their own flag, not by the founder
-    // remembering to hide them — a client can't book a private at a school.
-    supabase
-      .from("venues")
-      .select("id,name,unit,lat,lng")
-      .eq("is_public", true)
-      .eq("is_school", false),
+    getVenues(),
   ]);
 
-  const coaches = ((coachesRes.data ?? []) as CoachRosterRow[]).map((c) => ({
+  const coaches = (coachesRes.data ?? []).map((c) => ({
     id: c.id,
     name: c.full_name,
-    lat: c.base_lat,
-    lng: c.base_lng,
   }));
 
   const privatePlan = summary.privatePlan?.active
@@ -59,7 +47,7 @@ async function Wizard({ searchParams }: { searchParams: SearchParams }) {
     <PrivateWizard
       players={playersRes.data ?? []}
       coaches={coaches}
-      venues={venuesRes.data ?? []}
+      venues={venues}
       minutesBalance={summary.minutesBalance}
       defaultAddress={profile.default_address}
       defaultAddressDetails={profile.address_details}

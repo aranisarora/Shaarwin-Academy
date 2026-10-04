@@ -85,7 +85,7 @@ export async function bookSlot(
   return { ok: false, error: errorCopy.booking_failed };
 }
 
-export type CancelResult = { ok: boolean; error?: string };
+type CancelResult = { ok: boolean; error?: string };
 
 export async function cancelBooking(bookingId: string): Promise<CancelResult> {
   const supabase = await createClient();

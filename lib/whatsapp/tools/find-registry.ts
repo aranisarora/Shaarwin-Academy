@@ -260,7 +260,7 @@ export const ENTITIES: Record<string, EntityDef> = {
     columns:
       "id,class_type,is_school,title,description,skill_level,capacity,duration_minutes,venue_id,recurrence_rule,starts_on,ends_on,active,location_label",
     includes: {
-      venue: "venues(id,name,unit,address,postcode,active)",
+      venue: "venues(id,name,unit,address,postcode,is_public)",
       sessions: "class_sessions(id,starts_at,status,coach_id)",
     },
     defaultIncludes: ["venue"],
@@ -586,24 +586,24 @@ export const ENTITIES: Record<string, EntityDef> = {
   venues: {
     table: "venues",
     description: "Where sessions happen.",
-    // Staff only. RLS lets anyone read active venues, but get_academy_info
+    // Staff only. RLS lets anyone read public venues, but get_academy_info
     // treats `is_school = false` as a PRIVACY rule — never read a school campus
     // out to someone outside it. A client browsing the venue table would walk
     // straight past that; the venue they actually need rides on their session.
     roles: STAFF,
     // notes withheld — free text, and the table is readable by anon.
-    columns: "id,name,unit,address,postcode,lat,lng,active,is_school,created_at",
+    columns: "id,name,unit,address,postcode,lat,lng,is_public,is_school,created_at",
     includes: { classes: "classes(id,title,active,class_type)" },
     defaultIncludes: [],
     filters: {
       id: { path: "id", description: "Venue id", ops: ["eq", "in", "not_in"] },
       name: { path: "name", description: "Venue name, matched loosely", loose: true },
-      active: { path: "active", description: "true for venues in use" },
+      is_public: { path: "is_public", description: "true for venues offered to clients" },
       is_school: { path: "is_school", description: "true for school sites" },
       postcode: { path: "postcode", description: "Postcode", loose: true },
     },
     order: { path: "name", ascending: true },
-    groupable: ["active", "is_school"],
+    groupable: ["is_public", "is_school"],
   },
 
   // ── Money ────────────────────────────────────────────────────────────────
@@ -969,15 +969,6 @@ export const ENTITIES: Record<string, EntityDef> = {
     groupable: ["postcode"],
   },
 };
-
-export type EntityName = keyof typeof ENTITIES;
-
-export function entitiesForRole(role: Role): string[] {
-  return Object.entries(ENTITIES)
-    .filter(([, def]) => def.roles.includes(role))
-    .map(([name]) => name)
-    .sort();
-}
 
 /**
  * The entity catalogue, rendered into the tool description so the model can see

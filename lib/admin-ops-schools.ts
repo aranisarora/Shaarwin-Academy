@@ -24,7 +24,7 @@ import { createAdminClient, hasServiceRoleKey } from "@/lib/supabase/admin";
 import type { OpResult } from "@/lib/admin-ops-types";
 
 /** A campus the founder has marked as a school. */
-export type SchoolRow = {
+type SchoolRow = {
   venueId: string;
   name: string;
   unit: string | null;
@@ -72,7 +72,7 @@ const WORDS = [
   "dune", "ember", "fern", "grove", "hazel", "indigo",
 ];
 
-export function generatePassword(): string {
+function generatePassword(): string {
   const pick = () => WORDS[Math.floor(Math.random() * WORDS.length)];
   const digits = String(Math.floor(1000 + Math.random() * 9000));
   return `${pick()}-${pick()}-${digits}`;
@@ -152,56 +152,32 @@ async function lastSignInByUser(
 export async function listSchoolsCore(
   supabase: SupabaseClient<Database>
 ): Promise<SchoolRow[]> {
-  // The flagged venues come first because the counts are scoped to them — there
-  // is no reason to pull every class row in the database to count the handful
-  // that belong to a school.
-  const { data: venues } = await supabase
-    .from("venues")
-    .select("id,name,unit")
-    .eq("is_school", true)
-    .order("name");
-  const venueIds = (venues ?? []).map((v) => v.id);
-  if (venueIds.length === 0) return [];
-
-  const [{ data: classes }, { data: pupils }, { data: links }, signedIn] =
-    await Promise.all([
+  // Classes and pupils ride embedded under each flagged venue, so the counts
+  // need no second round trip and max_rows, which caps only the top level,
+  // can never cut a busy campus's pupils short.
+  const [{ data: venues }, { data: links }, signedIn] = await Promise.all([
+    supabase
+      .from("venues")
+      .select("id,name,unit,classes(id),players(id)")
+      .eq("is_school", true)
       // `active` is the difference between "6 classes" and the truth: a campus
       // whose batches have all ended still has its rows, and without this filter
       // the row would keep claiming a live timetable long after the last session.
-      supabase
-        .from("classes")
-        .select("venue_id")
-        .in("venue_id", venueIds)
-        .eq("active", true),
+      .eq("classes.active", true)
       // `client_id is null` is not decoration: it is the same test the school's
       // own RLS applies (`school_has_player`). Without it a private client's
       // child who attends a school session would be counted here and nowhere
       // else, and the founder's number would quietly exceed what the school can
       // actually see when it logs in.
-      supabase
-        .from("players")
-        .select("school_venue_id")
-        .not("school_venue_id", "is", null)
-        .is("client_id", null),
-      // Hinted: school_admins points at profiles twice (user_id and created_by),
-      // so an unqualified embed is ambiguous.
-      supabase
-        .from("school_admins")
-        .select("user_id,venue_id,profiles!school_admins_user_id_fkey(email)"),
-      lastSignInByUser(supabase),
-    ]);
-
-  const classCounts = new Map<string, number>();
-  for (const c of classes ?? []) {
-    const id = c.venue_id;
-    if (id) classCounts.set(id, (classCounts.get(id) ?? 0) + 1);
-  }
-
-  const pupilCounts = new Map<string, number>();
-  for (const p of pupils ?? []) {
-    const id = p.school_venue_id;
-    if (id) pupilCounts.set(id, (pupilCounts.get(id) ?? 0) + 1);
-  }
+      .is("players.client_id", null)
+      .order("name"),
+    // Hinted: school_admins points at profiles twice (user_id and created_by),
+    // so an unqualified embed is ambiguous.
+    supabase
+      .from("school_admins")
+      .select("user_id,venue_id,profiles!school_admins_user_id_fkey(email)"),
+    lastSignInByUser(supabase),
+  ]);
 
   const accounts = new Map<string, SchoolRow["account"]>();
   for (const l of links ?? []) {
@@ -218,8 +194,8 @@ export async function listSchoolsCore(
         venueId: v.id,
         name: v.name,
         unit: v.unit,
-        classes: classCounts.get(v.id) ?? 0,
-        pupils: pupilCounts.get(v.id) ?? 0,
+        classes: v.classes.length,
+        pupils: v.players.length,
         account,
         lastSignInAt: account ? signedIn.get(account.userId) ?? null : null,
       };

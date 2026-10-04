@@ -15,8 +15,7 @@ export const metadata: Metadata = { title: "More" };
  * the password, the academy does it and re-shares the credentials.
  */
 async function Account() {
-  const { supabase, profile } = await requireUser("/school/more");
-  const campuses = await getCampuses(supabase);
+  const [{ profile }, campuses] = await Promise.all([requireUser("/school/more"), getCampuses()]);
 
   return (
     <div className="space-y-6">

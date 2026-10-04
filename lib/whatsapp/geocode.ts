@@ -3,7 +3,7 @@
 
 import { BENGALURU_PROXIMITY } from "@/lib/coverage";
 
-export type GeoHit = { lat: number; lng: number; place: string };
+type GeoHit = { lat: number; lng: number; place: string };
 
 export async function geocode(address: string): Promise<GeoHit | null> {
   const token = process.env.NEXT_PUBLIC_MAPBOX_ACCESS_TOKEN;

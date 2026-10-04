@@ -29,7 +29,7 @@ export function StudioShell({
           href="/"
           className="flex items-center gap-2 px-6 py-6 font-display text-lg"
         >
-          <Image src={logo} alt="Sharwin Table Tennis Academy" className="h-16 w-auto" />
+          <Image src={logo} alt="Sharwin Table Tennis Academy" width={64} height={64} className="h-16 w-auto" />
         </Link>
         <nav aria-label="Primary" className="flex flex-1 flex-col gap-1 px-3">
           {tabs.map((t, i) => {

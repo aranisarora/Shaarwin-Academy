@@ -226,7 +226,7 @@ export async function deletePendingClientCore(
  * cancel path sends properly on its own.
  */
 export const NOTIFY_TYPES = ["announcement", "class_updated"] as const;
-export type NotifyType = (typeof NOTIFY_TYPES)[number];
+type NotifyType = (typeof NOTIFY_TYPES)[number];
 
 /**
  * Send an announcement to an explicit set of users. Rows land in

@@ -1,7 +1,7 @@
 import { Suspense } from "react";
 import type { Viewport } from "next";
 import { ServiceWorkerRegistrar } from "@/components/app/ServiceWorkerRegistrar";
-import { RealtimeRefresh } from "@/components/app/RealtimeRefresh";
+import { ResumeRefresh } from "@/components/app/ResumeRefresh";
 import { InstallPrompt } from "@/components/app/InstallPrompt";
 import { PushPrompt } from "@/components/app/PushPrompt";
 import { CoachWrapUpPrompt } from "@/components/app/CoachWrapUpPrompt";
@@ -43,7 +43,7 @@ export default function CoachLayout({ children }: { children: React.ReactNode })
         <CoachPreview />
       </Suspense>
       <ServiceWorkerRegistrar />
-      <RealtimeRefresh tables={["bookings", "class_sessions"]} />
+      <ResumeRefresh />
       {children}
       <InstallPrompt />
       {/* Push is the only permission this shell asks for. It used to hand over

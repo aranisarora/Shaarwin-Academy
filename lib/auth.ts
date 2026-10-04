@@ -1,6 +1,7 @@
 import { cache } from "react";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { sessionClaims, AUTH_TIMEOUT_MS } from "@/lib/supabase/claims";
 import { roleHome } from "@/lib/access-gates";
 import type { StructuredAddress } from "@/lib/address";
 
@@ -20,8 +21,7 @@ import type { StructuredAddress } from "@/lib/address";
  */
 export const getCurrentUser = cache(async () => {
   const supabase = await createClient();
-  const { data } = await supabase.auth.getClaims();
-  const claims = data?.claims;
+  const claims = await sessionClaims(supabase.auth);
   if (!claims?.sub) return null;
   return { id: claims.sub, email: typeof claims.email === "string" ? claims.email : "" };
 });
@@ -42,11 +42,16 @@ export async function redirectSignedInHome(): Promise<void> {
   if (!user) return;
 
   const supabase = await createClient();
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("profiles")
     .select("role")
     .eq("id", user.id)
+    .abortSignal(AbortSignal.timeout(AUTH_TIMEOUT_MS))
     .maybeSingle();
+  if (error) {
+    console.error("auth: signed-in role read failed", error.message);
+    return;
+  }
   redirect(roleHome(data?.role));
 }
 
@@ -77,11 +82,12 @@ const getProfileRow = cache(async (): Promise<Profile | null> => {
   // protected navigation, and the table also carries stripe_customer_id,
   // disputed, deleted_at, created_at and onboarding_step, which nothing here
   // reads. The screens that do need those fetch them in their own selects.
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("profiles")
     .select(PROFILE_COLUMNS)
     .eq("id", user.id)
     .maybeSingle();
+  if (error) throw error;
 
   return (data as Profile) ?? null;
 });

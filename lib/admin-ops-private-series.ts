@@ -30,7 +30,7 @@ import {
 const WEEKDAY_LABEL = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
 /** "Monday 5:00 pm" — how a weekly slot names itself in a message. */
-export function seriesLabel(weekday: number, startTime: string): string {
+function seriesLabel(weekday: number, startTime: string): string {
   const day = WEEKDAY_LABEL[weekday - 1] ?? "Weekly";
   const [hRaw, m] = String(startTime).slice(0, 5).split(":");
   const h = Number(hRaw);
@@ -209,27 +209,22 @@ export async function updatePrivateSeriesCore(
       )
     : null;
 
-  if (slotMoved) {
-    for (const clientId of clientIds) {
-      await supabase.from("notifications").insert({
-        user_id: clientId,
-        type: "session_moved",
-        title: "Weekly session moved",
-        body: `Your weekly private session has moved from ${wasLabel} to ${label}${
-          nextIso ? `, starting ${nextIso}` : ""
-        }.`,
-        data: {
-          series_id: seriesId,
-          old_slot: wasLabel,
-          new_slot: label,
-          url: "/app/schedule",
-        },
-      });
-    }
-  }
-
-  for (const coachId of affectedCoaches) {
-    await supabase.from("notifications").insert({
+  const notices = [
+    ...(slotMoved ? [...clientIds] : []).map((clientId) => ({
+      user_id: clientId,
+      type: "session_moved",
+      title: "Weekly session moved",
+      body: `Your weekly private session has moved from ${wasLabel} to ${label}${
+        nextIso ? `, starting ${nextIso}` : ""
+      }.`,
+      data: {
+        series_id: seriesId,
+        old_slot: wasLabel,
+        new_slot: label,
+        url: "/app/schedule",
+      },
+    })),
+    ...[...affectedCoaches].map((coachId) => ({
       user_id: coachId,
       type: "session_moved",
       title: slotMoved ? "Weekly private slot moved" : "Weekly private slot reassigned",
@@ -237,8 +232,9 @@ export async function updatePrivateSeriesCore(
         ? `A weekly private has moved from ${wasLabel} to ${label}. Check your calendar.`
         : `A weekly private on ${label} has changed coach. Check your calendar.`,
       data: { series_id: seriesId, old_slot: wasLabel, new_slot: label, url: "/coach" },
-    });
-  }
+    })),
+  ];
+  if (notices.length) await supabase.from("notifications").insert(notices);
 
   await supabase.from("audit_log").insert({
     actor_id: founderId,
@@ -398,10 +394,13 @@ export async function endPrivateSeriesCore(
   // One RPC per series rather than one for the whole list: each is atomic on its
   // own, so a slot that fails leaves the others ended rather than taking a whole
   // timetable clear-out down with it.
-  for (const id of seriesIds) {
-    const { data, error } = await supabase.rpc("end_private_series_as_academy", {
-      p_series: id,
-    });
+  const outcomes = await Promise.all(
+    seriesIds.map(async (id) => ({
+      id,
+      ...(await supabase.rpc("end_private_series_as_academy", { p_series: id })),
+    }))
+  );
+  for (const { id, data, error } of outcomes) {
     if (error) {
       failed += 1;
       if (!firstError)

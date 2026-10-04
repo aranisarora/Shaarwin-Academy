@@ -20,35 +20,12 @@ function base(className?: string) {
   };
 }
 
-/** Today — a house. */
-export function HomeIcon({ className }: IconProps) {
-  return (
-    <svg {...base(className)}>
-      <path d="M3 10.5 12 3l9 7.5" />
-      <path d="M5 9.5V20a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9.5" />
-      <path d="M9.5 21v-6h5v6" />
-    </svg>
-  );
-}
-
 /** Schedule — a calendar. */
 export function CalendarIcon({ className }: IconProps) {
   return (
     <svg {...base(className)}>
       <rect x="3.5" y="5" width="17" height="16" rx="2" />
       <path d="M3.5 9.5h17M8 3v4M16 3v4" />
-    </svg>
-  );
-}
-
-/** Weekly classes — a repeat loop. */
-export function RepeatIcon({ className }: IconProps) {
-  return (
-    <svg {...base(className)}>
-      <path d="M17 3.5 20.5 7 17 10.5" />
-      <path d="M20.5 7H7a3.5 3.5 0 0 0-3.5 3.5V12" />
-      <path d="M7 20.5 3.5 17 7 13.5" />
-      <path d="M3.5 17H17a3.5 3.5 0 0 0 3.5-3.5V12" />
     </svg>
   );
 }

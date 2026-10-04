@@ -47,8 +47,8 @@ import {
   reassignClassCoach,
   restoreGroupClass,
   updateGroupClass,
-  type RosterEntry,
 } from "@/app/admin/schedule/actions";
+import type { RosterEntry } from "@/lib/session-sheet";
 import { viewAsCoach } from "@/app/coach/preview-actions";
 import { AddressDisplay } from "@/components/app/AddressDisplay";
 import { ActionResult } from "./ActionResult";

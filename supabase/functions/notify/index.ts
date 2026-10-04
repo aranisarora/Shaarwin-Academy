@@ -2,7 +2,8 @@
 //   supabase functions deploy notify
 //   select cron.schedule('notify-worker', '* * * * *', $$select net.http_post(
 //     url := 'https://<ref>.supabase.co/functions/v1/notify',
-//     headers := '{"Authorization": "Bearer <service-role-key>"}'::jsonb)$$);
+//     headers := jsonb_build_object('Authorization', 'Bearer ' || (select decrypted_secret
+//       from vault.decrypted_secrets where name = 'notify_worker_key')))$$);
 //
 // Claims due rows (skip-locked semantics via status flip), delivers them over
 // web push and WhatsApp, marks sent/failed. After delivery it runs a set of
@@ -394,6 +395,7 @@ function mutedByPrefs(type: string, prefs: Record<string, boolean> | null): bool
 }
 
 Deno.serve(async () => {
+  const whatsappOn = await whatsappEnabled();
   const { data: due } = await supabase
     .from("notifications")
     .select("id,user_id,type,title,body,data,created_at")
@@ -471,7 +473,7 @@ Deno.serve(async () => {
       .maybeSingle();
     if (!claimed) continue;
 
-    const attempt = await deliver(row);
+    const attempt = await deliver(row, whatsappOn);
     if (attempt.ok) {
       sent++;
       // `error` on a sent row is not a failure — it is why the channel we would
@@ -528,6 +530,19 @@ Deno.serve(async () => {
     headers: { "Content-Type": "application/json" },
   });
 });
+
+async function whatsappEnabled(): Promise<boolean> {
+  const { data, error } = await supabase
+    .from("settings")
+    .select("value")
+    .eq("key", "whatsapp_enabled")
+    .single();
+  if (error) throw error;
+  if (typeof data.value !== "boolean") {
+    throw new Error(`settings.whatsapp_enabled must be a boolean, got ${JSON.stringify(data.value)}`);
+  }
+  return data.value;
+}
 
 async function safeSweep(name: string, fn: () => Promise<void>) {
   try {
@@ -1144,6 +1159,9 @@ async function sweepFounderDigest() {
 
   const { data: founders } = await supabase.from("profiles").select("id").eq("role", "founder");
   if (!founders?.length) return;
+  const digested = await briefedToday("ops_daily_digest", istDate, founders.map((f) => f.id));
+  const due = founders.filter((f) => !digested.has(f.id));
+  if (!due.length) return;
 
   const { data: report, error } = await supabase.rpc("founder_day_report", { p_date: istDate });
   if (error) return; // leave the day unreported rather than send a wrong summary
@@ -1154,16 +1172,7 @@ async function sweepFounderDigest() {
 
   const summary = summariseDay(sessions, await unreachableToday());
 
-  for (const f of founders) {
-    const { data: already } = await supabase
-      .from("notifications")
-      .select("id")
-      .eq("user_id", f.id)
-      .eq("type", "ops_daily_digest")
-      .eq("data->>date", istDate)
-      .limit(1);
-    if (already?.length) continue;
-
+  for (const f of due) {
     await supabase.from("notifications").insert({
       user_id: f.id,
       type: "ops_daily_digest",
@@ -1299,6 +1308,18 @@ async function alreadyBriefed(userId: string, type: string, stamp: string, key =
   return !!data?.length;
 }
 
+/** Which of these users already got this type stamped with this IST date, in one query. */
+async function briefedToday(type: string, istDate: string, userIds: string[]): Promise<Set<string>> {
+  const { data, error } = await supabase
+    .from("notifications")
+    .select("user_id")
+    .eq("type", type)
+    .eq("data->>date", istDate)
+    .in("user_id", userIds);
+  if (error) throw error;
+  return new Set(data.map((r) => r.user_id));
+}
+
 /** Confirmed/attended headcount per session id, in one query rather than N. */
 async function headcounts(sessionIds: string[]): Promise<Map<string, number>> {
   const counts = new Map<string, number>();
@@ -1337,8 +1358,11 @@ async function sweepCoachDayAhead() {
     .order("starts_at")
     .limit(500);
   if (!sessions?.length) return;
+  const briefed = await briefedToday("coach_day_ahead", istDate, [...new Set(sessions.map((s) => s.coach_id))]);
+  const due = sessions.filter((s) => !briefed.has(s.coach_id));
+  if (!due.length) return;
 
-  const valid = await withValidCoaches(sessions);
+  const valid = await withValidCoaches(due);
   const byCoach = new Map<string, typeof valid>();
   for (const s of valid) {
     const arr = byCoach.get(s.coach_id) ?? [];
@@ -1349,8 +1373,6 @@ async function sweepCoachDayAhead() {
   const counts = await headcounts(valid.map((s) => s.id));
 
   for (const [coachId, list] of byCoach) {
-    if (await alreadyBriefed(coachId, "coach_day_ahead", istDate)) continue;
-
     const lines = list.map((s) => {
       const { title, location } = locationOf(s.classes);
       const n = counts.get(s.id) ?? 0;
@@ -1392,6 +1414,9 @@ async function sweepFounderMorningBrief() {
 
   const { data: founders } = await supabase.from("profiles").select("id").eq("role", "founder");
   if (!founders?.length) return;
+  const briefed = await briefedToday("founder_morning_brief", istDate, founders.map((f) => f.id));
+  const due = founders.filter((f) => !briefed.has(f.id));
+  if (!due.length) return;
 
   const { data: sessions } = await supabase
     .from("class_sessions")
@@ -1442,8 +1467,7 @@ async function sweepFounderMorningBrief() {
     .filter(Boolean)
     .join("\n");
 
-  for (const f of founders) {
-    if (await alreadyBriefed(f.id, "founder_morning_brief", istDate)) continue;
+  for (const f of due) {
     await supabase.from("notifications").insert({
       user_id: f.id,
       type: "founder_morning_brief",
@@ -1787,7 +1811,7 @@ async function deliver(row: {
   title: string;
   body: string;
   data: { url?: string } & Record<string, unknown>;
-}): Promise<Attempt> {
+}, whatsappOn: boolean): Promise<Attempt> {
   // phone comes from here now, not a second query against a link table.
   // profiles.phone IS the WhatsApp binding — the same column inbound identity
   // resolves against — so the two directions cannot disagree about who is
@@ -1812,8 +1836,12 @@ async function deliver(row: {
   // person who has never subscribed — and stamping those on every failed row
   // would bury the reason that actually explains the failure.
   const notes: string[] = push.channel === "push" && push.error ? [`push: ${push.error}`] : [];
-  if (push.ok && !ruleFor(row.type).answer) {
+  if (push.ok && (!ruleFor(row.type).answer || !whatsappOn)) {
     return { ok: true, channel: "push", whatsapp: "skipped" };
+  }
+  if (!whatsappOn) {
+    notes.push("whatsapp: disabled");
+    return { ok: false, channel: push.channel, error: notes.join("; "), whatsapp: "skipped" };
   }
 
   /** Push already carried it, so a dead fallback isn't a failed notification.

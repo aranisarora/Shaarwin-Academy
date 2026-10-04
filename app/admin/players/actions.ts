@@ -10,7 +10,7 @@ import {
   setClientBlockedCore,
   updateClientCore,
   type ClientInviteDetails,
-} from "@/lib/admin-ops";
+} from "@/lib/admin-ops-clients";
 
 type Result = { ok: boolean; error?: string };
 

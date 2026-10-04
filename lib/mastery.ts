@@ -2,7 +2,7 @@ import type { createClient } from "@/lib/supabase/server";
 
 type Supabase = Awaited<ReturnType<typeof createClient>>;
 
-export type MasteryLabel = "Beginner" | "Intermediate" | "Advanced" | "Elite";
+type MasteryLabel = "Beginner" | "Intermediate" | "Advanced" | "Elite";
 
 export function masteryLabel(mastery: number): MasteryLabel {
   if (mastery >= 75) return "Elite";

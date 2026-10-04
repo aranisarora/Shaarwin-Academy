@@ -7,10 +7,11 @@
 // open until it's answered. Reuses the stepper's active-step buttons so the
 // logic never forks. No emojis.
 
-import { useState, useSyncExternalStore } from "react";
+import { useState } from "react";
 import { Sheet } from "@/components/ui/Sheet";
 import { CheckIcon } from "@/components/ui/icons";
 import { ComingAction, ArriveAction } from "@/components/app/ArrivalActions";
+import { useHydrated } from "@/components/app/use-pwa";
 
 function dismissKey(action: CoachAction) {
   return `coach-action-dismissed:${action.sessionId}:${action.phase}`;
@@ -33,19 +34,6 @@ export type CoachAction = {
   venueName: string | null;
   phase: "confirm" | "arrive";
 };
-
-/** True only after hydration. Lets a render read browser-only state (here,
- *  sessionStorage) without the client's first paint disagreeing with the
- *  server's: React uses the server snapshot for SSR *and* for hydration, then
- *  re-renders with the client one. */
-const subscribeNoop = () => () => {};
-function useHydrated(): boolean {
-  return useSyncExternalStore(
-    subscribeNoop,
-    () => true,
-    () => false
-  );
-}
 
 export function CoachActionSheet({ action }: { action: CoachAction | null }) {
   // The sheet must render closed on the server and on the hydration pass (both

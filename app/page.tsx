@@ -1,5 +1,5 @@
 import { Suspense } from "react";
-import Image from "next/image";
+import Image, { getImageProps } from "next/image";
 import Link from "next/link";
 import { StageShell } from "@/components/shells/StageShell";
 import { SectionDivider } from "@/components/ui/SectionDivider";
@@ -103,6 +103,31 @@ function CoachesGridSkeleton() {
   );
 }
 
+const HERO_ALT =
+  "A player frozen at the moment of a serve toss in a dark tournament hall";
+
+function HeroImage() {
+  const {
+    props: { srcSet: desktop },
+  } = getImageProps({ src: heroServe, alt: HERO_ALT, fill: true, sizes: "100vw" });
+  const { props: mobile } = getImageProps({
+    src: heroServeMobile,
+    alt: HERO_ALT,
+    fill: true,
+    sizes: "100vw",
+    placeholder: "blur",
+    loading: "eager",
+    fetchPriority: "high",
+    className: "object-cover",
+  });
+  return (
+    <picture>
+      <source media="(min-width: 768px)" srcSet={desktop} sizes="100vw" />
+      <img {...mobile} alt={HERO_ALT} />
+    </picture>
+  );
+}
+
 // Marketing homepage: static + revalidated hourly so India visitors get it from
 // the edge PoP near them instead of a dynamic render in Tokyo. The auth-aware CTA
 // lives in the AuthCta client island so the page body stays static.
@@ -114,24 +139,7 @@ export default function LandingPage() {
       {/* HERO — art-directed swap: 16:9 desktop, 4:5 mobile */}
       <section className="relative min-h-[100dvh] overflow-hidden">
         <Parallax>
-          <Image
-            src={heroServe}
-            alt="A player frozen at the moment of a serve toss in a dark tournament hall"
-            fill
-            priority
-            placeholder="blur"
-            sizes="100vw"
-            className="hidden object-cover md:block"
-          />
-          <Image
-            src={heroServeMobile}
-            alt="A player frozen at the moment of a serve toss in a dark tournament hall"
-            fill
-            priority
-            placeholder="blur"
-            sizes="100vw"
-            className="object-cover md:hidden"
-          />
+          <HeroImage />
         </Parallax>
         <div className="scrim-ink-bottom absolute inset-0" aria-hidden />
         <div className="absolute inset-x-0 bottom-0">

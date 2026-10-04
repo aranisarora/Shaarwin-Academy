@@ -8,23 +8,6 @@ import { academyToday, academyWallToUtc } from "@/lib/academy-time";
 import { overlaps, weeklyOccurrences } from "@/lib/slot-clashes";
 import { toSkillLevel, type OpResult } from "@/lib/admin-ops-types";
 
-// OpResult lives in a leaf module (admin-ops-types) so the domain cores can
-// import it without pointing back at this barrel — see admin-ops-types.ts.
-export type { OpResult } from "@/lib/admin-ops-types";
-
-// Domain cores split out to keep files small — re-exported so `@/lib/admin-ops`
-// stays the single import surface for both the admin actions and the bot.
-export * from "@/lib/admin-ops-classes";
-export * from "@/lib/admin-ops-calendar";
-export * from "@/lib/admin-ops-private-series";
-export * from "@/lib/admin-ops-wipe";
-export * from "@/lib/admin-ops-removal-notice";
-export * from "@/lib/admin-ops-chunk";
-export * from "@/lib/admin-ops-coaches";
-export * from "@/lib/admin-ops-clients";
-export * from "@/lib/admin-ops-venues";
-export * from "@/lib/admin-ops-settings";
-
 export type NewClass = {
   title: string;
   description: string;
@@ -38,7 +21,7 @@ export type NewClass = {
   isSchool?: boolean;
 };
 
-export type CreateClassResult = OpResult & {
+type CreateClassResult = OpResult & {
   /** Weeks actually put on the schedule. */
   weeks?: number;
   /** Of those, how many could NOT take the chosen coach and went out coachless

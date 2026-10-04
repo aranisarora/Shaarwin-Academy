@@ -1,6 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { gateRedirect, roleHome, GATE_COLUMNS } from "@/lib/access-gates";
+import { sessionClaims, AUTH_TIMEOUT_MS } from "@/lib/supabase/claims";
 
 // "/school" (singular) is the school head's app. The public marketing page at
 // "/schools" is a different route and stays public — the match below is exact
@@ -45,69 +46,37 @@ export async function proxy(request: NextRequest) {
     }
   );
 
-  // Verify the session — and refresh it, which is required for SSR auth to stay
-  // alive. `getClaims()` with no argument calls `getSession()` internally, so an
-  // expiring token is still refreshed and the `setAll` writer above still
-  // persists the rotated cookies. Unlike `getUser()` it then verifies the token
-  // locally against the public JWKS (the project signs with asymmetric ES256)
-  // instead of asking the auth server — turning a ~150ms Tokyo round trip on
-  // *every* request, including public marketing pages, into local crypto.
-  //
-  // Note it falls back to a full `getUser()` call, silently, if the token's alg
-  // is HS*, it carries no `kid`, or WebCrypto is missing. None apply here, but
-  // the symptom of a regression would be lost speed rather than an error.
-  //
-  // This await is also the whole site's single point of failure, so it is raced
-  // against a timeout. On 2026-08-28 Supabase's auth container hung — accepted
-  // TLS, then sent zero bytes forever — and because a cold invocation fetches
-  // the JWKS from `/auth/v1/.well-known/jwks.json`, this call never resolved.
-  // Every route 504'd with MIDDLEWARE_INVOCATION_TIMEOUT after 300s, marketing
-  // pages included, for every visitor *with a session cookie* (signed-out
-  // visitors short-circuit before the network and saw a healthy site, which
-  // made the outage look like anything but auth). Losing the race or throwing
-  // is treated as signed-out: public routes render, protected routes bounce to
-  // /login, and an auth outage is scoped to sessions instead of the site. The
-  // budget is generous — a real refresh is a ~150ms Tokyo round trip, so 3s is
-  // only ever spent when auth is already down.
-  let userId: string | null = null;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    const raced = await Promise.race([
-      supabase.auth.getClaims(),
-      new Promise<null>((resolve) => {
-        timer = setTimeout(() => resolve(null), 3_000);
-      }),
-    ]);
-    userId = raced?.data?.claims?.sub ?? null;
-  } catch {
-    // A thrown network error is the same outage as a hang, just faster.
-  } finally {
-    clearTimeout(timer);
-  }
+  const userId = (await sessionClaims(supabase.auth))?.sub ?? null;
 
-  const { pathname } = request.nextUrl;
+  const { pathname, search } = request.nextUrl;
   const wanted = PROTECTED_PREFIXES.find(
     (p) => pathname === p || pathname.startsWith(`${p}/`)
   );
 
   if (!wanted) return response;
 
-  if (!userId) {
-    // The query string is part of the destination, not decoration on it, so it
-    // travels with the path. Every deep link we send out is read on a phone
-    // that may not have a live session: the after-class WhatsApp points a coach
-    // at /coach/players/<player>?session=<session>, and `session` is the whole
-    // reason that link exists — it binds the assessment to the class just
-    // taught. Sending only the pathname landed a signed-out coach on a bare
-    // player page, where filing an assessment recorded an undated one and left
-    // the session's entry in the backlog untouched, so the prompt went on
-    // asking for work they had just done.
+  const redirectTo = (path: string, query = "") => {
     const url = request.nextUrl.clone();
-    const target = `${pathname}${request.nextUrl.search}`;
-    url.pathname = "/login";
-    url.search = `?next=${encodeURIComponent(target)}`;
-    return NextResponse.redirect(url);
-  }
+    url.pathname = path;
+    url.search = query;
+    const redirect = NextResponse.redirect(url);
+    response.cookies.getAll().forEach((cookie) => redirect.cookies.set(cookie));
+    return redirect;
+  };
+
+  // The query string is part of the destination, not decoration on it, so it
+  // travels with the path. Every deep link we send out is read on a phone
+  // that may not have a live session: the after-class WhatsApp points a coach
+  // at /coach/players/<player>?session=<session>, and `session` is the whole
+  // reason that link exists — it binds the assessment to the class just
+  // taught. Sending only the pathname landed a signed-out coach on a bare
+  // player page, where filing an assessment recorded an undated one and left
+  // the session's entry in the backlog untouched, so the prompt went on
+  // asking for work they had just done.
+  const toLogin = () =>
+    redirectTo("/login", `?next=${encodeURIComponent(`${pathname}${search}`)}`);
+
+  if (!userId) return toLogin();
 
   // The app's role lives in `profiles`, not in the JWT — the `role` claim on a
   // Supabase token is the Postgres role ("authenticated"), which says nothing
@@ -115,11 +84,17 @@ export async function proxy(request: NextRequest) {
   // check so public routes never touch PostgREST. It also carries the two
   // membership-gate columns, so enforcing those gates here costs no extra round
   // trip (see lib/access-gates.ts for why they left `requireUser`).
-  const { data: profile } = await supabase
+  const { data: profile, error } = await supabase
     .from("profiles")
     .select(GATE_COLUMNS)
     .eq("id", userId)
+    .abortSignal(AbortSignal.timeout(AUTH_TIMEOUT_MS))
     .maybeSingle();
+
+  if (error) {
+    console.error("proxy: profiles gate read failed", error.message);
+    return toLogin();
+  }
 
   const role = profile?.role ?? "client";
   const home = roleHome(role);
@@ -136,38 +111,38 @@ export async function proxy(request: NextRequest) {
     );
   if (previewing) return response;
 
-  // Wrong-role access → redirect to own home.
-  if (!pathname.startsWith(home)) {
-    const url = request.nextUrl.clone();
-    url.pathname = home;
-    url.search = "";
-    return NextResponse.redirect(url);
-  }
+  if (!pathname.startsWith(home)) return redirectTo(home);
 
   // Membership gates: unapproved → /app/pending, un-onboarded → /app/onboarding.
   // Skipped when the row is missing, so that stays `requireUser`'s loud error
   // about the on_auth_user_created trigger rather than a silent bounce to the
   // pending screen.
-  if (profile) {
-    const gate = gateRedirect(pathname, profile);
-    if (gate) {
-      const url = request.nextUrl.clone();
-      url.pathname = gate;
-      url.search = "";
-      return NextResponse.redirect(url);
-    }
-  }
+  const gate = profile && gateRedirect(pathname, profile);
+  if (gate) return redirectTo(gate);
 
   return response;
 }
 
 export const config = {
-  // Run on every route except static assets so the Supabase session is
-  // refreshed and re-persisted everywhere — including marketing pages like `/`.
-  // A Server Component can't write refreshed cookies, so if the proxy skips a
-  // route, any token refresh triggered during render is lost and rotates the
-  // stored refresh token into an invalid state → the visitor gets signed out.
+  // Run on every page so the Supabase session is refreshed and re-persisted
+  // everywhere — including marketing pages like `/`. A Server Component can't
+  // write refreshed cookies, so if the proxy skips a page, any token refresh
+  // triggered during its render is lost and rotates the stored refresh token
+  // into an invalid state → the visitor gets signed out. Static files, the
+  // service worker, the manifest, robots, the sitemap and API routes render no
+  // Server Component (route handlers write their own cookies), and router
+  // prefetches of public pages render only layouts and loading skeletons, so
+  // they skip it. Prefetches inside the apps still run it: the coach and school
+  // layouts read the session for the founder preview banner.
   matcher: [
-    "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|mp4)$).*)",
+    "/(app|coach|admin|school)/:path*",
+    {
+      source:
+        "/((?!_next/static|_next/image|favicon.ico|sw\\.js|manifest\\.webmanifest|robots\\.txt|sitemap\\.xml|api/|.*\\.(?:svg|png|jpg|jpeg|gif|webp|ico|mp4)$).*)",
+      missing: [
+        { type: "header", key: "next-router-prefetch" },
+        { type: "header", key: "purpose", value: "prefetch" },
+      ],
+    },
   ],
 };

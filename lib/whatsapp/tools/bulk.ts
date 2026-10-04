@@ -21,9 +21,9 @@ import { fail, ok } from "./types";
 /** Ceiling on ids per bulk call. Above this the tool refuses and asks for a narrower set. */
 export const BULK_CAP = 50;
 
-export type BulkOutcome = { id: string; ok: boolean; error?: string };
+type BulkOutcome = { id: string; ok: boolean; error?: string };
 
-export type BulkSummary = {
+type BulkSummary = {
   requested: number;
   succeeded: number;
   failed: number;

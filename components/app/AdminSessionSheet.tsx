@@ -23,13 +23,12 @@ import {
   moveSession,
   reassignClassCoach,
   reassignSession,
-  getSessionDetail,
   getSessionRoster,
+  getSessionSheet,
   setSessionCapacity,
   updateGroupClass,
-  type RosterEntry,
-  type SessionDetail,
 } from "@/app/admin/schedule/actions";
+import type { RankedCoach, RosterEntry, SessionDetail } from "@/lib/session-sheet";
 import { cancelSession, getRankedCoaches, setClassActive } from "@/app/admin/actions";
 import { viewAsCoach } from "@/app/coach/preview-actions";
 import { AddressDisplay } from "@/components/app/AddressDisplay";
@@ -75,6 +74,25 @@ function listNames(names: string[], max = 4): string {
   if (rest > 0) return `${shown.join(", ")} and ${rest} more`;
   if (shown.length === 1) return shown[0];
   return `${shown.slice(0, -1).join(", ")} and ${shown[shown.length - 1]}`;
+}
+
+function RankFetch({
+  sessionId,
+  onRanked,
+}: {
+  sessionId: string;
+  onRanked: (ranked: RankedCoach[]) => void;
+}) {
+  useEffect(() => {
+    let alive = true;
+    getRankedCoaches(sessionId).then((r) => {
+      if (alive) onRanked(r);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [sessionId, onRanked]);
+  return null;
 }
 
 export function AdminSessionSheet({
@@ -165,9 +183,7 @@ export function AdminSessionSheet({
   // When the ranking rules reject a coach, we surface an in-sheet override
   // prompt (not window.confirm) holding the reason; confirming forces it.
   const [coachOverride, setCoachOverride] = useState<string | null>(null);
-  const [ranked, setRanked] = useState<
-    { coachId: string; name: string; score: number }[] | null
-  >(null);
+  const [ranked, setRanked] = useState<RankedCoach[] | null>(null);
   // `ok` marks a success outcome — rendered as a green ✓ ActionResult whose copy
   // already says whether WhatsApp went out (see the notify manifest in
   // app/admin/schedule/actions.ts). Errors/validations stay neutral.
@@ -201,7 +217,7 @@ export function AdminSessionSheet({
         setSchoolGrade("");
         setSchoolAdding(false);
         okMsg(`${name} added to the class.`);
-        getSessionRoster(session.id).then(setRoster);
+        getSessionRoster(session.id, { includeWaitlisted: true }).then(setRoster);
       } else errMsg(r.error ?? "Couldn't add the player.");
     });
   }
@@ -228,23 +244,19 @@ export function AdminSessionSheet({
   // and did about turning up, and anything he wrote afterwards.
   const [detail, setDetail] = useState<SessionDetail | null>(null);
 
+  const [opensOnCoach] = useState(!session.coachId);
   useEffect(() => {
     let alive = true;
-    // Three independent reads, none blocking the others — the roster paints as
-    // soon as it lands rather than waiting on a coach lookup it doesn't need.
-    getRankedCoaches(session.id).then((r) => {
-      if (alive) setRanked(r);
-    });
-    getSessionRoster(session.id, { includeWaitlisted: true }).then((r) => {
-      if (alive) setRoster(r);
-    });
-    getSessionDetail(session.id).then((d) => {
-      if (alive) setDetail(d);
+    getSessionSheet(session.id, opensOnCoach).then((r) => {
+      if (!alive) return;
+      setRoster(r.roster);
+      setDetail(r.detail);
+      if (r.ranked) setRanked(r.ranked);
     });
     return () => {
       alive = false;
     };
-  }, [session.id]);
+  }, [session.id, opensOnCoach]);
 
   // What changed vs the session as it stands — drives the scope step.
   const dateChanged = date !== wallDate(session.starts_at);
@@ -1036,6 +1048,9 @@ export function AdminSessionSheet({
             tone={session.coachId ? "neutral" : "ember"}
             defaultOpen={focus === "coach"}
           >
+            {ranked === null && !opensOnCoach && (
+              <RankFetch sessionId={session.id} onRanked={setRanked} />
+            )}
             {ranked === null ? (
               <div className="flex justify-center py-3">
                 <Spinner />

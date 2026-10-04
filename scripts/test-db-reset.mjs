@@ -57,7 +57,8 @@ const batchesSql = readFileSync(
   "utf8"
 )
   .replace(FUNC_REDEF, "-- [harness] 0009 function redef stripped (schema.sql is canonical)")
-  .replace(DROPPED_TABLE_DML, "-- [harness] coach_availability DML stripped (table dropped in 0075)");
+  .replace(DROPPED_TABLE_DML, "-- [harness] coach_availability DML stripped (table dropped in 0075)")
+  .replace(VENUE_ACTIVE, "$1is_public");
 
 // schema.sql is a readability-grouped dump, NOT dependency-ordered: foreign keys
 // (both standalone `ALTER TABLE … ADD FOREIGN KEY` and inline `… references …`

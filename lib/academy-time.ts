@@ -1,6 +1,6 @@
 // Academy wall-clock helpers — everything user-facing runs on Asia/Kolkata.
 
-export const ACADEMY_TZ = "Asia/Kolkata";
+const ACADEMY_TZ = "Asia/Kolkata";
 
 /**
  * Current time in epoch milliseconds. A thin wrapper over `Date.now()` used for
@@ -16,7 +16,7 @@ export function nowMs(): number {
 
 /** Where a session sits relative to now — drives the schedule card status
  * visuals in both the admin and coach apps. */
-export type SessionTimeStatus = "completed" | "in_progress" | "upcoming";
+type SessionTimeStatus = "completed" | "in_progress" | "upcoming";
 
 export function sessionTimeStatus(
   startsAt: string,
@@ -29,7 +29,7 @@ export function sessionTimeStatus(
 }
 
 /** Timezone offset in minutes at a given instant (IST is a fixed +05:30 — minutes matter). */
-export function academyOffsetMinutes(date: Date): number {
+function academyOffsetMinutes(date: Date): number {
   const fmt = new Intl.DateTimeFormat("en-GB", {
     timeZone: ACADEMY_TZ,
     timeZoneName: "shortOffset",

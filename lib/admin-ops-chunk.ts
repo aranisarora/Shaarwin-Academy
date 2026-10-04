@@ -7,7 +7,7 @@
 // a limit like this drift, and the one that drifts is the one nobody is looking
 // at when the founder finally selects three hundred things.
 
-export const ID_CHUNK = 100;
+const ID_CHUNK = 100;
 
 export function chunked<T>(xs: T[], size = ID_CHUNK): T[][] {
   const out: T[][] = [];

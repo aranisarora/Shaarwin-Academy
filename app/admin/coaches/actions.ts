@@ -11,7 +11,7 @@ import {
   setCoachActiveCore,
   type CoachDetails,
   type CoachInput,
-} from "@/lib/admin-ops";
+} from "@/lib/admin-ops-coaches";
 import { standardizeCoachPortrait } from "@/lib/coach-photo";
 
 type Result = { ok: boolean; error?: string };

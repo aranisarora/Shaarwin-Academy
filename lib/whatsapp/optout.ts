@@ -14,7 +14,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/database.types";
 import { ALL_PREF_KEYS } from "@/lib/notification-prefs";
 
-export type OptOutAction = "stop" | "start";
+type OptOutAction = "stop" | "start";
 
 const STOP_WORDS = new Set(["stop", "stopall", "unsubscribe"]);
 const START_WORDS = new Set(["start", "unstop", "resume"]);

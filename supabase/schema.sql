@@ -614,6 +614,7 @@ ALTER TABLE public.school_admins ADD CONSTRAINT school_admins_user_id_fkey FOREI
 ALTER TABLE public.school_admins ADD CONSTRAINT school_admins_venue_id_fkey FOREIGN KEY (venue_id) REFERENCES venues(id) ON DELETE CASCADE;
 ALTER TABLE public.school_admins ADD CONSTRAINT school_admins_created_by_fkey FOREIGN KEY (created_by) REFERENCES profiles(id) ON DELETE SET NULL;
 ALTER TABLE public.settings ADD CONSTRAINT settings_pkey PRIMARY KEY (key);
+ALTER TABLE public.settings ADD CONSTRAINT settings_whatsapp_enabled_boolean CHECK (((key <> 'whatsapp_enabled'::text) OR (jsonb_typeof(value) = 'boolean'::text)));
 ALTER TABLE public.settings ADD CONSTRAINT settings_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES profiles(id) ON DELETE SET NULL;
 ALTER TABLE public.subscriptions ADD CONSTRAINT subscriptions_razorpay_subscription_id_key UNIQUE (razorpay_subscription_id);
 ALTER TABLE public.subscriptions ADD CONSTRAINT subscriptions_stripe_subscription_id_key UNIQUE (stripe_subscription_id);
@@ -637,7 +638,7 @@ CREATE INDEX bookings_client_id_status_idx ON public.bookings USING btree (clien
 CREATE UNIQUE INDEX bookings_one_live_per_player ON public.bookings USING btree (session_id, player_id) WHERE (status = ANY (ARRAY['confirmed'::booking_status, 'waitlisted'::booking_status, 'attended'::booking_status, 'no_show'::booking_status]));
 CREATE INDEX bookings_private_series_id ON public.bookings USING btree (private_series_id) WHERE (private_series_id IS NOT NULL);
 CREATE INDEX bookings_series_id ON public.bookings USING btree (series_id) WHERE (series_id IS NOT NULL);
-CREATE INDEX bookings_session_id_idx ON public.bookings USING btree (session_id) WHERE (status = 'waitlisted'::booking_status);
+CREATE INDEX bookings_session_id_all_idx ON public.bookings USING btree (session_id);
 CREATE INDEX class_credits_client_open_idx ON public.class_credits USING btree (client_id) WHERE (consumed_at IS NULL);
 CREATE UNIQUE INDEX class_credits_one_trial_per_client ON public.class_credits USING btree (client_id) WHERE ((type = 'group_trial'::class_credit_type) AND (player_id IS NULL));
 CREATE UNIQUE INDEX class_credits_one_trial_per_player ON public.class_credits USING btree (player_id) WHERE (type = 'group_trial'::class_credit_type);
@@ -661,7 +662,8 @@ CREATE INDEX wa_messages_phone_idx ON public.wa_messages USING btree (phone, cre
 CREATE INDEX wa_messages_phone_seq_idx ON public.wa_messages USING btree (phone, seq DESC);
 CREATE INDEX wa_inbound_seen_created_at_idx ON public.wa_inbound_seen USING btree (created_at);
 CREATE INDEX bookings_player_id_idx ON public.bookings USING btree (player_id);
-CREATE INDEX notifications_user_id_idx ON public.notifications USING btree (user_id);
+CREATE INDEX notifications_user_created_idx ON public.notifications USING btree (user_id, created_at DESC);
+CREATE INDEX notifications_type_session_idx ON public.notifications USING btree (type, ((data ->> 'session_id'::text)));
 CREATE INDEX notifications_failed_idx ON public.notifications USING btree (created_at DESC) WHERE (status = 'failed'::notification_status);
 CREATE INDEX notifications_user_type_created_idx ON public.notifications USING btree (user_id, type, created_at DESC);
 CREATE INDEX notifications_whatsapp_missed_idx ON public.notifications USING btree (whatsapp_status, created_at DESC) WHERE (whatsapp_status = ANY (ARRAY['failed'::text, 'no_phone'::text]));
@@ -1792,32 +1794,8 @@ CREATE OR REPLACE FUNCTION public.venue_display(v venues)
  RETURNS text
  LANGUAGE sql
  STABLE
- SET search_path TO 'public'
 AS $function$
   select btrim(v.name) || coalesce(' ' || nullif(btrim(v.unit), ''), '');
-$function$;
-
-CREATE OR REPLACE FUNCTION public.location_venue(c classes)
- RETURNS text
- LANGUAGE sql
- STABLE
- SET search_path TO 'public'
-AS $function$
-  select coalesce(
-    (select venue_display(v) from venues v where v.id = c.venue_id),
-    (select nullif(btrim(pcd.venue_label), '')
-       from private_class_details pcd where pcd.class_id = c.id)
-  );
-$function$;
-
-CREATE OR REPLACE FUNCTION public.location_unit(c classes)
- RETURNS text
- LANGUAGE sql
- STABLE
- SET search_path TO 'public'
-AS $function$
-  select nullif(btrim(pcd.unit_label), '')
-    from private_class_details pcd where pcd.class_id = c.id;
 $function$;
 
 CREATE OR REPLACE FUNCTION public.location_label(c classes)
@@ -1826,7 +1804,11 @@ CREATE OR REPLACE FUNCTION public.location_label(c classes)
  STABLE
  SET search_path TO 'public'
 AS $function$
-  select location_venue(c) || coalesce(', ' || location_unit(c), '');
+  select coalesce(public.venue_display(v), nullif(btrim(p.venue_label), ''))
+         || coalesce(', ' || nullif(btrim(p.unit_label), ''), '')
+    from (select 1) one
+    left join public.venues v on v.id = c.venue_id
+    left join public.private_class_details p on p.class_id = c.id;
 $function$;
 
 CREATE OR REPLACE FUNCTION public.location_maps_url(c classes)
@@ -2651,6 +2633,10 @@ CREATE OR REPLACE FUNCTION public.get_bookable_slots(p_lat double precision, p_l
  STABLE SECURITY DEFINER
  SET search_path TO 'public'
 AS $function$
+declare
+  v_buf interval := make_interval(mins => get_setting_int('travel_buffer_minutes', 30));
+  v_from timestamptz := date_trunc('hour', now() + interval '24 hours');
+  v_to timestamptz := now() + make_interval(days => p_days);
 begin
   return query
   with candidate_coaches as (
@@ -2658,22 +2644,18 @@ begin
     where c.active
   ),
   slots as (
-    select generate_series(
-      date_trunc('hour', now() + interval '24 hours'),
-      now() + make_interval(days => p_days),
-      interval '30 minutes'
-    ) as slot_start
+    select generate_series(v_from, v_to, interval '30 minutes') as slot_start
   )
   select s.slot_start, count(c.id)::int
   from slots s
   cross join candidate_coaches c
   where
-    -- no overlapping scheduled session (+ buffer, conservatively applied)
     not exists (
       select 1 from class_sessions cs
       where cs.coach_id = c.id and cs.status = 'scheduled'
-        and tstzrange(cs.starts_at - make_interval(mins => get_setting_int('travel_buffer_minutes', 30)),
-                      cs.ends_at + make_interval(mins => get_setting_int('travel_buffer_minutes', 30)))
+        and cs.starts_at < v_to + make_interval(mins => p_duration) + v_buf
+        and cs.ends_at > v_from - v_buf
+        and tstzrange(cs.starts_at - v_buf, cs.ends_at + v_buf)
           && tstzrange(s.slot_start, s.slot_start + make_interval(mins => p_duration))
     )
   group by s.slot_start
@@ -3312,20 +3294,28 @@ AS $function$
   );
 $function$;
 
-CREATE OR REPLACE FUNCTION public.school_admin_session(p_session uuid)
- RETURNS boolean
+CREATE OR REPLACE FUNCTION public.school_player_ids()
+ RETURNS SETOF uuid
  LANGUAGE sql
  STABLE SECURITY DEFINER
  SET search_path TO 'public'
 AS $function$
-  select exists (
-    select 1
-      from bookings b
-      join players pl on pl.id = b.player_id
-     where b.session_id = p_session
-       and pl.client_id is null
-       and pl.school_venue_id in (select school_admin_venues())
-  );
+  select pl.id from players pl
+  where pl.client_id is null
+    and pl.school_venue_id in (select school_admin_venues());
+$function$;
+
+CREATE OR REPLACE FUNCTION public.school_session_ids()
+ RETURNS SETOF uuid
+ LANGUAGE sql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+  select b.session_id
+    from bookings b
+    join players pl on pl.id = b.player_id
+   where pl.client_id is null
+     and pl.school_venue_id in (select school_admin_venues());
 $function$;
 
 CREATE OR REPLACE FUNCTION public.school_admin_class(p_class uuid)
@@ -5171,10 +5161,10 @@ AS $function$
     select pl.id from players pl
     where pl.id = any(p_players)
       and (
-        is_founder()
-        or (is_coach() and coach_has_player(pl.id))
-        or pl.client_id = auth.uid()
-        or (is_school_admin() and school_has_player(pl.id))
+        (select is_founder())
+        or ((select is_coach()) and coach_has_player(pl.id))
+        or pl.client_id = (select auth.uid())
+        or ((select is_school_admin()) and pl.id in (select school_player_ids()))
       )
   ),
   n_skills as (select count(*)::int as n from skills where active),
@@ -5184,6 +5174,7 @@ AS $function$
       from skill_ratings r
       join skill_assessments a on a.id = r.assessment_id
       join skills s on s.id = r.skill_id and s.active
+     where a.player_id = any(p_players)
      order by a.player_id, r.skill_id, a.created_at desc
   )
   select au.id,
@@ -5393,6 +5384,20 @@ as $$
   delete from public.wa_inbound_seen where created_at < now() - interval '1 day';
 $$;
 
+create or replace function public.prune_notifications()
+returns void
+language sql
+set search_path = public
+as $$
+  delete from public.notifications
+   where status <> 'pending'
+     and created_at < now() - interval '60 days'
+     and type <> 'signup_request'
+     and not (read_at is null and type in ('session_issue', 'private_request_parked', 'cover_offer'));
+$$;
+
+REVOKE ALL ON FUNCTION public.prune_notifications() FROM public, anon, authenticated;
+
 -- Every write to a push_subscriptions row comes from a browser that is open
 -- right now, so "when was this row last written" and "when was this device last
 -- alive" are the same fact. Stamped here rather than by each caller, so a
@@ -5489,13 +5494,13 @@ CREATE POLICY "coaches write attendance" ON public.bookings AS PERMISSIVE FOR UP
 CREATE POLICY "founder full access" ON public.bookings AS PERMISSIVE FOR ALL TO public USING (( SELECT is_founder() AS is_founder));
 -- School pupils carry client_id = null, so "clients read own bookings" matches
 -- nothing for them and every attendance figure would read zero without this.
-CREATE POLICY "school reads pupil bookings" ON public.bookings AS PERMISSIVE FOR SELECT TO public USING ((( SELECT is_school_admin() AS is_school_admin) AND school_has_player(player_id)));
+CREATE POLICY "school reads pupil bookings" ON public.bookings AS PERMISSIVE FOR SELECT TO public USING ((( SELECT is_school_admin() AS is_school_admin) AND (player_id IN ( SELECT school_player_ids() AS school_player_ids))));
 CREATE POLICY "own credits" ON public.class_credits AS PERMISSIVE FOR SELECT TO public USING (((client_id = ( SELECT auth.uid() AS uid)) OR ( SELECT is_founder() AS is_founder)));
 CREATE POLICY "founder writes credits" ON public.class_credits AS PERMISSIVE FOR ALL TO public USING (( SELECT is_founder() AS is_founder));
 CREATE POLICY "coach updates own session notes" ON public.class_sessions AS PERMISSIVE FOR UPDATE TO public USING ((coach_id = ( SELECT auth.uid() AS uid)));
 CREATE POLICY "founder writes sessions" ON public.class_sessions AS PERMISSIVE FOR ALL TO public USING (( SELECT is_founder() AS is_founder));
-CREATE POLICY "read scheduled sessions" ON public.class_sessions AS PERMISSIVE FOR SELECT TO public USING ((class_is_public_group(class_id) OR (coach_id = ( SELECT auth.uid() AS uid)) OR ( SELECT is_founder() AS is_founder) OR client_owns_private_class(class_id)));
-CREATE POLICY "school reads pupil sessions" ON public.class_sessions AS PERMISSIVE FOR SELECT TO public USING ((( SELECT is_school_admin() AS is_school_admin) AND school_admin_session(id)));
+CREATE POLICY "read scheduled sessions" ON public.class_sessions AS PERMISSIVE FOR SELECT TO public USING ((( SELECT is_founder() AS is_founder) OR (coach_id = ( SELECT auth.uid() AS uid)) OR class_is_public_group(class_id) OR client_owns_private_class(class_id)));
+CREATE POLICY "school reads pupil sessions" ON public.class_sessions AS PERMISSIVE FOR SELECT TO public USING ((( SELECT is_school_admin() AS is_school_admin) AND (id IN ( SELECT school_session_ids() AS school_session_ids))));
 CREATE POLICY "founder writes classes" ON public.classes AS PERMISSIVE FOR ALL TO public USING (( SELECT is_founder() AS is_founder));
 CREATE POLICY "public reads active group classes" ON public.classes AS PERMISSIVE FOR SELECT TO public USING ((((active = true) AND (class_type = 'group'::class_type) AND (is_school = false)) OR ( SELECT is_founder() AS is_founder) OR (( SELECT is_coach() AS is_coach) AND coach_teaches_class(id)) OR client_owns_private_class(id)));
 -- getStudentInsights joins classes(title, class_type) off the session.
@@ -5522,7 +5527,7 @@ CREATE POLICY "coach reads own rosters players" ON public.players AS PERMISSIVE 
 CREATE POLICY "coach reads school pupils" ON public.players AS PERMISSIVE FOR SELECT TO public USING ((( SELECT is_coach() AS is_coach) AND coach_teaches_school_of(id)));
 CREATE POLICY "founder all players" ON public.players AS PERMISSIVE FOR ALL TO public USING (( SELECT is_founder() AS is_founder));
 CREATE POLICY "own household" ON public.players AS PERMISSIVE FOR ALL TO public USING ((client_id = ( SELECT auth.uid() AS uid))) WITH CHECK ((client_id = ( SELECT auth.uid() AS uid)));
-CREATE POLICY "school reads own pupils" ON public.players AS PERMISSIVE FOR SELECT TO public USING ((( SELECT is_school_admin() AS is_school_admin) AND school_has_player(id)));
+CREATE POLICY "school reads own pupils" ON public.players AS PERMISSIVE FOR SELECT TO public USING ((( SELECT is_school_admin() AS is_school_admin) AND (id IN ( SELECT school_player_ids() AS school_player_ids))));
 CREATE POLICY "clients read own private series" ON public.private_booking_series AS PERMISSIVE FOR SELECT TO public USING ((client_id = ( SELECT auth.uid() AS uid)));
 CREATE POLICY "founder all private series" ON public.private_booking_series AS PERMISSIVE FOR ALL TO public USING (( SELECT is_founder() AS is_founder));
 CREATE POLICY "founder writes private details" ON public.private_class_details AS PERMISSIVE FOR ALL TO public USING (( SELECT is_founder() AS is_founder));
@@ -5569,3 +5574,83 @@ CREATE POLICY "founder deletes assessments" ON public.skill_assessments AS PERMI
 CREATE POLICY "staff reads ratings" ON public.skill_ratings AS PERMISSIVE FOR SELECT TO public USING ((( SELECT is_coach() AS is_coach) OR ( SELECT is_founder() AS is_founder)));
 CREATE POLICY "author writes ratings" ON public.skill_ratings AS PERMISSIVE FOR INSERT TO public WITH CHECK ((EXISTS ( SELECT 1 FROM skill_assessments a WHERE ((a.id = skill_ratings.assessment_id) AND (a.coach_id = ( SELECT auth.uid() AS uid))))));
 CREATE POLICY "founder deletes ratings" ON public.skill_ratings AS PERMISSIVE FOR DELETE TO public USING (( SELECT is_founder() AS is_founder));
+
+REVOKE EXECUTE ON FUNCTION public._assert_private_plan_allows(p_client uuid, p_start timestamp with time zone, p_duration integer) FROM public, anon;
+REVOKE EXECUTE ON FUNCTION public._book_one(p_session uuid, p_client uuid, p_player uuid, p_series uuid, p_notify boolean) FROM public, anon;
+REVOKE EXECUTE ON FUNCTION public._consume_group_credit(p_client uuid, p_player uuid) FROM public, anon;
+REVOKE EXECUTE ON FUNCTION public._create_private_occurrence(p_client uuid, p_player uuid, p_start timestamp with time zone, p_duration integer, p_address text, p_postcode text, p_lat double precision, p_lng double precision, p_has_table boolean, p_access_notes text, p_address_details jsonb, p_preferred uuid, p_series uuid, p_notify boolean, p_venue_id uuid, p_venue_label text, p_unit_label text) FROM public, anon;
+REVOKE EXECUTE ON FUNCTION public._delete_class_on_private_details_delete() FROM public, anon;
+REVOKE EXECUTE ON FUNCTION public._session_alert_resolve_trigger() FROM public, anon;
+REVOKE EXECUTE ON FUNCTION public.add_school_player(p_session uuid, p_full_name text, p_grade smallint) FROM public, anon;
+REVOKE EXECUTE ON FUNCTION public.assign_coach(p_session uuid, p_preferred uuid) FROM public, anon;
+REVOKE EXECUTE ON FUNCTION public.assign_unassigned_sessions() FROM public, anon;
+REVOKE EXECUTE ON FUNCTION public.book_series(p_session uuid, p_player uuid, p_recurring boolean) FROM public, anon;
+REVOKE EXECUTE ON FUNCTION public.book_session(p_session uuid, p_player uuid) FROM public, anon;
+REVOKE EXECUTE ON FUNCTION public.cancel_booking(p_booking uuid) FROM public, anon;
+REVOKE EXECUTE ON FUNCTION public.cancel_private_series(p_series uuid) FROM public, anon;
+REVOKE EXECUTE ON FUNCTION public.cancel_series(p_series uuid) FROM public, anon;
+REVOKE EXECUTE ON FUNCTION public.claim_client_invite() FROM public, anon;
+REVOKE EXECUTE ON FUNCTION public.claim_coach_invite_by_phone(p_user uuid, p_phone text) FROM public, anon;
+REVOKE EXECUTE ON FUNCTION public.claim_coach_invite_on_signup() FROM public, anon;
+REVOKE EXECUTE ON FUNCTION public.claim_cover_session(p_session uuid) FROM public, anon;
+REVOKE EXECUTE ON FUNCTION public.claim_waitlist_spot(p_booking uuid) FROM public, anon;
+REVOKE EXECUTE ON FUNCTION public.coach_confirm_session(p_session uuid) FROM public, anon;
+REVOKE EXECUTE ON FUNCTION public.coach_filter_failure(p_coach uuid, p_session uuid) FROM public, anon;
+REVOKE EXECUTE ON FUNCTION public.coach_has_client(p_client uuid) FROM public, anon;
+REVOKE EXECUTE ON FUNCTION public.coach_mark_arrival(p_session uuid, p_late boolean, p_source text) FROM public, anon;
+REVOKE EXECUTE ON FUNCTION public.coach_school_venues() FROM public, anon;
+REVOKE EXECUTE ON FUNCTION public.coach_undo_arrival(p_session uuid) FROM public, anon;
+REVOKE EXECUTE ON FUNCTION public.create_private_series(payload jsonb) FROM public, anon;
+REVOKE EXECUTE ON FUNCTION public.expire_credits() FROM public, anon;
+REVOKE EXECUTE ON FUNCTION public.founder_reassign(p_session uuid, p_coach uuid, p_lock boolean, p_force boolean) FROM public, anon;
+REVOKE EXECUTE ON FUNCTION public.generate_class_sessions(p_weeks integer) FROM public, anon;
+REVOKE EXECUTE ON FUNCTION public.generate_private_sessions(p_weeks integer) FROM public, anon;
+REVOKE EXECUTE ON FUNCTION public.get_bookable_slots(p_lat double precision, p_lng double precision, p_duration integer, p_player uuid, p_days integer) FROM public, anon;
+REVOKE EXECUTE ON FUNCTION public.get_coach_wrapup_queue(p_coach uuid) FROM public, anon;
+REVOKE EXECUTE ON FUNCTION public.get_pending_assessments(p_coach uuid) FROM public, anon;
+REVOKE EXECUTE ON FUNCTION public.get_player_notes(p_player uuid) FROM public, anon;
+REVOKE EXECUTE ON FUNCTION public.get_players_mastery(p_players uuid[]) FROM public, anon;
+REVOKE EXECUTE ON FUNCTION public.get_setting_int(p_key text, p_default integer) FROM public, anon;
+REVOKE EXECUTE ON FUNCTION public.grant_signup_trial() FROM public, anon;
+REVOKE EXECUTE ON FUNCTION public.handle_coach_dropout(p_coach uuid, p_from timestamp with time zone, p_to timestamp with time zone) FROM public, anon;
+REVOKE EXECUTE ON FUNCTION public.handle_new_user() FROM public, anon;
+REVOKE EXECUTE ON FUNCTION public.has_active_subscription(p_client uuid) FROM public, anon;
+REVOKE EXECUTE ON FUNCTION public.has_group_subscription(p_client uuid) FROM public, anon;
+REVOKE EXECUTE ON FUNCTION public.is_approved() FROM public, anon;
+REVOKE EXECUTE ON FUNCTION public.notify_founders(p_type text, p_title text, p_body text, p_data jsonb) FROM public, anon;
+REVOKE EXECUTE ON FUNCTION public.notify_name_the_session() FROM public, anon;
+REVOKE EXECUTE ON FUNCTION public.offer_cover_session(p_session uuid) FROM public, anon;
+REVOKE EXECUTE ON FUNCTION public.ops_notify_assessment() FROM public, anon;
+REVOKE EXECUTE ON FUNCTION public.ops_notify_booking_created() FROM public, anon;
+REVOKE EXECUTE ON FUNCTION public.ops_notify_booking_status() FROM public, anon;
+REVOKE EXECUTE ON FUNCTION public.ops_notify_class_open() FROM public, anon;
+REVOKE EXECUTE ON FUNCTION public.ops_notify_coach_change() FROM public, anon;
+REVOKE EXECUTE ON FUNCTION public.ops_notify_credit_used() FROM public, anon;
+REVOKE EXECUTE ON FUNCTION public.ops_notify_invoice() FROM public, anon;
+REVOKE EXECUTE ON FUNCTION public.ops_notify_new_player() FROM public, anon;
+REVOKE EXECUTE ON FUNCTION public.ops_notify_new_profile() FROM public, anon;
+REVOKE EXECUTE ON FUNCTION public.ops_notify_order_paid() FROM public, anon;
+REVOKE EXECUTE ON FUNCTION public.ops_notify_student_note() FROM public, anon;
+REVOKE EXECUTE ON FUNCTION public.ops_notify_subscription() FROM public, anon;
+REVOKE EXECUTE ON FUNCTION public.private_minutes_balance(p_client uuid) FROM public, anon;
+REVOKE EXECUTE ON FUNCTION public.private_plan_limits(p_client uuid) FROM public, anon;
+REVOKE EXECUTE ON FUNCTION public.prune_wa_inbound_seen() FROM public, anon;
+REVOKE EXECUTE ON FUNCTION public.queue_coach_changed(p_user uuid, p_session uuid, p_title text, p_body text, p_url text) FROM public, anon;
+REVOKE EXECUTE ON FUNCTION public.rank_coaches(p_session uuid, p_preferred uuid) FROM public, anon;
+REVOKE EXECUTE ON FUNCTION public.request_private_class(payload jsonb) FROM public, anon;
+REVOKE EXECUTE ON FUNCTION public.reschedule_booking(p_booking uuid, p_target_session uuid) FROM public, anon;
+REVOKE EXECUTE ON FUNCTION public.reschedule_private_session(p_session uuid, p_new_start timestamp with time zone, p_confirm boolean) FROM public, anon;
+REVOKE EXECUTE ON FUNCTION public.reschedule_series(p_booking uuid, p_target_session uuid) FROM public, anon;
+REVOKE EXECUTE ON FUNCTION public.reset_session_confirmation() FROM public, anon;
+REVOKE EXECUTE ON FUNCTION public.review_signup_request(p_client uuid, p_approve boolean, p_reviewer uuid) FROM public, anon;
+REVOKE EXECUTE ON FUNCTION public.save_session_assessment(p_player uuid, p_session uuid, p_ratings jsonb, p_coach uuid) FROM public, anon;
+REVOKE EXECUTE ON FUNCTION public.school_has_player(p_player uuid) FROM public, anon;
+REVOKE EXECUTE ON FUNCTION public.session_label(p_session uuid) FROM public, anon;
+REVOKE EXECUTE ON FUNCTION public.submit_signup_request(p_name text, p_phone text) FROM public, anon;
+
+-- ── Scheduled jobs (pg_cron, live only; db:reset does not schedule them) ─────
+-- private-series-nightly  40 21 * * *  select public.generate_private_sessions(4)
+-- session-status-hourly   5 * * * *    select public.sweep_session_status()
+-- notify-worker           * * * * *    net.http_post to functions/v1/notify, bearer from vault secret notify_worker_key
+-- cron-history-prune      15 22 * * *  delete cron.job_run_details older than 7 days; select public.prune_wa_inbound_seen()
+-- notifications-prune     20 22 * * *  select public.prune_notifications()

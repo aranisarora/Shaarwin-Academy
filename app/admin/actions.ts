@@ -2,17 +2,16 @@
 
 import { revalidatePath, revalidateTag } from "next/cache";
 import { requireFounder } from "@/lib/founder";
+import { readRankedCoaches, type RankedCoach } from "@/lib/session-sheet";
 import {
   adjustCreditsCore,
   cancelSessionCore,
   createGroupClassCore,
   grantCompCore,
-  saveVenueCore,
-  setClassActiveCore,
-  deleteVenueCore,
-  type VenueInput,
+  type NewClass,
 } from "@/lib/admin-ops";
-import type { NewClass } from "@/lib/admin-ops";
+import { setClassActiveCore } from "@/lib/admin-ops-classes";
+import { saveVenueCore, deleteVenueCore, type VenueInput } from "@/lib/admin-ops-venues";
 
 type Result = { ok: boolean; error?: string };
 
@@ -106,22 +105,8 @@ export async function adjustCredits(
 
 // ── Calendar: ranked alternatives ────────────────────────────────────────────
 
-export async function getRankedCoaches(
-  sessionId: string
-): Promise<{ coachId: string; name: string; score: number }[]> {
+export async function getRankedCoaches(sessionId: string): Promise<RankedCoach[]> {
   const { supabase, founder } = await requireFounder();
   if (!founder) return [];
-  const { data } = await supabase.rpc("rank_coaches", { p_session: sessionId });
-  const rows = (data as { coach_id: string; score: number }[]) ?? [];
-  if (rows.length === 0) return [];
-  const { data: profiles } = await supabase
-    .from("profiles")
-    .select("id,full_name")
-    .in("id", rows.map((r) => r.coach_id));
-  const names = new Map((profiles ?? []).map((p) => [p.id, p.full_name]));
-  return rows.map((r) => ({
-    coachId: r.coach_id,
-    name: names.get(r.coach_id) ?? "Coach",
-    score: Number(r.score),
-  }));
+  return readRankedCoaches(supabase, sessionId);
 }

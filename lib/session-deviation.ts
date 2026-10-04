@@ -51,7 +51,7 @@ export function modalTimeByClass(
   return out;
 }
 
-export type Deviation = {
+type Deviation = {
   /** The weekday the class normally runs on, MO..SU. */
   weekday: string;
   /** The time it normally runs at, "HH:MM". */

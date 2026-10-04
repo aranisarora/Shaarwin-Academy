@@ -14,14 +14,14 @@ import {
   deleteSkill,
 } from "@/app/admin/skills/actions";
 
-export type SkillCategory = {
+type SkillCategory = {
   id: string;
   name: string;
   sort_order: number;
   created_at: string;
 };
 
-export type Skill = {
+type Skill = {
   id: string;
   category_id: string;
   name: string;

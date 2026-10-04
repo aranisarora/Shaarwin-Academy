@@ -16,8 +16,8 @@ hit a dead end. An audit costs minutes, not hours.
 npm run db:start          # local Supabase up
 npm run db:reset          # fresh seeded world
 npx next dev -p 3100      # app on local Supabase (or reuse the flows server)
-# mint a login for the role you want the agent to be:
-node -e "import('./e2e/lib/auth.js')"   # or let the agent call getStorageState()
+# reset the DB again and mint a login for client, coach and founder:
+npx playwright test --config playwright.flows.config.ts --project setup
 ```
 
 Give the agent the storage state from `e2e/.auth/local-<role>.json` (load it into

@@ -60,7 +60,7 @@ describe("a coach reads the venue they are rostered at (0079)", () => {
   });
 
   it("resolves location_label for the class at that venue", async () => {
-    // location_venue() is invoker-rights and reads `venues`, so it went NULL
+    // location_label() is invoker-rights and reads `venues`, so it went NULL
     // through the same hole — a blank where the campus name should be.
     const db = await asUser(campus.coachEmail);
     const { data } = await db
