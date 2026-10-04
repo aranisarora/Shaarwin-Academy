@@ -96,12 +96,13 @@ export type SessionRow = {
 export const getPlans = unstable_cache(
   async (): Promise<Plan[]> => {
     const supabase = publicClient();
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("plans")
       .select("id,name,description,price_pence,group_sessions_per_week,private_minutes_per_cycle")
       .eq("active", true)
       .order("price_pence");
-    return data ?? [];
+    if (error) throw error;
+    return data;
   },
   ["reference:plans"],
   { revalidate: 3600, tags: ["plans"] }
@@ -110,12 +111,13 @@ export const getPlans = unstable_cache(
 export const getProducts = unstable_cache(
   async (): Promise<Product[]> => {
     const supabase = publicClient();
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("products")
       .select("id,name,description,kind,price_pence,member_price_pence,grants_minutes,duration_minutes")
       .eq("active", true)
       .order("price_pence");
-    return data ?? [];
+    if (error) throw error;
+    return data;
   },
   ["reference:products"],
   { revalidate: 3600, tags: ["products"] }
@@ -124,7 +126,7 @@ export const getProducts = unstable_cache(
 export const getVenues = unstable_cache(
   async (): Promise<Venue[]> => {
     const supabase = publicClient();
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("venues")
       .select("id,name,unit,address,postcode,lat,lng,photo_url")
       .eq("is_public", true)
@@ -132,7 +134,8 @@ export const getVenues = unstable_cache(
       // This used to depend on the founder remembering to hide it by hand.
       .eq("is_school", false)
       .order("name");
-    return data ?? [];
+    if (error) throw error;
+    return data;
   },
   ["reference:venues"],
   { revalidate: 3600, tags: ["venues"] }
@@ -141,13 +144,14 @@ export const getVenues = unstable_cache(
 export const getGroupClasses = unstable_cache(
   async (): Promise<ClassRow[]> => {
     const supabase = publicClient();
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("classes")
       .select("id,title,description,skill_level,capacity,duration_minutes,venue_id")
       .eq("active", true)
       .eq("class_type", "group")
       .order("title");
-    return data ?? [];
+    if (error) throw error;
+    return data;
   },
   ["reference:group-classes"],
   { revalidate: 3600, tags: ["classes"] }
@@ -159,14 +163,15 @@ export const getUpcomingSessions = unstable_cache(
   async (days = 14): Promise<SessionRow[]> => {
     const supabase = publicClient();
     const until = new Date(Date.now() + days * 86400000).toISOString();
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("class_sessions")
       .select("id,class_id,coach_id,starts_at,ends_at,status,capacity_override")
       .eq("status", "scheduled")
       .gt("starts_at", new Date().toISOString())
       .lt("starts_at", until)
       .order("starts_at");
-    return data ?? [];
+    if (error) throw error;
+    return data;
   },
   ["reference:upcoming-sessions"],
   { revalidate: 600, tags: ["classes"] }
@@ -179,9 +184,8 @@ export const getCoaches = unstable_cache(
     // Read through the definer-rights roster function rather than joining
     // `profiles` directly: RLS keeps `profiles` owner-only, so an anon join
     // returns nothing. See migration 0040_public_coach_roster.sql.
-    const { data } = await supabase.rpc("public_coach_roster");
-
-    if (!data) return [];
+    const { data, error } = await supabase.rpc("public_coach_roster");
+    if (error) throw error;
 
     return (data as CoachRosterRow[]).map((row) => {
       const firstName = row.full_name.toLowerCase().split(" ")[0];
