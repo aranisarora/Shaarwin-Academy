@@ -4,6 +4,8 @@ import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getSubscriptionSummary } from "@/lib/billing";
 import type { StructuredAddress } from "@/lib/address";
+import type { Database } from "@/lib/database.types";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 export async function recordAreaInterest(email: string, postcode: string, lat: number, lng: number) {
   const supabase = await createClient();
@@ -122,7 +124,7 @@ export async function requestPrivateSessions(
       ranOut = true;
       break;
     }
-    const r = await requestPrivateClass({ ...req, startsAt });
+    const r = await requestPrivateClass(supabase, { ...req, startsAt });
     if (r.ok) {
       booked += 1;
       if (r.parked) parked += 1;
@@ -136,17 +138,18 @@ export async function requestPrivateSessions(
     }
   }
 
+  if (booked > 0) {
+    revalidatePath("/app");
+    revalidatePath("/app/schedule");
+  }
   if (booked < slots.length) ranOut = true;
   return { ok: true, booked, parked, ranOut };
 }
 
-export async function requestPrivateClass(req: PrivateRequest): Promise<PrivateResult> {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return { ok: false, error: "Sign in first." };
-
+async function requestPrivateClass(
+  supabase: SupabaseClient<Database>,
+  req: PrivateRequest
+): Promise<PrivateResult> {
   const payload = {
     player_id: req.playerId,
     duration_minutes: req.duration,
@@ -168,9 +171,7 @@ export async function requestPrivateClass(req: PrivateRequest): Promise<PrivateR
   if (error) {
     return { ok: false, error: mapPrivateBookingError(error.message) };
   }
-  revalidatePath("/app");
-  revalidatePath("/app/schedule");
-  return { ok: true, sessionId: data as string, parked: false };
+  return { ok: true, sessionId: data, parked: false };
 }
 
 function mapPrivateBookingError(message: string): string {
