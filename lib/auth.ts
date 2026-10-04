@@ -133,7 +133,11 @@ export type Profile = {
  * already redirected a signed-out visitor before this runs.
  */
 export async function requireUser(nextPath: string) {
-  const { supabase, user } = await requireUserId(nextPath);
+  const supabase = await createClient();
+  const user = await getCurrentUser();
+
+  if (!user) redirect(`/login?next=${encodeURIComponent(nextPath)}`);
+
   const profile = await getProfileRow();
 
   if (!profile) {
@@ -144,13 +148,4 @@ export async function requireUser(nextPath: string) {
   }
 
   return { supabase, user, profile };
-}
-
-async function requireUserId(nextPath: string) {
-  const supabase = await createClient();
-  const user = await getCurrentUser();
-
-  if (!user) redirect(`/login?next=${encodeURIComponent(nextPath)}`);
-
-  return { supabase, user };
 }
