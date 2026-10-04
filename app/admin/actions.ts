@@ -8,12 +8,10 @@ import {
   cancelSessionCore,
   createGroupClassCore,
   grantCompCore,
-  saveVenueCore,
-  setClassActiveCore,
-  deleteVenueCore,
-  type VenueInput,
+  type NewClass,
 } from "@/lib/admin-ops";
-import type { NewClass } from "@/lib/admin-ops";
+import { setClassActiveCore } from "@/lib/admin-ops-classes";
+import { saveVenueCore, deleteVenueCore, type VenueInput } from "@/lib/admin-ops-venues";
 
 type Result = { ok: boolean; error?: string };
 

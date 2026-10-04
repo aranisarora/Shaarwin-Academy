@@ -20,37 +20,42 @@ import {
   type SessionDetail,
 } from "@/lib/session-sheet";
 import { buildSessionRows, fetchWeekRaw } from "@/lib/session-week";
+import { createOneOffClassCore, type NewOneOffClass } from "@/lib/admin-ops";
 import {
   assignPrivateSessionClientCore,
-  bulkRemoveClassesCore,
   cancelFuturePrivateSessionsCore,
-  createOneOffClassCore,
   createPrivateSessionCore,
+  moveSessionCore,
+  reassignSessionCore,
+  setSessionCapacityCore,
+  type PrivateSessionInput,
+} from "@/lib/admin-ops-calendar";
+import {
+  bulkRemoveClassesCore,
   deleteGroupClassCore,
-  endPrivateSeriesCore,
-  planCalendarWipeCore,
   planClassRemovalCore,
+  type ClassRemovalPlan,
+  endGroupClassCore,
+  reassignClassCoachCore,
+  restoreGroupClassCore,
+  topUpSessionsCore,
+  updateGroupClassCore,
+  type ClassUpdate,
+} from "@/lib/admin-ops-classes";
+import { materializeInviteCore } from "@/lib/admin-ops-clients";
+import {
+  endPrivateSeriesCore,
   planPrivateSeriesRemovalCore,
+  type PrivateSeriesRemovalPlan,
+  updatePrivateSeriesCore,
+  type PrivateSeriesPatch,
+} from "@/lib/admin-ops-private-series";
+import {
+  planCalendarWipeCore,
   wipeCalendarCore,
   type CalendarWipePreview,
   type CalendarWipeResult,
-  type ClassRemovalPlan,
-  type PrivateSeriesRemovalPlan,
-  materializeInviteCore,
-  endGroupClassCore,
-  moveSessionCore,
-  reassignClassCoachCore,
-  reassignSessionCore,
-  restoreGroupClassCore,
-  setSessionCapacityCore,
-  topUpSessionsCore,
-  updateGroupClassCore,
-  updatePrivateSeriesCore,
-  type PrivateSeriesPatch,
-  type ClassUpdate,
-  type NewOneOffClass,
-  type PrivateSessionInput,
-} from "@/lib/admin-ops";
+} from "@/lib/admin-ops-wipe";
 
 // ── WhatsApp/notify manifest ─────────────────────────────────────────────────
 // The founder migrated from a world where he *watched* each message send. So

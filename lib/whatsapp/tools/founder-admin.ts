@@ -4,32 +4,35 @@
 // the webapp uses (audit-logged), on the founder's own RLS-scoped session.
 
 import {
-  addClientInviteCore,
-  addCoachCore,
-  broadcastNotificationCore,
   createOneOffSessionCore,
   createPrivateSessionCore,
-  deleteGroupClassCore,
-  deleteVenueCore,
-  endGroupClassCore,
   moveSessionCore,
-  promoteToCoachCore,
-  saveCoachCore,
-  saveVenueCore,
+  setSessionCapacityCore,
+} from "@/lib/admin-ops-calendar";
+import {
+  deleteGroupClassCore,
+  endGroupClassCore,
   setClassActiveCore,
+  topUpSessionsCore,
+  updateGroupClassCore,
+} from "@/lib/admin-ops-classes";
+import {
+  addClientInviteCore,
+  broadcastNotificationCore,
   setClientArchivedCore,
   setClientBlockedCore,
-  setCoachActiveCore,
-  setSessionCapacityCore,
-  setVenuePublicCore,
-  topUpSessionsCore,
   updateClientCore,
-  updateGroupClassCore,
-  getSettingsCore,
-  saveSettingsCore,
   notifyUsersCore,
   NOTIFY_TYPES,
-} from "@/lib/admin-ops";
+} from "@/lib/admin-ops-clients";
+import {
+  addCoachCore,
+  promoteToCoachCore,
+  saveCoachCore,
+  setCoachActiveCore,
+} from "@/lib/admin-ops-coaches";
+import { getSettingsCore, saveSettingsCore } from "@/lib/admin-ops-settings";
+import { deleteVenueCore, saveVenueCore, setVenuePublicCore } from "@/lib/admin-ops-venues";
 import { formatSessionDate, utcToAcademyWall } from "@/lib/academy-time";
 import { BENGALURU } from "@/lib/coverage";
 import { geocode } from "@/lib/whatsapp/geocode";
