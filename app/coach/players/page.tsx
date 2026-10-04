@@ -32,31 +32,29 @@ async function PlayerList() {
   // added to onwards, so a coach who picked the class up later had a roster
   // missing pupils they'd be teaching that week. RLS agrees with both halves
   // (`coach_has_player` and `coach_teaches_school_of`, 0076).
-  const [{ data: rows }, { data: venues }] = await Promise.all([
+  //
+  // Players are the top-level rows and their bookings ride along embedded:
+  // max_rows caps only the top level, so the roll-up is bounded by the roster
+  // rather than cut off once a coach's booking history passes 1000 rows.
+  const [{ data: booked }, { data: venues }] = await Promise.all([
     supabase
-      .from("bookings")
-      .select("player_id,status,players(full_name),class_sessions!inner(coach_id)")
-      .eq("class_sessions.coach_id", coachId)
-      .in("status", ["confirmed", "attended", "no_show"]),
+      .from("players")
+      .select("id,full_name,bookings!inner(status,class_sessions!inner())")
+      .eq("bookings.class_sessions.coach_id", coachId)
+      .in("bookings.status", ["confirmed", "attended", "no_show"]),
     supabase.rpc("coach_school_venues"),
   ]);
 
   const unique = new Map<string, Entry>();
-  for (const row of rows ?? []) {
-    const player = row.players;
-    if (!player) continue;
-    const entry = unique.get(row.player_id) ?? {
-      id: row.player_id,
-      name: player.full_name,
-      sessions: 0,
-      attended: 0,
-      noShows: 0,
+  for (const p of booked ?? []) {
+    unique.set(p.id, {
+      id: p.id,
+      name: p.full_name,
+      sessions: p.bookings.length,
+      attended: p.bookings.filter((b) => b.status === "attended").length,
+      noShows: p.bookings.filter((b) => b.status === "no_show").length,
       school: null,
-    };
-    entry.sessions += 1;
-    if (row.status === "attended") entry.attended += 1;
-    if (row.status === "no_show") entry.noShows += 1;
-    unique.set(row.player_id, entry);
+    });
   }
 
   const campuses = venues ?? [];
