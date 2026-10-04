@@ -1,6 +1,7 @@
 import { cache } from "react";
 import { cookies } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
+import { getCurrentUser } from "@/lib/auth";
 
 export const SCHOOL_PREVIEW_COOKIE = "preview_school_id";
 
@@ -26,12 +27,10 @@ export const getSchoolPreview = cache(async () => {
   const userId = store.get(SCHOOL_PREVIEW_COOKIE)?.value;
   if (!userId) return null;
 
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await getCurrentUser();
   if (!user) return null;
 
+  const supabase = await createClient();
   const { data: me } = await supabase
     .from("profiles")
     .select("role")

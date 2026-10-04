@@ -1,6 +1,7 @@
 import { cache } from "react";
 import { cookies } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
+import { getCurrentUser } from "@/lib/auth";
 
 export const PREVIEW_COOKIE = "preview_coach_id";
 
@@ -19,25 +20,17 @@ export const getCoachPreview = cache(async () => {
   const coachId = store.get(PREVIEW_COOKIE)?.value;
   if (!coachId) return null;
 
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  const user = await getCurrentUser();
   if (!user) return null;
 
-  const { data: me } = await supabase
+  const supabase = await createClient();
+  const { data: rows } = await supabase
     .from("profiles")
-    .select("role")
-    .eq("id", user.id)
-    .maybeSingle();
-  if (me?.role !== "founder") return null;
+    .select("id,role,full_name")
+    .in("id", [user.id, coachId]);
+  if (rows?.find((row) => row.id === user.id)?.role !== "founder") return null;
 
-  const { data: coach } = await supabase
-    .from("profiles")
-    .select("full_name")
-    .eq("id", coachId)
-    .maybeSingle();
-
+  const coach = rows.find((row) => row.id === coachId);
   return { coachId, coachName: coach?.full_name ?? "Coach" };
 });
 
