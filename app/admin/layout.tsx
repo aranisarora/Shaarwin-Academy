@@ -1,5 +1,4 @@
 import type { Viewport } from "next";
-import { RealtimeRefresh } from "@/components/app/RealtimeRefresh";
 import { ServiceWorkerRegistrar } from "@/components/app/ServiceWorkerRegistrar";
 import { InstallPrompt } from "@/components/app/InstallPrompt";
 import { PushPrompt } from "@/components/app/PushPrompt";
@@ -14,7 +13,6 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   return (
     <>
       <ServiceWorkerRegistrar />
-      <RealtimeRefresh tables={["class_sessions", "coach_assignments", "bookings"]} />
       {children}
       <InstallPrompt />
       <PushPrompt />

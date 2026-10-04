@@ -8,7 +8,6 @@ import { ClientShell } from "@/components/app/ClientShell";
 import { BookBrowser } from "@/components/app/BookBrowser";
 import { BookModeSwitch } from "@/components/app/BookModeSwitch";
 import { OnboardingBanner } from "@/components/app/onboarding/OnboardingBanner";
-import { RealtimeRefresh } from "@/components/app/RealtimeRefresh";
 import { PageSkeleton } from "@/components/ui/Skeleton";
 
 export const metadata: Metadata = { title: "Book" };
@@ -72,7 +71,6 @@ export default function BookPage({
 }) {
   return (
     <ClientShell title="Book group class">
-      <RealtimeRefresh tables={["bookings", "class_sessions"]} />
       {/* Passed down unawaited: awaiting searchParams here would block the
           shell for exactly the reason requireUser used to. */}
       <Suspense fallback={<div className="h-10" />}>
