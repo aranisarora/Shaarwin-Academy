@@ -11,8 +11,7 @@ export const metadata: Metadata = { title: "Pupils" };
 
 /** Streamed under the shell — the roll-up needs auth, the chrome does not. */
 async function Roster() {
-  const { supabase } = await requireUser("/school");
-  const campuses = await getCampuses(supabase);
+  const [{ supabase }, campuses] = await Promise.all([requireUser("/school"), getCampuses()]);
   const pupils = await getRoster(
     supabase,
     campuses.map((c) => c.venueId)
@@ -37,8 +36,8 @@ async function Roster() {
 
 /** The campus name, streamed separately so the bar paints before the query. */
 async function Title() {
-  const { supabase } = await requireUser("/school");
-  return <>{campusLabel(await getCampuses(supabase))}</>;
+  await requireUser("/school");
+  return <>{campusLabel(await getCampuses())}</>;
 }
 
 export default function SchoolPupilsPage() {

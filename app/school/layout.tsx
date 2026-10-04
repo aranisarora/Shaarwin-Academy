@@ -3,7 +3,6 @@ import type { Viewport } from "next";
 import { ServiceWorkerRegistrar } from "@/components/app/ServiceWorkerRegistrar";
 import { InstallPrompt } from "@/components/app/InstallPrompt";
 import { PreviewBanner } from "@/components/app/PreviewBanner";
-import { createClient } from "@/lib/supabase/server";
 import { getSchoolPreview } from "@/lib/school-preview";
 import { exitSchoolView } from "@/app/school/preview-actions";
 import { getCampuses, campusLabel } from "@/lib/school";
@@ -28,10 +27,9 @@ export const viewport: Viewport = { themeColor: "#F4F1EA" };
 async function SchoolPreview() {
   const preview = await getSchoolPreview();
   if (!preview) return null;
-  const supabase = await createClient();
   return (
     <PreviewBanner
-      who={campusLabel(await getCampuses(supabase))}
+      who={campusLabel(await getCampuses())}
       onExit={exitSchoolView}
       backTo="/admin/schools"
     />

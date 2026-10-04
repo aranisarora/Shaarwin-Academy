@@ -1,5 +1,5 @@
 import { cache } from "react";
-import type { createClient } from "@/lib/supabase/server";
+import { createClient } from "@/lib/supabase/server";
 import { getMasteryMap } from "@/lib/mastery";
 import { getSchoolPreview } from "@/lib/school-preview";
 
@@ -33,10 +33,12 @@ export type Pupil = {
  * what "view as school" is for.
  *
  * Wrapped in React `cache` so the roster, the page title, the preview banner and
- * the More screen share one round trip within a request.
+ * the More screen share one round trip within a request. It takes no arguments
+ * and builds its own client because `cache` keys on argument identity, and every
+ * caller holds a different client.
  */
-export const getCampuses = cache(async (supabase: Supabase): Promise<Campus[]> => {
-  const preview = await getSchoolPreview();
+export const getCampuses = cache(async (): Promise<Campus[]> => {
+  const [preview, supabase] = await Promise.all([getSchoolPreview(), createClient()]);
 
   const query = supabase.from("school_admins").select("venue_id,venues(name,unit)");
   const { data } = preview ? await query.eq("user_id", preview.userId) : await query;
@@ -61,55 +63,45 @@ export function campusLabel(campuses: Campus[]): string {
 /**
  * Every pupil on the school's campuses, with their attendance roll-up.
  *
- * Both queries are RLS-scoped in their own right — `school reads own pupils`
+ * Both halves are RLS-scoped in their own right — `school reads own pupils`
  * and `school reads pupil bookings` — so the `.in()` on venue ids is a
  * narrowing convenience, not the security boundary. A school pupil carries
  * `client_id = null`, which is why the bookings read needs its own policy at
  * all: the client-owns-booking policy matches none of these rows.
+ *
+ * The bookings ride embedded under each pupil. max_rows caps only the top
+ * level, so a busy school's history can no longer be cut off at 1000 rows, and
+ * no pupil id list has to travel in a URL. Cancellations are filtered out in
+ * the embed: they aren't attendance, and would inflate every pupil's count with
+ * classes they were pulled out of.
  */
 export async function getRoster(supabase: Supabase, venueIds: string[]): Promise<Pupil[]> {
   if (venueIds.length === 0) return [];
 
   const { data: players } = await supabase
     .from("players")
-    .select("id,full_name,grade")
+    .select("id,full_name,grade,bookings(status)")
     .in("school_venue_id", venueIds)
+    .in("bookings.status", ["confirmed", "attended", "no_show"])
     .order("full_name");
 
   const pupils = players ?? [];
   if (pupils.length === 0) return [];
 
-  const ids = pupils.map((p) => p.id);
+  const masteryMap = await getMasteryMap(
+    supabase,
+    pupils.map((p) => p.id)
+  );
 
-  // The mastery RPC and the bookings roll-up are independent — both key off
-  // `ids`, which is already in hand.
-  const [{ data: bookings }, masteryMap] = await Promise.all([
-    supabase.from("bookings").select("player_id,status").in("player_id", ids),
-    getMasteryMap(supabase, ids),
-  ]);
-
-  const tally = new Map<string, { sessions: number; attended: number; noShows: number }>();
-  for (const b of bookings ?? []) {
-    // Cancellations aren't attendance — they'd otherwise inflate every pupil's
-    // session count with classes they were pulled out of.
-    if (!["confirmed", "attended", "no_show"].includes(b.status)) continue;
-    const entry = tally.get(b.player_id) ?? { sessions: 0, attended: 0, noShows: 0 };
-    entry.sessions += 1;
-    if (b.status === "attended") entry.attended += 1;
-    if (b.status === "no_show") entry.noShows += 1;
-    tally.set(b.player_id, entry);
-  }
-
-  return pupils.map((p) => {
-    const t = tally.get(p.id) ?? { sessions: 0, attended: 0, noShows: 0 };
-    return {
-      id: p.id,
-      name: p.full_name,
-      grade: p.grade,
-      ...t,
-      mastery: masteryMap.get(p.id) ?? 0,
-    };
-  });
+  return pupils.map((p) => ({
+    id: p.id,
+    name: p.full_name,
+    grade: p.grade,
+    sessions: p.bookings.length,
+    attended: p.bookings.filter((b) => b.status === "attended").length,
+    noShows: p.bookings.filter((b) => b.status === "no_show").length,
+    mastery: masteryMap.get(p.id) ?? 0,
+  }));
 }
 
 /**
