@@ -426,8 +426,6 @@ export type Database = {
           // row as a selectable column). `supabase gen types` does not emit
           // these, so they are maintained by hand — see migration 0052.
           location_label: string | null
-          location_venue: string | null
-          location_unit: string | null
           location_maps_url: string | null
         }
         Insert: {
@@ -2250,14 +2248,6 @@ export type Database = {
         Returns: { school_user_id: string; signed_in_at: string | null }[]
       }
       location_label: {
-        Args: { c: Database["public"]["Tables"]["classes"]["Row"] }
-        Returns: string
-      }
-      location_venue: {
-        Args: { c: Database["public"]["Tables"]["classes"]["Row"] }
-        Returns: string
-      }
-      location_unit: {
         Args: { c: Database["public"]["Tables"]["classes"]["Row"] }
         Returns: string
       }
