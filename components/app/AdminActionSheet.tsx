@@ -12,11 +12,12 @@
 // interruption, it is a list — and a popup that greets him every morning is one
 // he learns to dismiss without reading, which costs the mornings it was right.
 
-import { useState, useSyncExternalStore } from "react";
+import { useState } from "react";
 import Link from "next/link";
 import { Sheet } from "@/components/ui/Sheet";
 import { Button } from "@/components/ui/Button";
 import type { AttentionItem } from "@/lib/admin-attention";
+import { useHydrated } from "@/components/app/use-pwa";
 
 function dismissKey(item: AttentionItem) {
   return `admin-action-dismissed:${item.key}`;
@@ -30,17 +31,6 @@ function wasDismissed(item: AttentionItem | null): boolean {
   } catch {
     return false;
   }
-}
-
-/** True only after hydration, so a render can read browser-only state without
- *  the client's first paint disagreeing with the server's. */
-const subscribeNoop = () => () => {};
-function useHydrated(): boolean {
-  return useSyncExternalStore(
-    subscribeNoop,
-    () => true,
-    () => false
-  );
 }
 
 /**

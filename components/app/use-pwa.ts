@@ -11,6 +11,14 @@ import { useSyncExternalStore } from "react";
  */
 const noopSubscribe = () => () => {};
 
+/** True only after hydration. Lets a render read browser-only state without
+ *  the client's first paint disagreeing with the server's: React uses the
+ *  server snapshot for SSR *and* for hydration, then re-renders with the client
+ *  one. */
+export function useHydrated(): boolean {
+  return useSyncExternalStore(noopSubscribe, () => true, () => false);
+}
+
 function detectIos(): boolean {
   // navigator.userAgent is unreliable on modern iPadOS (Apple masks it), so we
   // also treat a Mac platform reporting touch points as iOS-on-iPad.
