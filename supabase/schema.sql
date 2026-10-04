@@ -5569,3 +5569,9 @@ CREATE POLICY "founder deletes assessments" ON public.skill_assessments AS PERMI
 CREATE POLICY "staff reads ratings" ON public.skill_ratings AS PERMISSIVE FOR SELECT TO public USING ((( SELECT is_coach() AS is_coach) OR ( SELECT is_founder() AS is_founder)));
 CREATE POLICY "author writes ratings" ON public.skill_ratings AS PERMISSIVE FOR INSERT TO public WITH CHECK ((EXISTS ( SELECT 1 FROM skill_assessments a WHERE ((a.id = skill_ratings.assessment_id) AND (a.coach_id = ( SELECT auth.uid() AS uid))))));
 CREATE POLICY "founder deletes ratings" ON public.skill_ratings AS PERMISSIVE FOR DELETE TO public USING (( SELECT is_founder() AS is_founder));
+
+-- ── Scheduled jobs (pg_cron, live only; db:reset does not schedule them) ─────
+-- private-series-nightly  40 21 * * *  select public.generate_private_sessions(4)
+-- session-status-hourly   5 * * * *    select public.sweep_session_status()
+-- notify-worker           * * * * *    net.http_post to functions/v1/notify
+-- cron-history-prune      15 22 * * *  delete cron.job_run_details older than 7 days; select public.prune_wa_inbound_seen()
