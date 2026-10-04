@@ -614,6 +614,7 @@ ALTER TABLE public.school_admins ADD CONSTRAINT school_admins_user_id_fkey FOREI
 ALTER TABLE public.school_admins ADD CONSTRAINT school_admins_venue_id_fkey FOREIGN KEY (venue_id) REFERENCES venues(id) ON DELETE CASCADE;
 ALTER TABLE public.school_admins ADD CONSTRAINT school_admins_created_by_fkey FOREIGN KEY (created_by) REFERENCES profiles(id) ON DELETE SET NULL;
 ALTER TABLE public.settings ADD CONSTRAINT settings_pkey PRIMARY KEY (key);
+ALTER TABLE public.settings ADD CONSTRAINT settings_whatsapp_enabled_boolean CHECK (((key <> 'whatsapp_enabled'::text) OR (jsonb_typeof(value) = 'boolean'::text)));
 ALTER TABLE public.settings ADD CONSTRAINT settings_updated_by_fkey FOREIGN KEY (updated_by) REFERENCES profiles(id) ON DELETE SET NULL;
 ALTER TABLE public.subscriptions ADD CONSTRAINT subscriptions_razorpay_subscription_id_key UNIQUE (razorpay_subscription_id);
 ALTER TABLE public.subscriptions ADD CONSTRAINT subscriptions_stripe_subscription_id_key UNIQUE (stripe_subscription_id);

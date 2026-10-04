@@ -395,6 +395,7 @@ function mutedByPrefs(type: string, prefs: Record<string, boolean> | null): bool
 }
 
 Deno.serve(async () => {
+  const whatsappOn = await whatsappEnabled();
   const { data: due } = await supabase
     .from("notifications")
     .select("id,user_id,type,title,body,data,created_at")
@@ -472,7 +473,7 @@ Deno.serve(async () => {
       .maybeSingle();
     if (!claimed) continue;
 
-    const attempt = await deliver(row);
+    const attempt = await deliver(row, whatsappOn);
     if (attempt.ok) {
       sent++;
       // `error` on a sent row is not a failure — it is why the channel we would
@@ -529,6 +530,19 @@ Deno.serve(async () => {
     headers: { "Content-Type": "application/json" },
   });
 });
+
+async function whatsappEnabled(): Promise<boolean> {
+  const { data, error } = await supabase
+    .from("settings")
+    .select("value")
+    .eq("key", "whatsapp_enabled")
+    .single();
+  if (error) throw error;
+  if (typeof data.value !== "boolean") {
+    throw new Error(`settings.whatsapp_enabled must be a boolean, got ${JSON.stringify(data.value)}`);
+  }
+  return data.value;
+}
 
 async function safeSweep(name: string, fn: () => Promise<void>) {
   try {
@@ -1788,7 +1802,7 @@ async function deliver(row: {
   title: string;
   body: string;
   data: { url?: string } & Record<string, unknown>;
-}): Promise<Attempt> {
+}, whatsappOn: boolean): Promise<Attempt> {
   // phone comes from here now, not a second query against a link table.
   // profiles.phone IS the WhatsApp binding — the same column inbound identity
   // resolves against — so the two directions cannot disagree about who is
@@ -1813,8 +1827,12 @@ async function deliver(row: {
   // person who has never subscribed — and stamping those on every failed row
   // would bury the reason that actually explains the failure.
   const notes: string[] = push.channel === "push" && push.error ? [`push: ${push.error}`] : [];
-  if (push.ok && !ruleFor(row.type).answer) {
+  if (push.ok && (!ruleFor(row.type).answer || !whatsappOn)) {
     return { ok: true, channel: "push", whatsapp: "skipped" };
+  }
+  if (!whatsappOn) {
+    notes.push("whatsapp: disabled");
+    return { ok: false, channel: push.channel, error: notes.join("; "), whatsapp: "skipped" };
   }
 
   /** Push already carried it, so a dead fallback isn't a failed notification.
