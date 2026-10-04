@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { Suspense } from "react";
 import Link from "next/link";
 import { requireUser } from "@/lib/auth";
-import { getMyBookings } from "@/lib/booking";
+import { getAttendedCounts, getMyBookings, splitBookings } from "@/lib/booking";
 import { formatSessionDate, nowMs } from "@/lib/academy-time";
 import { ClientShell } from "@/components/app/ClientShell";
 import { Badge } from "@/components/ui/Badge";
@@ -16,41 +16,29 @@ export const metadata: Metadata = { title: "Players" };
 /** Streamed under the shell — the roster needs auth, the chrome does not. */
 async function Roster() {
   const { supabase, user } = await requireUser("/app/players");
-  const [{ data: players }, bookings] = await Promise.all([
-    supabase
-      .from("players")
-      .select("id,full_name")
-      .eq("client_id", user.id)
-      .order("created_at"),
-    getMyBookings(supabase, user.id),
+  const playersP = supabase
+    .from("players")
+    .select("id,full_name")
+    .eq("client_id", user.id)
+    .order("created_at")
+    .then((r) => r.data ?? []);
+  const [players, bookings, attendedByPlayer, masteryMap] = await Promise.all([
+    playersP,
+    getMyBookings(supabase, user.id, 0),
+    getAttendedCounts(supabase, user.id),
+    playersP.then((ps) => getMasteryMap(supabase, ps.map((p) => p.id))),
   ]);
-  // A second trip by necessity: it needs the player ids the query above returns.
-  const masteryMap = await getMasteryMap(
-    supabase,
-    (players ?? []).map((p) => p.id)
-  );
 
-  const now = nowMs();
   const nextByPlayer = new Map<string, string>();
-  const attendedByPlayer = new Map<string, number>();
-  for (const b of bookings) {
-    if (!b.playerId) continue;
-    const starts = new Date(b.session.starts_at).getTime();
-    if (
-      ["confirmed", "waitlisted"].includes(b.status) &&
-      starts > now &&
-      !nextByPlayer.has(b.playerId)
-    ) {
+  for (const b of splitBookings(bookings, nowMs()).upcoming) {
+    if (b.playerId && !nextByPlayer.has(b.playerId)) {
       nextByPlayer.set(b.playerId, b.session.starts_at);
-    }
-    if (b.status === "attended") {
-      attendedByPlayer.set(b.playerId, (attendedByPlayer.get(b.playerId) ?? 0) + 1);
     }
   }
 
   return (
     <>
-      {(players ?? []).length === 0 ? (
+      {players.length === 0 ? (
         <EmptyState
           copy="No players yet — add who'll be at the table."
           action={<ButtonLink href="/app/profile">Add a player</ButtonLink>}
@@ -58,7 +46,7 @@ async function Roster() {
       ) : (
         <>
           <ul className="space-y-3">
-            {(players ?? []).map((p) => {
+            {players.map((p) => {
               const next = nextByPlayer.get(p.id);
               const attended = attendedByPlayer.get(p.id) ?? 0;
               const mastery = masteryMap.get(p.id) ?? 0;

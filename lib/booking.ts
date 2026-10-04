@@ -1,6 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/database.types";
 import { asAddressDetails, fromDetails, type StructuredAddress } from "@/lib/address";
+import { nowMs } from "@/lib/academy-time";
 
 export type BrowseSession = {
   id: string;
@@ -154,31 +155,62 @@ export function splitBookings(
   return { upcoming, past };
 }
 
-export async function getMyBookings(
+export async function getAttendedCounts(
   supabase: SupabaseClient<Database>,
   clientId: string
+): Promise<Map<string, number>> {
+  const { data } = await supabase
+    .from("bookings")
+    .select("player_id")
+    .eq("client_id", clientId)
+    .eq("status", "attended");
+  const counts = new Map<string, number>();
+  for (const { player_id } of data ?? []) {
+    counts.set(player_id, (counts.get(player_id) ?? 0) + 1);
+  }
+  return counts;
+}
+
+/**
+ * The client's bookings from now on, plus the `pastLimit` most recent before
+ * now, in ascending start order. Pass 0 to skip the past entirely.
+ */
+export async function getMyBookings(
+  supabase: SupabaseClient<Database>,
+  clientId: string,
+  pastLimit = 20
 ): Promise<MyBooking[]> {
-  const [{ data }, coachNames] = await Promise.all([
+  const nowIso = new Date(nowMs()).toISOString();
+  const bookings = () =>
     supabase
       .from("bookings")
       .select(
         "id,status,waitlist_position,series_id,private_series_id,players(id,full_name),class_sessions!inner(id,starts_at,ends_at,coach_id,classes!inner(title,class_type,location_label,venues(name,address,postcode,lat,lng,address_details),private_class_details(address,postcode,lat,lng,address_details)))"
       )
       .eq("client_id", clientId)
-      .in("status", ["confirmed", "waitlisted", "attended", "no_show"])
-      // Order the BOOKINGS by their session's start, not the embedded session by
-      // its own. `{ referencedTable }` spells the latter: it sorts rows *within* a
-      // to-many embed, so on a to-one embed like this one it is a silent no-op and
-      // the bookings came back in whatever order Postgres happened to read them —
-      // a client with weekly slots saw 10, 17, 24, 31 Aug and then back to 11 Aug.
-      // `class_sessions(starts_at)` is the top-level form and does sort the rows.
+      .in("status", ["confirmed", "waitlisted", "attended", "no_show"]);
+  // Order the BOOKINGS by their session's start, not the embedded session by
+  // its own. `{ referencedTable }` spells the latter: it sorts rows *within* a
+  // to-many embed, so on a to-one embed like this one it is a silent no-op and
+  // the bookings came back in whatever order Postgres happened to read them —
+  // a client with weekly slots saw 10, 17, 24, 31 Aug and then back to 11 Aug.
+  // `class_sessions(starts_at)` is the top-level form and does sort the rows.
+  const [upcoming, past, coachNames] = await Promise.all([
+    bookings()
+      .gte("class_sessions.starts_at", nowIso)
       .order("class_sessions(starts_at)", { ascending: true }),
+    pastLimit > 0
+      ? bookings()
+          .lt("class_sessions.starts_at", nowIso)
+          .order("class_sessions(starts_at)", { ascending: false })
+          .limit(pastLimit)
+      : null,
     getCoachNames(supabase),
   ]);
 
-  if (!data) return [];
+  const rows = [...(past?.data ?? []).reverse(), ...(upcoming.data ?? [])];
 
-  return data.map((b) => {
+  return rows.map((b) => {
     const s = b.class_sessions;
     const v = s.classes.venues;
     const priv = s.classes.private_class_details;
