@@ -58,9 +58,13 @@ function BookingCard({
 export function ScheduleList({
   upcoming,
   past,
+  tab,
+  olderHref,
 }: {
   upcoming: MyBooking[];
   past: MyBooking[];
+  tab: "upcoming" | "past";
+  olderHref: string | null;
 }) {
   const [selected, setSelected] = useState<MyBooking | null>(null);
   const [rescheduling, setRescheduling] = useState<MyBooking | null>(null);
@@ -93,7 +97,7 @@ export function ScheduleList({
 
   return (
     <>
-      <Tabs defaultValue="upcoming">
+      <Tabs defaultValue={tab}>
         <TabsList>
           <TabsTrigger value="upcoming">Upcoming</TabsTrigger>
           <TabsTrigger value="past">Past</TabsTrigger>
@@ -117,6 +121,11 @@ export function ScheduleList({
           {past.map((b) => (
             <BookingCard key={b.id} booking={b} />
           ))}
+          {olderHref && (
+            <ButtonLink href={olderHref} variant="ghost" className="w-full" scroll={false}>
+              Show older
+            </ButtonLink>
+          )}
         </TabsContent>
       </Tabs>
 
