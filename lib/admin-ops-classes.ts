@@ -117,30 +117,31 @@ export async function updateGroupClassCore(
   // to be told, because everything else about this operation reports success.
   let stuck = 0;
 
-  for (const s of sessions ?? []) {
-    const start = new Date(s.starts_at);
-    const wall = utcToAcademyWall(start);
-    const durationChanged = input.durationMinutes !== cls.duration_minutes;
-    const slotChanged = recurring
-      ? wall.isoWeekday !== newWd || wall.time !== input.time
-      : wall.time !== input.time;
-    if (!slotChanged && !durationChanged) continue;
+  const moves = await Promise.all(
+    (sessions ?? []).map(async (s) => {
+      const start = new Date(s.starts_at);
+      const wall = utcToAcademyWall(start);
+      const durationChanged = input.durationMinutes !== cls.duration_minutes;
+      const slotChanged = recurring
+        ? wall.isoWeekday !== newWd || wall.time !== input.time
+        : wall.time !== input.time;
+      if (!slotChanged && !durationChanged) return null;
 
-    // A one-off keeps its own date; only a repeating class slides to a new day.
-    const shifted = recurring
-      ? new Date(start.getTime() + (newWd - wall.isoWeekday) * 86400000)
-      : start;
-    const newDate = utcToAcademyWall(shifted).date;
-    const newStart = academyWallToUtc(newDate, input.time);
-    if (newStart <= new Date()) continue;
-    const newEnd = new Date(newStart.getTime() + input.durationMinutes * 60000);
+      // A one-off keeps its own date; only a repeating class slides to a new day.
+      const shifted = recurring
+        ? new Date(start.getTime() + (newWd - wall.isoWeekday) * 86400000)
+        : start;
+      const newDate = utcToAcademyWall(shifted).date;
+      const newStart = academyWallToUtc(newDate, input.time);
+      if (newStart <= new Date()) return null;
+      const newEnd = new Date(newStart.getTime() + input.durationMinutes * 60000);
 
-    const { error: moveErr } = await supabase
-      .from("class_sessions")
-      .update({ starts_at: newStart.toISOString(), ends_at: newEnd.toISOString() })
-      .eq("id", s.id);
+      const { error: moveErr } = await supabase
+        .from("class_sessions")
+        .update({ starts_at: newStart.toISOString(), ends_at: newEnd.toISOString() })
+        .eq("id", s.id);
+      if (!moveErr) return { s, slotChanged, coachCleared: false, stuck: false };
 
-    if (moveErr) {
       const { error: retryErr } = await supabase
         .from("class_sessions")
         .update({
@@ -149,15 +150,19 @@ export async function updateGroupClassCore(
           coach_id: null,
         })
         .eq("id", s.id);
-      if (retryErr) {
-        stuck += 1;
-        continue;
-      }
-      if (s.coach_id) affectedCoaches.add(s.coach_id);
-      needsEngine = true;
+      return { s, slotChanged, coachCleared: !retryErr, stuck: !!retryErr };
+    })
+  );
+
+  for (const m of moves) {
+    if (!m) continue;
+    if (m.stuck) {
+      stuck += 1;
+      continue;
     }
-    if (slotChanged) movedSessionIds.push(s.id);
-    if (s.coach_id) affectedCoaches.add(s.coach_id);
+    if (m.coachCleared) needsEngine = true;
+    if (m.slotChanged) movedSessionIds.push(m.s.id);
+    if (m.s.coach_id) affectedCoaches.add(m.s.coach_id);
   }
 
   if (needsEngine) await supabase.rpc("assign_unassigned_sessions");
@@ -171,29 +176,27 @@ export async function updateGroupClassCore(
       .select("client_id,session_id")
       .in("session_id", notifySessionIds)
       .in("status", ["confirmed", "waitlisted"]);
-    const notified = new Set<string>();
-    for (const b of bookings ?? []) {
-      // A school player's booking has no account behind it — nobody to notify.
-      if (b.client_id === null) continue;
-      if (notified.has(b.client_id)) continue;
-      notified.add(b.client_id);
-      await supabase.from("notifications").insert({
-        user_id: b.client_id,
+    // A school player's booking has no account behind it — nobody to notify.
+    const clientIds = new Set(
+      (bookings ?? []).map((b) => b.client_id).filter((id): id is string => id !== null)
+    );
+    const notices = [
+      ...[...clientIds].map((userId) => ({
+        user_id: userId,
         type: "class_updated",
         title: "Class schedule changed",
         body: `${input.title} ${whatChanged} — check your schedule.`,
         data: { ...changed, url: "/app/schedule" },
-      });
-    }
-    for (const coachId of affectedCoaches) {
-      await supabase.from("notifications").insert({
+      })),
+      ...[...affectedCoaches].map((coachId) => ({
         user_id: coachId,
         type: "class_updated",
         title: "Class schedule changed",
         body: `${input.title} ${whatChanged} — check your calendar.`,
         data: { ...changed, url: "/coach" },
-      });
-    }
+      })),
+    ];
+    if (notices.length) await supabase.from("notifications").insert(notices);
   }
 
   await supabase.from("audit_log").insert({
@@ -254,8 +257,7 @@ export async function endGroupClassCore(
       .update({ status: "cancelled", cancel_reason: "class ended" })
       .in("id", ids);
 
-    const notified = new Set<string>();
-    for (const b of bookings ?? []) {
+    if (bookings?.length) {
       await supabase
         .from("bookings")
         .update({
@@ -263,32 +265,36 @@ export async function endGroupClassCore(
           cancelled_at: new Date().toISOString(),
           cancel_reason: "class ended",
         })
-        .eq("id", b.id);
-      // The booking is still cancelled above; only the notification needs an
-      // account holder, which a school player's booking doesn't have.
-      if (b.client_id === null) continue;
-      if (notified.has(b.client_id)) continue;
-      notified.add(b.client_id);
-      await supabase.from("notifications").insert({
-        user_id: b.client_id,
+        .in(
+          "id",
+          bookings.map((b) => b.id)
+        );
+    }
+    // The booking is still cancelled above; only the notification needs an
+    // account holder, which a school player's booking doesn't have.
+    const clientIds = new Set(
+      (bookings ?? []).map((b) => b.client_id).filter((id): id is string => id !== null)
+    );
+    const coachIds = new Set(
+      (sessions ?? []).map((s) => s.coach_id).filter((c): c is string => !!c)
+    );
+    const notices = [
+      ...[...clientIds].map((userId) => ({
+        user_id: userId,
         type: "session_cancelled",
         title: "Class ended",
         body: `${cls.title} has finished its run. Your remaining sessions in it are cancelled — your allowance is unaffected.`,
         data: { url: "/app/book" },
-      });
-    }
-    const coachIds = new Set(
-      (sessions ?? []).map((s) => s.coach_id).filter((c): c is string => !!c)
-    );
-    for (const coachId of coachIds) {
-      await supabase.from("notifications").insert({
+      })),
+      ...[...coachIds].map((coachId) => ({
         user_id: coachId,
         type: "session_cancelled",
         title: "Class ended",
         body: `${cls.title} has ended — its sessions are off your calendar.`,
         data: { url: "/coach" },
-      });
-    }
+      })),
+    ];
+    if (notices.length) await supabase.from("notifications").insert(notices);
   }
 
   await supabase.from("audit_log").insert({
@@ -398,14 +404,16 @@ export async function restoreGroupClassCore(
   const coachIds = new Set(
     (revived ?? []).map((s) => s.coach_id).filter((c): c is string => !!c)
   );
-  for (const coachId of coachIds) {
-    await supabase.from("notifications").insert({
-      user_id: coachId,
-      type: "session_booked",
-      title: "Class restored",
-      body: `${cls.title} is back on — its sessions are on your calendar again.`,
-      data: { url: "/coach" },
-    });
+  if (coachIds.size) {
+    await supabase.from("notifications").insert(
+      [...coachIds].map((coachId) => ({
+        user_id: coachId,
+        type: "session_booked",
+        title: "Class restored",
+        body: `${cls.title} is back on — its sessions are on your calendar again.`,
+        data: { url: "/coach" },
+      }))
+    );
   }
 
   await supabase.from("audit_log").insert({

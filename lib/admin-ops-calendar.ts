@@ -3,7 +3,7 @@
 // client.
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { Database, Json } from "@/lib/database.types";
+import type { Database, Json, TablesInsert } from "@/lib/database.types";
 import { academyWallToUtc, formatSessionDate } from "@/lib/academy-time";
 import type { OpResult } from "@/lib/admin-ops-types";
 
@@ -128,22 +128,21 @@ export async function moveSessionCore(
     old_starts_at: session.starts_at,
     new_starts_at: newStart.toISOString(),
   };
-  const notified = new Set<string>();
-  for (const b of bookings ?? []) {
-    // A school player's booking has no account behind it — nobody to notify.
-    if (b.client_id === null) continue;
-    if (notified.has(b.client_id)) continue;
-    notified.add(b.client_id);
-    await supabase.from("notifications").insert({
-      user_id: b.client_id,
+  // A school player's booking has no account behind it — nobody to notify.
+  const clientIds = new Set(
+    (bookings ?? []).map((b) => b.client_id).filter((id): id is string => id !== null)
+  );
+  const notices: TablesInsert<"notifications">[] = [...clientIds].map(
+    (userId) => ({
+      user_id: userId,
       type: "session_moved",
       title: "Session moved",
       body: `${cls.title} has moved from ${wasWhen} to ${when}.`,
       data: { session_id: sessionId, class_title: cls.title, ...changed, url: "/app/schedule" },
-    });
-  }
+    })
+  );
   if (session.coach_id) {
-    await supabase.from("notifications").insert({
+    notices.push({
       user_id: session.coach_id,
       type: "session_moved",
       title: coachCleared ? "Session moved off your calendar" : "Session moved",
@@ -155,6 +154,7 @@ export async function moveSessionCore(
       data: { session_id: sessionId, class_title: cls.title, ...changed, url: "/coach" },
     });
   }
+  if (notices.length) await supabase.from("notifications").insert(notices);
 
   await supabase.from("audit_log").insert({
     actor_id: founderId,
@@ -776,11 +776,12 @@ export async function cancelFuturePrivateSessionsCore(
     .select("id")
     .eq("client_id", clientId)
     .eq("active", true);
-  let seriesRetired = 0;
-  for (const s of liveSeries ?? []) {
-    const { error } = await supabase.rpc("end_private_series_as_academy", { p_series: s.id });
-    if (!error) seriesRetired += 1;
-  }
+  const retired = await Promise.all(
+    (liveSeries ?? []).map((s) =>
+      supabase.rpc("end_private_series_as_academy", { p_series: s.id })
+    )
+  );
+  const seriesRetired = retired.filter((r) => !r.error).length;
 
   // All future class IDs for this client's private sessions.
   const { data: clientClasses } = await supabase
@@ -823,7 +824,8 @@ export async function cancelFuturePrivateSessionsCore(
     ])
   );
 
-  for (const b of bookings ?? []) {
+  const doomed = bookings ?? [];
+  if (doomed.length) {
     await supabase
       .from("bookings")
       .update({
@@ -831,42 +833,48 @@ export async function cancelFuturePrivateSessionsCore(
         cancelled_at: new Date().toISOString(),
         cancel_reason: "cancelled by academy",
       })
-      .eq("id", b.id);
+      .in(
+        "id",
+        doomed.map((b) => b.id)
+      );
 
     // No account holder (school player) means no minutes ledger to refund into.
-    if (b.client_id === null) continue;
-    const mins = durationBySession.get(b.session_id) ?? 60;
-    await supabase.from("private_credit_ledger").insert({
-      client_id: b.client_id,
-      booking_id: b.id,
-      delta_minutes: mins,
-      reason: "cancellation_refund",
-      note: "academy cancelled all upcoming sessions",
-    });
+    const refunds = doomed.flatMap((b) =>
+      b.client_id === null
+        ? []
+        : [
+            {
+              client_id: b.client_id,
+              booking_id: b.id,
+              delta_minutes: durationBySession.get(b.session_id) ?? 60,
+              reason: "cancellation_refund" as const,
+              note: "academy cancelled all upcoming sessions",
+            },
+          ]
+    );
+    if (refunds.length) await supabase.from("private_credit_ledger").insert(refunds);
   }
 
-  // One notification to the client.
-  await supabase.from("notifications").insert({
-    user_id: clientId,
-    type: "session_cancelled",
-    title: "Upcoming sessions cancelled",
-    body: `Your upcoming private sessions have been cancelled — your minutes have been returned.`,
-    data: { url: "/app/schedule" },
-  });
-
-  // Notify affected coaches (de-duped).
+  // One notification to the client, and one to each affected coach.
   const coachIds = new Set(
     sessions.map((s) => s.coach_id).filter((c): c is string => !!c)
   );
-  for (const coachId of coachIds) {
-    await supabase.from("notifications").insert({
+  await supabase.from("notifications").insert([
+    {
+      user_id: clientId,
+      type: "session_cancelled",
+      title: "Upcoming sessions cancelled",
+      body: `Your upcoming private sessions have been cancelled — your minutes have been returned.`,
+      data: { url: "/app/schedule" },
+    },
+    ...[...coachIds].map((coachId) => ({
       user_id: coachId,
       type: "session_cancelled",
       title: "Private sessions cancelled",
       body: `All upcoming private sessions for this client have been cancelled.`,
       data: { url: "/coach" },
-    });
-  }
+    })),
+  ]);
 
   await supabase.from("audit_log").insert({
     actor_id: founderId,
