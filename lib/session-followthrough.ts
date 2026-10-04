@@ -75,9 +75,6 @@ type AssessmentRow = { session_id: string | null; player_id: string | null };
  * (private_class_details), and a slot assigned to a family can carry no booking
  * row at all — so filtering to that family would drop their private lessons,
  * which are the sessions they are most likely to be looking for.
- *
- * Exported because SessionRow is assembled in two places (the schedule page and
- * fetchWeekSessions) and those two have drifted before.
  */
 export function sessionClientIds(
   owed: FollowThrough,
@@ -90,10 +87,7 @@ export function sessionClientIds(
 /**
  * Fold the two raw reads into one answer per session.
  *
- * Split out from the query so it can be tested without a database, and so the
- * page and the server action cannot end up counting differently — they had
- * already drifted once on session shape, which is why SessionRow is built in
- * two places at all.
+ * Split out from the query so it can be tested without a database.
  */
 export function foldFollowThrough(
   bookings: BookingRow[],

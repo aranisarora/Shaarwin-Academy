@@ -45,8 +45,7 @@ export type SessionRow = {
   privateClientId: string | null;
   // Every client with a live booking on this session, so "what is the Sharma
   // family in this week?" is answerable on group classes and not just on their
-  // privates. privateClientId is folded in here as well — see sessionClientIds,
-  // which both builders of this row use so they cannot disagree about it.
+  // privates. privateClientId is folded in here as well — see sessionClientIds.
   clientIds: string[];
   address: StructuredAddress | null;
   // Class scope — what "every week" edits apply to. Present on group sessions.
