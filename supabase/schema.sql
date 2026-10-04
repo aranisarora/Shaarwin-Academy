@@ -5383,6 +5383,20 @@ as $$
   delete from public.wa_inbound_seen where created_at < now() - interval '1 day';
 $$;
 
+create or replace function public.prune_notifications()
+returns void
+language sql
+set search_path = public
+as $$
+  delete from public.notifications
+   where status <> 'pending'
+     and created_at < now() - interval '60 days'
+     and type <> 'signup_request'
+     and not (read_at is null and type in ('session_issue', 'private_request_parked', 'cover_offer'));
+$$;
+
+REVOKE ALL ON FUNCTION public.prune_notifications() FROM public, anon, authenticated;
+
 -- Every write to a push_subscriptions row comes from a browser that is open
 -- right now, so "when was this row last written" and "when was this device last
 -- alive" are the same fact. Stamped here rather than by each caller, so a
@@ -5565,3 +5579,4 @@ CREATE POLICY "founder deletes ratings" ON public.skill_ratings AS PERMISSIVE FO
 -- session-status-hourly   5 * * * *    select public.sweep_session_status()
 -- notify-worker           * * * * *    net.http_post to functions/v1/notify
 -- cron-history-prune      15 22 * * *  delete cron.job_run_details older than 7 days; select public.prune_wa_inbound_seen()
+-- notifications-prune     20 22 * * *  select public.prune_notifications()
