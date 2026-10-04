@@ -14,24 +14,29 @@ export const metadata: Metadata = { title: "Billing" };
 async function Billing() {
   const { supabase } = await requireUser("/admin/billing");
 
-  const [{ data: plans }, { data: subs }, { data: graceDaysRow }] = await Promise.all([
-    supabase
-      .from("plans")
-      .select("id,name,price_pence,group_sessions_per_week,private_minutes_per_cycle,razorpay_plan_id,active")
-      .eq("active", true)
-      .order("price_pence"),
-    supabase
-      .from("subscriptions")
-      .select(
-        "id,status,source,current_period_end,cancel_at_period_end,profiles!subscriptions_client_id_fkey(full_name,email),plans(name)"
-      )
-      .order("created_at", { ascending: false })
-      .limit(100),
-    supabase.from("settings").select("value").eq("key", "dunning_grace_days").maybeSingle(),
-  ]);
+  const subSelect =
+    "id,status,source,current_period_end,cancel_at_period_end,profiles!subscriptions_client_id_fkey(full_name,email),plans(name)";
+  const [{ data: plans }, { data: subs }, { data: dunning }, { data: graceDaysRow }] =
+    await Promise.all([
+      supabase
+        .from("plans")
+        .select("id,name,price_pence,group_sessions_per_week,private_minutes_per_cycle,razorpay_plan_id,active")
+        .eq("active", true)
+        .order("price_pence"),
+      supabase
+        .from("subscriptions")
+        .select(subSelect)
+        .order("created_at", { ascending: false })
+        .limit(100),
+      supabase
+        .from("subscriptions")
+        .select(subSelect)
+        .eq("status", "past_due")
+        .order("created_at", { ascending: false }),
+      supabase.from("settings").select("value").eq("key", "dunning_grace_days").maybeSingle(),
+    ]);
 
   const graceDays = Number(graceDaysRow?.value ?? 7);
-  const dunning = (subs ?? []).filter((s) => s.status === "past_due");
 
   return (
     <>
@@ -66,7 +71,7 @@ async function Billing() {
         </p>
       </div>
 
-      {dunning.length > 0 && (
+      {dunning && dunning.length > 0 && (
         <div>
           <p className="label mb-3">Payment overdue</p>
           <ul className="divide-y divide-line rounded-[12px] border border-err bg-surface-2">
