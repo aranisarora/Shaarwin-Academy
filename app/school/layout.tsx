@@ -43,9 +43,6 @@ async function SchoolPreview() {
  * go on the home screen. A head of sport opens this on a phone in a corridor
  * like everyone else, so it gets the same chrome. (The offline strip now comes
  * with the shell itself, so it isn't listed here.)
- *
- * No RealtimeRefresh, though — the roster is read-only and nothing on these
- * screens changes underneath you while you're reading it.
  */
 export default function SchoolLayout({ children }: { children: React.ReactNode }) {
   return (
