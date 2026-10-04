@@ -244,7 +244,7 @@ export function AdminSessionSheet({
   // and did about turning up, and anything he wrote afterwards.
   const [detail, setDetail] = useState<SessionDetail | null>(null);
 
-  const opensOnCoach = !session.coachId;
+  const [opensOnCoach] = useState(!session.coachId);
   useEffect(() => {
     let alive = true;
     getSessionSheet(session.id, opensOnCoach).then((r) => {
