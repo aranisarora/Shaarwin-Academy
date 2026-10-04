@@ -4,7 +4,6 @@ import { revalidatePath, revalidateTag } from "next/cache";
 import { requireFounder } from "@/lib/founder";
 import { academyWallToUtc, formatDate, utcToAcademyWall } from "@/lib/academy-time";
 import { overlaps, weeklyOccurrences } from "@/lib/slot-clashes";
-import { asAddressDetails, fromDetails, type StructuredAddress } from "@/lib/address";
 import {
   WEEKDAYS,
   type ClassRow,
@@ -20,11 +19,7 @@ import {
   type RosterEntry,
   type SessionDetail,
 } from "@/lib/session-sheet";
-import {
-  fetchFollowThrough,
-  sessionClientIds,
-  NO_FOLLOW_THROUGH,
-} from "@/lib/session-followthrough";
+import { buildSessionRows, fetchWeekRaw } from "@/lib/session-week";
 import {
   assignPrivateSessionClientCore,
   bulkRemoveClassesCore,
@@ -522,110 +517,8 @@ export async function fetchWeekSessions(
   const from = academyWallToUtc(anchor, "00:00");
   const to = new Date(from.getTime() + 7 * 86400000);
 
-  const [{ data: rawSessions }] = await Promise.all([
-    supabase
-      .from("class_sessions")
-      .select(
-        "id,starts_at,ends_at,status,cancel_reason,coach_id,coach_arrived_at,coach_arrival_source,coach_arrival_distance_m,capacity_override,classes!inner(id,title,description,skill_level,capacity,duration_minutes,recurrence_rule,active,venue_id,class_type,is_school,location_label,venues(name,address,postcode,lat,lng,address_details),private_class_details(client_id,address,postcode,lat,lng,access_notes,address_details,players(full_name)))"
-      )
-      // Cancelled included — see the note on the same query in page.tsx.
-      .in("status", ["scheduled", "completed", "cancelled"])
-      .gte("starts_at", from.toISOString())
-      .lt("starts_at", to.toISOString())
-      .order("starts_at"),
-  ]);
-
-  const privateClientIds = [
-    ...new Set(
-      (rawSessions ?? [])
-        .map((s) => {
-          const cls = s.classes;
-          return cls.class_type === "private" ? (cls.private_class_details?.client_id ?? null) : null;
-        })
-        .filter((id): id is string => id !== null)
-    ),
-  ];
-
-  const clientNameMap = new Map<string, string>();
-  if (privateClientIds.length > 0) {
-    const { data: privProfiles } = await supabase
-      .from("profiles")
-      .select("id,full_name")
-      .in("id", privateClientIds);
-    for (const p of privProfiles ?? []) clientNameMap.set(p.id, p.full_name);
-  }
-
-  // Paging to another week has to answer the same questions the first render
-  // did. Leaving this out would not have failed loudly — the cards would simply
-  // have stopped reporting unkept registers the moment the founder paged.
-  const followThrough = await fetchFollowThrough(
-    supabase,
-    (rawSessions ?? []).map((s) => s.id)
-  );
-
-  const classTime = (classId: string, fallbackIso: string) => {
-    const iso = nextByClass[classId] ?? fallbackIso;
-    return utcToAcademyWall(new Date(iso)).time;
-  };
-
-  const sessions: SessionRow[] = (rawSessions ?? []).map((s) => {
-    const cls = s.classes;
-    const priv = cls.private_class_details;
-    const owed = followThrough.get(s.id) ?? NO_FOLLOW_THROUGH;
-    const address: StructuredAddress | null = cls.venues
-      ? fromDetails(asAddressDetails(cls.venues.address_details), {
-          address: cls.venues.address,
-          postcode: cls.venues.postcode,
-          lat: cls.venues.lat,
-          lng: cls.venues.lng,
-        })
-      : priv
-        ? fromDetails(asAddressDetails(priv.address_details), {
-            address: priv.address,
-            postcode: priv.postcode,
-            lat: priv.lat,
-            lng: priv.lng,
-            access_notes: priv.access_notes,
-          })
-        : null;
-
-
-    return {
-      id: s.id,
-      starts_at: s.starts_at,
-      ends_at: s.ends_at,
-      status: s.status,
-      cancelReason: s.cancel_reason,
-      coachId: s.coach_id,
-      coachArrivedAt: s.coach_arrived_at,
-      coachArrivalSource: s.coach_arrival_source,
-      coachArrivalDistanceM: s.coach_arrival_distance_m,
-      rosterUnmarked: owed.rosterUnmarked,
-      assessPending: owed.assessPending,
-      title: cls.title,
-      capacity: s.capacity_override ?? cls.capacity,
-      isPrivate: cls.class_type === "private",
-      isSchool: cls.is_school,
-      venueName: cls.location_label ?? null,
-      playerName: priv?.client_id ? (clientNameMap.get(priv.client_id) ?? null) : null,
-      privatePlayerName:
-        (priv?.players as unknown as { full_name: string } | null)?.full_name ?? null,
-      privateClientId: priv?.client_id ?? null,
-      clientIds: sessionClientIds(owed, priv?.client_id ?? null),
-      address,
-      classId: cls.id,
-      classActive: cls.active,
-      classDescription: cls.description ?? "",
-      classLevel: cls.skill_level,
-      classCapacity: cls.capacity,
-      classDuration: cls.duration_minutes,
-      classVenueId: cls.venue_id,
-      classWeekday: cls.recurrence_rule?.match(/BYDAY=(..)/)?.[1] ?? "MO",
-      classTime: classTime(cls.id, s.starts_at),
-      classSlotTime: slotByClass[cls.id] ?? null,
-      classRecurring: !!cls.recurrence_rule,
-    };
-  });
+  const { data: rawSessions } = await fetchWeekRaw(supabase, from, to);
+  const sessions = await buildSessionRows(supabase, rawSessions ?? [], nextByClass, slotByClass);
 
   const rangeLabel = `${formatDate(from)} – ${formatDate(to.getTime() - 86400000)}`;
 
