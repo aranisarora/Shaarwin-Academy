@@ -6,6 +6,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database, Json, TablesInsert } from "@/lib/database.types";
 import { academyWallToUtc, formatSessionDate } from "@/lib/academy-time";
 import type { OpResult } from "@/lib/admin-ops-types";
+import { chunked } from "@/lib/admin-ops-chunk";
 
 const whenIST = formatSessionDate;
 
@@ -826,17 +827,18 @@ export async function cancelFuturePrivateSessionsCore(
 
   const doomed = bookings ?? [];
   if (doomed.length) {
-    await supabase
-      .from("bookings")
-      .update({
-        status: "cancelled_by_academy",
-        cancelled_at: new Date().toISOString(),
-        cancel_reason: "cancelled by academy",
-      })
-      .in(
-        "id",
-        doomed.map((b) => b.id)
-      );
+    const cancelledAt = new Date().toISOString();
+    for (const part of chunked(doomed.map((b) => b.id))) {
+      const { error } = await supabase
+        .from("bookings")
+        .update({
+          status: "cancelled_by_academy",
+          cancelled_at: cancelledAt,
+          cancel_reason: "cancelled by academy",
+        })
+        .in("id", part);
+      if (error) return { ok: false, error: "Couldn't cancel those bookings." };
+    }
 
     // No account holder (school player) means no minutes ledger to refund into.
     const refunds = doomed.flatMap((b) =>

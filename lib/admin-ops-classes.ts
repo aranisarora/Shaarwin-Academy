@@ -257,18 +257,16 @@ export async function endGroupClassCore(
       .update({ status: "cancelled", cancel_reason: "class ended" })
       .in("id", ids);
 
-    if (bookings?.length) {
-      await supabase
+    for (const part of chunked((bookings ?? []).map((b) => b.id))) {
+      const { error } = await supabase
         .from("bookings")
         .update({
           status: "cancelled_by_academy",
-          cancelled_at: new Date().toISOString(),
+          cancelled_at: nowIso,
           cancel_reason: "class ended",
         })
-        .in(
-          "id",
-          bookings.map((b) => b.id)
-        );
+        .in("id", part);
+      if (error) return { ok: false, error: "Couldn't cancel those bookings." };
     }
     // The booking is still cancelled above; only the notification needs an
     // account holder, which a school player's booking doesn't have.
