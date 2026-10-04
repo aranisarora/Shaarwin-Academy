@@ -3,12 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getSubscriptionSummary } from "@/lib/billing";
-import { isWithinBengaluru } from "@/lib/coverage";
 import type { StructuredAddress } from "@/lib/address";
-
-export async function checkCoverage(lat: number, lng: number) {
-  return { covered: isWithinBengaluru(lat, lng) };
-}
 
 export async function recordAreaInterest(email: string, postcode: string, lat: number, lng: number) {
   const supabase = await createClient();
