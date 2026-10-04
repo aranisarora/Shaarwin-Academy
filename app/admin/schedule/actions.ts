@@ -715,6 +715,7 @@ export async function fetchTimetable(): Promise<Timetable> {
   const { supabase, founder } = await requireFounder();
   if (!founder) return { classes: [], privateSeries: [], oneOffCount: 0 };
 
+  const nowIso = new Date().toISOString();
   const [
     { data: classes },
     { count: oneOffCount },
@@ -722,13 +723,25 @@ export async function fetchTimetable(): Promise<Timetable> {
     { data: venues },
     { data: series },
   ] = await Promise.all([
+    // Each class carries its next scheduled session (with the families booked on
+    // it) and its latest session of any status. Ending a class cancels every
+    // future session, so `next` comes back empty for one; its own past sessions
+    // still hold the truth about its slot, and a hardcoded fallback here used to
+    // rewrite that slot on the next save.
     supabase
       .from("classes")
       .select(
-        "id,title,description,skill_level,capacity,duration_minutes,recurrence_rule,active,ends_on,venue_id,is_school,venues(name,unit)"
+        "id,title,description,skill_level,capacity,duration_minutes,recurrence_rule,active,ends_on,venue_id,is_school,venues(name,unit),next:class_sessions(id,starts_at,coach_id,coaches(profiles(full_name)),bookings(client_id)),last:class_sessions(starts_at)"
       )
       .eq("class_type", "group")
       .not("recurrence_rule", "is", null)
+      .eq("next.status", "scheduled")
+      .gt("next.starts_at", nowIso)
+      .in("next.bookings.status", ["confirmed", "attended"])
+      .order("starts_at", { referencedTable: "next" })
+      .limit(1, { referencedTable: "next" })
+      .order("starts_at", { referencedTable: "last", ascending: false })
+      .limit(1, { referencedTable: "last" })
       .order("title"),
     supabase
       .from("classes")
@@ -740,117 +753,29 @@ export async function fetchTimetable(): Promise<Timetable> {
       .select("id,active,profiles!inner(full_name)")
       .eq("active", true),
     supabase.from("venues").select("id,name,unit").order("name"),
+    // client_id as well as the joined name: the sub-line needs the name, the
+    // client filter needs the id, and resolving one back from the other would
+    // make two families called Sharma one row on the founder's screen. Sessions
+    // link to a series through their booking's private_series_id, so the
+    // deep-link target is the earliest scheduled future session across those.
     supabase
       .from("private_booking_series")
       .select(
-        // client_id as well as the joined name: the sub-line needs the name, the
-        // client filter needs the id, and resolving one back from the other
-        // would make two families called Sharma one row on the founder's screen.
-        "id,client_id,weekday,start_time,duration_minutes,preferred_coach,venue_id,venue_label," +
-          "venues(name,unit)," +
-          "player:players!private_booking_series_player_id_fkey(full_name)," +
-          "client:profiles!private_booking_series_client_id_fkey(full_name)"
+        "id,client_id,weekday,start_time,duration_minutes,preferred_coach,venue_id,venue_label,player:players!private_booking_series_player_id_fkey(full_name),client:profiles!private_booking_series_client_id_fkey(full_name),bookings(class_sessions!inner(id,starts_at))"
       )
-      .eq("active", true),
+      .eq("active", true)
+      .eq("bookings.class_sessions.status", "scheduled")
+      .gt("bookings.class_sessions.starts_at", nowIso),
   ]);
 
-  const classIds = (classes ?? []).map((c) => c.id);
-  const { data: nextSessions } = classIds.length
-    ? await supabase
-        .from("class_sessions")
-        .select("id,class_id,starts_at,coach_id,coaches(profiles!inner(full_name))")
-        .in("class_id", classIds)
-        .eq("status", "scheduled")
-        .gt("starts_at", new Date().toISOString())
-        .order("starts_at")
-    : {
-        data: [] as {
-          id: string;
-          class_id: string;
-          starts_at: string;
-          coach_id: string | null;
-          coaches: unknown;
-        }[],
-      };
-
-  const nextByClass = new Map<
-    string,
-    { sessionId: string; starts_at: string; coachName: string | null; coachId: string | null }
-  >();
-  for (const s of nextSessions ?? []) {
-    if (nextByClass.has(s.class_id)) continue;
-    const coachName =
-      (s.coaches as unknown as { profiles: { full_name: string } } | null)?.profiles?.full_name ??
-      null;
-    nextByClass.set(s.class_id, {
-      sessionId: s.id,
-      starts_at: s.starts_at,
-      coachName,
-      coachId: s.coach_id,
-    });
-  }
-
-  // Ending a class cancels every future session, so the lookup above finds
-  // nothing for one. Its own past sessions still hold the truth about its slot;
-  // a hardcoded fallback here used to rewrite that slot on the next save.
-  const slotlessIds = classIds.filter((id) => !nextByClass.has(id));
-  const lastSessionsPromise = slotlessIds.length
-    ? supabase
-        .from("class_sessions")
-        .select("class_id,starts_at")
-        .in("class_id", slotlessIds)
-        .order("starts_at", { ascending: false })
-        .then((r) => r.data)
-    : Promise.resolve(null);
-
-  const seriesIds = ((series ?? []) as unknown as { id: string }[]).map((s) => s.id);
-  const seriesBookingsPromise = seriesIds.length
-    ? supabase
-        .from("bookings")
-        .select("private_series_id,class_sessions(id,starts_at,status)")
-        .in("private_series_id", seriesIds)
-        .then((r) => r.data)
-    : Promise.resolve(null);
-
-  const nextSessionIds = [...nextByClass.values()].map((n) => n.sessionId);
-  const bookedBySession = new Map<string, number>();
-  // The families behind those same bookings, so the client filter can find a
-  // group class the way it finds a private. Folded from the rows already being
-  // read for the count rather than from a query of their own — asking `bookings`
-  // twice for one set of sessions is how a screen gets slow one field at a time.
-  const clientsBySession = new Map<string, Set<string>>();
-  if (nextSessionIds.length) {
-    const { data: bookings } = await supabase
-      .from("bookings")
-      .select("session_id,client_id")
-      .in("session_id", nextSessionIds)
-      .in("status", ["confirmed", "attended"]);
-    for (const b of bookings ?? []) {
-      bookedBySession.set(b.session_id, (bookedBySession.get(b.session_id) ?? 0) + 1);
-      // A Set, because two children of one family in the same class are two
-      // bookings and one name to filter by. School pupils have no client at all.
-      if (b.client_id) {
-        const seen = clientsBySession.get(b.session_id) ?? new Set<string>();
-        seen.add(b.client_id);
-        clientsBySession.set(b.session_id, seen);
-      }
-    }
-  }
-
-  const lastByClass = new Map<string, string>();
-  for (const s of (await lastSessionsPromise) ?? []) {
-    if (!lastByClass.has(s.class_id)) lastByClass.set(s.class_id, s.starts_at);
-  }
-
   const classRows: ClassRow[] = (classes ?? []).map((c) => {
-    const next = nextByClass.get(c.id);
-    const last = lastByClass.get(c.id);
+    const [next] = c.next;
+    const [last] = c.last;
     const time = next
       ? utcToAcademyWall(new Date(next.starts_at)).time
       : last
-        ? utcToAcademyWall(new Date(last)).time
+        ? utcToAcademyWall(new Date(last.starts_at)).time
         : (timeFromTitle(c.title) ?? "18:30");
-    const v = c.venues as unknown as { name: string; unit: string | null } | null;
     return {
       id: c.id,
       title: c.title,
@@ -863,68 +788,39 @@ export async function fetchTimetable(): Promise<Timetable> {
       active: c.active,
       endsOn: c.ends_on,
       venueId: c.venue_id,
-      venueName: v ? venueDisplayName(v) : null,
+      venueName: c.venues ? venueDisplayName(c.venues) : null,
       isSchool: c.is_school,
-      coachName: next?.coachName ?? null,
-      bookedCount: next ? (bookedBySession.get(next.sessionId) ?? 0) : 0,
-      clientIds: next ? [...(clientsBySession.get(next.sessionId) ?? [])] : [],
-      nextSessionId: next?.sessionId ?? null,
+      coachName: next?.coaches?.profiles.full_name ?? null,
+      bookedCount: next ? next.bookings.length : 0,
+      // A Set, because two children of one family in the same class are two
+      // bookings and one name to filter by. School pupils have no client at all.
+      clientIds: next
+        ? [...new Set(next.bookings.map((b) => b.client_id).filter((id): id is string => !!id))]
+        : [],
+      nextSessionId: next?.id ?? null,
       nextSessionStart: next?.starts_at ?? null,
-      nextCoachId: next?.coachId ?? null,
+      nextCoachId: next?.coach_id ?? null,
     };
   });
 
-  const coachNameById = new Map(
-    (coaches ?? []).map((c) => [
-      c.id,
-      (c.profiles as unknown as { full_name: string }).full_name,
-    ])
-  );
+  const coachNameById = new Map((coaches ?? []).map((c) => [c.id, c.profiles.full_name]));
 
-  type SeriesRow = {
-    id: string;
-    client_id: string | null;
-    weekday: number;
-    start_time: string;
-    duration_minutes: number;
-    preferred_coach: string | null;
-    venue_id: string | null;
-    venue_label: string | null;
-    venues: { name: string; unit: string | null } | null;
-    player: { full_name: string } | null;
-    client: { full_name: string } | null;
-  };
-  const seriesRows = (series ?? []) as unknown as SeriesRow[];
-
-  // Sessions link to a series through their booking's private_series_id, so the
-  // deep-link target is the earliest scheduled future session across those.
-  const nextBySeriesId = new Map<string, { id: string; starts_at: string }>();
-  {
-    const seriesBookings = await seriesBookingsPromise;
-    const nowIso = new Date().toISOString();
-    for (const b of seriesBookings ?? []) {
-      const sid = b.private_series_id as string | null;
-      const cs = b.class_sessions as unknown as {
-        id: string;
-        starts_at: string;
-        status: string;
-      } | null;
-      if (!sid || !cs || cs.status !== "scheduled" || cs.starts_at <= nowIso) continue;
-      const cur = nextBySeriesId.get(sid);
-      if (!cur || cs.starts_at < cur.starts_at)
-        nextBySeriesId.set(sid, { id: cs.id, starts_at: cs.starts_at });
-    }
-  }
-
+  const venueById = new Map((venues ?? []).map((v) => [v.id, v]));
   const knownVenueNames = new Set(
     (venues ?? []).map((v) => venueDisplayName(v).toLowerCase())
   );
   const isoWeekdayCode = WEEKDAYS.map(([code]) => code); // 0-based: [MO..SU]
 
-  const privateSeries: PrivateSeriesRow[] = seriesRows.map((s) => {
+  const privateSeries: PrivateSeriesRow[] = (series ?? []).map((s) => {
+    const venue = s.venue_id ? venueById.get(s.venue_id) : undefined;
     const venueName =
-      (s.venues ? venueDisplayName(s.venues) : s.venue_label?.trim()) ?? "Private location";
-    const next = nextBySeriesId.get(s.id);
+      (venue ? venueDisplayName(venue) : s.venue_label?.trim()) ?? "Private location";
+    const next = s.bookings
+      .map((b) => b.class_sessions)
+      .reduce<{ id: string; starts_at: string } | null>(
+        (soonest, cs) => (!soonest || cs.starts_at < soonest.starts_at ? cs : soonest),
+        null
+      );
     return {
       id: s.id,
       playerName: s.player?.full_name ?? "Player",
