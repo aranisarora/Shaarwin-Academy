@@ -970,15 +970,6 @@ export const ENTITIES: Record<string, EntityDef> = {
   },
 };
 
-export type EntityName = keyof typeof ENTITIES;
-
-export function entitiesForRole(role: Role): string[] {
-  return Object.entries(ENTITIES)
-    .filter(([, def]) => def.roles.includes(role))
-    .map(([name]) => name)
-    .sort();
-}
-
 /**
  * The entity catalogue, rendered into the tool description so the model can see
  * what exists without a discovery round-trip. Kept terse — it rides in every
