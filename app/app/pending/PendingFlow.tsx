@@ -10,6 +10,9 @@ import { submitSignupRequest } from "./actions";
 
 type Status = "pending" | "denied";
 
+const FIRST_POLL_MS = 10_000;
+const MAX_POLL_MS = 120_000;
+
 /**
  * The closed-membership gate a signed-in-but-unapproved client sees. One page,
  * three states driven by the profile:
@@ -47,8 +50,28 @@ export function PendingFlow({
   // so a plain refresh loop beats a realtime subscription.
   useEffect(() => {
     if (!waiting) return;
-    const id = setInterval(() => router.refresh(), 10000);
-    return () => clearInterval(id);
+    let delay = FIRST_POLL_MS;
+    let id: ReturnType<typeof setTimeout> | undefined;
+    const schedule = () => {
+      id = setTimeout(() => {
+        router.refresh();
+        delay = Math.min(delay * 2, MAX_POLL_MS);
+        schedule();
+      }, delay);
+    };
+    const onVisibility = () => {
+      clearTimeout(id);
+      if (document.hidden) return;
+      delay = FIRST_POLL_MS;
+      router.refresh();
+      schedule();
+    };
+    if (!document.hidden) schedule();
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      clearTimeout(id);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
   }, [waiting, router]);
 
   function submit() {
