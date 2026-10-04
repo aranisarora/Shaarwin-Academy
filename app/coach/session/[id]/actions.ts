@@ -54,47 +54,10 @@ async function requireCoachSession(sessionId: string) {
   return { supabase, user, session };
 }
 
-export async function setAttendance(
-  bookingId: string,
-  status: AttendanceStatus
-): Promise<Result> {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return { ok: false, error: "Sign in first." };
-
-  const { data: booking } = await supabase
-    .from("bookings")
-    .select("id,session_id,class_sessions!inner(coach_id,starts_at,ends_at)")
-    .eq("id", bookingId)
-    .maybeSingle();
-  if (!booking) return { ok: false, error: "Booking not found." };
-
-  const session = booking.class_sessions;
-  const coachId = await effectiveCoachId(user.id);
-  if (session.coach_id !== coachId) return { ok: false, error: "Not your session." };
-
-  // Same window the roster renders and the backlog chases — see
-  // lib/attendance-window.ts for why all three had to become one literal.
-  const state = attendanceState(session.starts_at, session.ends_at, Date.now());
-  if (state !== "open") {
-    return { ok: false, error: attendanceClosedReason(state) ?? "Attendance is closed." };
-  }
-
-  const { error } = await supabase
-    .from("bookings")
-    .update({ status })
-    .eq("id", bookingId);
-  if (error) return { ok: false, error: "Couldn't save." };
-  revalidatePath(`/coach/session/${booking.session_id}`);
-  return { ok: true };
-}
-
 /**
  * Mark a whole roster at once.
  *
- * "All present" used to call setAttendance in a `for` loop — one HTTP round
+ * "All present" used to call a per-booking action in a `for` loop — one HTTP round
  * trip, one auth check and one booking lookup PER CHILD, awaited in series. A
  * twelve-player class on a school-hall connection was twelve sequential
  * requests behind one tap, and a failure halfway left the roster half-written

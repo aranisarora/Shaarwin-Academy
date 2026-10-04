@@ -44,7 +44,6 @@ import {
 } from "@/lib/admin-ops-classes";
 import { materializeInviteCore } from "@/lib/admin-ops-clients";
 import {
-  endPrivateSeriesCore,
   planPrivateSeriesRemovalCore,
   type PrivateSeriesRemovalPlan,
   updatePrivateSeriesCore,
@@ -73,10 +72,6 @@ import {
 //   cancelAllFuturePrivateSessions ... notifies the client + affected coaches, and
 //                                      retires the client's weekly slots so they stop
 //                                      regenerating
-//   endPrivateSeries ................. notifies each family + each coach, ONE message
-//                                      each across every slot in the selection; the
-//                                      minutes go back in full, including a week
-//                                      inside the 24-hour window
 //   updatePrivateSeries .............. notifies the family *iff* the slot moves, and every
 //                                      coach who had a week of it or is taking it now —
 //                                      ONE message each however many weeks move
@@ -267,24 +262,6 @@ export async function planClassRemoval(
     planPrivateSeriesRemovalCore(supabase, seriesIds),
   ]);
   return { ok: true, ...plan, series };
-}
-
-/** Retire weekly private slots outright — the Schedule tab's client-wide
- * "cancel all upcoming" is a different, blunter thing. */
-export async function endPrivateSeries(
-  seriesIds: string[]
-): Promise<Result & { ended?: number; cancelled?: number; minutesReturned?: number }> {
-  const { supabase, founder } = await requireFounder();
-  if (!founder) return { ok: false, error: "Founder only." };
-  const result = await endPrivateSeriesCore(supabase, founder.id, seriesIds);
-  if (!result.ok) return result;
-  refresh();
-  return {
-    ok: true,
-    ended: result.ended,
-    cancelled: result.cancelled,
-    minutesReturned: result.minutesReturned,
-  };
 }
 
 /** Move a family's standing weekly slot, or change who takes it. Carries the

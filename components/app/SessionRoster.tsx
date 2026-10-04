@@ -93,7 +93,7 @@ export function SessionRoster({
 
   /**
    * Every attendance write, a single tap included, goes through the bulk action
-   * as a batch of one. "All present" used to loop `setAttendance` and await each
+   * as a batch of one. "All present" used to loop a per-booking action and await each
    * call in turn — twelve children meant twelve sequential round trips behind
    * one tap, each re-checking auth and re-reading the booking, and a failure
    * halfway left the roster half-written with nothing on screen saying which
