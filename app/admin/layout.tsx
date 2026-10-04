@@ -1,5 +1,6 @@
 import type { Viewport } from "next";
 import { ServiceWorkerRegistrar } from "@/components/app/ServiceWorkerRegistrar";
+import { ResumeRefresh } from "@/components/app/ResumeRefresh";
 import { InstallPrompt } from "@/components/app/InstallPrompt";
 import { PushPrompt } from "@/components/app/PushPrompt";
 
@@ -13,6 +14,7 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
   return (
     <>
       <ServiceWorkerRegistrar />
+      <ResumeRefresh />
       {children}
       <InstallPrompt />
       <PushPrompt />
