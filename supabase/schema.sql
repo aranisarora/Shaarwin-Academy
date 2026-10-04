@@ -5484,7 +5484,7 @@ CREATE POLICY "own credits" ON public.class_credits AS PERMISSIVE FOR SELECT TO 
 CREATE POLICY "founder writes credits" ON public.class_credits AS PERMISSIVE FOR ALL TO public USING (( SELECT is_founder() AS is_founder));
 CREATE POLICY "coach updates own session notes" ON public.class_sessions AS PERMISSIVE FOR UPDATE TO public USING ((coach_id = ( SELECT auth.uid() AS uid)));
 CREATE POLICY "founder writes sessions" ON public.class_sessions AS PERMISSIVE FOR ALL TO public USING (( SELECT is_founder() AS is_founder));
-CREATE POLICY "read scheduled sessions" ON public.class_sessions AS PERMISSIVE FOR SELECT TO public USING ((class_is_public_group(class_id) OR (coach_id = ( SELECT auth.uid() AS uid)) OR ( SELECT is_founder() AS is_founder) OR client_owns_private_class(class_id)));
+CREATE POLICY "read scheduled sessions" ON public.class_sessions AS PERMISSIVE FOR SELECT TO public USING ((( SELECT is_founder() AS is_founder) OR (coach_id = ( SELECT auth.uid() AS uid)) OR class_is_public_group(class_id) OR client_owns_private_class(class_id)));
 CREATE POLICY "school reads pupil sessions" ON public.class_sessions AS PERMISSIVE FOR SELECT TO public USING ((( SELECT is_school_admin() AS is_school_admin) AND (id IN ( SELECT school_session_ids() AS school_session_ids))));
 CREATE POLICY "founder writes classes" ON public.classes AS PERMISSIVE FOR ALL TO public USING (( SELECT is_founder() AS is_founder));
 CREATE POLICY "public reads active group classes" ON public.classes AS PERMISSIVE FOR SELECT TO public USING ((((active = true) AND (class_type = 'group'::class_type) AND (is_school = false)) OR ( SELECT is_founder() AS is_founder) OR (( SELECT is_coach() AS is_coach) AND coach_teaches_class(id)) OR client_owns_private_class(id)));
