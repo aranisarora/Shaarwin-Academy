@@ -637,7 +637,7 @@ CREATE INDEX bookings_client_id_status_idx ON public.bookings USING btree (clien
 CREATE UNIQUE INDEX bookings_one_live_per_player ON public.bookings USING btree (session_id, player_id) WHERE (status = ANY (ARRAY['confirmed'::booking_status, 'waitlisted'::booking_status, 'attended'::booking_status, 'no_show'::booking_status]));
 CREATE INDEX bookings_private_series_id ON public.bookings USING btree (private_series_id) WHERE (private_series_id IS NOT NULL);
 CREATE INDEX bookings_series_id ON public.bookings USING btree (series_id) WHERE (series_id IS NOT NULL);
-CREATE INDEX bookings_session_id_idx ON public.bookings USING btree (session_id) WHERE (status = 'waitlisted'::booking_status);
+CREATE INDEX bookings_session_id_all_idx ON public.bookings USING btree (session_id);
 CREATE INDEX class_credits_client_open_idx ON public.class_credits USING btree (client_id) WHERE (consumed_at IS NULL);
 CREATE UNIQUE INDEX class_credits_one_trial_per_client ON public.class_credits USING btree (client_id) WHERE ((type = 'group_trial'::class_credit_type) AND (player_id IS NULL));
 CREATE UNIQUE INDEX class_credits_one_trial_per_player ON public.class_credits USING btree (player_id) WHERE (type = 'group_trial'::class_credit_type);
