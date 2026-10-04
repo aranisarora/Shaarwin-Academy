@@ -53,22 +53,25 @@ The routing rule in one line:
 > top**. Otherwise → **push if they have it, WhatsApp if they don't**. Email
 > never.
 
+> **WhatsApp is switched off in production (2026-10-05).** `notify` reads
+> `settings.whatsapp_enabled` on every run (migration 0095). While it is `false`
+> every row goes out by push only, and a row with no push to carry it is marked
+> `failed` with `whatsapp: disabled`. Set it back to `true` to restore the
+> routing above.
+
 > `notify` has **no autodeploy**. Editing `supabase/functions/notify/index.ts`
 > and pushing changes nothing in production until someone runs
 > `supabase functions deploy notify`.
 
-> **⚠ Production was on v36 when this was last checked (2026-08-10), which
-> predates the removal of email and the type-table collapse.** Until someone
-> deploys, `deliver()` in production still falls back to Resend and still reads
-> the five old sets — everything §1, §2 and §2c describe is written, tested and
-> **not live**.
+> Production matched the repo when last checked (v41, 2026-10-05). To deploy:
 >
 > ```bash
 > supabase functions deploy notify --project-ref jkjgdpifimvnptpxjixk
 > ```
 >
 > `--project-ref` matters from a worktree, which is not linked. Confirm it took
-> with `list_edge_functions` (the version should bump) and then:
+> with `supabase functions list --project-ref jkjgdpifimvnptpxjixk` (the version
+> should bump) and then:
 >
 > ```sql
 > select channel_attempted, count(*) from notifications
@@ -971,8 +974,7 @@ answered for older rows.
 ## 5. Locations: venue + unit, stored not derived
 
 A location is **two stored fields, chosen by a human at booking** — not a label
-parsed out of an address string. Migrations `0052`–`0054`; design notes in
-`docs/plans/location-model.md`.
+parsed out of an address string. Migrations `0052`–`0054`.
 
 | part | source | example |
 | --- | --- | --- |

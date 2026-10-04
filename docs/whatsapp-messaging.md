@@ -88,7 +88,7 @@ this gauntlet in order:
 4. **Preferences?** Non-transactional types check
    `profiles.notification_prefs[type] === false` and are silently marked sent if off.
 5. **Claim** — flip `pending → sent` first (idempotent across workers), then deliver.
-6. **Deliver** — WhatsApp first, email second, else mark `failed`.
+6. **Deliver**: push and WhatsApp as `notifications.md` describes, else mark `failed`. Email is not a channel.
 
 **Delivery inside `deliverWhatsApp`:**
 
@@ -97,11 +97,10 @@ this gauntlet in order:
 | Interactive/CTA template | The type has a template AND its `TWILIO_WA_*_SID` env var is set | The approved template body with buttons. Works **any time** (business-initiated). Outbound Twilio SID is stored on `notifications.data.twilio_sid` so a button tap maps back to the session/booking. |
 | Free-form text | User messaged us within 24h (`wa_messages` role=`user`) | `*{title}*` newline `{body}` |
 | Generic utility template | Outside 24h, `TWILIO_WA_TEMPLATE_SID` set | One generic template, `{{1}}` = first name, `{{2}}` = `"{title} — {body}"` |
-| Nothing | Outside 24h, no generic SID | `deliverWhatsApp` returns false → falls to email |
+| Nothing | Outside 24h, no generic SID | `deliverWhatsApp` returns false |
 
-Then email via Resend, and — note — **if `RESEND_KEY` is unset the row is
-counted as delivered** (`return true`) to avoid retry loops. A member with no
-phone number and no Resend key gets nothing, silently.
+The Resend email fallback that used to follow was removed in August 2026; see
+`notifications.md`.
 
 **No `profiles.phone` = no WhatsApp, ever.** As of migration 0074 there is no
 link table and no link code: the number saved on the profile IS the binding,
@@ -693,7 +692,7 @@ inserts a notification of that type. Either build it or drop the toggle.
 `DEFERRABLE`. A founder editing a class at 23:00 pings every booked parent.
 Cancellations arguably *should* be immediate; a schedule tweak probably shouldn't.
 
-**G8 — Silent drops when Resend is unconfigured.**
+**G8 — Silent drops when Resend is unconfigured.** *(Fixed: email is no longer a channel, so this path is gone.)*
 `deliver()` returns `true` when `RESEND_KEY` is unset, so a member with no
 phone number never receives anything and the row still reads `sent`. Partly
 addressed: `notifications.whatsapp_status` (migration 0073) now records the
