@@ -36,7 +36,7 @@ import {
 type Coach = { id: string; name: string };
 
 /** A place the academy already coaches at — offered by name near the pin. */
-export type WizardVenue = {
+type WizardVenue = {
   id: string;
   name: string;
   unit: string | null;
@@ -44,7 +44,7 @@ export type WizardVenue = {
   lng: number;
 };
 
-export type PrivatePlanLimits = {
+type PrivatePlanLimits = {
   /** Weekly cap; null = legacy minutes-only (one-off booking). */
   sessionsPerWeek: number | null;
   /** Fixed session length; null = free 60/90 choice. */

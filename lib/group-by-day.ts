@@ -13,7 +13,7 @@ import { WEEKDAYS } from "@/components/app/admin-calendar-types";
 /** MO..SU, in the order a week is read. */
 export const WEEKDAY_ORDER: string[] = WEEKDAYS.map(([code]) => code);
 
-export type DayGroup<T> = {
+type DayGroup<T> = {
   /** The academy wall date, "YYYY-MM-DD". */
   key: string;
   /** "Mon 11 Aug" — what the heading prints. */

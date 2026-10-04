@@ -27,7 +27,7 @@ export function withVenueAddress<T extends { address_details: unknown }>(
 }
 
 /** The venue fields that decide how it's named. */
-export type VenueNameParts = { name: string; unit?: string | null };
+type VenueNameParts = { name: string; unit?: string | null };
 
 /**
  * "Adarsh Palm Retreat" + "Villas" → "Adarsh Palm Retreat Villas".

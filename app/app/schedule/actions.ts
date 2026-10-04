@@ -221,7 +221,7 @@ export async function cancelPrivateSeries(
   return { ok: true, cancelled: (data as number) ?? 0 };
 }
 
-export type PrivatePreview = {
+type PrivatePreview = {
   ok: boolean;
   proposedCoach?: string | null;
   coachChanged?: boolean;

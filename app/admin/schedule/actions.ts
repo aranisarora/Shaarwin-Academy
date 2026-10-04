@@ -510,14 +510,14 @@ export async function fetchWeekSessions(
 // ── What's already there ─────────────────────────────────────────────────────
 
 /** One session standing in the way of a slot the founder is picking. */
-export type SlotClash = {
+type SlotClash = {
   startsAt: string; // ISO
   endsAt: string; // ISO
   title: string;
   isPrivate: boolean;
 };
 
-export type SlotPreviewRow = {
+type SlotPreviewRow = {
   /** The instants this pick would occupy, ISO ascending. */
   occurrences: string[];
   /** Occurrences the NAMED coach cannot take. Empty when left on automatic. */

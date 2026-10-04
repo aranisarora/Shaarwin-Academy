@@ -1,8 +1,8 @@
 import { Badge } from "@/components/ui/Badge";
 import { masteryLabel } from "@/lib/mastery";
 
-export type RatedCategory = { id: string; name: string };
-export type RatedSkill = { id: string; category_id: string; name: string };
+type RatedCategory = { id: string; name: string };
+type RatedSkill = { id: string; category_id: string; name: string };
 
 /**
  * Read-only mastery + per-skill rating display, shared by the admin and coach

@@ -35,7 +35,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/database.types";
 
-export type FollowThrough = {
+type FollowThrough = {
   /** Bookings still on 'confirmed' — the register was never kept. */
   rosterUnmarked: number;
   /** Players marked attended that this session has no assessment for. */

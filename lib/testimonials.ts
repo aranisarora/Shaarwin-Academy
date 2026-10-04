@@ -3,7 +3,7 @@
  * from where a player started to where they are now — kept to two short lines
  * so the section reads clean rather than as a before/after sales matrix.
  */
-export type Testimonial = {
+type Testimonial = {
   name: string;
   duration: string;
   before: string;

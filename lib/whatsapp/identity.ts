@@ -42,7 +42,7 @@ export function adminClient(): SupabaseClient<Database> {
 /** Why a message is being handled without an account — for logging. */
 type GuestReason = "no_account" | "db_error";
 
-export type IdentityResult =
+type IdentityResult =
   | { profile: Profile; reason: null }
   | { profile: null; reason: GuestReason };
 

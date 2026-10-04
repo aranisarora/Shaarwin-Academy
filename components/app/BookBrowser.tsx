@@ -50,7 +50,7 @@ type Slot = {
 };
 
 /** How a client without a group plan can still book: trial or drop-in. */
-export type GroupEntitlement = {
+type GroupEntitlement = {
   hasGroupPlan: boolean;
   trialPlayerIds: string[];
   /** Players whose trial has already been consumed — distinguishes "used" from "never had". */

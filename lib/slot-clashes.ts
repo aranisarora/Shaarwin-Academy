@@ -14,7 +14,7 @@
 import { academyToday, academyWallToUtc, shiftWallDate } from "@/lib/academy-time";
 
 /** MO..SU, indexed by ISO weekday - 1. */
-export const WEEKDAY_CODES = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"] as const;
+const WEEKDAY_CODES = ["MO", "TU", "WE", "TH", "FR", "SA", "SU"] as const;
 
 /**
  * ISO weekday (1=Mon..7=Sun) of a bare "YYYY-MM-DD" wall date.

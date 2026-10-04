@@ -58,7 +58,7 @@ export async function getSlots(
   return [];
 }
 
-export type PrivateRequest = {
+type PrivateRequest = {
   playerId: string;
   duration: number;
   startsAt: string;
@@ -79,11 +79,11 @@ export type PrivateRequest = {
   unitLabel?: string | null;
 };
 
-export type PrivateResult =
+type PrivateResult =
   | { ok: true; sessionId: string; parked: boolean }
   | { ok: false; error: string };
 
-export type PrivateSessionsResult =
+type PrivateSessionsResult =
   | { ok: true; booked: number; parked: number; ranOut: boolean }
   | { ok: false; error: string };
 
@@ -188,7 +188,7 @@ function mapPrivateBookingError(message: string): string {
   return "Request didn't go through. Try again.";
 }
 
-export type PrivateSeriesResult =
+type PrivateSeriesResult =
   | { ok: true; booked: number; skipped: number }
   | { ok: false; error: string };
 

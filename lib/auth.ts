@@ -146,7 +146,7 @@ export async function requireUser(nextPath: string) {
   return { supabase, user, profile };
 }
 
-export async function requireUserId(nextPath: string) {
+async function requireUserId(nextPath: string) {
   const supabase = await createClient();
   const user = await getCurrentUser();
 

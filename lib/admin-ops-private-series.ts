@@ -30,7 +30,7 @@ import {
 const WEEKDAY_LABEL = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
 /** "Monday 5:00 pm" — how a weekly slot names itself in a message. */
-export function seriesLabel(weekday: number, startTime: string): string {
+function seriesLabel(weekday: number, startTime: string): string {
   const day = WEEKDAY_LABEL[weekday - 1] ?? "Weekly";
   const [hRaw, m] = String(startTime).slice(0, 5).split(":");
   const h = Number(hRaw);

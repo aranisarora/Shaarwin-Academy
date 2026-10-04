@@ -34,7 +34,7 @@ export const GATE_COLUMNS = "role,approval_status,onboarded_at";
  * is a different route: the proxy matches prefixes exactly or slash-prefixed,
  * so the plural never collides with the singular.
  */
-export const ROLE_HOME: Record<string, string> = {
+const ROLE_HOME: Record<string, string> = {
   client: "/app",
   coach: "/coach",
   founder: "/admin",

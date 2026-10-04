@@ -38,7 +38,7 @@ function formatGap(totalMin: number): string {
   return m === 0 ? `${h}h` : `${h}h ${m}m`;
 }
 
-export type ArrivalTiming = {
+type ArrivalTiming = {
   /** Minutes between the class starting and the coach arriving; negative = early. */
   offsetMin: number;
   /** Past the grace. Drives the chip's colour, not its existence. */
@@ -86,7 +86,7 @@ export type IssueInput = {
   assessPending: number;
 };
 
-export type SessionIssues = {
+type SessionIssues = {
   /** When the coach got there, if anyone has said. */
   arrival: ArrivalTiming | null;
   /** Started, has a coach, and nobody has marked them in. */

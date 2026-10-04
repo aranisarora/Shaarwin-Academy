@@ -29,11 +29,11 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database } from "@/lib/database.types";
 
 /** What one person lost in one operation, whatever kind of thing it was. */
-export type NoticeItem =
+type NoticeItem =
   | { kind: "class"; id: string; title: string }
   | { kind: "series"; id: string; label: string; minutesReturned: number };
 
-export type NoticeAudience = "client" | "coach";
+type NoticeAudience = "client" | "coach";
 
 type Entry = { audience: NoticeAudience; items: Map<string, NoticeItem> };
 

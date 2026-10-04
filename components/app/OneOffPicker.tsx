@@ -8,7 +8,7 @@ import { whatsappLink } from "@/lib/contact";
 import { formatPrice } from "@/lib/format";
 import { loadRazorpay } from "@/lib/razorpay-checkout";
 
-export type OneOffProduct = {
+type OneOffProduct = {
   id: string;
   name: string;
   description: string | null;

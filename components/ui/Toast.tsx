@@ -15,7 +15,7 @@
 import { useEffect, useState } from "react";
 
 /** The one position. Compose it; don't retype it. */
-export const TOAST_ANCHOR =
+const TOAST_ANCHOR =
   "fixed inset-x-4 bottom-[calc(env(safe-area-inset-bottom)+4.75rem)] z-40 mx-auto max-w-md lg:bottom-6";
 
 /** The anchor with nothing else — for things that bring their own skin (the

@@ -10,7 +10,7 @@ export type OpResult = { ok: boolean; error?: string; code?: string };
 // Postgres enums, named once so inputs that end up in a column are typed the
 // same as the column instead of widening to `string` at the boundary.
 type Enums = Database["public"]["Enums"];
-export type SkillLevel = Enums["skill_level"];
+type SkillLevel = Enums["skill_level"];
 
 /** Update payload for a table, so patch objects are checked column by column. */
 export type TableUpdate<T extends keyof Database["public"]["Tables"]> =

@@ -18,7 +18,7 @@ export type PlanSummary = {
   active: boolean;
 };
 
-export type SubscriptionSummary = {
+type SubscriptionSummary = {
   /** Membership that includes group classes (cap > 0 or legacy null). */
   groupPlan: PlanSummary | null;
   /** Private home-coaching plan (monthly minutes grant). */

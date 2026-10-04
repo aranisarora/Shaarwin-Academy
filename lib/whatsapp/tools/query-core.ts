@@ -40,10 +40,10 @@ export type Filter = {
   value?: unknown;
 };
 
-export const AGGREGATES = ["count", "sum", "avg", "min", "max"] as const;
-export type AggregateFn = (typeof AGGREGATES)[number];
+const AGGREGATES = ["count", "sum", "avg", "min", "max"] as const;
+type AggregateFn = (typeof AGGREGATES)[number];
 
-export type Aggregate = { fn: AggregateFn; col?: string };
+type Aggregate = { fn: AggregateFn; col?: string };
 
 /**
  * Minimal shape of the PostgREST builder we use. Typing it structurally instead
@@ -269,7 +269,7 @@ function numeric(value: unknown): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
-export type GroupedRow = Record<string, unknown> & { count: number };
+type GroupedRow = Record<string, unknown> & { count: number };
 
 /**
  * Fold rows into groups in TypeScript rather than SQL.
@@ -341,7 +341,7 @@ export function groupRows(
 // embed; picking one silently loses whatever the other asked for. So parse both
 // into trees, merge, and print once.
 
-export type SelectNode = { name: string; inner: boolean; children: SelectNode[] };
+type SelectNode = { name: string; inner: boolean; children: SelectNode[] };
 
 /** Split on commas that sit at paren depth zero. */
 function splitTop(source: string): string[] {
@@ -361,7 +361,7 @@ function splitTop(source: string): string[] {
   return parts.map((p) => p.trim()).filter(Boolean);
 }
 
-export function parseSelect(fragment: string): SelectNode[] {
+function parseSelect(fragment: string): SelectNode[] {
   return splitTop(fragment).map((part) => {
     const open = part.indexOf("(");
     if (open === -1) return { name: part, inner: false, children: [] };
@@ -392,7 +392,7 @@ function mergeNodes(into: SelectNode[], from: readonly SelectNode[]): SelectNode
   return out;
 }
 
-export function printSelect(nodes: readonly SelectNode[]): string {
+function printSelect(nodes: readonly SelectNode[]): string {
   return nodes
     .map((n) =>
       n.children.length === 0

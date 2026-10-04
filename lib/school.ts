@@ -5,9 +5,9 @@ import { getSchoolPreview } from "@/lib/school-preview";
 
 type Supabase = Awaited<ReturnType<typeof createClient>>;
 
-export type Campus = { venueId: string; name: string; unit: string | null };
+type Campus = { venueId: string; name: string; unit: string | null };
 
-export type Pupil = {
+type Pupil = {
   id: string;
   name: string;
   grade: number | null;

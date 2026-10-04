@@ -21,11 +21,11 @@
 import { appBaseUrl } from "@/lib/app-url";
 import { formatFullDateTime } from "@/lib/academy-time";
 
-export type LintRule = "uuid" | "localhost" | "raw_iso" | "sent_claim";
+type LintRule = "uuid" | "localhost" | "raw_iso" | "sent_claim";
 
-export type LintFinding = { rule: LintRule; matched: string };
+type LintFinding = { rule: LintRule; matched: string };
 
-export type LintResult = { text: string; findings: LintFinding[] };
+type LintResult = { text: string; findings: LintFinding[] };
 
 /**
  * Strict RFC-4122 shape, deliberately. A loose hex pattern would maul order

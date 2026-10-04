@@ -3,7 +3,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { normalizePhoneInput } from "@/lib/whatsapp/phone";
 
-export type SignupRequestResult = {
+type SignupRequestResult = {
   ok: boolean;
   /** Set when the request (or an invite match) resolved the account. */
   status?: "pending" | "approved" | "denied";

@@ -16,7 +16,7 @@
 
 import { Sheet } from "@/components/ui/Sheet";
 
-export type CardAction = {
+type CardAction = {
   label: string;
   /** The consequence, when the label alone doesn't carry it. */
   hint?: string;

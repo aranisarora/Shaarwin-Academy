@@ -19,7 +19,7 @@ function publicClient() {
  * `full_name` and the base coordinates are NOT NULL on their source columns, so
  * they are narrowed here even though a RETURNS TABLE column is always nullable.
  */
-export type CoachRosterRow = {
+type CoachRosterRow = {
   id: string;
   full_name: string;
   bio: string | null;
@@ -31,7 +31,7 @@ export type CoachRosterRow = {
 };
 
 /** A coach as shown on the public /coaches page — sourced entirely from the DB. */
-export type PublicCoach = {
+type PublicCoach = {
   slug: string;
   name: string;
   image: string;
@@ -40,7 +40,7 @@ export type PublicCoach = {
   credentials?: string[];
 };
 
-export type Plan = {
+type Plan = {
   id: string;
   name: string;
   description: string | null;
@@ -49,7 +49,7 @@ export type Plan = {
   private_minutes_per_cycle: number;
 };
 
-export type Product = {
+type Product = {
   id: string;
   name: string;
   description: string | null;
@@ -73,7 +73,7 @@ export type Venue = {
   photo_url: string | null;
 };
 
-export type ClassRow = {
+type ClassRow = {
   id: string;
   title: string;
   description: string | null;
@@ -83,7 +83,7 @@ export type ClassRow = {
   venue_id: string | null;
 };
 
-export type SessionRow = {
+type SessionRow = {
   id: string;
   class_id: string;
   coach_id: string | null;

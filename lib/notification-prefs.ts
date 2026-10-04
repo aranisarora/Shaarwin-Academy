@@ -13,7 +13,7 @@
 // session, a coach running late, an absence) and money at risk (a failed
 // payment). Everything else a member can turn off.
 
-export type PrefGroup = "reminders" | "progress" | "news";
+type PrefGroup = "reminders" | "progress" | "news";
 
 export const PREF_GROUPS: {
   key: PrefGroup;
@@ -37,7 +37,7 @@ export const PREF_GROUPS: {
   },
 ];
 
-export type Audience = "parent" | "coach" | "founder" | "both";
+type Audience = "parent" | "coach" | "founder" | "both";
 
 export type NotificationRule = {
   who: Audience;
@@ -198,7 +198,7 @@ export const UNMUTABLE: [string, string][] = [
  * Legacy per-type keys written by the old profile editor. Still honoured when
  * reading (an existing member's stored `false` keeps working), never written.
  */
-export const LEGACY_PREF_TYPES: [string, string][] = [
+const LEGACY_PREF_TYPES: [string, string][] = [
   ["reminder_upcoming", "Session reminders"],
   ["waitlist_spot", "Waitlist openings"],
   ["coach_changed", "Coach changes"],

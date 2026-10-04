@@ -21,7 +21,7 @@ export type NewClass = {
   isSchool?: boolean;
 };
 
-export type CreateClassResult = OpResult & {
+type CreateClassResult = OpResult & {
   /** Weeks actually put on the schedule. */
   weeks?: number;
   /** Of those, how many could NOT take the chosen coach and went out coachless

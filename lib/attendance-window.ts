@@ -18,13 +18,13 @@ export const ATTENDANCE_OPENS_BEFORE_MS = 15 * 60_000;
 /** …and stays editable for a week after it ends. Same window as the backlog. */
 export const ATTENDANCE_CLOSES_AFTER_MS = 7 * 86_400_000;
 
-export type AttendanceState = "early" | "open" | "closed";
+type AttendanceState = "early" | "open" | "closed";
 
-export function attendanceOpensAt(startsAt: string): number {
+function attendanceOpensAt(startsAt: string): number {
   return new Date(startsAt).getTime() - ATTENDANCE_OPENS_BEFORE_MS;
 }
 
-export function attendanceClosesAt(endsAt: string): number {
+function attendanceClosesAt(endsAt: string): number {
   return new Date(endsAt).getTime() + ATTENDANCE_CLOSES_AFTER_MS;
 }
 

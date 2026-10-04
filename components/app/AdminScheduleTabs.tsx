@@ -57,7 +57,7 @@ import type {
   Venue,
 } from "./admin-calendar-types";
 
-export type ScheduleView = "week" | "timetable";
+type ScheduleView = "week" | "timetable";
 
 /** The four questions both views ask, held once.
  *

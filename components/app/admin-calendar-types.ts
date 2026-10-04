@@ -133,7 +133,7 @@ export type PrivateSeriesRow = {
  * "clientId" on its own for a family whose player profile doesn't exist yet,
  * "clientId|playerId" otherwise. Uuids contain no "|", so the split is safe.
  */
-export type PlayerChoice = { value: string; label: string };
+type PlayerChoice = { value: string; label: string };
 
 /** Every player across every client, as "Player (Family)" rows sorted by the
  * name the founder is scanning for. A client with no player yet still gets a

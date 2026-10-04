@@ -5,7 +5,7 @@
 
 const RAZORPAY_API = "https://api.razorpay.com/v1";
 
-export type RazorpayClient = {
+type RazorpayClient = {
   keyId: string;
   post: <T>(path: string, body: Record<string, unknown>) => Promise<T>;
   get: <T>(path: string) => Promise<T>;

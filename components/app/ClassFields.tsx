@@ -49,7 +49,7 @@ export const EMPTY_CLASS_FORM: ClassFormState = {
  * A school block is a group class that runs longer. That is not two questions,
  * so it is no longer two lists.
  */
-export const DURATIONS = [60, 90, 120, 150, 180, 210, 240, 270, 300, 330, 360];
+const DURATIONS = [60, 90, 120, 150, 180, 210, 240, 270, 300, 330, 360];
 
 /** The list, guaranteed to contain what the class actually holds. The database
  *  allows any value from 30 to 360, so a class seeded from elsewhere must still

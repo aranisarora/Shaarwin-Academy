@@ -24,7 +24,7 @@ import { createAdminClient, hasServiceRoleKey } from "@/lib/supabase/admin";
 import type { OpResult } from "@/lib/admin-ops-types";
 
 /** A campus the founder has marked as a school. */
-export type SchoolRow = {
+type SchoolRow = {
   venueId: string;
   name: string;
   unit: string | null;
@@ -72,7 +72,7 @@ const WORDS = [
   "dune", "ember", "fern", "grove", "hazel", "indigo",
 ];
 
-export function generatePassword(): string {
+function generatePassword(): string {
   const pick = () => WORDS[Math.floor(Math.random() * WORDS.length)];
   const digits = String(Math.floor(1000 + Math.random() * 9000));
   return `${pick()}-${pick()}-${digits}`;
