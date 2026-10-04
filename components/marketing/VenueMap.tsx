@@ -43,7 +43,7 @@ export function VenueMap({
       return;
     }
 
-    (async () => {
+    const start = async () => {
       try {
         const mapboxgl = (await import("mapbox-gl")).default;
         await import("mapbox-gl/dist/mapbox-gl.css");
@@ -85,10 +85,21 @@ export function VenueMap({
       } catch {
         if (!cancelled) setFailed(true);
       }
-    })();
+    };
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((e) => e.isIntersecting)) return;
+        observer.disconnect();
+        void start();
+      },
+      { rootMargin: "400px" }
+    );
+    observer.observe(containerRef.current);
 
     return () => {
       cancelled = true;
+      observer.disconnect();
       mapRef.current?.remove();
       mapRef.current = null;
       mapboxglRef.current = null;
