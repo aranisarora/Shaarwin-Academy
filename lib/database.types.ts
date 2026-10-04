@@ -2235,9 +2235,10 @@ export type Database = {
         Returns: string
       }
       school_admin_class: { Args: { p_class: string }; Returns: boolean }
-      school_admin_session: { Args: { p_session: string }; Returns: boolean }
       school_admin_venues: { Args: never; Returns: string[] }
       school_has_player: { Args: { p_player: string }; Returns: boolean }
+      school_player_ids: { Args: never; Returns: string[] }
+      school_session_ids: { Args: never; Returns: string[] }
       set_school_password: {
         Args: { p_user: string; p_password: string }
         Returns: undefined

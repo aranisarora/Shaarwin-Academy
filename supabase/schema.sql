@@ -3313,20 +3313,28 @@ AS $function$
   );
 $function$;
 
-CREATE OR REPLACE FUNCTION public.school_admin_session(p_session uuid)
- RETURNS boolean
+CREATE OR REPLACE FUNCTION public.school_player_ids()
+ RETURNS SETOF uuid
  LANGUAGE sql
  STABLE SECURITY DEFINER
  SET search_path TO 'public'
 AS $function$
-  select exists (
-    select 1
-      from bookings b
-      join players pl on pl.id = b.player_id
-     where b.session_id = p_session
-       and pl.client_id is null
-       and pl.school_venue_id in (select school_admin_venues())
-  );
+  select pl.id from players pl
+  where pl.client_id is null
+    and pl.school_venue_id in (select school_admin_venues());
+$function$;
+
+CREATE OR REPLACE FUNCTION public.school_session_ids()
+ RETURNS SETOF uuid
+ LANGUAGE sql
+ STABLE SECURITY DEFINER
+ SET search_path TO 'public'
+AS $function$
+  select b.session_id
+    from bookings b
+    join players pl on pl.id = b.player_id
+   where pl.client_id is null
+     and pl.school_venue_id in (select school_admin_venues());
 $function$;
 
 CREATE OR REPLACE FUNCTION public.school_admin_class(p_class uuid)
@@ -5172,10 +5180,10 @@ AS $function$
     select pl.id from players pl
     where pl.id = any(p_players)
       and (
-        is_founder()
-        or (is_coach() and coach_has_player(pl.id))
-        or pl.client_id = auth.uid()
-        or (is_school_admin() and school_has_player(pl.id))
+        (select is_founder())
+        or ((select is_coach()) and coach_has_player(pl.id))
+        or pl.client_id = (select auth.uid())
+        or ((select is_school_admin()) and pl.id in (select school_player_ids()))
       )
   ),
   n_skills as (select count(*)::int as n from skills where active),
@@ -5185,6 +5193,7 @@ AS $function$
       from skill_ratings r
       join skill_assessments a on a.id = r.assessment_id
       join skills s on s.id = r.skill_id and s.active
+     where a.player_id = any(p_players)
      order by a.player_id, r.skill_id, a.created_at desc
   )
   select au.id,
@@ -5490,13 +5499,13 @@ CREATE POLICY "coaches write attendance" ON public.bookings AS PERMISSIVE FOR UP
 CREATE POLICY "founder full access" ON public.bookings AS PERMISSIVE FOR ALL TO public USING (( SELECT is_founder() AS is_founder));
 -- School pupils carry client_id = null, so "clients read own bookings" matches
 -- nothing for them and every attendance figure would read zero without this.
-CREATE POLICY "school reads pupil bookings" ON public.bookings AS PERMISSIVE FOR SELECT TO public USING ((( SELECT is_school_admin() AS is_school_admin) AND school_has_player(player_id)));
+CREATE POLICY "school reads pupil bookings" ON public.bookings AS PERMISSIVE FOR SELECT TO public USING ((( SELECT is_school_admin() AS is_school_admin) AND (player_id IN ( SELECT school_player_ids() AS school_player_ids))));
 CREATE POLICY "own credits" ON public.class_credits AS PERMISSIVE FOR SELECT TO public USING (((client_id = ( SELECT auth.uid() AS uid)) OR ( SELECT is_founder() AS is_founder)));
 CREATE POLICY "founder writes credits" ON public.class_credits AS PERMISSIVE FOR ALL TO public USING (( SELECT is_founder() AS is_founder));
 CREATE POLICY "coach updates own session notes" ON public.class_sessions AS PERMISSIVE FOR UPDATE TO public USING ((coach_id = ( SELECT auth.uid() AS uid)));
 CREATE POLICY "founder writes sessions" ON public.class_sessions AS PERMISSIVE FOR ALL TO public USING (( SELECT is_founder() AS is_founder));
 CREATE POLICY "read scheduled sessions" ON public.class_sessions AS PERMISSIVE FOR SELECT TO public USING ((class_is_public_group(class_id) OR (coach_id = ( SELECT auth.uid() AS uid)) OR ( SELECT is_founder() AS is_founder) OR client_owns_private_class(class_id)));
-CREATE POLICY "school reads pupil sessions" ON public.class_sessions AS PERMISSIVE FOR SELECT TO public USING ((( SELECT is_school_admin() AS is_school_admin) AND school_admin_session(id)));
+CREATE POLICY "school reads pupil sessions" ON public.class_sessions AS PERMISSIVE FOR SELECT TO public USING ((( SELECT is_school_admin() AS is_school_admin) AND (id IN ( SELECT school_session_ids() AS school_session_ids))));
 CREATE POLICY "founder writes classes" ON public.classes AS PERMISSIVE FOR ALL TO public USING (( SELECT is_founder() AS is_founder));
 CREATE POLICY "public reads active group classes" ON public.classes AS PERMISSIVE FOR SELECT TO public USING ((((active = true) AND (class_type = 'group'::class_type) AND (is_school = false)) OR ( SELECT is_founder() AS is_founder) OR (( SELECT is_coach() AS is_coach) AND coach_teaches_class(id)) OR client_owns_private_class(id)));
 -- getStudentInsights joins classes(title, class_type) off the session.
@@ -5523,7 +5532,7 @@ CREATE POLICY "coach reads own rosters players" ON public.players AS PERMISSIVE 
 CREATE POLICY "coach reads school pupils" ON public.players AS PERMISSIVE FOR SELECT TO public USING ((( SELECT is_coach() AS is_coach) AND coach_teaches_school_of(id)));
 CREATE POLICY "founder all players" ON public.players AS PERMISSIVE FOR ALL TO public USING (( SELECT is_founder() AS is_founder));
 CREATE POLICY "own household" ON public.players AS PERMISSIVE FOR ALL TO public USING ((client_id = ( SELECT auth.uid() AS uid))) WITH CHECK ((client_id = ( SELECT auth.uid() AS uid)));
-CREATE POLICY "school reads own pupils" ON public.players AS PERMISSIVE FOR SELECT TO public USING ((( SELECT is_school_admin() AS is_school_admin) AND school_has_player(id)));
+CREATE POLICY "school reads own pupils" ON public.players AS PERMISSIVE FOR SELECT TO public USING ((( SELECT is_school_admin() AS is_school_admin) AND (id IN ( SELECT school_player_ids() AS school_player_ids))));
 CREATE POLICY "clients read own private series" ON public.private_booking_series AS PERMISSIVE FOR SELECT TO public USING ((client_id = ( SELECT auth.uid() AS uid)));
 CREATE POLICY "founder all private series" ON public.private_booking_series AS PERMISSIVE FOR ALL TO public USING (( SELECT is_founder() AS is_founder));
 CREATE POLICY "founder writes private details" ON public.private_class_details AS PERMISSIVE FOR ALL TO public USING (( SELECT is_founder() AS is_founder));
