@@ -14,6 +14,7 @@ import { Spinner } from "@/components/ui/Spinner";
 import { ConfirmAction } from "@/components/ui/ConfirmAction";
 import { formatDateFull } from "@/lib/academy-time";
 import { formatPrice } from "@/lib/format";
+import { isRealName, isSyntheticEmail } from "@/lib/synthetic-email";
 import { grantCompSubscription, adjustCredits } from "@/app/admin/actions";
 import {
   addClientInvite,
@@ -49,19 +50,6 @@ type ClientRow = {
   attendedCount: number;
   students: { id: string; name: string; level: string }[];
 };
-
-/** WhatsApp-provisioned accounts carry a synthetic @sharwin.local email that
- *  should never surface in the UI — the phone number is the real identity. */
-function isPhoneOnly(email: string): boolean {
-  return email.endsWith("@sharwin.local") || email === "";
-}
-
-/** Auto-provisioned accounts carry placeholder names until the person fills
- *  in their profile — treat those as "no name yet". */
-function isRealName(name: string): boolean {
-  const n = name.trim().toLowerCase();
-  return n !== "" && n !== "there" && n !== "player";
-}
 
 function displayName(c: { name: string; phone: string | null }): string {
   if (isRealName(c.name)) return c.name;
@@ -140,7 +128,7 @@ export function ClientManager({
     (c) =>
       (showArchived || !c.archived) &&
       (c.name.toLowerCase().includes(search.toLowerCase()) ||
-        (!isPhoneOnly(c.email) &&
+        (!isSyntheticEmail(c.email) &&
           c.email.toLowerCase().includes(search.toLowerCase())) ||
         (c.phone ?? "").includes(search.trim()))
   );
@@ -228,7 +216,7 @@ export function ClientManager({
                 <div className="min-w-0">
                   <p className="truncate font-medium">{displayName(c)}</p>
                   <p className="truncate text-sm text-fg-2">
-                    {!isPhoneOnly(c.email) ? `${c.email} · ` : ""}
+                    {!isSyntheticEmail(c.email) ? `${c.email} · ` : ""}
                     {c.phone}
                   </p>
                 </div>
@@ -481,7 +469,7 @@ export function ClientManager({
                 placeholder="Optional"
               />
               <p className="text-sm text-fg-2">
-                {isPhoneOnly(selected.email)
+                {isSyntheticEmail(selected.email)
                   ? "No email — they use WhatsApp."
                   : selected.email}
               </p>

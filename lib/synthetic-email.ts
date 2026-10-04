@@ -25,3 +25,10 @@ export function isSyntheticEmail(email: string | null | undefined): boolean {
   const e = (email ?? "").trim().toLowerCase();
   return e === "" || SYNTHETIC_DOMAINS.some((d) => e.endsWith(d));
 }
+
+/** Auto-provisioned accounts carry placeholder names until the person fills
+ *  in their profile, so those count as "no name yet". */
+export function isRealName(name: string): boolean {
+  const n = name.trim().toLowerCase();
+  return n !== "" && n !== "there" && n !== "player";
+}

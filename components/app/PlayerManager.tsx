@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/Input";
 import { Sheet } from "@/components/ui/Sheet";
 import { formatWallDateFull } from "@/lib/academy-time";
 import { masteryLabel } from "@/lib/mastery";
+import { isRealName, isSyntheticEmail } from "@/lib/synthetic-email";
 
 type PlayerRow = {
   id: string;
@@ -83,17 +84,6 @@ function initials(name: string): string {
     .join("");
 }
 
-function isPhoneOnly(email: string): boolean {
-  return email.endsWith("@sharwin.local") || email === "";
-}
-
-/** Auto-provisioned accounts carry placeholder player names until the person
- *  fills in their profile — treat those as "no name yet". */
-function isRealName(name: string): boolean {
-  const n = name.trim().toLowerCase();
-  return n !== "" && n !== "there" && n !== "player";
-}
-
 /** Best available label for the row title: player → client → phone. */
 function displayName(row: PlayerRow): string {
   if (isRealName(row.name)) return row.name;
@@ -122,7 +112,7 @@ function clientSubline(row: PlayerRow): string {
   const parts: string[] = [];
   if (isRealName(row.clientName) && row.clientName !== displayName(row))
     parts.push(row.clientName);
-  if (isPhoneOnly(row.clientEmail)) {
+  if (isSyntheticEmail(row.clientEmail)) {
     if (row.clientPhone && row.clientPhone !== displayName(row)) parts.push(row.clientPhone);
     if (parts.length === 0) return "Signed up by phone";
   } else if (row.clientEmail) {
@@ -425,7 +415,7 @@ export function PlayerManager({ players }: { players: PlayerRow[] }) {
                   ? selected.clientName
                   : (selected.clientPhone ?? "No name yet")}
               </p>
-              {isPhoneOnly(selected.clientEmail) ? (
+              {isSyntheticEmail(selected.clientEmail) ? (
                 <div className="flex items-center gap-2 text-sm text-fg-2">
                   <PhoneGlyph className="h-4 w-4 text-ember" />
                   <span>
